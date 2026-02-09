@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import CoreGraphics
+import CryptoKit
 
 enum HistoryItem: Codable {
     case text(String)
@@ -61,6 +62,7 @@ struct HistoryEntry: Codable {
     let item: HistoryItem
     let date: Date
     let sourceApp: String?
+    let contentHash: String?
 }
 
 class ClipboardManager {
@@ -80,7 +82,39 @@ class ClipboardManager {
     
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let dateStr = try container.decode(String.self)
+            
+            let isoFormatter = ISO8601DateFormatter()
+            isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = isoFormatter.date(from: dateStr) {
+                return date
+            }
+            
+            isoFormatter.formatOptions = [.withInternetDateTime]
+            if let date = isoFormatter.date(from: dateStr) {
+                return date
+            }
+            
+            let formats = [
+                "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
+                "yyyy-MM-dd'T'HH:mm:ss.SSS",
+                "yyyy-MM-dd'T'HH:mm:ss"
+            ]
+            let df = DateFormatter()
+            df.calendar = Calendar(identifier: .iso8601)
+            df.locale = Locale(identifier: "en_US_POSIX")
+            df.timeZone = TimeZone(secondsFromGMT: 0)
+            for format in formats {
+                df.dateFormat = format
+                if let date = df.date(from: dateStr) {
+                    return date
+                }
+            }
+            
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid date format: \(dateStr)")
+        }
         return decoder
     }()
     
@@ -145,8 +179,11 @@ class ClipboardManager {
     }
 
     private func addToHistory(_ item: HistoryItem, sourceApp: String?) {
-        // Deduplication
+        let hash = contentHash(for: item)
         history.removeAll { entry in
+            if let h = entry.contentHash, let nh = hash {
+                return h == nh
+            }
             switch (entry.item, item) {
             case (.text(let s1), .text(let s2)): return s1 == s2
             case (.fileURL(let u1), .fileURL(let u2)): return u1 == u2
@@ -154,7 +191,7 @@ class ClipboardManager {
             }
         }
         
-        let entry = HistoryEntry(item: item, date: Date(), sourceApp: sourceApp)
+        let entry = HistoryEntry(item: item, date: Date(), sourceApp: sourceApp, contentHash: hash)
         history.insert(entry, at: 0)
         
         if history.count > maxHistoryItems {
@@ -165,12 +202,14 @@ class ClipboardManager {
         onHistoryChanged?(history)
         
         // Broadcast change
-        SyncManager.shared.broadcast(.historyItem(entry))
+        SyncManager.shared.broadcastHistory(entry)
     }
     
     func receiveSyncedItem(_ entry: HistoryEntry) {
-        // Deduplication
         history.removeAll { existing in
+            if let h1 = existing.contentHash, let h2 = entry.contentHash, h1 == h2 {
+                return true
+            }
             switch (existing.item, entry.item) {
             case (.text(let s1), .text(let s2)): return s1 == s2
             case (.fileURL(let u1), .fileURL(let u2)): return u1 == u2
@@ -224,5 +263,31 @@ class ClipboardManager {
         
         vKeyDown?.post(tap: .cghidEventTap)
         vKeyUp?.post(tap: .cghidEventTap)
+    }
+    
+    private func contentHash(for item: HistoryItem) -> String? {
+        switch item {
+        case .text(let str):
+            let normalized = str.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: "\r", with: "\n")
+            guard let data = normalized.data(using: .utf8) else { return nil }
+            return sha256Hex(data)
+        case .image(let data):
+            return sha256Hex(data)
+        case .rtf(let data):
+            return sha256Hex(data)
+        case .pdf(let data):
+            return sha256Hex(data)
+        case .fileURL(let url):
+            let s = url.absoluteString
+            guard let data = s.data(using: .utf8) else { return nil }
+            return sha256Hex(data)
+        }
+    }
+    
+    private func sha256Hex(_ data: Data) -> String {
+        let digest = CryptoKit.SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 }

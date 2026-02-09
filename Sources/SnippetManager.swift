@@ -124,7 +124,7 @@ class SnippetManager {
             try? data.write(to: storageURL)
             registerHotKeys()
             onSnippetsChanged?(folders)
-            SyncManager.shared.broadcast(.snippetFolders(folders))
+            SyncManager.shared.broadcastSnippets(folders)
         }
     }
 

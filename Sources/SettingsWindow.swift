@@ -72,12 +72,28 @@ class SettingsWindow: NSWindow {
         deviceNameField.target = self
         deviceNameField.action = #selector(deviceNameChanged(_:))
         contentView.addSubview(deviceNameField)
+
+        let syncKeyLabel = NSTextField(labelWithString: "Sync Key:")
+        syncKeyLabel.frame = NSRect(x: 20, y: 90, width: 100, height: 20)
+        contentView.addSubview(syncKeyLabel)
+
+        let syncKeyField = NSSecureTextField(frame: NSRect(x: 120, y: 87, width: 260, height: 24))
+        syncKeyField.stringValue = PreferencesManager.shared.syncKey
+        syncKeyField.target = self
+        syncKeyField.action = #selector(syncKeyChanged(_:))
+        contentView.addSubview(syncKeyField)
         
         let closeButton = NSButton(title: "Close", target: self, action: #selector(closeWindow))
         closeButton.frame = NSRect(x: 300, y: 20, width: 80, height: 32)
         contentView.addSubview(closeButton)
     }
     
+    @objc private func syncKeyChanged(_ sender: NSSecureTextField) {
+        PreferencesManager.shared.syncKey = sender.stringValue
+        // No need to restart SyncManager as it's computed on demand, 
+        // but existing connections might fail decryption until they also update their key.
+    }
+
     @objc private func syncToggled(_ sender: NSButton) {
         let isEnabled = sender.state == .on
         PreferencesManager.shared.isSyncEnabled = isEnabled
