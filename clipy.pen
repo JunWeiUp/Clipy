@@ -1,0 +1,144 @@
+{
+  "version": "2.7",
+  "children": [
+    {
+      "type": "frame",
+      "id": "bi8Au",
+      "x": 0,
+      "y": 0,
+      "name": "Frame",
+      "clip": true,
+      "width": 800,
+      "height": 600,
+      "fill": "#F0F2F5",
+      "layout": "vertical",
+      "justifyContent": "center",
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "frame",
+          "id": "b9h8v",
+          "name": "Logo Card",
+          "width": 400,
+          "height": 400,
+          "fill": "#FFFFFF",
+          "cornerRadius": 40,
+          "effect": {
+            "type": "shadow",
+            "shadowType": "outer",
+            "color": "rgba(0,0,0,0.05)",
+            "offset": {
+              "x": 0,
+              "y": 10
+            },
+            "blur": 30
+          },
+          "layout": "vertical",
+          "gap": 32,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "a98m5",
+              "name": "Icon Wrapper",
+              "width": 180,
+              "height": 180,
+              "layout": "none",
+              "children": [
+                {
+                  "type": "ellipse",
+                  "id": "rfHjZ",
+                  "x": 10,
+                  "y": 10,
+                  "name": "Sync Ring",
+                  "width": 160,
+                  "height": 160,
+                  "stroke": {
+                    "thickness": 4,
+                    "cap": "round",
+                    "fill": "#007AFF"
+                  }
+                },
+                {
+                  "type": "ellipse",
+                  "id": "D6DFN",
+                  "x": 78,
+                  "y": -2,
+                  "name": "Node macOS",
+                  "fill": "#007AFF",
+                  "width": 24,
+                  "height": 24,
+                  "stroke": {
+                    "thickness": 4,
+                    "fill": "#FFFFFF"
+                  }
+                },
+                {
+                  "type": "ellipse",
+                  "id": "nyNUn",
+                  "x": 78,
+                  "y": 158,
+                  "name": "Node Mobile",
+                  "fill": "#007AFF",
+                  "width": 24,
+                  "height": 24,
+                  "stroke": {
+                    "thickness": 4,
+                    "fill": "#FFFFFF"
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "syZgD",
+                  "x": 48,
+                  "y": 40,
+                  "name": "Sheet Base",
+                  "width": 64,
+                  "height": 84,
+                  "fill": "#007AFF",
+                  "cornerRadius": 10
+                },
+                {
+                  "type": "frame",
+                  "id": "zHkz3",
+                  "x": 68,
+                  "y": 56,
+                  "name": "Sheet Copy",
+                  "width": 64,
+                  "height": 84,
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 10,
+                  "stroke": {
+                    "thickness": 4,
+                    "fill": "#007AFF"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "MI1Fz",
+              "name": "Brand Text",
+              "layout": "vertical",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "i4tFu",
+                  "name": "title",
+                  "fill": "#1A1A1A",
+                  "content": "Clipy",
+                  "fontFamily": "Inter",
+                  "fontSize": 64,
+                  "fontWeight": "800"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
