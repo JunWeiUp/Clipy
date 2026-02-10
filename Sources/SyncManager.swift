@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import CryptoKit
+import Compression
 
 struct SyncMessage: Codable {
     let deviceId: String
@@ -21,6 +22,41 @@ struct FileChunk: Codable {
     let chunkIndex: Int
     let data: String // Base64 encrypted chunk data
     let isLast: Bool
+    let isCompressed: Bool
+    let originalSize: Int?
+    
+    init(fileId: String, chunkIndex: Int, data: String, isLast: Bool, isCompressed: Bool = false, originalSize: Int? = nil) {
+        self.fileId = fileId
+        self.chunkIndex = chunkIndex
+        self.data = data
+        self.isLast = isLast
+        self.isCompressed = isCompressed
+        self.originalSize = originalSize
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case fileId, chunkIndex, data, isLast, isCompressed, originalSize
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.fileId = try container.decode(String.self, forKey: .fileId)
+        self.chunkIndex = try container.decode(Int.self, forKey: .chunkIndex)
+        self.data = try container.decode(String.self, forKey: .data)
+        self.isLast = try container.decode(Bool.self, forKey: .isLast)
+        self.isCompressed = try container.decodeIfPresent(Bool.self, forKey: .isCompressed) ?? false
+        self.originalSize = try container.decodeIfPresent(Int.self, forKey: .originalSize)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(fileId, forKey: .fileId)
+        try container.encode(chunkIndex, forKey: .chunkIndex)
+        try container.encode(data, forKey: .data)
+        try container.encode(isLast, forKey: .isLast)
+        try container.encode(isCompressed, forKey: .isCompressed)
+        try container.encodeIfPresent(originalSize, forKey: .originalSize)
+    }
 }
 
 class SyncManager: NSObject, NetServiceDelegate {
@@ -39,12 +75,153 @@ class SyncManager: NSObject, NetServiceDelegate {
     private let serviceType = "_clipy-sync._tcp" 
     private var deviceId: String { PreferencesManager.shared.deviceName } 
      
-    private let hardcodedSecret = "ClipySyncSecret2026" 
-    
+    private let hardcodedSecret = "ClipySyncSecret2026"
+
     private var encryptionKey: SymmetricKey {
         let data = hardcodedSecret.data(using: .utf8)!
         let hash = SHA256.hash(data: data)
         return SymmetricKey(data: hash)
+    }
+    
+    private func shouldCompressFile(at url: URL) -> Bool {
+        // Never compress binary/executable files or already compressed formats
+        let fileExtension = url.pathExtension.lowercased()
+        let neverCompressExtensions = [
+            // Archives and compressed files
+            "zip", "gz", "7z", "rar", "tar", "bz2", "xz", "tgz", "tbz2",
+            // Images
+            "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "svg", "ico",
+            // Video
+            "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "m4v",
+            // Audio
+            "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma",
+            // Documents
+            "pdf", "docx", "xlsx", "pptx", "epub", "mobi",
+            // Executables and binaries
+            "exe", "dll", "so", "dylib", "app", "apk", "ipa", "bin", "dmg",
+            // Other compressed or binary formats
+            "psd", "ai", "indd", "raw", "cr2", "nef", "arw"
+        ]
+        
+        if neverCompressExtensions.contains(fileExtension) {
+            return false
+        }
+        
+        // Only compress text-based files
+        let textExtensions = [
+            "txt", "log", "csv", "json", "xml", "html", "htm", "css", "js", "ts",
+            "py", "java", "cpp", "c", "h", "hpp", "cs", "rb", "php", "go", "rs",
+            "swift", "kt", "kts", "md", "markdown", "yaml", "yml", "toml", "ini",
+            "properties", "cfg", "conf", "sh", "bash", "bat", "cmd", "sql", "pl",
+            "pm", "lua", "r", "scala", "clj", "cljs", "edn", "coffee", "scss", "sass"
+        ]
+        
+        if !textExtensions.contains(fileExtension) {
+            // For unknown file types, check file content to determine if it's text
+            return isLikelyTextFile(at: url)
+        }
+        
+        // Check file size - don't compress very small files
+        do {
+            let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+            let fileSize = attrs[.size] as? Int64 ?? 0
+            if fileSize < 1024 { // Less than 1KB
+                return false
+            }
+            if fileSize > 10 * 1024 * 1024 { // More than 10MB, skip compression to avoid memory issues
+                return false
+            }
+        } catch {
+            appLog("Failed to get file size for compression check: \(error)", level: .warning)
+            return false
+        }
+        
+        return true
+    }
+    
+    private func isLikelyTextFile(at url: URL) -> Bool {
+        // Read first 1KB of file to check if it's likely text
+        do {
+            let fileHandle = try FileHandle(forReadingFrom: url)
+            defer { try? fileHandle.close() }
+            
+            let data = fileHandle.readData(ofLength: 1024)
+            if data.isEmpty {
+                return false
+            }
+            
+            // Check for null bytes - binary files often contain them
+            if data.contains(0) {
+                return false
+            }
+            
+            // Try to decode as UTF-8
+            if let string = String(data: data, encoding: .utf8) {
+                // Check if most characters are printable
+                var printableCount = 0
+                for char in string.utf8 {
+                    // Printable ASCII: 32-126 (space to ~)
+                    // Also allow common whitespace: tab(9), newline(10), carriage return(13)
+                    if (32...126).contains(char) || [9, 10, 13].contains(char) {
+                        printableCount += 1
+                    }
+                }
+                let ratio = Double(printableCount) / Double(string.utf8.count)
+                return ratio > 0.9 // At least 90% printable characters
+            }
+            
+            return false
+        } catch {
+            appLog("Failed to check file content: \(error)", level: .warning)
+            return false
+        }
+    }
+    
+    private func compressData(_ data: Data) -> Data? {
+        let bufferSize = data.count + 64 // Add some overhead for compression metadata
+        var buffer = [UInt8](repeating: 0, count: bufferSize)
+        
+        let compressedSize = data.withUnsafeBytes { inputPtr in
+            buffer.withUnsafeMutableBytes { outputPtr in
+                compression_encode_buffer(
+                    outputPtr.baseAddress!,
+                    bufferSize,
+                    inputPtr.baseAddress!,
+                    data.count,
+                    nil,
+                    COMPRESSION_LZFSE
+                )
+            }
+        }
+        
+        if compressedSize == 0 {
+            return nil // Compression failed or not beneficial
+        }
+        
+        return Data(buffer[0..<compressedSize])
+    }
+    
+    private func decompressData(_ data: Data, originalSize: Int) -> Data? {
+        var buffer = [UInt8](repeating: 0, count: originalSize)
+        
+        let decompressedSize = data.withUnsafeBytes { inputPtr in
+            buffer.withUnsafeMutableBytes { outputPtr in
+                compression_decode_buffer(
+                    outputPtr.baseAddress!,
+                    originalSize,
+                    inputPtr.baseAddress!,
+                    data.count,
+                    nil,
+                    COMPRESSION_LZFSE
+                )
+            }
+        }
+        
+        if decompressedSize != originalSize {
+            return nil // Decompression failed
+        }
+        
+        return Data(buffer)
     }
 
     private func encrypt(_ text: String) -> String? {
@@ -376,9 +553,20 @@ class SyncManager: NSObject, NetServiceDelegate {
             return
         }
         
-        guard let chunkData = Data(base64Encoded: chunk.data) else {
+        guard var chunkData = Data(base64Encoded: chunk.data) else {
             appLog("Failed to decode base64 chunk data", level: .error)
             return
+        }
+        
+        // Handle decompression if needed
+        if chunk.isCompressed, let originalSize = chunk.originalSize {
+            if let decompressedData = decompressData(chunkData, originalSize: originalSize) {
+                chunkData = decompressedData
+                appLog("Decompressed chunk \(chunk.chunkIndex) from \(Data(base64Encoded: chunk.data)!.count) to \(decompressedData.count) bytes")
+            } else {
+                appLog("Failed to decompress chunk \(chunk.chunkIndex)", level: .error)
+                return
+            }
         }
         
         do {
@@ -497,31 +685,77 @@ class SyncManager: NSObject, NetServiceDelegate {
         
         sendSync(headerJson, to: endpoint)
         
-        // 2. Send File Chunks
+        // 2. Send File Chunks with dynamic sizing and compression
         syncQueue.async {
             do {
                 let fileHandle = try FileHandle(forReadingFrom: url)
                 defer { try? fileHandle.close() }
+
+                // Dynamic chunk size based on file size
+                let chunkSize: Int
+                if fileSize < 1024 * 1024 { // < 1MB
+                    chunkSize = Int(min(fileSize, 256 * 1024)) // Max 256KB for small files
+                } else if fileSize < 10 * 1024 * 1024 { // < 10MB
+                    chunkSize = 512 * 1024 // 512KB for medium files
+                } else {
+                    chunkSize = 1024 * 1024 // 1MB for large files
+                }
                 
-                let chunkSize = 512 * 1024 // 512KB
+                // Determine if file should be compressed
+                // TODO: Make this configurable via preferences
+                let compressionEnabled = true
+                let shouldCompress = compressionEnabled && self.shouldCompressFile(at: url)
+                appLog("File compression enabled: \(shouldCompress), chunk size: \(chunkSize)")
+
                 var chunkIndex = 0
                 var bytesRead: Int64 = 0
-                
+
                 while bytesRead < fileSize {
-                    let data = fileHandle.readData(ofLength: chunkSize)
-                    if data.isEmpty { break }
-                    
-                    bytesRead += Int64(data.count)
+                    let rawData = fileHandle.readData(ofLength: chunkSize)
+                    if rawData.isEmpty { break }
+
+                    bytesRead += Int64(rawData.count)
                     let isLast = bytesRead >= fileSize
                     
+                    var processedData = rawData
+                    let originalSize = rawData.count
+                    var isCompressed = false
+                    
+                    // Apply compression if beneficial
+                    if shouldCompress {
+                        if let compressedData = self.compressData(rawData) {
+                            // Only use compression if it actually reduces size significantly
+                            // Require at least 10% reduction to avoid marginal gains
+                            let compressionRatio = Double(compressedData.count) / Double(rawData.count)
+                            if compressionRatio < 0.9 && compressedData.count < rawData.count {
+                                processedData = compressedData
+                                isCompressed = true
+                                appLog("Chunk \(chunkIndex) compressed: \(rawData.count) -> \(compressedData.count) bytes (ratio: \(String(format: "%.2f", compressionRatio)))")
+                            } else {
+                                appLog("Chunk \(chunkIndex) compression not beneficial (ratio: \(String(format: "%.2f", compressionRatio))), sending uncompressed")
+                            }
+                        } else {
+                            appLog("Chunk \(chunkIndex) compression failed, sending uncompressed")
+                        }
+                    }
+
                     // We need to encrypt the raw bytes, but our encrypt(String) takes String.
                     // Let's use Base64 for the raw data before encrypting as String.
-                    let base64Data = data.base64EncodedString()
+                    let base64Data = processedData.base64EncodedString()
                     
-                    let chunk = FileChunk(fileId: fileId, chunkIndex: chunkIndex, data: base64Data, isLast: isLast)
+                    // Include compression metadata in chunk
+                    let chunk = FileChunk(
+                        fileId: fileId, 
+                        chunkIndex: chunkIndex, 
+                        data: base64Data, 
+                        isLast: isLast,
+                        isCompressed: isCompressed,
+                        originalSize: isCompressed ? originalSize : nil
+                    )
+                    
                     guard let chunkData = try? JSONEncoder().encode(chunk),
                           let encryptedChunk = self.encrypt(String(data: chunkData, encoding: .utf8) ?? "") else { break }
-                    
+
                     let chunkMessage = SyncMessage(
                         deviceId: self.deviceId,
                         timestamp: Date().timeIntervalSince1970,
@@ -529,18 +763,21 @@ class SyncManager: NSObject, NetServiceDelegate {
                         content: encryptedChunk,
                         hash: ""
                     )
-                    
+
                     guard let chunkJson = try? JSONEncoder().encode(chunkMessage) else { break }
-                    
-                    // Small delay to avoid overwhelming the receiver's buffer
-                    Thread.sleep(forTimeInterval: 0.05)
+
+                    // Adaptive delay based on chunk size
+                    let delay = min(0.1, Double(processedData.count) / 1000000.0) // Max 0.1s, scale with size
+                    if delay > 0 {
+                        Thread.sleep(forTimeInterval: delay)
+                    }
                     self.sendSync(chunkJson, to: endpoint)
-                    
+
                     chunkIndex += 1
-                    appLog("Sent chunk \(chunkIndex) (\(bytesRead)/\(fileSize) bytes)")
+                    appLog("Sent chunk \(chunkIndex) (\(bytesRead)/\(fileSize) bytes, compressed: \(isCompressed))")
                 }
                 appLog("File transfer completed for \(fileName)")
-                
+
                 // Add sent file to history
                 DispatchQueue.main.async {
                     ClipboardManager.shared.addToFileHistory(

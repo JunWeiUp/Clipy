@@ -9,8 +9,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter/services.dart';
 import 'log_manager.dart';
 import 'clipboard_manager.dart';
+import 'compression_utils.dart';
+import 'permission_manager.dart';
 
 class SyncMessage {
   final String deviceId;
@@ -63,14 +66,25 @@ class FileChunk {
   final int chunkIndex;
   final String data;
   final bool isLast;
+  final bool isCompressed;
+  final int? originalSize;
 
-  FileChunk({required this.fileId, required this.chunkIndex, required this.data, required this.isLast});
+  FileChunk({
+    required this.fileId, 
+    required this.chunkIndex, 
+    required this.data, 
+    required this.isLast,
+    this.isCompressed = false,
+    this.originalSize,
+  });
 
   factory FileChunk.fromJson(Map<String, dynamic> json) => FileChunk(
         fileId: json['fileId'],
         chunkIndex: json['chunkIndex'],
         data: json['data'],
         isLast: json['isLast'],
+        isCompressed: json['isCompressed'] ?? false,
+        originalSize: json['originalSize'],
       );
 }
 
@@ -105,6 +119,7 @@ class _PendingFile {
 }
 
 class SyncManager {
+  static const _storageChannel = MethodChannel('com.clipyclone.clipy_android/storage');
   static final SyncManager instance = SyncManager._();
   SyncManager._();
 
@@ -361,21 +376,61 @@ class SyncManager {
     }
   }
 
+  Future<String?> _getPublicDownloadsDirectory() async {
+    try {
+      final String? path = await _storageChannel.invokeMethod('getDownloadsDirectory');
+      return path;
+    } catch (e) {
+      appLog('Error getting public downloads directory: $e', level: 'error');
+      return null;
+    }
+  }
+
   Future<void> _handleFileHeader(String json, String sender) async {
     try {
       final header = FileHeader.fromJson(jsonDecode(json));
       appLog('Received FileHeader for ${header.fileName} (${header.fileSize} bytes) from $sender');
 
-      final directory = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
-      final clipyDir = Directory('${directory.path}/Clipy');
-      if (!await clipyDir.exists()) {
-        await clipyDir.create(recursive: true);
+      // Check and request storage permission if needed
+      bool hasPermission = await PermissionManager.checkStoragePermission();
+      if (!hasPermission) {
+        appLog('Storage permission not granted, requesting permission...');
+        hasPermission = await PermissionManager.requestStoragePermission();
+        // Note: On Android 11+, this will return true immediately as no permission is needed
       }
 
-      final file = File('${clipyDir.path}/${header.fileName}');
-      if (await file.exists()) {
-        await file.delete();
+      // Try to get Downloads directory with proper permission handling
+      Directory? targetDirectory;
+      
+      // First, try to get public Downloads directory via native channel (LocalSend style)
+      final publicDownloadsPath = await _getPublicDownloadsDirectory();
+      if (publicDownloadsPath != null) {
+        targetDirectory = Directory(publicDownloadsPath);
+        appLog('Using public Downloads directory: ${targetDirectory.path}');
+      } else {
+        // Fallback to path_provider's Downloads directory
+        final downloadsDir = await getDownloadsDirectory();
+        if (downloadsDir != null) {
+          targetDirectory = downloadsDir;
+          appLog('Using app-specific Downloads directory: ${downloadsDir.path}');
+        } else {
+          // Downloads directory not available, try external storage
+          final externalDir = await getExternalStorageDirectory();
+          if (externalDir != null) {
+            targetDirectory = externalDir;
+            appLog('Using external storage directory: ${externalDir.path}');
+          } else {
+            // Fallback to application documents
+            final appDir = await getApplicationDocumentsDirectory();
+            targetDirectory = appDir;
+            appLog('Using application documents directory: ${appDir.path}');
+          }
+        }
       }
+
+      // Generate unique file path
+      final uniqueFileName = await _getUniqueFileName(targetDirectory.path, header.fileName);
+      final file = File(uniqueFileName);
       
       final sink = file.openWrite();
       _pendingFiles[header.fileId] = _PendingFile(
@@ -384,8 +439,32 @@ class SyncManager {
         file: file,
         sink: sink,
       );
+      
+      appLog('File will be saved to: ${file.path}');
     } catch (e) {
       appLog('Error handling file header: $e', level: 'error');
+    }
+  }
+
+  Future<String> _getUniqueFileName(String directoryPath, String originalFileName) async {
+    final file = File('$directoryPath/$originalFileName');
+    if (!await file.exists()) {
+      return file.path;
+    }
+    
+    // Add timestamp to avoid conflicts
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final lastDotIndex = originalFileName.lastIndexOf('.');
+    if (lastDotIndex > 0 && lastDotIndex < originalFileName.length - 1) {
+      // Has extension
+      final nameWithoutExt = originalFileName.substring(0, lastDotIndex);
+      final ext = originalFileName.substring(lastDotIndex);
+      final newFileName = '$nameWithoutExt-$timestamp$ext';
+      return '$directoryPath/$newFileName';
+    } else {
+      // No extension or dot at the end
+      final newFileName = '$originalFileName-$timestamp';
+      return '$directoryPath/$newFileName';
     }
   }
 
@@ -399,7 +478,25 @@ class SyncManager {
         return;
       }
 
-      final data = base64Decode(chunk.data);
+      var data = base64Decode(chunk.data);
+
+      // Handle decompression if needed
+      if (chunk.isCompressed && chunk.originalSize != null) {
+        try {
+          final decompressed = CompressionUtils.decompressData(data);
+          if (decompressed != null) {
+            data = decompressed;
+            appLog('Decompressed chunk ${chunk.chunkIndex} from ${base64Decode(chunk.data).length} to ${data.length} bytes');
+          } else {
+            appLog('Decompression failed for chunk ${chunk.chunkIndex}, using original data', level: 'warning');
+            // Continue with original compressed data (treat as uncompressed)
+          }
+        } catch (e) {
+          appLog('Decompression error: $e, using original data', level: 'warning');
+          // Continue with original data
+        }
+      }
+      
       pending.sink.add(data);
       pending.receivedBytes += data.length;
 

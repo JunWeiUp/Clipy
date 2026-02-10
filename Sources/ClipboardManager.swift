@@ -76,7 +76,7 @@ struct FileHistoryItem: Codable {
 
 class ClipboardManager {
     static let shared = ClipboardManager()
-    
+
     private let pasteboard = NSPasteboard.general
     private var changeCount: Int
     private var timer: Timer?
@@ -87,29 +87,36 @@ class ClipboardManager {
     private let fileHistoryURL: URL
     private var lastSyncHash: String?
     
+    // Performance optimization: debounce and content tracking
+    private var lastCheckTime: Date = Date()
+    private var pendingContentCheck: Bool = false
+    private let minCheckInterval: TimeInterval = 0.3 // Reduced from 0.5s to 0.3s with better logic
+    private var recentContentHashes: Set<String> = []
+    private let recentContentHashesMaxSize = 50
+
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return encoder
     }()
-    
+
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let dateStr = try container.decode(String.self)
-            
+
             let isoFormatter = ISO8601DateFormatter()
             isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             if let date = isoFormatter.date(from: dateStr) {
                 return date
             }
-            
+
             isoFormatter.formatOptions = [.withInternetDateTime]
             if let date = isoFormatter.date(from: dateStr) {
                 return date
             }
-            
+
             let formats = [
                 "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
                 "yyyy-MM-dd'T'HH:mm:ss.SSS",
@@ -125,28 +132,40 @@ class ClipboardManager {
                     return date
                 }
             }
-            
+
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid date format: \(dateStr)")
         }
         return decoder
     }()
-    
+
     var onHistoryChanged: (([HistoryEntry]) -> Void)?
     var onFileHistoryChanged: (([FileHistoryItem]) -> Void)?
 
     private init() {
         self.changeCount = pasteboard.changeCount
-        
+
         // Setup storage
         let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let appSupport = paths[0].appendingPathComponent("ClipyClone")
         try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
         self.storageURL = appSupport.appendingPathComponent("history_v2.json")
         self.fileHistoryURL = appSupport.appendingPathComponent("file_history.json")
-        
+
         loadHistory()
         loadFileHistory()
         startPolling()
+        
+        // Initialize recent content hashes from existing history
+        updateRecentContentHashes()
+    }
+    
+    private func updateRecentContentHashes() {
+        recentContentHashes.removeAll()
+        for entry in history.prefix(recentContentHashesMaxSize) {
+            if let hash = entry.contentHash {
+                recentContentHashes.insert(hash)
+            }
+        }
     }
     
     private func loadFileHistory() {
@@ -193,43 +212,89 @@ class ClipboardManager {
     }
 
     private func startPolling() {
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.checkPasteboard()
+        Timer.scheduledTimer(withTimeInterval: minCheckInterval, repeats: true) { [weak self] _ in
+            self?.checkPasteboardWithDebounce()
         }
     }
 
-    private func checkPasteboard() {
-        guard pasteboard.changeCount != changeCount else { return }
-        changeCount = pasteboard.changeCount
+    private func checkPasteboardWithDebounce() {
+        let now = Date()
+        let timeSinceLastCheck = now.timeIntervalSince(lastCheckTime)
         
+        // If clipboard hasn't changed, skip processing
+        guard pasteboard.changeCount != changeCount else { return }
+        
+        // Implement debounce: if we've checked recently, delay this check
+        if timeSinceLastCheck < minCheckInterval {
+            if !pendingContentCheck {
+                pendingContentCheck = true
+                // Schedule a check after the debounce period
+                DispatchQueue.main.asyncAfter(deadline: .now() + (minCheckInterval - timeSinceLastCheck)) { [weak self] in
+                    self?.processPendingContentCheck()
+                }
+            }
+            return
+        }
+        
+        // Process immediately if enough time has passed
+        lastCheckTime = now
+        pendingContentCheck = false
+        processClipboardContent()
+    }
+    
+    private func processPendingContentCheck() {
+        if pendingContentCheck {
+            pendingContentCheck = false
+            lastCheckTime = Date()
+            processClipboardContent()
+        }
+    }
+    
+    private func processClipboardContent() {
+        changeCount = pasteboard.changeCount
+
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         let sourceApp = frontmostApp?.localizedName
         let bundleIdentifier = frontmostApp?.bundleIdentifier
-        
+
         appLog("Clipboard changed. Source: \(sourceApp ?? "Unknown") (\(bundleIdentifier ?? "N/A"))")
-        
+
         // Clipy feature: Exclude sensitive apps (e.g., Password managers)
         if let bundleID = bundleIdentifier, PreferencesManager.shared.excludedApps.contains(bundleID) {
             return
         }
+
+        var newItem: HistoryItem?
         
         if let newString = pasteboard.string(forType: .string), !newString.isEmpty {
-            addToHistory(.text(newString), sourceApp: sourceApp)
+            newItem = .text(newString)
         } else if let rtfData = pasteboard.data(forType: .rtf) {
-            addToHistory(.rtf(rtfData), sourceApp: sourceApp)
+            newItem = .rtf(rtfData)
         } else if let pdfData = pasteboard.data(forType: .pdf) {
-            addToHistory(.pdf(pdfData), sourceApp: sourceApp)
+            newItem = .pdf(pdfData)
         } else if let fileURLString = pasteboard.string(forType: .fileURL), let url = URL(string: fileURLString) {
-            addToHistory(.fileURL(url), sourceApp: sourceApp)
+            newItem = .fileURL(url)
         } else if let imageData = pasteboard.data(forType: .tiff) ?? pasteboard.data(forType: .png) {
-            addToHistory(.image(imageData), sourceApp: sourceApp)
+            newItem = .image(imageData)
+        }
+        
+        if let item = newItem {
+            let hash = contentHash(for: item)
+            
+            // Early duplicate detection using recent hashes
+            if let hash = hash, recentContentHashes.contains(hash) {
+                appLog("Skipping duplicate content (hash: \(hash.prefix(8)))")
+                return
+            }
+            
+            addToHistory(item, sourceApp: sourceApp)
         }
     }
 
     private func addToHistory(_ item: HistoryItem, sourceApp: String?) {
         let hash = contentHash(for: item)
         appLog("Adding to history: \(item.title), Hash: \(hash?.prefix(8) ?? "N/A")")
-        
+
         // Broadcast to other devices if it's a new text item and not from sync
         if let nh = hash, nh != lastSyncHash {
             if case .text(let str) = item {
@@ -247,14 +312,23 @@ class ClipboardManager {
             default: return false
             }
         }
-        
+
         let entry = HistoryEntry(item: item, date: Date(), sourceApp: sourceApp, contentHash: hash)
         history.insert(entry, at: 0)
-        
+
         if history.count > maxHistoryItems {
             history.removeLast()
         }
-        
+
+        // Update recent content hashes for performance
+        if let hash = hash {
+            recentContentHashes.insert(hash)
+            if recentContentHashes.count > recentContentHashesMaxSize {
+                // Remove oldest hash by rebuilding set from current history
+                updateRecentContentHashes()
+            }
+        }
+
         saveHistory()
         onHistoryChanged?(history)
     }
