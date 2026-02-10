@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -730,12 +731,66 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  StreamSubscription? _fileSubscription;
+  StreamSubscription? _progressSubscription;
+  final Map<String, FileProgress> _activeTransfers = {};
+
   @override
   void initState() {
     super.initState();
     ClipboardManager.instance.onHistoryChanged = () {
-      setState(() {});
+      if (mounted) setState(() {});
     };
+    
+    _progressSubscription = SyncManager.instance.onFileProgress.listen((progress) {
+      if (mounted) {
+        setState(() {
+          if (progress.isCompleted) {
+            _activeTransfers.remove(progress.fileId);
+          } else {
+            _activeTransfers[progress.fileId] = progress;
+          }
+        });
+      }
+    });
+
+    _fileSubscription = SyncManager.instance.onFileReceived.listen((fileName) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Received file: $fileName'),
+            action: SnackBarAction(
+              label: 'View',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ReceivedFilesPage()),
+              ),
+            ),
+          ),
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _fileSubscription?.cancel();
+    _progressSubscription?.cancel();
+    super.dispose();
+  }
+
+  static const _channel = MethodChannel('com.clipyclone.clipy_android/open_folder');
+
+  Future<void> _openFolder(String filePath) async {
+    try {
+      await _channel.invokeMethod('openFolder', {'path': filePath});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open folder: $e')),
+        );
+      }
+    }
   }
 
   @override
@@ -746,6 +801,14 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('Clipy History'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.folder_open),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const ReceivedFilesPage()),
+            ),
+            tooltip: 'Received Files',
+          ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () => Navigator.push(
@@ -767,25 +830,75 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      body: ListView.builder(
-        itemCount: history.length,
-        itemBuilder: (context, index) {
-          final entry = history[index];
-          return ListTile(
-            title: Text(
-              entry.item.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+      body: Column(
+        children: [
+          if (_activeTransfers.isNotEmpty)
+            Container(
+              color: Colors.blue.withOpacity(0.1),
+              child: Column(
+                children: _activeTransfers.values.map((progress) {
+                  return Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.downloading, size: 16),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Receiving: ${progress.fileName}',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            Text(
+                              '${(progress.progress * 100).toStringAsFixed(0)}%',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        LinearProgressIndicator(value: progress.progress),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
             ),
-            subtitle: Text('${entry.sourceApp ?? 'Unknown'} • ${entry.date.toString().split('.')[0]}'),
-            onTap: () {
-              ClipboardManager.instance.copyToClipboard(entry.item);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Copied to clipboard')),
-              );
-            },
-          );
-        },
+          Expanded(
+            child: ListView.builder(
+              itemCount: history.length,
+              itemBuilder: (context, index) {
+                final entry = history[index];
+                final isFile = entry.item.type == 'fileURL';
+                return ListTile(
+                  leading: Icon(
+                    isFile ? Icons.insert_drive_file_outlined : Icons.short_text,
+                    color: isFile ? Colors.blue : null,
+                  ),
+                  title: Text(
+                    entry.item.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text('${entry.sourceApp ?? 'Unknown'} • ${entry.date.toString().split('.')[0]}'),
+                  onTap: () {
+                    if (isFile) {
+                      _openFolder(entry.item.value.toString());
+                    } else {
+                      ClipboardManager.instance.copyToClipboard(entry.item);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Copied to clipboard')),
+                      );
+                    }
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -956,6 +1069,94 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class ReceivedFilesPage extends StatefulWidget {
+  const ReceivedFilesPage({super.key});
+
+  @override
+  State<ReceivedFilesPage> createState() => _ReceivedFilesPageState();
+}
+
+class _ReceivedFilesPageState extends State<ReceivedFilesPage> {
+  List<dynamic> _files = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFiles();
+  }
+
+  Future<void> _loadFiles() async {
+    final prefs = await SharedPreferences.getInstance();
+    final historyJson = prefs.getString('fileHistory') ?? '[]';
+    if (mounted) {
+      setState(() {
+        _files = jsonDecode(historyJson);
+      });
+    }
+  }
+
+  Future<void> _deleteFile(int index) async {
+    final file = _files[index];
+    final ioFile = File(file['filePath']);
+    if (await ioFile.exists()) {
+      await ioFile.delete();
+    }
+
+    _files.removeAt(index);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('fileHistory', jsonEncode(_files));
+    setState(() {});
+  }
+
+  String _formatSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  static const _channel = MethodChannel('com.clipyclone.clipy_android/open_folder');
+
+  Future<void> _openFolder(String filePath) async {
+    try {
+      await _channel.invokeMethod('openFolder', {'path': filePath});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open folder: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Received Files')),
+      body: _files.isEmpty
+          ? const Center(child: Text('No files received yet'))
+          : ListView.builder(
+              itemCount: _files.length,
+              itemBuilder: (context, index) {
+                final file = _files[index];
+                final date = DateTime.parse(file['timestamp']);
+                return ListTile(
+                  leading: const Icon(Icons.insert_drive_file),
+                  title: Text(file['fileName']),
+                  subtitle: Text(
+                    '${_formatSize(file['fileSize'])} • From: ${file['senderName']}\n${date.toString().split('.')[0]}',
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () => _deleteFile(index),
+                  ),
+                  onTap: () => _openFolder(file['filePath']),
+                );
+              },
+            ),
     );
   }
 }

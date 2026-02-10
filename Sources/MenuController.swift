@@ -64,7 +64,14 @@ class MenuController: NSObject {
     
     private func setupClipboardObserver() {
         clipboardManager.onHistoryChanged = { [weak self] history in
-            self?.updateMenu(with: history)
+            DispatchQueue.main.async {
+                self?.updateMenu(with: history)
+            }
+        }
+        clipboardManager.onFileHistoryChanged = { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.updateMenu(with: self?.clipboardManager.history ?? [])
+            }
         }
     }
     
@@ -154,24 +161,62 @@ class MenuController: NSObject {
         
         menu.addItem(NSMenuItem.separator())
         
+        // --- File History Section ---
+        let fileHistoryItem = NSMenuItem(title: "File History", action: nil, keyEquivalent: "")
+        let fileHistorySubmenu = NSMenu()
+        
+        if clipboardManager.fileHistory.isEmpty {
+            let emptyItem = NSMenuItem(title: "No Files", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            fileHistorySubmenu.addItem(emptyItem)
+        } else {
+            for file in clipboardManager.fileHistory {
+                let menuItem = NSMenuItem(title: file.fileName, action: #selector(fileHistoryItemClicked(_:)), keyEquivalent: "")
+                menuItem.target = self
+                menuItem.representedObject = file
+                menuItem.toolTip = "From: \(file.senderName)\nPath: \(file.filePath)"
+                fileHistorySubmenu.addItem(menuItem)
+            }
+        }
+        fileHistoryItem.submenu = fileHistorySubmenu
+        menu.addItem(fileHistoryItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
         // --- Authorized Devices Section ---
         let devicesHeader = NSMenuItem(title: "Authorized Devices", action: nil, keyEquivalent: "")
         devicesHeader.isEnabled = false
         menu.addItem(devicesHeader)
         
-        let devices = SyncManager.shared.availableDeviceNames
-        if devices.isEmpty {
-            let noDevicesItem = NSMenuItem(title: "  No Devices Found", action: nil, keyEquivalent: "")
-            noDevicesItem.isEnabled = false
-            menu.addItem(noDevicesItem)
+        let availableDevices = SyncManager.shared.availableDeviceNames
+        if availableDevices.isEmpty {
+            let emptyItem = NSMenuItem(title: "  No Devices Found", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            menu.addItem(emptyItem)
         } else {
-            for deviceName in devices {
-                let menuItem = NSMenuItem(title: "  " + deviceName, action: #selector(toggleDeviceAuthorization(_:)), keyEquivalent: "")
-                menuItem.target = self
-                menuItem.representedObject = deviceName
+            for deviceName in availableDevices {
+                let deviceMenuItem = NSMenuItem(title: "  " + deviceName, action: nil, keyEquivalent: "")
+                let deviceSubmenu = NSMenu()
+                
+                // Authorization Toggle
+                let authItem = NSMenuItem(title: "Authorized", action: #selector(toggleDeviceAuthorization(_:)), keyEquivalent: "")
+                authItem.target = self
+                authItem.representedObject = deviceName
                 let isAuthorized = PreferencesManager.shared.authorizedDevices.contains(deviceName)
-                menuItem.state = isAuthorized ? .on : .off
-                menu.addItem(menuItem)
+                authItem.state = isAuthorized ? .on : .off
+                deviceSubmenu.addItem(authItem)
+                
+                // Send File Action (only if authorized)
+                if isAuthorized {
+                    deviceSubmenu.addItem(NSMenuItem.separator())
+                    let sendFileItem = NSMenuItem(title: "Send File...", action: #selector(sendFileClicked(_:)), keyEquivalent: "")
+                    sendFileItem.target = self
+                    sendFileItem.representedObject = deviceName
+                    deviceSubmenu.addItem(sendFileItem)
+                }
+                
+                deviceMenuItem.submenu = deviceSubmenu
+                menu.addItem(deviceMenuItem)
             }
         }
         
@@ -203,6 +248,33 @@ class MenuController: NSObject {
     @objc private func menuItemClicked(_ sender: NSMenuItem) {
         if let item = sender.representedObject as? HistoryItem {
             clipboardManager.copyToPasteboard(item)
+        }
+    }
+    
+    @objc private func fileHistoryItemClicked(_ sender: NSMenuItem) {
+        guard let file = sender.representedObject as? FileHistoryItem else { return }
+        let url = URL(fileURLWithPath: file.filePath)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+    
+    @objc private func sendFileClicked(_ sender: NSMenuItem) {
+        guard let deviceName = sender.representedObject as? String else { return }
+        appLog("Send File clicked for device: \(deviceName)")
+        
+        NSApp.activate(ignoringOtherApps: true)
+        
+        let openPanel = NSOpenPanel()
+        openPanel.canChooseFiles = true
+        openPanel.canChooseDirectories = false
+        openPanel.allowsMultipleSelection = false
+        openPanel.message = "Choose a file to send to \(deviceName)"
+        openPanel.prompt = "Send"
+        
+        // Use runModal to ensure the dialog appears and blocks until a choice is made
+        let response = openPanel.runModal()
+        if response == .OK, let url = openPanel.url {
+            appLog("Selected file: \(url.lastPathComponent), sending...")
+            SyncManager.shared.sendFile(at: url, toDevice: deviceName)
         }
     }
     

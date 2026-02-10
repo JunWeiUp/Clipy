@@ -10,6 +10,19 @@ struct SyncMessage: Codable {
     let hash: String
 }
 
+struct FileHeader: Codable {
+    let fileId: String
+    let fileName: String
+    let fileSize: Int64
+}
+
+struct FileChunk: Codable {
+    let fileId: String
+    let chunkIndex: Int
+    let data: String // Base64 encrypted chunk data
+    let isLast: Bool
+}
+
 class SyncManager: NSObject, NetServiceDelegate {
     static let shared = SyncManager()
     
@@ -21,6 +34,7 @@ class SyncManager: NSObject, NetServiceDelegate {
     private var discoveredEndpoints: [NWEndpoint: NWBrowser.Result] = [:] 
     private var activeConnections: [NWConnection] = [] 
     private let syncQueue = DispatchQueue(label: "com.clipy.sync")
+    private var pendingFiles: [String: (header: FileHeader, senderName: String, localURL: URL)] = [:]
      
     private let serviceType = "_clipy-sync._tcp" 
     private var deviceId: String { PreferencesManager.shared.deviceName } 
@@ -318,8 +332,84 @@ class SyncManager: NSObject, NetServiceDelegate {
         }
         
         if let decrypted = decrypt(message.content) {
-            appLog("Received sync from \(message.deviceId): \(decrypted.prefix(20))...")
-            ClipboardManager.shared.handleRemoteSync(content: decrypted, hash: message.hash)
+            if message.type == "text/plain" {
+                appLog("Received sync from \(message.deviceId): \(decrypted.prefix(20))...")
+                ClipboardManager.shared.handleRemoteSync(content: decrypted, hash: message.hash)
+            } else if message.type == "file/header" {
+                handleFileHeader(decrypted, from: message.deviceId)
+            } else if message.type == "file/chunk" {
+                handleFileChunk(decrypted, from: message.deviceId)
+            }
+        }
+    }
+    
+    private func handleFileHeader(_ json: String, from sender: String) {
+        guard let data = json.data(using: .utf8),
+              let header = try? JSONDecoder().decode(FileHeader.self, from: data) else {
+            appLog("Failed to decode FileHeader", level: .error)
+            return
+        }
+        
+        appLog("Received FileHeader for \(header.fileName) (\(header.fileSize) bytes) from \(sender)")
+        
+        let downloadsFolder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0].appendingPathComponent("Clipy")
+        try? FileManager.default.createDirectory(at: downloadsFolder, withIntermediateDirectories: true)
+        
+        let localURL = downloadsFolder.appendingPathComponent(header.fileName)
+        
+        // Ensure the file is empty or doesn't exist
+        try? FileManager.default.removeItem(at: localURL)
+        FileManager.default.createFile(atPath: localURL.path, contents: nil)
+        
+        pendingFiles[header.fileId] = (header, sender, localURL)
+    }
+    
+    private func handleFileChunk(_ json: String, from sender: String) {
+        guard let data = json.data(using: .utf8),
+              let chunk = try? JSONDecoder().decode(FileChunk.self, from: data) else {
+            appLog("Failed to decode FileChunk", level: .error)
+            return
+        }
+        
+        guard let (header, senderName, localURL) = pendingFiles[chunk.fileId] else {
+            appLog("Received chunk for unknown fileId: \(chunk.fileId)", level: .error)
+            return
+        }
+        
+        guard let chunkData = Data(base64Encoded: chunk.data) else {
+            appLog("Failed to decode base64 chunk data", level: .error)
+            return
+        }
+        
+        do {
+            let fileHandle = try FileHandle(forWritingTo: localURL)
+            defer { try? fileHandle.close() }
+            try fileHandle.seekToEnd()
+            try fileHandle.write(contentsOf: chunkData)
+            
+            if chunk.isLast {
+                appLog("File transfer completed: \(header.fileName)")
+                pendingFiles.removeValue(forKey: chunk.fileId)
+                
+                // Add to history
+                DispatchQueue.main.async {
+                    ClipboardManager.shared.addToFileHistory(
+                        fileName: header.fileName,
+                        filePath: localURL.path,
+                        fileSize: header.fileSize,
+                        senderName: senderName
+                    )
+                    
+                    // Show notification
+                    let notification = NSUserNotification()
+                    notification.title = "File Received"
+                    notification.informativeText = "Received \(header.fileName) from \(senderName)"
+                    notification.soundName = NSUserNotificationDefaultSoundName
+                    NSUserNotificationCenter.default.deliver(notification)
+                }
+            }
+        } catch {
+            appLog("Failed to write chunk: \(error)", level: .error)
         }
     }
     
@@ -355,6 +445,114 @@ class SyncManager: NSObject, NetServiceDelegate {
                 appLog("Sending sync to authorized device: \(name)")
             }
             sendSync(jsonData, to: result.endpoint)
+        }
+    }
+    
+    func sendFile(at url: URL, toDevice targetName: String) {
+        appLog("Preparing to send file \(url.lastPathComponent) to \(targetName)")
+        
+        // Find the endpoint for the target device
+        guard let result = discoveredEndpoints.values.first(where: { result in
+            if case let .service(name, _, _, _) = result.endpoint {
+                return name == targetName
+            }
+            return false
+        }) else {
+            appLog("Could not find endpoint for device: \(targetName)", level: .error)
+            return
+        }
+        
+        let endpoint = result.endpoint
+        let fileId = UUID().uuidString
+        let fileName = url.lastPathComponent
+        let fileSize: Int64
+        do {
+            let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+            fileSize = attrs[.size] as? Int64 ?? 0
+        } catch {
+            appLog("Failed to get file size: \(error)", level: .error)
+            return
+        }
+        
+        // 1. Send File Header
+        let header = FileHeader(fileId: fileId, fileName: fileName, fileSize: fileSize)
+        guard let headerData = try? JSONEncoder().encode(header),
+              let encryptedHeader = encrypt(String(data: headerData, encoding: .utf8) ?? "") else { return }
+        
+        let headerMessage = SyncMessage(
+            deviceId: deviceId,
+            timestamp: Date().timeIntervalSince1970,
+            type: "file/header",
+            content: encryptedHeader,
+            hash: ""
+        )
+        
+        guard let headerJson = try? JSONEncoder().encode(headerMessage) else { return }
+        
+        // For files, we'll create a dedicated connection for the whole transfer if possible, 
+        // but to reuse the current sendSync logic (which closes after one send), 
+        // we'll just send header then chunks. 
+        // NOTE: For better performance, a persistent connection would be better.
+        // For now, let's stick to the current pattern but maybe optimize it later.
+        
+        sendSync(headerJson, to: endpoint)
+        
+        // 2. Send File Chunks
+        syncQueue.async {
+            do {
+                let fileHandle = try FileHandle(forReadingFrom: url)
+                defer { try? fileHandle.close() }
+                
+                let chunkSize = 512 * 1024 // 512KB
+                var chunkIndex = 0
+                var bytesRead: Int64 = 0
+                
+                while bytesRead < fileSize {
+                    let data = fileHandle.readData(ofLength: chunkSize)
+                    if data.isEmpty { break }
+                    
+                    bytesRead += Int64(data.count)
+                    let isLast = bytesRead >= fileSize
+                    
+                    // We need to encrypt the raw bytes, but our encrypt(String) takes String.
+                    // Let's use Base64 for the raw data before encrypting as String.
+                    let base64Data = data.base64EncodedString()
+                    
+                    let chunk = FileChunk(fileId: fileId, chunkIndex: chunkIndex, data: base64Data, isLast: isLast)
+                    guard let chunkData = try? JSONEncoder().encode(chunk),
+                          let encryptedChunk = self.encrypt(String(data: chunkData, encoding: .utf8) ?? "") else { break }
+                    
+                    let chunkMessage = SyncMessage(
+                        deviceId: self.deviceId,
+                        timestamp: Date().timeIntervalSince1970,
+                        type: "file/chunk",
+                        content: encryptedChunk,
+                        hash: ""
+                    )
+                    
+                    guard let chunkJson = try? JSONEncoder().encode(chunkMessage) else { break }
+                    
+                    // Small delay to avoid overwhelming the receiver's buffer
+                    Thread.sleep(forTimeInterval: 0.05)
+                    self.sendSync(chunkJson, to: endpoint)
+                    
+                    chunkIndex += 1
+                    appLog("Sent chunk \(chunkIndex) (\(bytesRead)/\(fileSize) bytes)")
+                }
+                appLog("File transfer completed for \(fileName)")
+                
+                // Add sent file to history
+                DispatchQueue.main.async {
+                    ClipboardManager.shared.addToFileHistory(
+                        fileName: fileName,
+                        filePath: url.path,
+                        fileSize: fileSize,
+                        senderName: "Me (Sent to \(targetName))"
+                    )
+                }
+            } catch {
+                appLog("Failed to read file: \(error)", level: .error)
+            }
         }
     }
     

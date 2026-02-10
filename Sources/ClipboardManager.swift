@@ -65,14 +65,26 @@ struct HistoryEntry: Codable {
     let contentHash: String?
 }
 
+struct FileHistoryItem: Codable {
+    let id: UUID
+    let fileName: String
+    let filePath: String
+    let fileSize: Int64
+    let timestamp: Date
+    let senderName: String
+}
+
 class ClipboardManager {
     static let shared = ClipboardManager()
     
     private let pasteboard = NSPasteboard.general
     private var changeCount: Int
+    private var timer: Timer?
     private(set) var history: [HistoryEntry] = []
+    var fileHistory: [FileHistoryItem] = []
     private var maxHistoryItems: Int { PreferencesManager.shared.historyLimit }
     private let storageURL: URL
+    private let fileHistoryURL: URL
     private var lastSyncHash: String?
     
     private let encoder: JSONEncoder = {
@@ -120,6 +132,7 @@ class ClipboardManager {
     }()
     
     var onHistoryChanged: (([HistoryEntry]) -> Void)?
+    var onFileHistoryChanged: (([FileHistoryItem]) -> Void)?
 
     private init() {
         self.changeCount = pasteboard.changeCount
@@ -129,9 +142,41 @@ class ClipboardManager {
         let appSupport = paths[0].appendingPathComponent("ClipyClone")
         try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
         self.storageURL = appSupport.appendingPathComponent("history_v2.json")
+        self.fileHistoryURL = appSupport.appendingPathComponent("file_history.json")
         
         loadHistory()
+        loadFileHistory()
         startPolling()
+    }
+    
+    private func loadFileHistory() {
+        if let data = try? Data(contentsOf: fileHistoryURL),
+           let savedHistory = try? decoder.decode([FileHistoryItem].self, from: data) {
+            self.fileHistory = savedHistory
+        }
+    }
+    
+    func saveFileHistory() {
+        if let data = try? encoder.encode(fileHistory) {
+            try? data.write(to: fileHistoryURL)
+            onFileHistoryChanged?(fileHistory)
+        }
+    }
+    
+    func addToFileHistory(fileName: String, filePath: String, fileSize: Int64, senderName: String) {
+        let item = FileHistoryItem(
+            id: UUID(),
+            fileName: fileName,
+            filePath: filePath,
+            fileSize: fileSize,
+            timestamp: Date(),
+            senderName: senderName
+        )
+        fileHistory.insert(item, at: 0)
+        if fileHistory.count > 20 {
+            fileHistory.removeLast()
+        }
+        saveFileHistory()
     }
     
     private func loadHistory() {

@@ -6,6 +6,7 @@ A cross-platform clipboard management and synchronization tool for macOS and And
 
 - **Clipboard History**: Automatically monitors and saves your clipboard history.
 - **Cross-Platform Sync**: Synchronize clipboard data between macOS and Android devices in the same local network.
+- **LAN File Transfer**: Send files directly between devices with hover menus on macOS and real-time progress tracking on Android.
 - **Snippets**: Manage and quickly access frequently used text snippets or code fragments.
 - **Secure Communication**: All data transmitted over the network is encrypted using AES-GCM 256-bit encryption.
 - **Real-time Logs**: Integrated log viewer for monitoring sync status and debugging.
@@ -25,9 +26,10 @@ A cross-platform clipboard management and synchronization tool for macOS and And
 
 ## Synchronization Protocol
 
-Clipy uses a custom TCP-based protocol for synchronization:
+Clipy uses a custom TCP-based protocol for synchronization and file transfer:
 - **Discovery**: Devices find each other using mDNS.
 - **Protocol**: `[4-byte Big-Endian Length Prefix] + [Encrypted JSON Data]`
+- **File Transfer**: Supports chunked transmission (512KB chunks) with metadata headers and real-time progress feedback.
 - **Encryption**: AES-GCM 256-bit with a pre-shared key.
 - **Loop Prevention**: Uses `lastSyncHash` to prevent synchronization loops between devices.
 
