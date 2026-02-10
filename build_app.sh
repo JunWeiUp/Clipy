@@ -42,7 +42,27 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# 4. 生成 Info.plist
+# 4. 准备资源文件
+echo "📦 准备资源文件..."
+if [ -f "Clipy/Resources/AppIcon.png" ]; then
+    echo "🎨 生成 AppIcon.icns..."
+    mkdir -p AppIcon.iconset
+    sips -z 16 16     Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_16x16.png
+    sips -z 32 32     Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_16x16@2x.png
+    sips -z 32 32     Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_32x32.png
+    sips -z 64 64     Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_32x32@2x.png
+    sips -z 128 128   Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_128x128.png
+    sips -z 256 256   Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_128x128@2x.png
+    sips -z 256 256   Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_256x256.png
+    sips -z 512 512   Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_256x256@2x.png
+    sips -z 512 512   Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_512x512.png
+    sips -z 1024 1024 Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_512x512@2x.png
+    iconutil -c icns AppIcon.iconset
+    cp AppIcon.icns "${RESOURCES_DIR}/"
+    rm -rf AppIcon.iconset AppIcon.icns
+fi
+
+# 5. 生成 Info.plist
 echo "📝 生成 Info.plist..."
 cat > "${CONTENTS_DIR}/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -55,6 +75,8 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <string>${BUNDLE_ID}</string>
     <key>CFBundleName</key>
     <string>${APP_NAME}</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

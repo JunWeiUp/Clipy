@@ -950,9 +950,9 @@ class _SettingsPageState extends State<SettingsPage> {
             },
           ),
           const Divider(),
-          const ListTile(
-            title: Text('About'),
-            subtitle: Text('ClipyClone Android v1.0.0'),
+          ListTile(
+            title: const Text('About'),
+            subtitle: Text('ClipyClone ${Platform.isIOS ? 'iOS' : 'Android'} v1.0.0'),
           ),
         ],
       ),

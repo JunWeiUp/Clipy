@@ -62,7 +62,9 @@ class SyncManager {
   List<String> authorizedDevices = [];
   
   String _deviceName = '';
-  String get deviceId => _deviceName.isEmpty ? 'Android-${const Uuid().v4().substring(0, 8)}' : _deviceName;
+  String get deviceId => _deviceName.isEmpty 
+      ? '${Platform.isIOS ? 'iOS' : 'Android'}-${const Uuid().v4().substring(0, 8)}' 
+      : _deviceName;
 
   final String _serviceType = '_clipy-sync._tcp';
 

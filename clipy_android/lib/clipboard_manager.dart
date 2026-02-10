@@ -68,7 +68,7 @@ class ClipboardManager {
           final entry = HistoryEntry(
             item: item,
             date: DateTime.now(),
-            sourceApp: Platform.isMacOS ? 'macOS' : 'Android',
+            sourceApp: Platform.isMacOS ? 'macOS' : (Platform.isIOS ? 'iOS' : 'Android'),
             contentHash: _contentHashForItem(item),
           );
           _addToHistory(entry);
