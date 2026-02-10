@@ -9,7 +9,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         menuController = MenuController()
-        _ = SyncManager.shared
+        SyncManager.shared.start()
         print("Clipy clone started!")
     }
 }

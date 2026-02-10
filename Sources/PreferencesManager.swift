@@ -6,11 +6,16 @@ class PreferencesManager {
     private let defaults = UserDefaults.standard
     private let historyLimitKey = "historyLimit"
     private let excludedAppsKey = "excludedApps"
-    private let isSyncEnabledKey = "isSyncEnabled"
-    private let syncDeviceNameKey = "syncDeviceName"
-    private let allowedDevicesKey = "allowedDevices"
-    private let deviceLastSyncTimesKey = "deviceLastSyncTimes"
-    private let syncKeyKey = "syncKey"
+    private let syncEnabledKey = "syncEnabled"
+    private let syncPortKey = "syncPort"
+    private let syncSecretKey = "syncSecret"
+    private let authorizedDevicesKey = "authorizedDevices"
+    private let deviceNameKey = "deviceName"
+    
+    var deviceName: String {
+        get { defaults.string(forKey: deviceNameKey) ?? Host.current().localizedName ?? "Mac" }
+        set { defaults.set(newValue, forKey: deviceNameKey) }
+    }
     
     var historyLimit: Int {
         get { defaults.integer(forKey: historyLimitKey) == 0 ? 50 : defaults.integer(forKey: historyLimitKey) }
@@ -23,48 +28,33 @@ class PreferencesManager {
     }
 
     var isSyncEnabled: Bool {
-        get { defaults.bool(forKey: isSyncEnabledKey) }
-        set { defaults.set(newValue, forKey: isSyncEnabledKey) }
+        get { defaults.bool(forKey: syncEnabledKey) }
+        set { defaults.set(newValue, forKey: syncEnabledKey) }
     }
 
-    var syncDeviceName: String {
-        get { defaults.string(forKey: syncDeviceNameKey) ?? Host.current().localizedName ?? "Mac" }
-        set { defaults.set(newValue, forKey: syncDeviceNameKey) }
-    }
-
-    var syncKey: String {
-        get { defaults.string(forKey: syncKeyKey) ?? "clipy-clone-secret-key-32-chars!!" }
-        set { defaults.set(newValue, forKey: syncKeyKey) }
-    }
-    
-    var allowedDevices: Set<String> {
-        get { Set(defaults.stringArray(forKey: allowedDevicesKey) ?? []) }
-        set { defaults.set(Array(newValue), forKey: allowedDevicesKey) }
-    }
-
-    var deviceLastSyncTimes: [String: Date] {
-        get { defaults.dictionary(forKey: deviceLastSyncTimesKey) as? [String: Date] ?? [:] }
-        set { defaults.set(newValue, forKey: deviceLastSyncTimesKey) }
-    }
-
-    func setLastSyncTime(for device: String, date: Date) {
-        var times = deviceLastSyncTimes
-        times[device] = date
-        deviceLastSyncTimes = times
-    }
-    
-    func getLastSyncTime(for device: String) -> Date? {
-        return deviceLastSyncTimes[device]
-    }
-    
-    func toggleDeviceAllowance(_ deviceName: String) {
-        var devices = allowedDevices
-        if devices.contains(deviceName) {
-            devices.remove(deviceName)
-        } else {
-            devices.insert(deviceName)
+    var syncPort: Int {
+        get { 
+            let port = defaults.integer(forKey: syncPortKey)
+            return port == 0 ? 5566 : port
         }
-        allowedDevices = devices
+        set { defaults.set(newValue, forKey: syncPortKey) }
+    }
+
+    var syncSecret: String {
+        get { 
+            if let secret = defaults.string(forKey: syncSecretKey) {
+                return secret
+            }
+            let newSecret = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+            defaults.set(newSecret, forKey: syncSecretKey)
+            return newSecret
+        }
+        set { defaults.set(newValue, forKey: syncSecretKey) }
+    }
+
+    var authorizedDevices: [String] {
+        get { defaults.stringArray(forKey: authorizedDevicesKey) ?? [] }
+        set { defaults.set(newValue, forKey: authorizedDevicesKey) }
     }
     
     private init() {}

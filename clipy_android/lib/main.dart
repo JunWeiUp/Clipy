@@ -1,14 +1,18 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'clipboard_manager.dart';
-import 'models.dart';
 import 'sync_manager.dart';
+import 'log_manager.dart';
+import 'models.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await SyncManager.instance.init();
   await ClipboardManager.instance.init();
   await SnippetManager.instance.init();
+  await SyncManager.instance.init();
   runApp(const MyApp());
 }
 
@@ -44,12 +48,10 @@ class _MacHomePageState extends State<MacHomePage> with SingleTickerProviderStat
     _tabController = TabController(length: 3, vsync: this);
     ClipboardManager.instance.onHistoryChanged = _handleDataChanged;
     SnippetManager.instance.onSnippetsChanged = _handleDataChanged;
-    SyncManager.instance.addListener(_handleDataChanged);
   }
 
   @override
   void dispose() {
-    SyncManager.instance.removeListener(_handleDataChanged);
     ClipboardManager.instance.onHistoryChanged = null;
     SnippetManager.instance.onSnippetsChanged = null;
     _tabController.dispose();
@@ -64,7 +66,6 @@ class _MacHomePageState extends State<MacHomePage> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
-    final syncManager = SyncManager.instance;
     return Scaffold(
       appBar: AppBar(
         title: const Text('ClipyClone'),
@@ -78,19 +79,6 @@ class _MacHomePageState extends State<MacHomePage> with SingleTickerProviderStat
             icon: const Icon(Icons.tune),
             onPressed: () => _switchTab(2),
             tooltip: 'Preferences',
-          ),
-          IconButton(
-            icon: Icon(syncManager.isSyncEnabled ? Icons.wifi : Icons.wifi_off),
-            onPressed: () async {
-              await syncManager.setSyncEnabled(!syncManager.isSyncEnabled);
-              setState(() {});
-            },
-            tooltip: syncManager.isSyncEnabled ? 'Disable Sync' : 'Enable Sync',
-          ),
-          IconButton(
-            icon: const Icon(Icons.devices_other),
-            onPressed: () => _showDevicesDialog(context),
-            tooltip: 'Sync Devices',
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
@@ -123,52 +111,62 @@ class _MacHomePageState extends State<MacHomePage> with SingleTickerProviderStat
       _tabController.animateTo(index);
     }
   }
+}
 
-  Future<void> _showDevicesDialog(BuildContext context) async {
-    final syncManager = SyncManager.instance;
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Sync Devices'),
-          content: SizedBox(
-            width: 420,
-            child: StatefulBuilder(
-              builder: (context, setDialogState) {
-                final devices = syncManager.discoveredDevices.toList()..sort();
-                if (!syncManager.isSyncEnabled) {
-                  return const Text('Sync is disabled.');
-                }
-                if (devices.isEmpty) {
-                  return const Text('Searching for devices...');
-                }
-                return ListView(
-                  shrinkWrap: true,
-                  children: devices.map((device) {
-                    final isAllowed = syncManager.allowedDevices.contains(device);
-                    final lastSeen = syncManager.deviceLastSeen[device];
-                    return CheckboxListTile(
-                      title: Text(device),
-                      subtitle: lastSeen != null
-                          ? Text('Last seen ${lastSeen.toString().split('.')[0]}')
-                          : null,
-                      value: isAllowed,
-                      onChanged: (value) async {
-                        await syncManager.toggleDeviceAllowance(device);
-                        setDialogState(() {});
-                        setState(() {});
-                      },
-                    );
-                  }).toList(),
-                );
-              },
-            ),
+class LogPage extends StatelessWidget {
+  const LogPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('App Logs'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_sweep),
+            onPressed: () => LogManager.instance.clear(),
+            tooltip: 'Clear Logs',
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-          ],
-        );
-      },
+          IconButton(
+            icon: const Icon(Icons.copy),
+            onPressed: () {
+              final allLogs = LogManager.instance.logs.join('\n');
+              Clipboard.setData(ClipboardData(text: allLogs));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Logs copied to clipboard')),
+              );
+            },
+            tooltip: 'Copy All',
+          ),
+        ],
+      ),
+      body: ListenableBuilder(
+        listenable: LogManager.instance,
+        builder: (context, _) {
+          final logs = LogManager.instance.logs;
+          if (logs.isEmpty) {
+            return const Center(child: Text('No logs recorded yet.'));
+          }
+          return ListView.builder(
+            reverse: true,
+            itemCount: logs.length,
+            itemBuilder: (context, index) {
+              // Show newest logs first
+              final log = logs[logs.length - 1 - index];
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+                child: Text(
+                  log,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }
@@ -577,31 +575,34 @@ class MacSettingsTab extends StatefulWidget {
 }
 
 class _MacSettingsTabState extends State<MacSettingsTab> {
-  late TextEditingController _nameController;
-  late TextEditingController _keyController;
   late TextEditingController _excludedController;
+  late TextEditingController _portController;
+  late TextEditingController _devicesController;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: SyncManager.instance.deviceName);
-    _keyController = TextEditingController(text: SyncManager.instance.syncKey);
     _excludedController = TextEditingController(
       text: ClipboardManager.instance.excludedApps.join('\n'),
+    );
+    _portController = TextEditingController(
+      text: SyncManager.instance.port.toString(),
+    );
+    _devicesController = TextEditingController(
+      text: SyncManager.instance.authorizedDevices.join(', '),
     );
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _keyController.dispose();
     _excludedController.dispose();
+    _portController.dispose();
+    _devicesController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final syncManager = SyncManager.instance;
     final clipboardManager = ClipboardManager.instance;
     final historyLimit = clipboardManager.historyLimit;
     return ListView(
@@ -663,71 +664,54 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
         const Divider(),
         SwitchListTile(
           title: const Text('Enable LAN Sync'),
-          subtitle: const Text('Sync clipboard and snippets with devices on your local network'),
-          value: syncManager.isSyncEnabled,
-          onChanged: (value) {
-            syncManager.setSyncEnabled(value);
+          value: SyncManager.instance.isEnabled,
+          onChanged: (value) async {
+            SyncManager.instance.isEnabled = value;
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('syncEnabled', value);
+            if (value) {
+              await SyncManager.instance.start();
+            } else {
+              await SyncManager.instance.stop();
+            }
             setState(() {});
           },
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: TextField(
-            controller: _nameController,
+            controller: _portController,
             decoration: const InputDecoration(
-              labelText: 'Device Name',
+              labelText: 'Sync Port',
               border: OutlineInputBorder(),
             ),
-            onSubmitted: (value) {
-              syncManager.setDeviceName(value);
+            keyboardType: TextInputType.number,
+            onChanged: (value) async {
+              final port = int.tryParse(value);
+              if (port != null) {
+                SyncManager.instance.port = port;
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setInt('syncPort', port);
+              }
             },
           ),
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: TextField(
-            controller: _keyController,
-            obscureText: true,
+            controller: _devicesController,
             decoration: const InputDecoration(
-              labelText: 'Sync Key',
+              labelText: 'Authorized Devices (comma separated)',
               border: OutlineInputBorder(),
             ),
-            onSubmitted: (value) {
-              syncManager.setSyncKey(value);
+            onChanged: (value) async {
+              final devices = value.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+              SyncManager.instance.authorizedDevices = devices;
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setStringList('authorizedDevices', devices);
             },
           ),
         ),
-        if (syncManager.isSyncEnabled) ...[
-          const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text(
-              'Discovered Devices',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-          ),
-          if (syncManager.discoveredDevices.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16.0),
-              child: Text('Searching for devices...', style: TextStyle(color: Colors.grey)),
-            )
-          else
-            ...syncManager.discoveredDevices.map((device) {
-              final isAllowed = syncManager.allowedDevices.contains(device);
-              final lastSeen = syncManager.deviceLastSeen[device];
-              return CheckboxListTile(
-                title: Text('💻 $device'),
-                subtitle: lastSeen != null
-                    ? Text('Last seen ${lastSeen.toString().split('.')[0]}')
-                    : null,
-                value: isAllowed,
-                onChanged: (value) {
-                  syncManager.toggleDeviceAllowance(device);
-                  setState(() {});
-                },
-              );
-            }),
-        ],
         const Divider(),
         const ListTile(
           title: Text('About'),
@@ -773,6 +757,14 @@ class _HomePageState extends State<HomePage> {
             icon: const Icon(Icons.delete_outline),
             onPressed: () => ClipboardManager.instance.clearHistory(),
           ),
+          IconButton(
+            icon: const Icon(Icons.list_alt),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const LogPage()),
+            ),
+            tooltip: 'View Logs',
+          ),
         ],
       ),
       body: ListView.builder(
@@ -807,103 +799,153 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  late TextEditingController _portController;
   late TextEditingController _nameController;
-  late TextEditingController _keyController;
+  StreamSubscription? _devicesSubscription;
+  List<String> _availableDevices = [];
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: SyncManager.instance.deviceName);
-    _keyController = TextEditingController(text: SyncManager.instance.syncKey);
+    _portController = TextEditingController(
+      text: SyncManager.instance.port.toString(),
+    );
+    _nameController = TextEditingController(
+      text: SyncManager.instance.deviceId,
+    );
+    _availableDevices = SyncManager.instance.availableDeviceNames;
+    _devicesSubscription = SyncManager.instance.onDevicesChanged.listen((devices) {
+      if (mounted) {
+        setState(() {
+          _availableDevices = devices;
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
+    _portController.dispose();
     _nameController.dispose();
-    _keyController.dispose();
+    _devicesSubscription?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: SyncManager.instance,
-      builder: (context, _) {
-        final syncManager = SyncManager.instance;
-        return Scaffold(
-          appBar: AppBar(title: const Text('Settings')),
-          body: ListView(
-            children: [
-              SwitchListTile(
-                title: const Text('Enable LAN Sync'),
-                subtitle: const Text('Sync clipboard with other devices on your local network'),
-                value: syncManager.isSyncEnabled,
-                onChanged: (value) {
-                  syncManager.setSyncEnabled(value);
-                },
+    return Scaffold(
+      appBar: AppBar(title: const Text('Settings')),
+      body: ListView(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+            child: TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: 'Device Name (for Sync)',
+                border: OutlineInputBorder(),
+                hintText: 'Enter device name',
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                child: TextField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Device Name',
-                    border: OutlineInputBorder(),
-                  ),
-                  onSubmitted: (value) {
-                    syncManager.setDeviceName(value);
-                  },
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                child: TextField(
-                  controller: _keyController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Sync Key',
-                    border: OutlineInputBorder(),
-                  ),
-                  onSubmitted: (value) {
-                    syncManager.setSyncKey(value);
-                  },
-                ),
-              ),
-              if (syncManager.isSyncEnabled) ...[
-                const Divider(),
-                const Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: Text(
-                    'Discovered Devices',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                if (syncManager.discoveredDevices.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16.0),
-                    child: Text('Searching for devices...', style: TextStyle(color: Colors.grey)),
-                  )
-                else
-                  ...syncManager.discoveredDevices.map((device) {
-                    final isAllowed = syncManager.allowedDevices.contains(device);
-                    return CheckboxListTile(
-                      title: Text('📱 $device'),
-                      value: isAllowed,
-                      onChanged: (value) {
-                        syncManager.toggleDeviceAllowance(device);
-                      },
+              onSubmitted: (value) async {
+                final newName = value.trim();
+                if (newName.isNotEmpty) {
+                  await SyncManager.instance.updateDeviceName(newName);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Device name updated and sync restarted')),
                     );
-                  }),
-              ],
-              const Divider(),
-              const ListTile(
-                title: Text('About'),
-                subtitle: Text('ClipyClone Android v1.0.0'),
-              ),
-            ],
+                  }
+                }
+              },
+            ),
           ),
-        );
-      },
+          const Divider(),
+          SwitchListTile(
+            title: const Text('Enable LAN Sync'),
+            value: SyncManager.instance.isEnabled,
+            onChanged: (value) async {
+              SyncManager.instance.isEnabled = value;
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('syncEnabled', value);
+              if (value) {
+                await SyncManager.instance.start();
+              } else {
+                await SyncManager.instance.stop();
+              }
+              setState(() {});
+            },
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: TextField(
+              controller: _portController,
+              decoration: const InputDecoration(
+                labelText: 'Sync Port',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+              onChanged: (value) async {
+                final port = int.tryParse(value);
+                if (port != null) {
+                  SyncManager.instance.port = port;
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setInt('syncPort', port);
+                }
+              },
+            ),
+          ),
+          const Divider(),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text(
+              'Authorized Devices',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blue),
+            ),
+          ),
+          if (_availableDevices.isEmpty)
+            const ListTile(
+              title: Text('No devices found'),
+              subtitle: Text('Ensure other devices are on the same WiFi'),
+            )
+          else
+            ..._availableDevices.map((deviceName) {
+              final isAuthorized = SyncManager.instance.authorizedDevices.contains(deviceName);
+              return CheckboxListTile(
+                title: Text(deviceName),
+                value: isAuthorized,
+                onChanged: (bool? value) async {
+                  final devices = List<String>.from(SyncManager.instance.authorizedDevices);
+                  if (value == true) {
+                    if (!devices.contains(deviceName)) devices.add(deviceName);
+                  } else {
+                    devices.remove(deviceName);
+                  }
+                  SyncManager.instance.authorizedDevices = devices;
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setStringList('authorizedDevices', devices);
+                  setState(() {});
+                },
+              );
+            }),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.list_alt),
+            title: const Text('View Logs'),
+            subtitle: const Text('App runtime logs for troubleshooting'),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const LogPage()),
+              );
+            },
+          ),
+          const Divider(),
+          const ListTile(
+            title: Text('About'),
+            subtitle: Text('ClipyClone Android v1.0.0'),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import 'log_manager.dart';
 import 'models.dart';
 import 'sync_manager.dart';
 
@@ -16,6 +16,7 @@ class ClipboardManager {
 
   List<HistoryEntry> history = [];
   String? _lastText;
+  String? _lastSyncHash;
   late File _storageFile;
   int _historyLimit = 50;
   List<String> _excludedApps = [];
@@ -24,16 +25,12 @@ class ClipboardManager {
   List<String> get excludedApps => List.unmodifiable(_excludedApps);
 
   Future<void> init() async {
+    appLog('Initializing ClipboardManager...');
     final dir = await getApplicationSupportDirectory();
     _storageFile = File('${dir.path}/history.json');
     await _loadPreferences();
     await _loadHistory();
     _startMonitoring();
-    
-    SyncManager.instance.onHistorySynced = (entry) {
-      _addToHistory(entry, broadcast: false);
-    };
-    SyncManager.instance.onGetHistory = () => history;
   }
 
   Future<void> _loadHistory() async {
@@ -42,8 +39,9 @@ class ClipboardManager {
         final content = await _storageFile.readAsString();
         final List jsonList = jsonDecode(content);
         history = jsonList.map((j) => HistoryEntry.fromJson(j)).toList();
+        appLog('Loaded ${history.length} history entries');
       } catch (e) {
-        debugPrint('Load history error: $e');
+        appLog('Load history error: $e');
       }
     }
   }
@@ -52,6 +50,7 @@ class ClipboardManager {
     final prefs = await SharedPreferences.getInstance();
     _historyLimit = prefs.getInt('historyLimit') ?? 50;
     _excludedApps = prefs.getStringList('excludedApps') ?? [];
+    appLog('Preferences loaded: limit=$_historyLimit, excludedCount=${_excludedApps.length}');
   }
 
   Future<void> _saveHistory() async {
@@ -81,8 +80,10 @@ class ClipboardManager {
 
   void _addToHistory(HistoryEntry entry, {bool broadcast = true}) {
     if (entry.sourceApp != null && _excludedApps.contains(entry.sourceApp)) {
+      appLog('Entry excluded by app name: ${entry.sourceApp}');
       return;
     }
+    
     final normalizedEntry = entry.contentHash != null
         ? entry
         : HistoryEntry(
@@ -91,6 +92,24 @@ class ClipboardManager {
             sourceApp: entry.sourceApp,
             contentHash: _contentHashForItem(entry.item),
           );
+
+    // Check for duplicates
+    if (history.any((e) => e.contentHash == normalizedEntry.contentHash)) {
+      return;
+    }
+
+    appLog('New history entry: ${normalizedEntry.item.title}');
+
+    // Broadcast if it's a new text item and not from sync
+    if (broadcast && normalizedEntry.contentHash != _lastSyncHash) {
+      if (normalizedEntry.item.type == 'text') {
+        appLog('Broadcasting new local copy...');
+        SyncManager.instance.broadcastSync(
+          normalizedEntry.item.value as String,
+          normalizedEntry.contentHash!,
+        );
+      }
+    }
 
     history.removeWhere((existing) {
       if (existing.contentHash != null && normalizedEntry.contentHash != null) {
@@ -108,9 +127,6 @@ class ClipboardManager {
     }
 
     _saveHistory();
-    if (broadcast) {
-      SyncManager.instance.broadcastHistory(normalizedEntry);
-    }
     onHistoryChanged?.call();
   }
 
@@ -119,6 +135,29 @@ class ClipboardManager {
       Clipboard.setData(ClipboardData(text: item.value as String));
       _lastText = item.value as String;
     }
+  }
+
+  Future<void> handleRemoteSync(String text, String hash) async {
+    if (hash == _lastSyncHash || history.any((e) => e.contentHash == hash)) {
+      appLog('Ignoring duplicate sync or loop');
+      return;
+    }
+
+    appLog('Processing remote sync: ${text.substring(0, text.length > 20 ? 20 : text.length)}...');
+    _lastSyncHash = hash;
+    _lastText = text;
+    
+    final item = HistoryItem(type: 'text', value: text);
+    final entry = HistoryEntry(
+      item: item,
+      date: DateTime.now(),
+      sourceApp: 'Remote Sync',
+      contentHash: hash,
+    );
+    
+    _addToHistory(entry, broadcast: false);
+    await Clipboard.setData(ClipboardData(text: text));
+    appLog('Clipboard updated from remote sync');
   }
 
   void clearHistory() {
@@ -175,9 +214,6 @@ class SnippetManager {
     if (folders.isEmpty) {
       _createDefaultSnippets();
     }
-    SyncManager.instance.onSnippetsSynced = (syncedFolders) {
-      _receiveSyncedFolders(syncedFolders);
-    };
   }
 
   Future<void> _loadSnippets() async {
@@ -187,18 +223,15 @@ class SnippetManager {
         final List jsonList = jsonDecode(content);
         folders = jsonList.map((j) => SnippetFolder.fromJson(j)).toList();
       } catch (e) {
-        debugPrint('Load snippets error: $e');
+        appLog('Load snippets error: $e');
       }
     }
   }
 
-  Future<void> _saveSnippets({bool broadcast = true}) async {
+  Future<void> _saveSnippets() async {
     final jsonList = folders.map((f) => f.toJson()).toList();
     await _storageFile.writeAsString(jsonEncode(jsonList));
     onSnippetsChanged?.call();
-    if (broadcast) {
-      SyncManager.instance.broadcastSnippets(folders);
-    }
   }
 
   void _createDefaultSnippets() {
@@ -223,11 +256,6 @@ class SnippetManager {
       ),
     ];
     _saveSnippets();
-  }
-
-  void _receiveSyncedFolders(List<SnippetFolder> syncedFolders) {
-    folders = syncedFolders;
-    _saveSnippets(broadcast: false);
   }
 
   Future<void> addFolder(String title) async {

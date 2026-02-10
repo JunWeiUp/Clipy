@@ -4,7 +4,6 @@ class MenuController: NSObject {
     private var statusItem: NSStatusItem!
     private let clipboardManager = ClipboardManager.shared
     private let snippetManager = SnippetManager.shared
-    private let syncManager = SyncManager.shared
     
     override init() {
         super.init()
@@ -12,13 +11,6 @@ class MenuController: NSObject {
         setupClipboardObserver()
         setupSnippetObserver()
         setupHotKeyObserver()
-        setupSyncObserver()
-    }
-    
-    private func setupSyncObserver() {
-        syncManager.onDevicesChanged = { [weak self] _ in
-            self?.updateMenu(with: self?.clipboardManager.history ?? [])
-        }
     }
     
     private func setupHotKeyObserver() {
@@ -62,6 +54,12 @@ class MenuController: NSObject {
         }
         
         updateMenu(with: clipboardManager.history)
+        
+        SyncManager.shared.onDevicesChanged = { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.updateMenu(with: self?.clipboardManager.history ?? [])
+            }
+        }
     }
     
     private func setupClipboardObserver() {
@@ -156,28 +154,24 @@ class MenuController: NSObject {
         
         menu.addItem(NSMenuItem.separator())
         
-        // --- Devices Section ---
-        let devicesHeader = NSMenuItem(title: "Sync Devices", action: nil, keyEquivalent: "")
+        // --- Authorized Devices Section ---
+        let devicesHeader = NSMenuItem(title: "Authorized Devices", action: nil, keyEquivalent: "")
         devicesHeader.isEnabled = false
         menu.addItem(devicesHeader)
         
-        let devices = syncManager.discoveredDevices
-        if !PreferencesManager.shared.isSyncEnabled {
-            let disabledItem = NSMenuItem(title: "  Sync Disabled", action: nil, keyEquivalent: "")
-            disabledItem.isEnabled = false
-            menu.addItem(disabledItem)
-        } else if devices.isEmpty {
-            let searchingItem = NSMenuItem(title: "  Searching...", action: nil, keyEquivalent: "")
-            searchingItem.isEnabled = false
-            menu.addItem(searchingItem)
+        let devices = SyncManager.shared.availableDeviceNames
+        if devices.isEmpty {
+            let noDevicesItem = NSMenuItem(title: "  No Devices Found", action: nil, keyEquivalent: "")
+            noDevicesItem.isEnabled = false
+            menu.addItem(noDevicesItem)
         } else {
-            for device in devices {
-                let isAllowed = PreferencesManager.shared.allowedDevices.contains(device)
-                let deviceItem = NSMenuItem(title: "  📱 " + device, action: #selector(toggleDeviceSync(_:)), keyEquivalent: "")
-                deviceItem.target = self
-                deviceItem.representedObject = device
-                deviceItem.state = isAllowed ? .on : .off
-                menu.addItem(deviceItem)
+            for deviceName in devices {
+                let menuItem = NSMenuItem(title: "  " + deviceName, action: #selector(toggleDeviceAuthorization(_:)), keyEquivalent: "")
+                menuItem.target = self
+                menuItem.representedObject = deviceName
+                let isAuthorized = PreferencesManager.shared.authorizedDevices.contains(deviceName)
+                menuItem.state = isAuthorized ? .on : .off
+                menu.addItem(menuItem)
             }
         }
         
@@ -197,6 +191,10 @@ class MenuController: NSObject {
         clearItem.target = self
         menu.addItem(clearItem)
         
+        let logsItem = NSMenuItem(title: "Show Logs...", action: #selector(openLogs), keyEquivalent: "L")
+        logsItem.target = self
+        menu.addItem(logsItem)
+        
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         
         statusItem.menu = menu
@@ -208,12 +206,18 @@ class MenuController: NSObject {
         }
     }
     
-    @objc private func toggleDeviceSync(_ sender: NSMenuItem) {
-        if let deviceName = sender.representedObject as? String {
-            PreferencesManager.shared.toggleDeviceAllowance(deviceName)
-            // Refresh menu to show checkmark change
-            updateMenu(with: clipboardManager.history)
+    @objc private func toggleDeviceAuthorization(_ sender: NSMenuItem) {
+        guard let deviceName = sender.representedObject as? String else { return }
+        
+        var authorizedDevices = PreferencesManager.shared.authorizedDevices
+        if authorizedDevices.contains(deviceName) {
+            authorizedDevices.removeAll { $0 == deviceName }
+            sender.state = .off
+        } else {
+            authorizedDevices.append(deviceName)
+            sender.state = .on
         }
+        PreferencesManager.shared.authorizedDevices = authorizedDevices
     }
     
     @objc private func clearHistory() {
@@ -228,5 +232,9 @@ class MenuController: NSObject {
     @objc private func openSnippetEditor() {
         NSApp.activate(ignoringOtherApps: true)
         SnippetEditorWindow.shared.makeKeyAndOrderFront(nil)
+    }
+    
+    @objc private func openLogs() {
+        LogWindow.show()
     }
 }

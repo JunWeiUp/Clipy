@@ -8,7 +8,7 @@ plugins {
 android {
     namespace = "com.clipyclone.clipy_android"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -39,13 +39,6 @@ android {
             isShrinkResources = false
         }
     }
-
-    packaging {
-        resources {
-            excludes += "META-INF/INDEX.LIST"
-            excludes += "META-INF/io.netty.versions.properties"
-        }
-    }
 }
 
 flutter {
@@ -53,13 +46,5 @@ flutter {
 }
 
 dependencies {
-    implementation("io.ktor:ktor-server-core:2.3.7")
-    implementation("io.ktor:ktor-server-netty:2.3.7")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
 
-configurations.all {
-    resolutionStrategy.force("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
-    resolutionStrategy.force("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-}

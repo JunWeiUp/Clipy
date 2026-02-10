@@ -73,6 +73,7 @@ class ClipboardManager {
     private(set) var history: [HistoryEntry] = []
     private var maxHistoryItems: Int { PreferencesManager.shared.historyLimit }
     private let storageURL: URL
+    private var lastSyncHash: String?
     
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -160,6 +161,8 @@ class ClipboardManager {
         let sourceApp = frontmostApp?.localizedName
         let bundleIdentifier = frontmostApp?.bundleIdentifier
         
+        appLog("Clipboard changed. Source: \(sourceApp ?? "Unknown") (\(bundleIdentifier ?? "N/A"))")
+        
         // Clipy feature: Exclude sensitive apps (e.g., Password managers)
         if let bundleID = bundleIdentifier, PreferencesManager.shared.excludedApps.contains(bundleID) {
             return
@@ -180,6 +183,15 @@ class ClipboardManager {
 
     private func addToHistory(_ item: HistoryItem, sourceApp: String?) {
         let hash = contentHash(for: item)
+        appLog("Adding to history: \(item.title), Hash: \(hash?.prefix(8) ?? "N/A")")
+        
+        // Broadcast to other devices if it's a new text item and not from sync
+        if let nh = hash, nh != lastSyncHash {
+            if case .text(let str) = item {
+                SyncManager.shared.broadcastSync(content: str, hash: nh)
+            }
+        }
+
         history.removeAll { entry in
             if let h = entry.contentHash, let nh = hash {
                 return h == nh
@@ -200,32 +212,32 @@ class ClipboardManager {
         
         saveHistory()
         onHistoryChanged?(history)
-        
-        // Broadcast change
-        SyncManager.shared.broadcastHistory(entry)
     }
     
-    func receiveSyncedItem(_ entry: HistoryEntry) {
-        history.removeAll { existing in
-            if let h1 = existing.contentHash, let h2 = entry.contentHash, h1 == h2 {
-                return true
-            }
-            switch (existing.item, entry.item) {
-            case (.text(let s1), .text(let s2)): return s1 == s2
-            case (.fileURL(let u1), .fileURL(let u2)): return u1 == u2
-            default: return false
-            }
+    func handleRemoteSync(content: String, hash: String) {
+        appLog("Handling remote sync: \(hash.prefix(8))")
+        // Prevent loop if we already have this content
+        guard hash != lastSyncHash else { 
+            appLog("Sync loop detected or duplicate hash, ignoring")
+            return 
         }
         
-        history.insert(entry, at: 0)
-        if history.count > maxHistoryItems {
-            history.removeLast()
+        // Also check if it's already in history
+        if history.contains(where: { $0.contentHash == hash }) {
+            return
         }
         
-        saveHistory()
-        onHistoryChanged?(history)
+        lastSyncHash = hash
+        
+        // Update pasteboard
+        pasteboard.clearContents()
+        pasteboard.setString(content, forType: .string)
+        changeCount = pasteboard.changeCount
+        
+        // Add to history
+        addToHistory(.text(content), sourceApp: "Remote Device")
     }
-    
+
     func clearHistory() {
         history.removeAll()
         saveHistory()

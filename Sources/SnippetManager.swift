@@ -124,18 +124,6 @@ class SnippetManager {
             try? data.write(to: storageURL)
             registerHotKeys()
             onSnippetsChanged?(folders)
-            SyncManager.shared.broadcastSnippets(folders)
-        }
-    }
-
-    func receiveSyncedFolders(_ syncedFolders: [SnippetFolder]) {
-        // Simple merge: for now, we'll just replace if the synced folders are different
-        // In a real app, you'd want a more sophisticated merge strategy (timestamp-based or UUID-based)
-        self.folders = syncedFolders
-        if let data = try? encoder.encode(folders) {
-            try? data.write(to: storageURL)
-            registerHotKeys()
-            onSnippetsChanged?(folders)
         }
     }
     

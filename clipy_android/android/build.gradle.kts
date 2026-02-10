@@ -1,9 +1,24 @@
+import java.io.File
+import org.gradle.api.plugins.ExtensionAware
+
 allprojects {
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
         google()
         mavenCentral()
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
+    }
+}
+
+subprojects {
+    // 只为插件项目（非 app 项目）提供默认的 flutter 属性，解决 "unknown property 'flutter'" 错误
+    if (project.name != "app") {
+        project.ext.set("flutter", mapOf(
+            "compileSdkVersion" to 34,
+            "minSdkVersion" to 21,
+            "targetSdkVersion" to 34,
+            "ndkVersion" to "25.1.8937393"
+        ))
     }
 }
 
@@ -23,6 +38,21 @@ subprojects {
         if (project.extensions.findByName("android") != null) {
             val android = project.extensions.getByName("android") as com.android.build.gradle.BaseExtension
             
+            // 为 android 扩展注入 flutter 属性，满足旧插件的需求
+            if ((android as? ExtensionAware)?.extensions?.findByName("flutter") == null) {
+                (android as? ExtensionAware)?.extensions?.add("flutter", mapOf(
+                    "compileSdkVersion" to 34,
+                    "minSdkVersion" to 21,
+                    "targetSdkVersion" to 34,
+                    "ndkVersion" to "25.1.8937393"
+                ))
+            }
+
+            // 1. 强制设置 compileSdkVersion，解决插件未指定 compileSdk 的问题
+            if (android.compileSdkVersion == null) {
+                android.compileSdkVersion("android-34")
+            }
+
             val manifestFile = android.sourceSets.getByName("main").manifest.srcFile
             if (manifestFile.exists()) {
                 val manifestContents = manifestFile.readText()
@@ -31,13 +61,12 @@ subprojects {
                 if (packageMatch != null) {
                     val packageName = packageMatch.groupValues[1]
                     
-                    // 1. 如果没有 namespace，则注入
+                    // 2. 如果没有 namespace，则注入
                     if (android.namespace == null) {
                         android.namespace = packageName
                     }
                     
-                    // 2. 解决 AGP 8.0+ 不允许 Manifest 中存在 package 属性的问题
-                    // 我们动态创建一个不带 package 属性的临时 Manifest，并让 Android SDK 使用它
+                    // 3. 解决 AGP 8.0+ 不允许 Manifest 中存在 package 属性的问题
                     val tempDir = File(project.layout.buildDirectory.get().asFile, "intermediates/fixed_manifests/${project.name}")
                     if (!tempDir.exists()) tempDir.mkdirs()
                     

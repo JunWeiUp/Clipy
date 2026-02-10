@@ -24,11 +24,13 @@ swiftc \
     Sources/ClipboardManager.swift \
     Sources/MenuController.swift \
     Sources/PreferencesManager.swift \
-    Sources/SyncManager.swift \
     Sources/SnippetManager.swift \
+    Sources/SyncManager.swift \
     Sources/HotKeyManager.swift \
     Sources/SettingsWindow.swift \
     Sources/SnippetEditorWindow.swift \
+    Sources/LogManager.swift \
+    Sources/LogWindow.swift \
     Sources/main.swift \
     -o "${MACOS_DIR}/${EXECUTABLE_NAME}" \
     -framework AppKit \
@@ -65,12 +67,17 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Clipy needs local network access to sync clipboard content with your other devices.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_clipy-sync._tcp</string>
     </array>
-    <key>NSLocalNetworkUsageDescription</key>
-    <string>ClipyClone needs local network access to synchronize clipboard history and snippets with other devices on your LAN.</string>
 </dict>
 </plist>
 EOF

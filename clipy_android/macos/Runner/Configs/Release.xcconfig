@@ -1,3 +1,0 @@
-#include "../../Flutter/Flutter-Release.xcconfig"
-#include "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
-#include "Warnings.xcconfig"
