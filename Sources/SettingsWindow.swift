@@ -2,6 +2,7 @@ import AppKit
 
 class SettingsWindow: NSWindow {
     static let shared = SettingsWindow()
+    private var deviceNameField: NSTextField?
     
     init() {
         let styleMask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable]
@@ -25,12 +26,15 @@ class SettingsWindow: NSWindow {
         nameLabel.frame = NSRect(x: 20, y: 410, width: 200, height: 20)
         contentView.addSubview(nameLabel)
         
-        let nameField = NSTextField(frame: NSRect(x: 20, y: 380, width: 360, height: 24))
+        let nameField = NSTextField(frame: NSRect(x: 20, y: 380, width: 280, height: 24))
         nameField.stringValue = PreferencesManager.shared.deviceName
         nameField.placeholderString = "Enter device name"
-        nameField.target = self
-        nameField.action = #selector(deviceNameChanged(_:))
         contentView.addSubview(nameField)
+        self.deviceNameField = nameField
+        
+        let saveNameButton = NSButton(title: "Save", target: self, action: #selector(saveDeviceNameClicked(_:)))
+        saveNameButton.frame = NSRect(x: 310, y: 376, width: 70, height: 32)
+        contentView.addSubview(saveNameButton)
         
         let label = NSTextField(labelWithString: "History Limit:")
         label.frame = NSRect(x: 20, y: 340, width: 100, height: 20)
@@ -107,14 +111,23 @@ class SettingsWindow: NSWindow {
         }
     }
     
-    @objc private func deviceNameChanged(_ sender: NSTextField) {
-        let newName = sender.stringValue.trimmingCharacters(in: .whitespaces)
+    @objc private func saveDeviceNameClicked(_ sender: NSButton) {
+        guard let nameField = self.deviceNameField else { return }
+        let newName = nameField.stringValue.trimmingCharacters(in: .whitespaces)
         if !newName.isEmpty {
             PreferencesManager.shared.deviceName = newName
             // Notify SyncManager to update mDNS advertisement
             SyncManager.shared.restartService()
+            
+            // Visual feedback
+            let alert = NSAlert()
+            alert.messageText = "Success"
+            alert.informativeText = "Device name updated to '\(newName)'. Sync services restarted."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.beginSheetModal(for: self, completionHandler: nil)
         } else {
-            sender.stringValue = PreferencesManager.shared.deviceName
+            nameField.stringValue = PreferencesManager.shared.deviceName
         }
     }
     

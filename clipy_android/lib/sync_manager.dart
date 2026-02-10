@@ -141,9 +141,11 @@ class SyncManager {
       _discovery = await startDiscovery(_serviceType);
       _discovery!.addListener(() {
         _discoveredServices.clear();
-        _discoveredServices.addAll(_discovery!.services.where((s) => s.name != deviceId));
+        // Force refresh by clearing old entries and re-adding
+        final newServices = _discovery!.services.where((s) => s.name != deviceId).toList();
+        _discoveredServices.addAll(newServices);
         _devicesChangedController.add(availableDeviceNames);
-        appLog('Discovered devices updated: ${availableDeviceNames.join(', ')}');
+        appLog('Discovered devices updated (${newServices.length}): ${availableDeviceNames.join(', ')}');
       });
     } catch (e) {
       appLog('Failed to start mDNS browsing: $e', level: 'error');

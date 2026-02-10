@@ -839,24 +839,34 @@ class _SettingsPageState extends State<SettingsPage> {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
-            child: TextField(
-              controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'Device Name (for Sync)',
-                border: OutlineInputBorder(),
-                hintText: 'Enter device name',
-              ),
-              onSubmitted: (value) async {
-                final newName = value.trim();
-                if (newName.isNotEmpty) {
-                  await SyncManager.instance.updateDeviceName(newName);
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Device name updated and sync restarted')),
-                    );
-                  }
-                }
-              },
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Device Name (for Sync)',
+                      border: OutlineInputBorder(),
+                      hintText: 'Enter device name',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () async {
+                    final newName = _nameController.text.trim();
+                    if (newName.isNotEmpty) {
+                      await SyncManager.instance.updateDeviceName(newName);
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Device name updated and sync restarted')),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
             ),
           ),
           const Divider(),

@@ -10,19 +10,22 @@ struct SyncMessage: Codable {
     let hash: String
 }
 
-class SyncManager: NSObject {
+class SyncManager: NSObject, NetServiceDelegate {
     static let shared = SyncManager()
     
     var onDevicesChanged: (([String]) -> Void)?
     
-    private var browser: NWBrowser?
-    private var listener: NWListener?
-    private var discoveredEndpoints: [NWEndpoint: NWBrowser.Result] = [:]
-    
-    private let serviceType = "_clipy-sync._tcp"
-    private var deviceId: String { PreferencesManager.shared.deviceName }
-    
-    private let hardcodedSecret = "ClipySyncSecret2026"
+    private var browser: NWBrowser? 
+    private var listener: NWListener? 
+    private var netService: NetService?
+    private var discoveredEndpoints: [NWEndpoint: NWBrowser.Result] = [:] 
+    private var activeConnections: [NWConnection] = [] 
+    private let syncQueue = DispatchQueue(label: "com.clipy.sync")
+     
+    private let serviceType = "_clipy-sync._tcp" 
+    private var deviceId: String { PreferencesManager.shared.deviceName } 
+     
+    private let hardcodedSecret = "ClipySyncSecret2026" 
     
     private var encryptionKey: SymmetricKey {
         let data = hardcodedSecret.data(using: .utf8)!
@@ -87,15 +90,44 @@ class SyncManager: NSObject {
     }
     
     func stop() {
+        appLog("SyncManager stopping and cleaning up resources...")
+        
+        browser?.stateUpdateHandler = nil
+        browser?.browseResultsChangedHandler = nil
         browser?.cancel()
+        browser = nil
+        
+        // Stop and nil NetService advertisement on main thread
+        DispatchQueue.main.async {
+            self.netService?.delegate = nil
+            self.netService?.stop()
+            self.netService = nil
+        }
+        
+        // Explicitly clear service before cancelling listener to help mDNS unregistration
+        listener?.service = nil
+        listener?.stateUpdateHandler = nil
+        listener?.newConnectionHandler = nil
         listener?.cancel()
+        listener = nil
+        
+        // Cancel all active connections
+        for connection in activeConnections {
+            connection.stateUpdateHandler = nil
+            connection.cancel()
+        }
+        activeConnections.removeAll()
+        
+        discoveredEndpoints.removeAll()
+        appLog("SyncManager stopped.")
     }
     
     func restartService() {
         appLog("Restarting Sync services with new device name: \(deviceId)")
         stop()
-        // Small delay to ensure cleanup before restart
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        
+        // Use syncQueue for restarting to ensure serial execution
+        syncQueue.asyncAfter(deadline: .now() + 1.5) {
             self.start()
         }
     }
@@ -142,7 +174,7 @@ class SyncManager: NSObject {
             }
         }
         
-        browser.start(queue: .main)
+        browser.start(queue: syncQueue)
         appLog("Network Framework browser started for \(serviceType)")
     }
     
@@ -157,24 +189,42 @@ class SyncManager: NSObject {
     
     // MARK: - Network Framework Listener (NWListener)
     private func startListening() {
-        appLog("Starting listener on port \(PreferencesManager.shared.syncPort) as '\(deviceId)'...")
+        let currentDeviceId = deviceId
+        let port = Int32(PreferencesManager.shared.syncPort)
+        appLog("Starting listener on port \(port) as '\(currentDeviceId)'...")
+        
         do {
-            // Configure parameters to support both IPv4 and IPv6, but ensure we don't force v4
             let parameters = NWParameters.tcp
-            // Allow both but IPv6 is preferred by system defaults
+            let nwPort = NWEndpoint.Port(rawValue: UInt16(port))!
+            let listener = try NWListener(using: parameters, on: nwPort)
             
-            let port = NWEndpoint.Port(rawValue: UInt16(PreferencesManager.shared.syncPort))!
-            let listener = try NWListener(using: parameters, on: port)
+            // NetService must be published on a thread with a RunLoop (usually Main)
+            DispatchQueue.main.async {
+                // NetService type should NOT have a trailing dot here, 
+                // it is usually like "_clipy-sync._tcp"
+                let ns = NetService(domain: "local.", type: self.serviceType, name: currentDeviceId, port: port)
+                ns.delegate = self
+                ns.schedule(in: .main, forMode: .common)
+                ns.publish()
+                self.netService = ns
+                appLog("NetService (Main Thread) publishing as: \(currentDeviceId) on port \(port) with type \(self.serviceType)")
+            }
             
-            // Set mDNS advertisement
-            listener.service = NWListener.Service(name: deviceId, type: serviceType)
-            
-            listener.stateUpdateHandler = { state in
+            listener.stateUpdateHandler = { [weak self] state in
+                guard let self = self else { return }
                 switch state {
                 case .ready:
-                    appLog("NWListener ready on port \(port), advertising as \(self.deviceId)")
+                    appLog("NWListener ready on port \(port)")
                 case .failed(let error):
                     appLog("NWListener failed: \(error)", level: .error)
+                    if case .posix(let code) = error, code == .EADDRINUSE {
+                        appLog("Port in use, will retry in 2 seconds...")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            self.restartService()
+                        }
+                    }
+                case .cancelled:
+                    appLog("NWListener cancelled")
                 default:
                     appLog("NWListener state: \(state)")
                 }
@@ -185,20 +235,50 @@ class SyncManager: NSObject {
                 self?.handleIncomingConnection(connection)
             }
             
-            listener.start(queue: .main)
+            self.listener = listener
+            listener.start(queue: syncQueue)
             appLog("Network Framework listener started on port \(port)")
         } catch {
             appLog("Failed to start NWListener: \(error)", level: .error)
         }
     }
     
+    // MARK: - NetServiceDelegate
+    func netServiceDidPublish(_ sender: NetService) {
+        appLog("NetService successfully published: \(sender.name)")
+    }
+    
+    func netService(_ sender: NetService, didNotPublish errorDict: [String : NSNumber]) {
+        appLog("NetService failed to publish: \(errorDict)", level: .error)
+    }
+    
+    func netServiceDidStop(_ sender: NetService) {
+        appLog("NetService stopped: \(sender.name)")
+    }
+    
     private func handleIncomingConnection(_ connection: NWConnection) {
-        connection.stateUpdateHandler = { state in
-            if case .ready = state {
+        activeConnections.append(connection)
+        connection.stateUpdateHandler = { [weak self, weak connection] state in
+            guard let self = self, let connection = connection else { return }
+            switch state {
+            case .ready:
                 self.receiveMessage(from: connection)
+            case .failed(let error):
+                appLog("Incoming connection failed: \(error)", level: .error)
+                self.removeConnection(connection)
+            case .cancelled:
+                self.removeConnection(connection)
+            default:
+                break
             }
         }
-        connection.start(queue: .main)
+        connection.start(queue: syncQueue)
+    }
+    
+    private func removeConnection(_ connection: NWConnection) {
+        if let index = activeConnections.firstIndex(where: { $0 === connection }) {
+            activeConnections.remove(at: index)
+        }
     }
     
     private func receiveMessage(from connection: NWConnection) {
@@ -207,14 +287,19 @@ class SyncManager: NSObject {
                 let length = Int(data.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian })
                 appLog("Incoming message length: \(length)")
                 
-                connection.receive(minimumIncompleteLength: length, maximumLength: length) { data, _, _, error in
+                connection.receive(minimumIncompleteLength: length, maximumLength: length) { [weak self, weak connection] data, _, _, error in
                     if let data = data {
                         self?.processReceivedData(data)
                     }
-                    connection.cancel()
+                    if let connection = connection {
+                        self?.removeConnection(connection)
+                        connection.cancel()
+                    }
                 }
             } else if let error = error {
                 appLog("Receive length failed: \(error)", level: .error)
+                self?.removeConnection(connection)
+                connection.cancel()
             }
         }
     }
@@ -342,6 +427,6 @@ class SyncManager: NSObject {
             }
         }
         
-        connection.start(queue: .main)
+        connection.start(queue: syncQueue)
     }
 }
