@@ -94,9 +94,6 @@ class ClipboardManager {
           );
 
     // Check for duplicates
-    if (history.any((e) => e.contentHash == normalizedEntry.contentHash)) {
-      return;
-    }
 
     appLog('New history entry: ${normalizedEntry.item.title}');
 
@@ -138,7 +135,7 @@ class ClipboardManager {
   }
 
   Future<void> handleRemoteSync(String text, String hash) async {
-    if (hash == _lastSyncHash || history.any((e) => e.contentHash == hash)) {
+    if (hash == _lastSyncHash) {
       appLog('Ignoring duplicate sync or loop');
       return;
     }

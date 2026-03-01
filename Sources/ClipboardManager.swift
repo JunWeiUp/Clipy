@@ -281,11 +281,6 @@ class ClipboardManager {
         if let item = newItem {
             let hash = contentHash(for: item)
             
-            // Early duplicate detection using recent hashes
-            if let hash = hash, recentContentHashes.contains(hash) {
-                appLog("Skipping duplicate content (hash: \(hash.prefix(8)))")
-                return
-            }
             
             addToHistory(item, sourceApp: sourceApp)
         }
@@ -341,10 +336,6 @@ class ClipboardManager {
             return 
         }
         
-        // Also check if it's already in history
-        if history.contains(where: { $0.contentHash == hash }) {
-            return
-        }
         
         lastSyncHash = hash
         
