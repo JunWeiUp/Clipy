@@ -42,6 +42,16 @@ struct SnippetFolder: Codable, Identifiable {
     var shortcut: ShortcutCombo?
 }
 
+extension UUID {
+    var hashValue32: UInt32 {
+        let (u0, u1, u2, u3, u4, u5, u6, u7, u8, u9, u10, u11, u12, u13, u14, u15) = self.uuid
+        return UInt32(u0) ^ UInt32(u1) << 8 ^ UInt32(u2) << 16 ^ UInt32(u3) << 24 ^
+               UInt32(u4) ^ UInt32(u5) << 8 ^ UInt32(u6) << 16 ^ UInt32(u7) << 24 ^
+               UInt32(u8) ^ UInt32(u9) << 8 ^ UInt32(u10) << 16 ^ UInt32(u11) << 24 ^
+               UInt32(u12) ^ UInt32(u13) << 8 ^ UInt32(u14) << 16 ^ UInt32(u15) << 24
+    }
+}
+
 class SnippetManager {
     static let shared = SnippetManager()
     
@@ -80,7 +90,8 @@ class SnippetManager {
         
         for folder in folders {
             if let combo = folder.shortcut {
-                let folderId = UInt32(folder.id.hashValue & 0x7FFFFFFF)
+                // Use a more stable ID derived from UUID
+                let folderId = folder.id.hashValue32
                 HotKeyManager.shared.register(keyCode: combo.keyCode, modifiers: combo.modifierFlags, id: folderId) { [weak self] in
                     self?.onHotKeyTriggered?(folder)
                 }
@@ -88,7 +99,8 @@ class SnippetManager {
             
             for snippet in folder.snippets {
                 if let combo = snippet.shortcut {
-                    let snippetId = UInt32(snippet.id.hashValue & 0x7FFFFFFF)
+                    // Use a more stable ID derived from UUID
+                    let snippetId = snippet.id.hashValue32
                     HotKeyManager.shared.register(keyCode: combo.keyCode, modifiers: combo.modifierFlags, id: snippetId) { [weak self] in
                         self?.onHotKeyTriggered?(snippet)
                     }

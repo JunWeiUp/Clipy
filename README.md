@@ -12,6 +12,14 @@ A cross-platform clipboard management and synchronization tool for macOS and And
 - **Real-time Logs**: Integrated log viewer for monitoring sync status and debugging.
 - **Customizable Device Names**: Set unique names for each device to easily identify them during synchronization.
 
+## Screenshots
+
+### macOS Menu Bar
+![macOS Menu Bar](res/menubar.png)
+
+### Snippet Editor
+![Snippet Editor](res/fragment.png)
+
 ## Architecture
 
 ### macOS App (Swift/AppKit)
