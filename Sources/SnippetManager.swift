@@ -218,6 +218,35 @@ class SnippetManager {
         }
     }
 
+    /// Serializes all snippet folders to XML compatible with `importFromXML`.
+    func exportToXMLString() -> String {
+        var lines: [String] = []
+        lines.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+        lines.append("<snippets>")
+        for folder in folders {
+            lines.append("<folder>")
+            lines.append("<title>\(SnippetManager.xmlEscape(folder.title))</title>")
+            for snippet in folder.snippets {
+                lines.append("<snippet>")
+                lines.append("<title>\(SnippetManager.xmlEscape(snippet.title))</title>")
+                lines.append("<content>\(SnippetManager.xmlEscape(snippet.content))</content>")
+                lines.append("</snippet>")
+            }
+            lines.append("</folder>")
+        }
+        lines.append("</snippets>")
+        return lines.joined(separator: "\n")
+    }
+
+    private static func xmlEscape(_ string: String) -> String {
+        string
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
+    }
+
     func importFromXML(_ xmlString: String) {
         guard let data = xmlString.data(using: .utf8) else { return }
         let parser = XMLParser(data: data)

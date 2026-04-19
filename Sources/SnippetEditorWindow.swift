@@ -338,6 +338,27 @@ extension SnippetEditorWindow {
             }
         }
     }
+
+    @objc func exportAction() {
+        let savePanel = NSSavePanel()
+        savePanel.title = "导出片段"
+        savePanel.nameFieldStringValue = "ClipySnippets.clipy"
+        savePanel.allowedFileTypes = ["clipy", "xml"]
+        savePanel.canCreateDirectories = true
+
+        savePanel.begin { response in
+            guard response == .OK, let url = savePanel.url else { return }
+            let xml = SnippetManager.shared.exportToXMLString()
+            do {
+                try xml.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "导出失败"
+                alert.informativeText = error.localizedDescription
+                alert.runModal()
+            }
+        }
+    }
 }
 
 extension SnippetEditorWindow: NSOutlineViewDataSource, NSOutlineViewDelegate {
@@ -419,6 +440,11 @@ extension SnippetEditorWindow: NSToolbarDelegate {
             item.image = NSImage(systemSymbolName: "square.and.arrow.down", accessibilityDescription: nil)
             item.target = self
             item.action = #selector(importAction)
+        case "export":
+            item.label = "导出"
+            item.image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: nil)
+            item.target = self
+            item.action = #selector(exportAction)
         default:
             return nil
         }

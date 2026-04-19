@@ -19,8 +19,13 @@ mkdir -p "${MACOS_DIR}"
 mkdir -p "${RESOURCES_DIR}"
 
 # 3. 编译源代码
+# 先复制到临时目录再编译，避免编译过程中 IDE/自动保存修改源文件导致 swiftc 报
+# "input file '...' was modified during the build"
 echo "🔨 正在编译 Swift 源代码..."
-swiftc \
+BUILD_SRC_DIR="$(mktemp -d "${TMPDIR:-/tmp}/clipybuild.XXXXXX")"
+trap 'rm -rf "${BUILD_SRC_DIR}"' EXIT
+mkdir -p "${BUILD_SRC_DIR}/Sources"
+cp \
     Sources/ClipboardManager.swift \
     Sources/MenuController.swift \
     Sources/PreferencesManager.swift \
@@ -32,6 +37,21 @@ swiftc \
     Sources/LogManager.swift \
     Sources/LogWindow.swift \
     Sources/main.swift \
+    "${BUILD_SRC_DIR}/Sources/"
+
+swiftc \
+    "${BUILD_SRC_DIR}/Sources/ClipboardManager.swift" \
+    "${BUILD_SRC_DIR}/Sources/MenuController.swift" \
+    "${BUILD_SRC_DIR}/Sources/PreferencesManager.swift" \
+    "${BUILD_SRC_DIR}/Sources/SnippetManager.swift" \
+    "${BUILD_SRC_DIR}/Sources/SyncManager.swift" \
+    "${BUILD_SRC_DIR}/Sources/HotKeyManager.swift" \
+    "${BUILD_SRC_DIR}/Sources/SettingsWindow.swift" \
+    "${BUILD_SRC_DIR}/Sources/SnippetEditorWindow.swift" \
+    "${BUILD_SRC_DIR}/Sources/LogManager.swift" \
+    "${BUILD_SRC_DIR}/Sources/LogWindow.swift" \
+    "${BUILD_SRC_DIR}/Sources/main.swift" \
+    -whole-module-optimization \
     -o "${MACOS_DIR}/${EXECUTABLE_NAME}" \
     -framework AppKit \
     -framework CoreGraphics \
