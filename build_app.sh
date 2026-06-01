@@ -4,6 +4,8 @@
 APP_NAME="ClipyClone"
 BUNDLE_ID="com.yourdomain.ClipyClone"
 EXECUTABLE_NAME="ClipyClone"
+APP_VERSION="${APP_VERSION:-1.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
 APP_BUNDLE="${APP_NAME}.app"
 CONTENTS_DIR="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
@@ -100,9 +102,9 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${BUILD_NUMBER}</string>
     <key>LSMinimumSystemVersion</key>
     <string>10.13</string>
     <key>LSUIElement</key>

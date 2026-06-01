@@ -62,6 +62,21 @@ Clipy 使用自定义的基于 TCP 的协议进行同步和文件传输：
 - **Android 源码**: 位于 `clipy_android/lib/` 目录。
 - **任务日志**: 了解项目的详细开发历史。
 
+## GitHub Release
+
+推送版本标签时会自动构建并发布 GitHub Release：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+发布流程会构建并上传：
+- `ClipyClone-macOS-v<version>.zip`
+- `ClipyClone-Android-v<version>.apk`
+
+也可以在 GitHub Actions 中手动运行 `Release` workflow，并输入类似 `1.0.0` 的版本号。
+
 ## 许可证
 
 内部项目。

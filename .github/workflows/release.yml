@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 1.2.0 or v1.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          RAW_VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${RAW_VERSION#v}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build macOS app
+        run: |
+          APP_VERSION="${{ steps.version.outputs.version }}" \
+          BUILD_NUMBER="${{ github.run_number }}" \
+          ./build_app.sh
+
+      - name: Package macOS app
+        run: |
+          mkdir -p dist
+          ditto -c -k --keepParent ClipyClone.app "dist/ClipyClone-macOS-v${{ steps.version.outputs.version }}.zip"
+
+      - name: Build Android APK
+        working-directory: clipy_android
+        run: |
+          flutter pub get
+          flutter build apk --release \
+            --build-name "${{ steps.version.outputs.version }}" \
+            --build-number "${{ github.run_number }}"
+
+      - name: Package Android APK
+        run: |
+          cp clipy_android/build/app/outputs/flutter-apk/app-release.apk \
+            "dist/ClipyClone-Android-v${{ steps.version.outputs.version }}.apk"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Clipy ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          files: dist/*

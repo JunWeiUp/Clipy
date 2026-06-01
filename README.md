@@ -70,6 +70,21 @@ To build the Android application:
 - **Android Sources**: Located in the `clipy_android/lib/` directory.
 - **Task Log**: for a detailed history of the project development.
 
+## GitHub Release
+
+Release builds are published automatically when pushing a version tag:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The release workflow builds and uploads:
+- `ClipyClone-macOS-v<version>.zip`
+- `ClipyClone-Android-v<version>.apk`
+
+You can also run the `Release` workflow manually from GitHub Actions and enter a version such as `1.0.0`.
+
 ## License
 
 Internal Project.
