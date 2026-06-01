@@ -45,10 +45,11 @@ struct SnippetFolder: Codable, Identifiable {
 extension UUID {
     var hashValue32: UInt32 {
         let (u0, u1, u2, u3, u4, u5, u6, u7, u8, u9, u10, u11, u12, u13, u14, u15) = self.uuid
-        return UInt32(u0) ^ UInt32(u1) << 8 ^ UInt32(u2) << 16 ^ UInt32(u3) << 24 ^
-               UInt32(u4) ^ UInt32(u5) << 8 ^ UInt32(u6) << 16 ^ UInt32(u7) << 24 ^
-               UInt32(u8) ^ UInt32(u9) << 8 ^ UInt32(u10) << 16 ^ UInt32(u11) << 24 ^
-               UInt32(u12) ^ UInt32(u13) << 8 ^ UInt32(u14) << 16 ^ UInt32(u15) << 24
+        let part0 = UInt32(u0) | (UInt32(u1) << 8) | (UInt32(u2) << 16) | (UInt32(u3) << 24)
+        let part1 = UInt32(u4) | (UInt32(u5) << 8) | (UInt32(u6) << 16) | (UInt32(u7) << 24)
+        let part2 = UInt32(u8) | (UInt32(u9) << 8) | (UInt32(u10) << 16) | (UInt32(u11) << 24)
+        let part3 = UInt32(u12) | (UInt32(u13) << 8) | (UInt32(u14) << 16) | (UInt32(u15) << 24)
+        return part0 ^ part1 ^ part2 ^ part3
     }
 }
 
