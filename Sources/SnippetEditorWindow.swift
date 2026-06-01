@@ -112,6 +112,14 @@ class SnippetEditorWindow: NSWindow {
     private var sidebarView: NSOutlineView!
     private var detailView: NSView!
     private var currentSelection: Any?
+    /// 避免在 `reloadData` 后仍选中同一项时重复 `updateDetailView()`，否则侧栏刷新会拆掉正在编辑的标题/正文视图，导致“存不上”。
+    private var activeDetailKey: String?
+    private var selectedFolderId: UUID?
+    private var selectedSnippetId: UUID?
+    private weak var activeFolderTitleField: NSTextField?
+    private weak var activeSnippetTitleField: NSTextField?
+    /// 在批量 reloadData() + 恢复选中期间置 true，防止 outlineViewSelectionDidChange 误重建右侧面板。
+    private var isSuppressingSelectionChange = false
     
     init() {
         let styleMask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -142,6 +150,7 @@ class SnippetEditorWindow: NSWindow {
         splitView.isVertical = true
         splitView.dividerStyle = .thin
         splitView.autoresizingMask = [.width, .height]
+        splitView.delegate = self
         contentView.addSubview(splitView)
         
         // Sidebar
@@ -156,6 +165,9 @@ class SnippetEditorWindow: NSWindow {
         sidebarView.headerView = nil
         sidebarView.delegate = self
         sidebarView.dataSource = self
+        sidebarView.registerForDraggedTypes([.string])
+        sidebarView.setDraggingSourceOperationMask(.move, forLocal: true)
+        sidebarView.setDraggingSourceOperationMask([], forLocal: false)
         
         sidebarScrollView.documentView = sidebarView
         splitView.addArrangedSubview(sidebarScrollView)
@@ -170,10 +182,13 @@ class SnippetEditorWindow: NSWindow {
     func updateDetailView() {
         detailView.subviews.forEach { $0.removeFromSuperview() }
         
+        // `NSOutlineView` 会对行 item 做缓存；`Snippet`/`SnippetFolder` 为 struct 时，切换行再切回可能仍是旧副本，必须从 `SnippetManager` 按 id 取最新数据。
         if let folder = currentSelection as? SnippetFolder {
-            showFolderDetail(folder)
+            let toShow = Self.latestFolder(matching: folder.id) ?? folder
+            showFolderDetail(toShow)
         } else if let snippet = currentSelection as? Snippet {
-            showSnippetDetail(snippet)
+            let toShow = Self.latestSnippet(matching: snippet.id) ?? snippet
+            showSnippetDetail(toShow)
         } else {
             let label = NSTextField(labelWithString: "请在左侧选择一个文件夹或片段")
             label.textColor = .secondaryLabelColor
@@ -183,15 +198,20 @@ class SnippetEditorWindow: NSWindow {
     }
     
     private func showFolderDetail(_ folder: SnippetFolder) {
+        activeFolderTitleField = nil
+        activeSnippetTitleField = nil
+        selectedFolderId = folder.id
+        selectedSnippetId = nil
+        
         let titleLabel = NSTextField(labelWithString: "文件夹名称")
         titleLabel.frame = NSRect(x: 50, y: 520, width: 100, height: 20)
         detailView.addSubview(titleLabel)
         
         let titleField = NSTextField(frame: NSRect(x: 50, y: 490, width: 400, height: 24))
         titleField.stringValue = folder.title
-        titleField.target = self
-        titleField.action = #selector(folderTitleChanged(_:))
+        titleField.delegate = self
         detailView.addSubview(titleField)
+        activeFolderTitleField = titleField
         
         let shortcutLabel = NSTextField(labelWithString: "快捷键")
         shortcutLabel.frame = NSRect(x: 50, y: 440, width: 100, height: 20)
@@ -199,9 +219,8 @@ class SnippetEditorWindow: NSWindow {
         
         let recorder = ShortcutRecorderView(frame: NSRect(x: 50, y: 400, width: 200, height: 30))
         recorder.combo = folder.shortcut
-        recorder.onShortcutChanged = { [weak self] newCombo in
+        recorder.onShortcutChanged = { newCombo in
             SnippetManager.shared.updateFolderShortcut(id: folder.id, shortcut: newCombo)
-            self?.sidebarView.reloadData()
         }
         detailView.addSubview(recorder)
         
@@ -212,22 +231,21 @@ class SnippetEditorWindow: NSWindow {
         detailView.addSubview(infoLabel)
     }
     
-    @objc private func folderTitleChanged(_ sender: NSTextField) {
-        guard let folder = currentSelection as? SnippetFolder else { return }
-        SnippetManager.shared.updateFolderTitle(id: folder.id, title: sender.stringValue)
-        sidebarView.reloadData()
-    }
-    
     private func showSnippetDetail(_ snippet: Snippet) {
+        activeFolderTitleField = nil
+        activeSnippetTitleField = nil
+        selectedSnippetId = snippet.id
+        selectedFolderId = nil
+        
         let titleLabel = NSTextField(labelWithString: "片段标题")
         titleLabel.frame = NSRect(x: 50, y: 520, width: 100, height: 20)
         detailView.addSubview(titleLabel)
         
         let titleField = NSTextField(frame: NSRect(x: 50, y: 490, width: 400, height: 24))
         titleField.stringValue = snippet.title
-        titleField.target = self
-        titleField.action = #selector(snippetTitleChanged(_:))
+        titleField.delegate = self
         detailView.addSubview(titleField)
+        activeSnippetTitleField = titleField
         
         let contentLabel = NSTextField(labelWithString: "内容")
         contentLabel.frame = NSRect(x: 50, y: 450, width: 100, height: 20)
@@ -240,7 +258,9 @@ class SnippetEditorWindow: NSWindow {
         let textView = NSTextView(frame: scrollView.bounds)
         textView.string = snippet.content
         textView.isRichText = false
-        textView.delegate = self
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.textStorage?.delegate = self
         textView.autoresizingMask = [.width]
         scrollView.documentView = textView
         detailView.addSubview(scrollView)
@@ -259,22 +279,99 @@ class SnippetEditorWindow: NSWindow {
     
     private func updateSnippetShortcut(_ snippetId: UUID, _ combo: ShortcutCombo?) {
         SnippetManager.shared.updateSnippetShortcut(id: snippetId, shortcut: combo)
-        sidebarView.reloadData()
     }
     
-    @objc private func snippetTitleChanged(_ sender: NSTextField) {
-        guard let snippet = currentSelection as? Snippet else { return }
-        SnippetManager.shared.updateSnippetTitle(id: snippet.id, title: sender.stringValue)
+    /// 仅刷新当前选中行的 cell 显示（如名称更新），不影响选中状态，不触发 outlineViewSelectionDidChange。
+    private func refreshCurrentSidebarCell() {
+        let row: Int
+        if let sid = selectedSnippetId { row = rowForSnippetId(sid) }
+        else if let fid = selectedFolderId { row = rowForFolderId(fid) }
+        else { return }
+        guard row >= 0 else { return }
+        sidebarView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0))
+    }
+    
+    /// 结构性变化（增删、重排）时使用，全量 reload 并按 ID 恢复选中，期间屏蔽选中变更事件防右侧面板重建。
+    private func reloadSidebarPreservingSelection() {
+        let fid = selectedFolderId
+        let sid = selectedSnippetId
+        isSuppressingSelectionChange = true
         sidebarView.reloadData()
+        if let sid {
+            if let folder = Self.folder(containingSnippetId: sid) {
+                sidebarView.expandItem(folder)
+            }
+            let r = rowForSnippetId(sid)
+            if r >= 0 {
+                sidebarView.selectRowIndexes(IndexSet(integer: r), byExtendingSelection: false)
+                isSuppressingSelectionChange = false
+                return
+            }
+        }
+        if let fid {
+            let r = rowForFolderId(fid)
+            if r >= 0 {
+                sidebarView.selectRowIndexes(IndexSet(integer: r), byExtendingSelection: false)
+            }
+        }
+        isSuppressingSelectionChange = false
+    }
+    
+    private func rowForFolderId(_ id: UUID) -> Int {
+        for r in 0..<sidebarView.numberOfRows {
+            if let f = sidebarView.item(atRow: r) as? SnippetFolder, f.id == id { return r }
+        }
+        return -1
+    }
+    
+    private func rowForSnippetId(_ id: UUID) -> Int {
+        for r in 0..<sidebarView.numberOfRows {
+            if let s = sidebarView.item(atRow: r) as? Snippet, s.id == id { return r }
+        }
+        return -1
+    }
+    
+    private static func folder(containingSnippetId id: UUID) -> SnippetFolder? {
+        for folder in SnippetManager.shared.folders {
+            if folder.snippets.contains(where: { $0.id == id }) {
+                return folder
+            }
+        }
+        return nil
+    }
+    
+    private static func latestFolder(matching id: UUID) -> SnippetFolder? {
+        SnippetManager.shared.folders.first { $0.id == id }
+    }
+    
+    private static func latestSnippet(matching id: UUID) -> Snippet? {
+        for folder in SnippetManager.shared.folders {
+            if let s = folder.snippets.first(where: { $0.id == id }) {
+                return s
+            }
+        }
+        return nil
+    }
+    
+}
+
+extension SnippetEditorWindow: NSTextFieldDelegate {
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField else { return }
+        if field === activeSnippetTitleField, let id = selectedSnippetId {
+            SnippetManager.shared.updateSnippetTitle(id: id, title: field.stringValue)
+            refreshCurrentSidebarCell()
+        } else if field === activeFolderTitleField, let id = selectedFolderId {
+            SnippetManager.shared.updateFolderTitle(id: id, title: field.stringValue)
+            refreshCurrentSidebarCell()
+        }
     }
 }
 
-extension SnippetEditorWindow: NSTextViewDelegate {
-    func textDidChange(_ notification: Notification) {
-        guard let textView = notification.object as? NSTextView,
-              let snippet = currentSelection as? Snippet else { return }
-        
-        SnippetManager.shared.updateSnippetContent(id: snippet.id, content: textView.string)
+extension SnippetEditorWindow: NSTextStorageDelegate {
+    func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions, range editedRange: NSRange, changeInLength delta: Int) {
+        guard let id = selectedSnippetId else { return }
+        SnippetManager.shared.updateSnippetContent(id: id, content: textStorage.string)
     }
 }
 
@@ -361,7 +458,91 @@ extension SnippetEditorWindow {
     }
 }
 
+extension SnippetEditorWindow: NSSplitViewDelegate {
+    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool {
+        false
+    }
+    
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        guard dividerIndex == 0 else { return proposedMinimumPosition }
+        let minSidebar: CGFloat = 140
+        return max(proposedMinimumPosition, minSidebar)
+    }
+    
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        guard dividerIndex == 0 else { return proposedMaximumPosition }
+        let totalWidth = splitView.bounds.width
+        let minDetailWidth: CGFloat = 280
+        let maxDividerX = totalWidth - minDetailWidth
+        return min(proposedMaximumPosition, maxDividerX)
+    }
+}
+
 extension SnippetEditorWindow: NSOutlineViewDataSource, NSOutlineViewDelegate {
+    func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+        let p = NSPasteboardItem()
+        if let f = item as? SnippetFolder {
+            p.setString(f.id.uuidString, forType: .string)
+        } else if let s = item as? Snippet {
+            p.setString(s.id.uuidString, forType: .string)
+        } else {
+            return nil
+        }
+        return p
+    }
+    
+    func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
+        guard let idStr = info.draggingPasteboard.string(forType: .string),
+              let uuid = UUID(uuidString: idStr) else { return [] }
+        
+        if SnippetManager.shared.folders.contains(where: { $0.id == uuid }) {
+            return item == nil ? .move : []
+        }
+        
+        guard let (folderId, _) = Self.folderAndSnippetIndex(forSnippetId: uuid),
+              let target = item as? SnippetFolder,
+              target.id == folderId else { return [] }
+        return .move
+    }
+    
+    func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item proposedItem: Any?, childIndex index: Int) -> Bool {
+        guard let idStr = info.draggingPasteboard.string(forType: .string),
+              let uuid = UUID(uuidString: idStr) else { return false }
+        
+        if let fromIndex = SnippetManager.shared.folders.firstIndex(where: { $0.id == uuid }) {
+            guard proposedItem == nil else { return false }
+            var dropIdx = index
+            if dropIdx == NSOutlineViewDropOnItemIndex {
+                dropIdx = SnippetManager.shared.folders.count
+            }
+            SnippetManager.shared.reorderFolder(from: fromIndex, toDropIndex: dropIdx)
+            reloadSidebarPreservingSelection()
+            return true
+        }
+        
+        guard let (folderId, fromIdx) = Self.folderAndSnippetIndex(forSnippetId: uuid),
+              let target = proposedItem as? SnippetFolder,
+              target.id == folderId else { return false }
+        
+        let count = SnippetManager.shared.folders.first(where: { $0.id == folderId })?.snippets.count ?? 0
+        var dropIdx = index
+        if dropIdx == NSOutlineViewDropOnItemIndex {
+            dropIdx = count
+        }
+        SnippetManager.shared.reorderSnippet(inFolderId: folderId, from: fromIdx, toDropIndex: dropIdx)
+        reloadSidebarPreservingSelection()
+        return true
+    }
+    
+    private static func folderAndSnippetIndex(forSnippetId id: UUID) -> (UUID, Int)? {
+        for folder in SnippetManager.shared.folders {
+            if let idx = folder.snippets.firstIndex(where: { $0.id == id }) {
+                return (folder.id, idx)
+            }
+        }
+        return nil
+    }
+    
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         if item == nil {
             return SnippetManager.shared.folders.count
@@ -408,11 +589,36 @@ extension SnippetEditorWindow: NSOutlineViewDataSource, NSOutlineViewDelegate {
     }
     
     func outlineViewSelectionDidChange(_ notification: Notification) {
+        guard !isSuppressingSelectionChange else { return }
         let row = sidebarView.selectedRow
-        if row >= 0 {
-            currentSelection = sidebarView.item(atRow: row)
+        if row < 0 {
+            activeDetailKey = nil
+            selectedFolderId = nil
+            selectedSnippetId = nil
+            activeFolderTitleField = nil
+            activeSnippetTitleField = nil
+            currentSelection = nil
             updateDetailView()
+            return
         }
+        guard let item = sidebarView.item(atRow: row) else { return }
+        let key: String
+        if let f = item as? SnippetFolder {
+            key = "folder:\(f.id.uuidString)"
+        } else if let s = item as? Snippet {
+            key = "snippet:\(s.id.uuidString)"
+        } else {
+            activeDetailKey = nil
+            currentSelection = nil
+            updateDetailView()
+            return
+        }
+        if key == activeDetailKey {
+            return
+        }
+        activeDetailKey = key
+        currentSelection = item
+        updateDetailView()
     }
 }
 

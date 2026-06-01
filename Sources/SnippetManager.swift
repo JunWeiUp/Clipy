@@ -76,6 +76,7 @@ class SnippetManager {
     private init() {
         let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let appSupport = paths[0].appendingPathComponent("ClipyClone")
+        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
         self.storageURL = appSupport.appendingPathComponent("snippets.json")
         
         loadSnippets()
@@ -131,18 +132,26 @@ class SnippetManager {
         }
     }
     
-    func saveSnippets() {
-        if let data = try? encoder.encode(folders) {
-            try? data.write(to: storageURL)
-            registerHotKeys()
+    /// - Parameter reregisterHotKeys: 正文/标题等不改变快捷键映射时可传 `false`，避免每次按键全局注销再注册快捷键。
+    func saveSnippets(reregisterHotKeys: Bool = true) {
+        let dirURL = storageURL.deletingLastPathComponent()
+        do {
+            try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+            let data = try encoder.encode(folders)
+            try data.write(to: storageURL, options: [.atomic])
+            if reregisterHotKeys {
+                registerHotKeys()
+            }
             onSnippetsChanged?(folders)
+        } catch {
+            NSLog("SnippetManager: failed to save snippets — \(error.localizedDescription)")
         }
     }
     
     func updateFolderTitle(id: UUID, title: String) {
         if let index = folders.firstIndex(where: { $0.id == id }) {
             folders[index].title = title
-            saveSnippets()
+            saveSnippets(reregisterHotKeys: false)
         }
     }
     
@@ -157,7 +166,7 @@ class SnippetManager {
         for fIndex in 0..<folders.count {
             if let sIndex = folders[fIndex].snippets.firstIndex(where: { $0.id == id }) {
                 folders[fIndex].snippets[sIndex].title = title
-                saveSnippets()
+                saveSnippets(reregisterHotKeys: false)
                 return
             }
         }
@@ -167,7 +176,7 @@ class SnippetManager {
         for fIndex in 0..<folders.count {
             if let sIndex = folders[fIndex].snippets.firstIndex(where: { $0.id == id }) {
                 folders[fIndex].snippets[sIndex].content = content
-                saveSnippets()
+                saveSnippets(reregisterHotKeys: false)
                 return
             }
         }
@@ -207,6 +216,35 @@ class SnippetManager {
             folders[index].snippets.append(newSnippet)
             saveSnippets()
         }
+    }
+    
+    /// 调整根级文件夹顺序（`dropIndex` 为拖放目标插入位置，与 `NSOutlineView` 一致）。
+    func reorderFolder(from fromIndex: Int, toDropIndex dropIndex: Int) {
+        guard folders.indices.contains(fromIndex) else { return }
+        var destination = min(max(0, dropIndex), folders.count)
+        let item = folders.remove(at: fromIndex)
+        if fromIndex < destination {
+            destination -= 1
+        }
+        destination = max(0, min(destination, folders.count))
+        folders.insert(item, at: destination)
+        saveSnippets(reregisterHotKeys: false)
+    }
+    
+    /// 在同一文件夹内调整片段顺序。
+    func reorderSnippet(inFolderId folderId: UUID, from fromIndex: Int, toDropIndex dropIndex: Int) {
+        guard let fIndex = folders.firstIndex(where: { $0.id == folderId }) else { return }
+        var list = folders[fIndex].snippets
+        guard list.indices.contains(fromIndex) else { return }
+        var destination = min(max(0, dropIndex), list.count)
+        let item = list.remove(at: fromIndex)
+        if fromIndex < destination {
+            destination -= 1
+        }
+        destination = max(0, min(destination, list.count))
+        list.insert(item, at: destination)
+        folders[fIndex].snippets = list
+        saveSnippets(reregisterHotKeys: false)
     }
     
     func updateSnippet(folderId: UUID, snippetId: UUID, title: String, content: String) {
