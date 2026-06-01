@@ -55,6 +55,9 @@ class MainActivity: FlutterActivity() {
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, STORAGE_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
+                "getAppStorageDirectory" -> {
+                    result.success(filesDir.absolutePath)
+                }
                 "getDownloadsDirectory" -> {
                     val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                     if (downloadsDir != null) {

@@ -2,12 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'log_manager.dart';
 import 'models.dart';
+import 'storage_paths.dart';
 import 'sync_manager.dart';
 
 class ClipboardManager {
@@ -26,7 +26,7 @@ class ClipboardManager {
 
   Future<void> init() async {
     appLog('Initializing ClipboardManager...');
-    final dir = await getApplicationSupportDirectory();
+    final dir = await StoragePaths.appStorageDirectory();
     _storageFile = File('${dir.path}/history.json');
     await _loadPreferences();
     await _loadHistory();
@@ -205,7 +205,7 @@ class SnippetManager {
   final Uuid _uuid = const Uuid();
 
   Future<void> init() async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await StoragePaths.appStorageDirectory();
     _storageFile = File('${dir.path}/snippets.json');
     await _loadSnippets();
     if (folders.isEmpty) {

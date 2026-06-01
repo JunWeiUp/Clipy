@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 import 'dart:io';
-import 'package:archive/archive.dart';
 
 class CompressionUtils {
   static bool shouldCompressFile(String filePath) {
@@ -28,12 +27,8 @@ class CompressionUtils {
   
   static Uint8List? compressData(Uint8List data) {
     try {
-      // Use gzip compression
-      final encoder = GZipEncoder();
-      final compressed = encoder.encode(data);
-
-      // Check if compression succeeded and is beneficial
-      if (compressed != null && compressed.length < data.length) {
+      final compressed = gzip.encode(data);
+      if (compressed.length < data.length) {
         return Uint8List.fromList(compressed);
       }
     } catch (e) {
@@ -44,11 +39,8 @@ class CompressionUtils {
 
   static Uint8List? decompressData(Uint8List compressedData) {
     try {
-      final decoder = GZipDecoder();
-      final decompressed = decoder.decodeBytes(compressedData);
-      if (decompressed != null) {
-        return Uint8List.fromList(decompressed);
-      }
+      final decompressed = gzip.decode(compressedData);
+      return Uint8List.fromList(decompressed);
     } catch (e) {
       // Decompression failed
     }

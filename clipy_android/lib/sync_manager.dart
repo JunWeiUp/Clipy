@@ -1,19 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:nsd/nsd.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:crypto/crypto.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:flutter/services.dart';
 import 'log_manager.dart';
 import 'clipboard_manager.dart';
 import 'compression_utils.dart';
 import 'permission_manager.dart';
+import 'storage_paths.dart';
 
 class SyncMessage {
   final String deviceId;
@@ -119,7 +117,6 @@ class _PendingFile {
 }
 
 class SyncManager {
-  static const _storageChannel = MethodChannel('com.clipyclone.clipy_android/storage');
   static final SyncManager instance = SyncManager._();
   SyncManager._();
 
@@ -319,26 +316,25 @@ class SyncManager {
             }
           }
 
-          if (expectedLength != null) {
-            if (buffer.length >= expectedLength!) {
-              appLog('Buffer has enough data for message ($expectedLength bytes)');
-              final messageData = buffer.sublist(0, expectedLength!);
-              buffer.removeRange(0, expectedLength!);
-              
-              try {
-                final jsonString = utf8.decode(messageData);
-                final json = jsonDecode(jsonString);
-                final message = SyncMessage.fromJson(json);
-                appLog('Parsed SyncMessage from ${message.deviceId}, type: ${message.type}');
-                await _handleSyncMessage(message);
-              } catch (e) {
-                appLog('Error parsing sync message: $e', level: 'error');
-              }
-              
-              expectedLength = null; // Reset for next message if any
-            } else {
-              break; // Wait for more data
+          final messageLength = expectedLength;
+          if (buffer.length >= messageLength) {
+            appLog('Buffer has enough data for message ($messageLength bytes)');
+            final messageData = buffer.sublist(0, messageLength);
+            buffer.removeRange(0, messageLength);
+            
+            try {
+              final jsonString = utf8.decode(messageData);
+              final json = jsonDecode(jsonString);
+              final message = SyncMessage.fromJson(json);
+              appLog('Parsed SyncMessage from ${message.deviceId}, type: ${message.type}');
+              await _handleSyncMessage(message);
+            } catch (e) {
+              appLog('Error parsing sync message: $e', level: 'error');
             }
+            
+            expectedLength = null; // Reset for next message if any
+          } else {
+            break; // Wait for more data
           }
         }
       }
@@ -376,16 +372,6 @@ class SyncManager {
     }
   }
 
-  Future<String?> _getPublicDownloadsDirectory() async {
-    try {
-      final String? path = await _storageChannel.invokeMethod('getDownloadsDirectory');
-      return path;
-    } catch (e) {
-      appLog('Error getting public downloads directory: $e', level: 'error');
-      return null;
-    }
-  }
-
   Future<void> _handleFileHeader(String json, String sender) async {
     try {
       final header = FileHeader.fromJson(jsonDecode(json));
@@ -399,33 +385,15 @@ class SyncManager {
         // Note: On Android 11+, this will return true immediately as no permission is needed
       }
 
-      // Try to get Downloads directory with proper permission handling
-      Directory? targetDirectory;
-      
-      // First, try to get public Downloads directory via native channel (LocalSend style)
-      final publicDownloadsPath = await _getPublicDownloadsDirectory();
-      if (publicDownloadsPath != null) {
-        targetDirectory = Directory(publicDownloadsPath);
+      final publicDownloadsDir = await StoragePaths.publicDownloadsDirectory();
+      late final Directory targetDirectory;
+
+      if (publicDownloadsDir != null) {
+        targetDirectory = publicDownloadsDir;
         appLog('Using public Downloads directory: ${targetDirectory.path}');
       } else {
-        // Fallback to path_provider's Downloads directory
-        final downloadsDir = await getDownloadsDirectory();
-        if (downloadsDir != null) {
-          targetDirectory = downloadsDir;
-          appLog('Using app-specific Downloads directory: ${downloadsDir.path}');
-        } else {
-          // Downloads directory not available, try external storage
-          final externalDir = await getExternalStorageDirectory();
-          if (externalDir != null) {
-            targetDirectory = externalDir;
-            appLog('Using external storage directory: ${externalDir.path}');
-          } else {
-            // Fallback to application documents
-            final appDir = await getApplicationDocumentsDirectory();
-            targetDirectory = appDir;
-            appLog('Using application documents directory: ${appDir.path}');
-          }
-        }
+        targetDirectory = await StoragePaths.appStorageDirectory();
+        appLog('Using app storage directory: ${targetDirectory.path}');
       }
 
       // Generate unique file path
