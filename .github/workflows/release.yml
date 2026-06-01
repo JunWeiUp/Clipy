@@ -59,6 +59,7 @@ jobs:
         run: |
           flutter pub get
           flutter build apk --release \
+            --target-platform android-arm,android-arm64 \
             --build-name "${{ steps.version.outputs.version }}" \
             --build-number "${{ github.run_number }}"
 
