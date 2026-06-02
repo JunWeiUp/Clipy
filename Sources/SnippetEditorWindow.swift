@@ -182,13 +182,11 @@ class SnippetEditorWindow: NSWindow {
     func updateDetailView() {
         detailView.subviews.forEach { $0.removeFromSuperview() }
         
-        // `NSOutlineView` 会对行 item 做缓存；`Snippet`/`SnippetFolder` 为 struct 时，切换行再切回可能仍是旧副本，必须从 `SnippetManager` 按 id 取最新数据。
-        if let folder = currentSelection as? SnippetFolder {
-            let toShow = Self.latestFolder(matching: folder.id) ?? folder
-            showFolderDetail(toShow)
-        } else if let snippet = currentSelection as? Snippet {
-            let toShow = Self.latestSnippet(matching: snippet.id) ?? snippet
-            showSnippetDetail(toShow)
+        // `NSOutlineView` 会缓存 struct item；详情区始终按选中 ID 从 SnippetManager 取最新数据。
+        if let snippetId = selectedSnippetId, let snippet = Self.latestSnippet(matching: snippetId) {
+            showSnippetDetail(snippet)
+        } else if let folderId = selectedFolderId, let folder = Self.latestFolder(matching: folderId) {
+            showFolderDetail(folder)
         } else {
             let label = NSTextField(labelWithString: "请在左侧选择一个文件夹或片段")
             label.textColor = .secondaryLabelColor
@@ -291,30 +289,79 @@ class SnippetEditorWindow: NSWindow {
         sidebarView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0))
     }
     
-    /// 结构性变化（增删、重排）时使用，全量 reload 并按 ID 恢复选中，期间屏蔽选中变更事件防右侧面板重建。
+    /// 结构性变化（增删、重排）时使用，全量 reload 并按 ID 恢复展开/选中/滚动状态。
     private func reloadSidebarPreservingSelection() {
         let fid = selectedFolderId
         let sid = selectedSnippetId
+        var expandedFolderIds = currentlyExpandedFolderIds()
+        if let sid, let parent = Self.folder(containingSnippetId: sid) {
+            expandedFolderIds.insert(parent.id)
+        }
+        if let fid {
+            expandedFolderIds.insert(fid)
+        }
+        let visibleOrigin = sidebarView.enclosingScrollView?.contentView.bounds.origin
+        
         isSuppressingSelectionChange = true
         sidebarView.reloadData()
-        if let sid {
-            if let folder = Self.folder(containingSnippetId: sid) {
-                sidebarView.expandItem(folder)
-            }
-            let r = rowForSnippetId(sid)
-            if r >= 0 {
-                sidebarView.selectRowIndexes(IndexSet(integer: r), byExtendingSelection: false)
-                isSuppressingSelectionChange = false
+        restoreSidebarState(expandedFolderIds: expandedFolderIds, folderId: fid, snippetId: sid, visibleOrigin: visibleOrigin)
+        isSuppressingSelectionChange = false
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard self.selectedFolderId == fid && self.selectedSnippetId == sid else { return }
+            self.isSuppressingSelectionChange = true
+            self.restoreSidebarState(expandedFolderIds: expandedFolderIds, folderId: fid, snippetId: sid, visibleOrigin: visibleOrigin)
+            self.isSuppressingSelectionChange = false
+        }
+    }
+    
+    private func restoreSidebarState(expandedFolderIds: Set<UUID>, folderId: UUID?, snippetId: UUID?, visibleOrigin: NSPoint?) {
+        restoreExpandedFolders(expandedFolderIds)
+        
+        if let snippetId {
+            let row = rowForSnippetId(snippetId)
+            if row >= 0 {
+                sidebarView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                restoreSidebarScrollPosition(visibleOrigin)
                 return
             }
         }
-        if let fid {
-            let r = rowForFolderId(fid)
-            if r >= 0 {
-                sidebarView.selectRowIndexes(IndexSet(integer: r), byExtendingSelection: false)
+        if let folderId {
+            let row = rowForFolderId(folderId)
+            if row >= 0 {
+                sidebarView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             }
         }
-        isSuppressingSelectionChange = false
+        restoreSidebarScrollPosition(visibleOrigin)
+    }
+    
+    private func currentlyExpandedFolderIds() -> Set<UUID> {
+        var ids = Set<UUID>()
+        for row in 0..<sidebarView.numberOfRows {
+            guard let folder = sidebarView.item(atRow: row) as? SnippetFolder else { continue }
+            if sidebarView.isItemExpanded(folder) {
+                ids.insert(folder.id)
+            }
+        }
+        return ids
+    }
+    
+    private func restoreExpandedFolders(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            let row = rowForFolderId(id)
+            guard row >= 0,
+                  let folder = sidebarView.item(atRow: row) as? SnippetFolder else { continue }
+            sidebarView.expandItem(folder)
+        }
+    }
+    
+    private func restoreSidebarScrollPosition(_ origin: NSPoint?) {
+        guard let origin,
+              let scrollView = sidebarView.enclosingScrollView else { return }
+        scrollView.contentView.scroll(to: origin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
     
     private func rowForFolderId(_ id: UUID) -> Int {
@@ -329,6 +376,46 @@ class SnippetEditorWindow: NSWindow {
             if let s = sidebarView.item(atRow: r) as? Snippet, s.id == id { return r }
         }
         return -1
+    }
+    
+    private func visibleFolderItem(for id: UUID) -> SnippetFolder? {
+        let row = rowForFolderId(id)
+        guard row >= 0 else { return nil }
+        return sidebarView.item(atRow: row) as? SnippetFolder
+    }
+    
+    private func currentSidebarSelectionIds() -> (folderId: UUID?, snippetId: UUID?) {
+        let row = sidebarView.selectedRow
+        if row >= 0, let item = sidebarView.item(atRow: row) {
+            if let folder = item as? SnippetFolder {
+                return (folder.id, nil)
+            }
+            if let snippet = item as? Snippet {
+                return (nil, snippet.id)
+            }
+        }
+        if let snippetId = selectedSnippetId, Self.latestSnippet(matching: snippetId) != nil {
+            return (nil, snippetId)
+        }
+        if let folderId = selectedFolderId, Self.latestFolder(matching: folderId) != nil {
+            return (folderId, nil)
+        }
+        return (nil, nil)
+    }
+    
+    private func destinationFolderIdForNewSnippet() -> UUID? {
+        let selection = currentSidebarSelectionIds()
+        if let folderId = selection.folderId {
+            return folderId
+        }
+        if let snippetId = selection.snippetId {
+            return Self.folder(containingSnippetId: snippetId)?.id
+        }
+        if let firstFolder = SnippetManager.shared.folders.first {
+            return firstFolder.id
+        }
+        SnippetManager.shared.addFolder(title: "新文件夹")
+        return SnippetManager.shared.folders.last?.id
     }
     
     private static func folder(containingSnippetId id: UUID) -> SnippetFolder? {
@@ -377,20 +464,55 @@ extension SnippetEditorWindow: NSTextStorageDelegate {
 
 extension SnippetEditorWindow {
     @objc func addSnippetAction() {
-        if let folder = currentSelection as? SnippetFolder {
-            SnippetManager.shared.addSnippet(to: folder.id, title: "新片段", content: "")
-            sidebarView.reloadData()
-            sidebarView.expandItem(folder)
+        guard let folderId = destinationFolderIdForNewSnippet() else { return }
+        
+        let parentItem = visibleFolderItem(for: folderId)
+        var expandedFolderIds = currentlyExpandedFolderIds()
+        expandedFolderIds.insert(folderId)
+        let visibleOrigin = sidebarView.enclosingScrollView?.contentView.bounds.origin
+        
+        guard let newSnippet = SnippetManager.shared.addSnippet(to: folderId, title: "新片段", content: "") else { return }
+        
+        activeDetailKey = "snippet:\(newSnippet.id.uuidString)"
+        selectedFolderId = nil
+        selectedSnippetId = newSnippet.id
+        
+        if let parentItem {
+            isSuppressingSelectionChange = true
+            if !sidebarView.isItemExpanded(parentItem) {
+                sidebarView.expandItem(parentItem, expandChildren: false)
+            }
+            sidebarView.reloadItem(parentItem, reloadChildren: true)
+            sidebarView.expandItem(parentItem, expandChildren: false)
+            restoreSidebarState(expandedFolderIds: expandedFolderIds, folderId: nil, snippetId: newSnippet.id, visibleOrigin: visibleOrigin)
+            isSuppressingSelectionChange = false
+            updateDetailView()
+            
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.selectedSnippetId == newSnippet.id else { return }
+                self.isSuppressingSelectionChange = true
+                self.restoreSidebarState(expandedFolderIds: expandedFolderIds, folderId: nil, snippetId: newSnippet.id, visibleOrigin: visibleOrigin)
+                self.isSuppressingSelectionChange = false
+            }
+            return
         }
+        
+        // 空列表首次创建文件夹后没有可见父行，只在这个兜底场景全量刷新。
+        isSuppressingSelectionChange = true
+        sidebarView.reloadData()
+        restoreSidebarState(expandedFolderIds: expandedFolderIds, folderId: nil, snippetId: newSnippet.id, visibleOrigin: visibleOrigin)
+        isSuppressingSelectionChange = false
+        updateDetailView()
     }
     
     @objc func addFolderAction() {
         SnippetManager.shared.addFolder(title: "新文件夹")
-        sidebarView.reloadData()
+        reloadSidebarPreservingSelection()
     }
     
     @objc func deleteAction() {
-        guard let selection = currentSelection else { return }
+        let selection = currentSidebarSelectionIds()
+        guard selection.folderId != nil || selection.snippetId != nil else { return }
         
         let alert = NSAlert()
         alert.messageText = "确定要删除吗？"
@@ -400,13 +522,16 @@ extension SnippetEditorWindow {
         alert.alertStyle = .warning
         
         if alert.runModal() == .alertFirstButtonReturn {
-            if let folder = selection as? SnippetFolder {
-                SnippetManager.shared.deleteFolder(id: folder.id)
-            } else if let snippet = selection as? Snippet {
-                SnippetManager.shared.deleteSnippet(id: snippet.id)
+            if let folderId = selection.folderId {
+                SnippetManager.shared.deleteFolder(id: folderId)
+            } else if let snippetId = selection.snippetId {
+                SnippetManager.shared.deleteSnippet(id: snippetId)
             }
             currentSelection = nil
-            sidebarView.reloadData()
+            activeDetailKey = nil
+            selectedFolderId = nil
+            selectedSnippetId = nil
+            reloadSidebarPreservingSelection()
             updateDetailView()
         }
     }
@@ -547,7 +672,7 @@ extension SnippetEditorWindow: NSOutlineViewDataSource, NSOutlineViewDelegate {
         if item == nil {
             return SnippetManager.shared.folders.count
         } else if let folder = item as? SnippetFolder {
-            return folder.snippets.count
+            return Self.latestFolder(matching: folder.id)?.snippets.count ?? 0
         }
         return 0
     }
@@ -555,8 +680,10 @@ extension SnippetEditorWindow: NSOutlineViewDataSource, NSOutlineViewDelegate {
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
         if item == nil {
             return SnippetManager.shared.folders[index]
-        } else if let folder = item as? SnippetFolder {
-            return folder.snippets[index]
+        } else if let folder = item as? SnippetFolder,
+                  let latestFolder = Self.latestFolder(matching: folder.id),
+                  latestFolder.snippets.indices.contains(index) {
+            return latestFolder.snippets[index]
         }
         return ""
     }
@@ -580,9 +707,11 @@ extension SnippetEditorWindow: NSOutlineViewDataSource, NSOutlineViewDelegate {
         }
         
         if let folder = item as? SnippetFolder {
-            view?.textField?.stringValue = "📁 " + folder.title
+            let latestFolder = Self.latestFolder(matching: folder.id) ?? folder
+            view?.textField?.stringValue = "📁 " + latestFolder.title
         } else if let snippet = item as? Snippet {
-            view?.textField?.stringValue = "📄 " + snippet.title
+            let latestSnippet = Self.latestSnippet(matching: snippet.id) ?? snippet
+            view?.textField?.stringValue = "📄 " + latestSnippet.title
         }
         
         return view
@@ -605,10 +734,16 @@ extension SnippetEditorWindow: NSOutlineViewDataSource, NSOutlineViewDelegate {
         let key: String
         if let f = item as? SnippetFolder {
             key = "folder:\(f.id.uuidString)"
+            selectedFolderId = f.id
+            selectedSnippetId = nil
         } else if let s = item as? Snippet {
             key = "snippet:\(s.id.uuidString)"
+            selectedSnippetId = s.id
+            selectedFolderId = nil
         } else {
             activeDetailKey = nil
+            selectedFolderId = nil
+            selectedSnippetId = nil
             currentSelection = nil
             updateDetailView()
             return

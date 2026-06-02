@@ -211,12 +211,15 @@ class SnippetManager {
         saveSnippets()
     }
     
-    func addSnippet(to folderId: UUID, title: String, content: String) {
+    @discardableResult
+    func addSnippet(to folderId: UUID, title: String, content: String) -> Snippet? {
         if let index = folders.firstIndex(where: { $0.id == folderId }) {
             let newSnippet = Snippet(id: UUID(), title: title, content: content)
             folders[index].snippets.append(newSnippet)
             saveSnippets()
+            return newSnippet
         }
+        return nil
     }
     
     /// 调整根级文件夹顺序（`dropIndex` 为拖放目标插入位置，与 `NSOutlineView` 一致）。
