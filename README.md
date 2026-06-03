@@ -18,7 +18,7 @@ A cross-platform clipboard management and synchronization tool for macOS and And
 ![macOS Menu Bar](res/menubar.png)
 
 ### Snippet Editor
-![Snippet Editor](res/fragment.png)
+![Snippet Editor](res/fragment1.png)
 
 ## Architecture
 
