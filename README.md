@@ -1,74 +1,91 @@
 # Clipy
 
-A cross-platform clipboard management and synchronization tool for macOS and Android.
+[中文](README_ZH.md) | English
 
-## Features
+Clipy is a cross-platform clipboard manager for macOS and Android. It keeps clipboard history, organizes reusable snippets, transfers files over the local network, and synchronizes data between nearby devices.
 
-- **Clipboard History**: Automatically monitors and saves your clipboard history.
-- **Cross-Platform Sync**: Synchronize clipboard data between macOS and Android devices in the same local network.
-- **LAN File Transfer**: Send files directly between devices with hover menus on macOS and real-time progress tracking on Android.
-- **Snippets**: Manage and quickly access frequently used text snippets or code fragments.
-- **Secure Communication**: All data transmitted over the network is encrypted using AES-GCM 256-bit encryption.
-- **Real-time Logs**: Integrated log viewer for monitoring sync status and debugging.
-- **Customizable Device Names**: Set unique names for each device to easily identify them during synchronization.
+## Highlights
+
+- **Clipboard history**: Automatically monitors, deduplicates, and stores clipboard content.
+- **Snippets**: Organize frequently used text or code snippets in folders and paste them quickly.
+- **LAN sync**: Synchronize clipboard history and snippets between macOS and Android devices on the same local network.
+- **LAN file transfer**: Send files directly between devices with macOS hover actions and Android progress tracking.
+- **Secure transport**: Encrypts network payloads with AES-GCM 256-bit encryption and a pre-shared key.
+- **Real-time logs**: Built-in log windows help inspect sync, transfer, and debugging events.
+- **Custom device names**: Give each device a clear name for easier discovery.
+- **Chinese and English UI**: Switch the app language from preferences on both macOS and Android.
 
 ## Screenshots
 
 ### macOS Menu Bar
+
 ![macOS Menu Bar](res/menubar.png)
 
 ### Snippet Editor
+
 ![Snippet Editor](res/fragment1.png)
 
 ## Architecture
 
-### macOS App (Swift/AppKit)
-- Native implementation for performance and system integration.
-- Uses SwiftUI for the modern log window interface.
-- Leverages Apple's `Network` framework for reliable mDNS discovery and TCP communication.
+### macOS App
 
-### Android App (Flutter/Dart)
-- Cross-platform Flutter implementation for the mobile client.
-- Uses `nsd` for mDNS discovery and native `Socket` for TCP communication.
-- Supports both IPv4 and IPv6 for maximum compatibility.
+- Built with Swift and AppKit as a native menu bar app.
+- `MenuController` renders the status bar menu and handles history, snippets, devices, and actions.
+- `ClipboardManager` polls the system pasteboard, persists history, removes duplicates, and dispatches sync events.
+- `SnippetManager` manages folders, snippets, shortcuts, imports, exports, and sync updates.
+- `SyncManager` handles Bonjour discovery, HTTP sync endpoints, AES-GCM encryption, hashing, and deduplication.
+- `SettingsWindow`, `SnippetEditorWindow`, and `LogWindow` provide the main configuration and editing surfaces.
 
-## Synchronization Protocol
+### Android App
 
-Clipy uses a custom TCP-based protocol for synchronization and file transfer:
-- **Discovery**: Devices find each other using mDNS.
-- **Protocol**: `[4-byte Big-Endian Length Prefix] + [Encrypted JSON Data]`
-- **File Transfer**: Supports chunked transmission (512KB chunks) with metadata headers and real-time progress feedback.
-- **Encryption**: AES-GCM 256-bit with a pre-shared key.
-- **Loop Prevention**: Uses `lastSyncHash` to prevent synchronization loops between devices.
+- Built with Flutter and Dart.
+- `lib/main.dart` contains the tab-based UI for history, snippets, preferences, logs, and transfer actions.
+- `lib/clipboard_manager.dart` monitors clipboard changes, stores history, and coordinates sync events.
+- `lib/sync_manager.dart` handles service registration, discovery, HTTP sync, encryption, file transfer, and deduplication.
+- `lib/app_localizations.dart` provides the Chinese and English text resources.
 
-## Getting Started
+## Sync Protocol
+
+Clipy uses a LAN-first sync protocol for clipboard, snippet, and file data:
+
+- **Discovery**: Devices discover each other through Bonjour/mDNS.
+- **Transport**: Sync data is exchanged through local HTTP endpoints.
+- **Payloads**: Clipboard and snippet messages are JSON payloads encrypted before transmission.
+- **File transfer**: Files are sent in 512 KB chunks with metadata and real-time progress updates.
+- **Encryption**: AES-GCM 256-bit with a shared key configured on each device.
+- **Loop prevention**: Content hashes such as `lastSyncHash` prevent rebroadcast loops.
+
+## Build
 
 ### macOS
-To build the macOS application:
-1. Ensure you have Xcode installed.
-2. Run the build script:
-   ```bash
-   ./build_app.sh
-   ```
-3. The application will be generated as `ClipyClone.app`.
+
+Requirements: Xcode command line tools.
+
+```bash
+./build_app.sh
+```
+
+The generated app bundle is `ClipyClone.app`.
 
 ### Android
-To build the Android application:
-1. Ensure you have Flutter SDK and Android SDK installed.
-2. Navigate to the `clipy_android` directory:
-   ```bash
-   cd clipy_android
-   ```
-3. Run the Flutter build command:
-   ```bash
-   flutter build apk --debug
-   ```
 
-## Development
+Requirements: Flutter SDK and Android SDK.
 
-- **macOS Sources**: Located in the `Sources/` directory.
-- **Android Sources**: Located in the `clipy_android/lib/` directory.
-- **Task Log**: for a detailed history of the project development.
+```bash
+cd clipy_android
+flutter pub get
+flutter build apk --debug
+```
+
+For release builds, the GitHub workflow builds split APKs for `armeabi-v7a` and `arm64-v8a`.
+
+## Project Structure
+
+- `Sources/`: macOS Swift/AppKit source code.
+- `clipy_android/lib/`: Android Flutter/Dart source code.
+- `.github/workflows/release.yml`: GitHub Release automation.
+- `build_app.sh`: macOS app bundle build script.
+- `res/`: README assets.
 
 ## GitHub Release
 
@@ -79,12 +96,14 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The release workflow builds and uploads:
-- `ClipyClone-macOS-v<version>.zip`
-- `ClipyClone-Android-v<version>.apk`
+The `Release` workflow can also be run manually from GitHub Actions with a version such as `1.0.0`.
 
-You can also run the `Release` workflow manually from GitHub Actions and enter a version such as `1.0.0`.
+Published artifacts:
+
+- `ClipyClone-macOS-v<version>.zip`
+- `ClipyClone-Android-armeabi-v7a-v<version>.apk`
+- `ClipyClone-Android-arm64-v8a-v<version>.apk`
 
 ## License
 
-Internal Project.
+Internal project.

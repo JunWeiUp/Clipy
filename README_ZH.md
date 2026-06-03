@@ -1,66 +1,91 @@
 # Clipy
 
-一个适用于 macOS 和 Android 的跨平台剪贴板管理与同步工具。
+中文 | [English](README.md)
 
-## 功能特性
+Clipy 是一个适用于 macOS 和 Android 的跨平台剪贴板管理工具。它可以保存剪贴板历史、管理常用片段、在局域网内传输文件，并在附近设备之间同步数据。
 
-- **剪贴板历史**: 自动监控并保存您的剪贴板历史记录。
-- **跨平台同步**: 在同一局域网内的 macOS 和 Android 设备之间同步剪贴板数据。
-- **局域网文件传输**: 在设备间直接发送文件，macOS 支持悬停菜单操作，Android 支持实时进度追踪。
-- **片段管理**: 管理并快速访问常用的文本片段或代码块。
-- **安全通信**: 所有通过网络传输的数据均使用 AES-GCM 256 位加密。
-- **实时日志**: 内置日志查看器，用于监控同步状态和调试。
-- **自定义设备名称**: 为每台设备设置唯一名称，以便在同步时轻松识别。
+## 功能亮点
+
+- **剪贴板历史**：自动监控、去重并保存剪贴板内容。
+- **片段管理**：按文件夹管理常用文本或代码片段，并支持快速粘贴。
+- **局域网同步**：在同一局域网内同步 macOS 与 Android 设备的剪贴板历史和片段。
+- **局域网文件传输**：设备之间直接发送文件，macOS 支持悬停操作，Android 支持实时进度。
+- **安全传输**：网络数据使用 AES-GCM 256 位加密，并通过预共享密钥保护。
+- **实时日志**：内置日志窗口，方便查看同步、传输和调试信息。
+- **自定义设备名称**：为每台设备设置易识别的名称。
+- **中英文界面**：macOS 与 Android 均可在偏好设置中切换中文和英文。
+
+## 截图
+
+### macOS 菜单栏
+
+![macOS 菜单栏](res/menubar.png)
+
+### 片段编辑器
+
+![片段编辑器](res/fragment1.png)
 
 ## 项目架构
 
-### macOS 应用 (Swift/AppKit)
-- 原生实现，确保性能和系统集成度。
-- 使用 SwiftUI 构建现代化的日志窗口界面。
-- 利用苹果的 `Network` 框架实现可靠的 mDNS 服务发现和 TCP 通信。
+### macOS 应用
 
-### Android 应用 (Flutter/Dart)
-- 使用 Flutter 实现跨平台移动客户端。
-- 使用 `nsd` 进行 mDNS 服务发现，使用原生 `Socket` 进行 TCP 通信。
-- 支持 IPv4 和 IPv6，确保最佳兼容性。
+- 使用 Swift 和 AppKit 构建原生菜单栏应用。
+- `MenuController` 负责状态栏菜单、历史、片段、设备列表和菜单操作。
+- `ClipboardManager` 轮询系统剪贴板、持久化历史、处理去重并触发同步。
+- `SnippetManager` 管理文件夹、片段、快捷键、导入导出和同步更新。
+- `SyncManager` 负责 Bonjour 发现、HTTP 同步接口、AES-GCM 加密、哈希去重和文件传输。
+- `SettingsWindow`、`SnippetEditorWindow` 和 `LogWindow` 提供主要配置、编辑和日志界面。
+
+### Android 应用
+
+- 使用 Flutter 和 Dart 构建。
+- `lib/main.dart` 包含历史、片段、偏好设置、日志和传输操作的 Tab 化界面。
+- `lib/clipboard_manager.dart` 监听剪贴板变化、保存历史并协调同步事件。
+- `lib/sync_manager.dart` 负责服务注册、设备发现、HTTP 同步、加密、文件传输和去重。
+- `lib/app_localizations.dart` 提供中文和英文文案资源。
 
 ## 同步协议
 
-Clipy 使用自定义的基于 TCP 的协议进行同步和文件传输：
-- **服务发现**: 设备通过 mDNS 互相发现。
-- **协议格式**: `[4字节大端序长度前缀] + [加密的 JSON 数据]`
-- **文件传输**: 支持分块传输（512KB 分块），包含元数据头信息和实时进度反馈。
-- **加密方式**: AES-GCM 256 位，使用预共享密钥。
-- **环路防止**: 使用 `lastSyncHash` 校验机制防止设备间产生同步环路。
+Clipy 使用面向局域网的同步协议处理剪贴板、片段和文件数据：
 
-## 快速入门
+- **设备发现**：通过 Bonjour/mDNS 发现同一网络内的设备。
+- **传输方式**：通过本地 HTTP 接口交换同步数据。
+- **数据负载**：剪贴板和片段消息使用 JSON，并在传输前加密。
+- **文件传输**：文件按 512 KB 分块发送，带元数据和实时进度反馈。
+- **加密方式**：使用 AES-GCM 256 位加密，密钥需在各设备上保持一致。
+- **环路防止**：使用 `lastSyncHash` 等内容哈希避免设备间重复广播。
+
+## 构建
 
 ### macOS
-构建 macOS 应用：
-1. 确保已安装 Xcode。
-2. 运行构建脚本：
-   ```bash
-   ./build_app.sh
-   ```
-3. 生成的应用位于 `ClipyClone.app`。
+
+要求：已安装 Xcode 命令行工具。
+
+```bash
+./build_app.sh
+```
+
+生成的应用包为 `ClipyClone.app`。
 
 ### Android
-构建 Android 应用：
-1. 确保已安装 Flutter SDK 和 Android SDK。
-2. 进入 `clipy_android` 目录：
-   ```bash
-   cd clipy_android
-   ```
-3. 运行 Flutter 构建命令：
-   ```bash
-   flutter build apk --debug
-   ```
 
-## 开发相关
+要求：已安装 Flutter SDK 和 Android SDK。
 
-- **macOS 源码**: 位于 `Sources/` 目录。
-- **Android 源码**: 位于 `clipy_android/lib/` 目录。
-- **任务日志**: 了解项目的详细开发历史。
+```bash
+cd clipy_android
+flutter pub get
+flutter build apk --debug
+```
+
+Release 构建由 GitHub workflow 生成 `armeabi-v7a` 和 `arm64-v8a` 两个分 ABI APK。
+
+## 项目结构
+
+- `Sources/`：macOS Swift/AppKit 源码。
+- `clipy_android/lib/`：Android Flutter/Dart 源码。
+- `.github/workflows/release.yml`：GitHub Release 自动化流程。
+- `build_app.sh`：macOS 应用包构建脚本。
+- `res/`：README 图片资源。
 
 ## GitHub Release
 
@@ -71,11 +96,13 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-发布流程会构建并上传：
-- `ClipyClone-macOS-v<version>.zip`
-- `ClipyClone-Android-v<version>.apk`
-
 也可以在 GitHub Actions 中手动运行 `Release` workflow，并输入类似 `1.0.0` 的版本号。
+
+发布产物：
+
+- `ClipyClone-macOS-v<version>.zip`
+- `ClipyClone-Android-armeabi-v7a-v<version>.apk`
+- `ClipyClone-Android-arm64-v8a-v<version>.apk`
 
 ## 许可证
 
