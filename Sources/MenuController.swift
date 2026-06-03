@@ -11,6 +11,12 @@ class MenuController: NSObject {
         setupClipboardObserver()
         setupSnippetObserver()
         setupHotKeyObserver()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(languageDidChange),
+            name: .appLanguageDidChange,
+            object: nil
+        )
     }
     
     private func setupHotKeyObserver() {
@@ -79,12 +85,12 @@ class MenuController: NSObject {
         let menu = NSMenu()
         
         // --- History Section ---
-        let historyHeader = NSMenuItem(title: "History", action: nil, keyEquivalent: "")
+        let historyHeader = NSMenuItem(title: L10n.t(.history), action: nil, keyEquivalent: "")
         historyHeader.isEnabled = false
         menu.addItem(historyHeader)
         
         if history.isEmpty {
-            let emptyItem = NSMenuItem(title: "  No History", action: nil, keyEquivalent: "")
+            let emptyItem = NSMenuItem(title: L10n.t(.noHistory), action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
             menu.addItem(emptyItem)
         } else {
@@ -115,7 +121,7 @@ class MenuController: NSObject {
                     
                     // Add app source if available
                     if let app = entry.sourceApp {
-                        menuItem.toolTip = "Source: \(app)"
+                        menuItem.toolTip = "\(L10n.t(.source)): \(app)"
                     }
                     
                     // Add image preview
@@ -136,7 +142,7 @@ class MenuController: NSObject {
         menu.addItem(NSMenuItem.separator())
         
         // --- Snippets Section ---
-        let snippetHeader = NSMenuItem(title: "Snippets", action: nil, keyEquivalent: "")
+        let snippetHeader = NSMenuItem(title: L10n.t(.snippets), action: nil, keyEquivalent: "")
         snippetHeader.isEnabled = false
         menu.addItem(snippetHeader)
         
@@ -162,11 +168,11 @@ class MenuController: NSObject {
         menu.addItem(NSMenuItem.separator())
         
         // --- File History Section ---
-        let fileHistoryItem = NSMenuItem(title: "File History", action: nil, keyEquivalent: "")
+        let fileHistoryItem = NSMenuItem(title: L10n.t(.fileHistory), action: nil, keyEquivalent: "")
         let fileHistorySubmenu = NSMenu()
         
         if clipboardManager.fileHistory.isEmpty {
-            let emptyItem = NSMenuItem(title: "No Files", action: nil, keyEquivalent: "")
+            let emptyItem = NSMenuItem(title: L10n.t(.noFiles), action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
             fileHistorySubmenu.addItem(emptyItem)
         } else {
@@ -174,7 +180,7 @@ class MenuController: NSObject {
                 let menuItem = NSMenuItem(title: file.fileName, action: #selector(fileHistoryItemClicked(_:)), keyEquivalent: "")
                 menuItem.target = self
                 menuItem.representedObject = file
-                menuItem.toolTip = "From: \(file.senderName)\nPath: \(file.filePath)"
+                menuItem.toolTip = "\(L10n.t(.from)): \(file.senderName)\nPath: \(file.filePath)"
                 fileHistorySubmenu.addItem(menuItem)
             }
         }
@@ -184,13 +190,13 @@ class MenuController: NSObject {
         menu.addItem(NSMenuItem.separator())
         
         // --- Authorized Devices Section ---
-        let devicesHeader = NSMenuItem(title: "Authorized Devices", action: nil, keyEquivalent: "")
+        let devicesHeader = NSMenuItem(title: L10n.t(.authorizedDevices), action: nil, keyEquivalent: "")
         devicesHeader.isEnabled = false
         menu.addItem(devicesHeader)
         
         let availableDevices = SyncManager.shared.availableDeviceNames
         if availableDevices.isEmpty {
-            let emptyItem = NSMenuItem(title: "  No Devices Found", action: nil, keyEquivalent: "")
+            let emptyItem = NSMenuItem(title: L10n.t(.noDevicesFound), action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
             menu.addItem(emptyItem)
         } else {
@@ -199,7 +205,7 @@ class MenuController: NSObject {
                 let deviceSubmenu = NSMenu()
                 
                 // Authorization Toggle
-                let authItem = NSMenuItem(title: "Authorized", action: #selector(toggleDeviceAuthorization(_:)), keyEquivalent: "")
+                let authItem = NSMenuItem(title: L10n.t(.authorized), action: #selector(toggleDeviceAuthorization(_:)), keyEquivalent: "")
                 authItem.target = self
                 authItem.representedObject = deviceName
                 let isAuthorized = PreferencesManager.shared.authorizedDevices.contains(deviceName)
@@ -209,7 +215,7 @@ class MenuController: NSObject {
                 // Send File Action (only if authorized)
                 if isAuthorized {
                     deviceSubmenu.addItem(NSMenuItem.separator())
-                    let sendFileItem = NSMenuItem(title: "Send File...", action: #selector(sendFileClicked(_:)), keyEquivalent: "")
+                    let sendFileItem = NSMenuItem(title: L10n.t(.sendFile), action: #selector(sendFileClicked(_:)), keyEquivalent: "")
                     sendFileItem.target = self
                     sendFileItem.representedObject = deviceName
                     deviceSubmenu.addItem(sendFileItem)
@@ -222,25 +228,25 @@ class MenuController: NSObject {
         
         menu.addItem(NSMenuItem.separator())
         
-        let editSnippetsItem = NSMenuItem(title: "Edit Snippets...", action: #selector(openSnippetEditor), keyEquivalent: "S")
+        let editSnippetsItem = NSMenuItem(title: L10n.t(.editSnippets), action: #selector(openSnippetEditor), keyEquivalent: "S")
         editSnippetsItem.target = self
         menu.addItem(editSnippetsItem)
         
-        let preferencesItem = NSMenuItem(title: "Preferences...", action: #selector(openPreferences), keyEquivalent: ",")
+        let preferencesItem = NSMenuItem(title: L10n.t(.preferences) + "...", action: #selector(openPreferences), keyEquivalent: ",")
         preferencesItem.target = self
         menu.addItem(preferencesItem)
         
         menu.addItem(NSMenuItem.separator())
         
-        let clearItem = NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: "")
+        let clearItem = NSMenuItem(title: L10n.t(.clearHistory), action: #selector(clearHistory), keyEquivalent: "")
         clearItem.target = self
         menu.addItem(clearItem)
         
-        let logsItem = NSMenuItem(title: "Show Logs...", action: #selector(openLogs), keyEquivalent: "L")
+        let logsItem = NSMenuItem(title: L10n.t(.showLogs), action: #selector(openLogs), keyEquivalent: "L")
         logsItem.target = self
         menu.addItem(logsItem)
         
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L10n.t(.quit), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         
         statusItem.menu = menu
     }
@@ -267,8 +273,8 @@ class MenuController: NSObject {
         openPanel.canChooseFiles = true
         openPanel.canChooseDirectories = false
         openPanel.allowsMultipleSelection = false
-        openPanel.message = "Choose a file to send to \(deviceName)"
-        openPanel.prompt = "Send"
+        openPanel.message = L10n.format(.chooseFileToSend, deviceName)
+        openPanel.prompt = L10n.t(.send)
         
         // Use runModal to ensure the dialog appears and blocks until a choice is made
         let response = openPanel.runModal()
@@ -308,5 +314,9 @@ class MenuController: NSObject {
     
     @objc private func openLogs() {
         LogWindow.show()
+    }
+
+    @objc private func languageDidChange() {
+        updateMenu(with: clipboardManager.history)
     }
 }

@@ -28,6 +28,7 @@ BUILD_SRC_DIR="$(mktemp -d "${TMPDIR:-/tmp}/clipybuild.XXXXXX")"
 trap 'rm -rf "${BUILD_SRC_DIR}"' EXIT
 mkdir -p "${BUILD_SRC_DIR}/Sources"
 cp \
+    Sources/Localization.swift \
     Sources/ClipboardManager.swift \
     Sources/MenuController.swift \
     Sources/PreferencesManager.swift \
@@ -42,6 +43,7 @@ cp \
     "${BUILD_SRC_DIR}/Sources/"
 
 swiftc \
+    "${BUILD_SRC_DIR}/Sources/Localization.swift" \
     "${BUILD_SRC_DIR}/Sources/ClipboardManager.swift" \
     "${BUILD_SRC_DIR}/Sources/MenuController.swift" \
     "${BUILD_SRC_DIR}/Sources/PreferencesManager.swift" \
@@ -66,6 +68,7 @@ fi
 
 # 4. 准备资源文件
 echo "📦 准备资源文件..."
+rm -rf AppIcon.iconset AppIcon.icns
 if [ -f "Clipy/Resources/AppIcon.png" ]; then
     echo "🎨 生成 AppIcon.icns..."
     mkdir -p AppIcon.iconset
@@ -79,8 +82,11 @@ if [ -f "Clipy/Resources/AppIcon.png" ]; then
     sips -z 512 512   Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_256x256@2x.png
     sips -z 512 512   Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_512x512.png
     sips -z 1024 1024 Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_512x512@2x.png
-    iconutil -c icns AppIcon.iconset
-    cp AppIcon.icns "${RESOURCES_DIR}/"
+    if iconutil -c icns AppIcon.iconset && [ -f "AppIcon.icns" ]; then
+        cp AppIcon.icns "${RESOURCES_DIR}/"
+    else
+        echo "⚠️ AppIcon.icns 生成失败，跳过图标复制。"
+    fi
     rm -rf AppIcon.iconset AppIcon.icns
 fi
 

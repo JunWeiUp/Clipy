@@ -17,17 +17,17 @@ struct LogView: View {
         VStack(spacing: 0) {
             // 工具栏
             HStack {
-                TextField("Search logs...", text: $searchText)
+                TextField(L10n.t(.searchLogs), text: $searchText)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .frame(maxWidth: .infinity)
                 
                 Button(action: { copyLogs() }) {
-                    Label("Copy All", systemImage: "doc.on.doc")
+                    Label(L10n.t(.copyAll), systemImage: "doc.on.doc")
                 }
                 .buttonStyle(.bordered)
                 
                 Button(action: { logManager.clear() }) {
-                    Label("Clear", systemImage: "trash")
+                    Label(L10n.t(.clear), systemImage: "trash")
                 }
                 .buttonStyle(.bordered)
             }
@@ -94,7 +94,7 @@ class LogWindow: NSWindow {
             defer: false
         )
         
-        self.title = "Clipy Logs"
+        self.title = L10n.t(.clipyLogs)
         self.contentViewController = hostingController
         self.center()
         self.setFrameAutosaveName("LogWindow")

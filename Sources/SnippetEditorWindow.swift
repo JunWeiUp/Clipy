@@ -8,7 +8,7 @@ class ShortcutRecorderView: NSView {
         }
     }
     
-    private let label = NSTextField(labelWithString: "点击录制快捷键")
+    private let label = NSTextField(labelWithString: L10n.t(.recordShortcut))
     private let clearButton = NSButton(title: "✕", target: nil, action: nil)
     private var isRecording = false
     
@@ -48,7 +48,7 @@ class ShortcutRecorderView: NSView {
     
     private func updateDisplay() {
         if isRecording {
-            label.stringValue = "录制中..."
+            label.stringValue = L10n.t(.recordingShortcut)
             layer?.borderColor = NSColor.controlAccentColor.cgColor
             clearButton.isHidden = true
         } else if let combo = combo {
@@ -56,7 +56,7 @@ class ShortcutRecorderView: NSView {
             layer?.borderColor = NSColor.separatorColor.cgColor
             clearButton.isHidden = false
         } else {
-            label.stringValue = "点击录制快捷键"
+            label.stringValue = L10n.t(.recordShortcut)
             layer?.borderColor = NSColor.separatorColor.cgColor
             clearButton.isHidden = true
         }
@@ -156,11 +156,17 @@ class SnippetEditorWindow: NSWindow {
                    defer: false)
         self.isReleasedWhenClosed = false
         
-        self.title = "Clipy - 片段编辑器"
+        self.title = L10n.t(.snippetEditorTitle)
         self.center()
         setupToolbar()
         setupUI()
         reloadSidebar(selecting: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(languageDidChange),
+            name: .appLanguageDidChange,
+            object: nil
+        )
     }
     
     private func setupToolbar() {
@@ -168,6 +174,32 @@ class SnippetEditorWindow: NSWindow {
         toolbar.delegate = self
         toolbar.displayMode = .iconAndLabel
         self.toolbar = toolbar
+    }
+
+    private func updateToolbarLabels() {
+        toolbar?.items.forEach { item in
+            switch item.itemIdentifier.rawValue {
+            case "addSnippet":
+                item.label = L10n.t(.addSnippet)
+            case "addFolder":
+                item.label = L10n.t(.addFolder)
+            case "delete":
+                item.label = L10n.t(.delete)
+            case "import":
+                item.label = L10n.t(.importAction)
+            case "export":
+                item.label = L10n.t(.exportAction)
+            default:
+                break
+            }
+        }
+    }
+
+    @objc private func languageDidChange() {
+        title = L10n.t(.snippetEditorTitle)
+        updateToolbarLabels()
+        sidebarView.reloadData()
+        updateDetailView()
     }
     
     private func setupUI() {
@@ -186,7 +218,7 @@ class SnippetEditorWindow: NSWindow {
         
         sidebarView = NSOutlineView(frame: sidebarScrollView.bounds)
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Name"))
-        column.title = "Name"
+        column.title = L10n.t(.nameColumn)
         column.width = sidebarScrollView.bounds.width
         column.resizingMask = .autoresizingMask
         sidebarView.addTableColumn(column)
@@ -354,7 +386,7 @@ class SnippetEditorWindow: NSWindow {
         if let firstFolder = SnippetManager.shared.folders.first {
             return firstFolder.id
         }
-        SnippetManager.shared.addFolder(title: "新文件夹")
+        SnippetManager.shared.addFolder(title: L10n.t(.newFolder))
         return SnippetManager.shared.folders.last?.id
     }
     
@@ -388,9 +420,9 @@ class SnippetEditorWindow: NSWindow {
     }
     
     private func showEmptyDetail() {
-        let label = NSTextField(labelWithString: "请在左侧选择一个文件夹或片段")
+        let label = NSTextField(labelWithString: L10n.t(.selectFolderOrSnippet))
         label.textColor = .secondaryLabelColor
-        label.frame = NSRect(x: (detailView.bounds.width - 220) / 2, y: detailView.bounds.height / 2, width: 220, height: 20)
+        label.frame = NSRect(x: (detailView.bounds.width - 260) / 2, y: detailView.bounds.height / 2, width: 260, height: 20)
         label.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
         detailView.addSubview(label)
     }
@@ -399,7 +431,7 @@ class SnippetEditorWindow: NSWindow {
         selectedFolderId = folder.id
         selectedSnippetId = nil
         
-        let titleLabel = NSTextField(labelWithString: "文件夹名称")
+        let titleLabel = NSTextField(labelWithString: L10n.t(.folderName))
         titleLabel.frame = NSRect(x: 50, y: 520, width: 100, height: 20)
         detailView.addSubview(titleLabel)
         
@@ -409,7 +441,7 @@ class SnippetEditorWindow: NSWindow {
         detailView.addSubview(titleField)
         activeFolderTitleField = titleField
         
-        let shortcutLabel = NSTextField(labelWithString: "快捷键")
+        let shortcutLabel = NSTextField(labelWithString: L10n.t(.shortcut))
         shortcutLabel.frame = NSRect(x: 50, y: 440, width: 100, height: 20)
         detailView.addSubview(shortcutLabel)
         
@@ -420,7 +452,7 @@ class SnippetEditorWindow: NSWindow {
         }
         detailView.addSubview(recorder)
         
-        let infoLabel = NSTextField(labelWithString: "设置后可通过快捷键直接弹出该文件夹菜单")
+        let infoLabel = NSTextField(labelWithString: L10n.t(.folderShortcutHint))
         infoLabel.textColor = .secondaryLabelColor
         infoLabel.font = NSFont.systemFont(ofSize: 11)
         infoLabel.frame = NSRect(x: 50, y: 380, width: 300, height: 15)
@@ -431,7 +463,7 @@ class SnippetEditorWindow: NSWindow {
         selectedSnippetId = snippet.id
         selectedFolderId = nil
         
-        let titleLabel = NSTextField(labelWithString: "片段标题")
+        let titleLabel = NSTextField(labelWithString: L10n.t(.snippetTitle))
         titleLabel.frame = NSRect(x: 50, y: 520, width: 100, height: 20)
         detailView.addSubview(titleLabel)
         
@@ -441,7 +473,7 @@ class SnippetEditorWindow: NSWindow {
         detailView.addSubview(titleField)
         activeSnippetTitleField = titleField
         
-        let contentLabel = NSTextField(labelWithString: "内容")
+        let contentLabel = NSTextField(labelWithString: L10n.t(.content))
         contentLabel.frame = NSRect(x: 50, y: 450, width: 100, height: 20)
         detailView.addSubview(contentLabel)
         
@@ -459,7 +491,7 @@ class SnippetEditorWindow: NSWindow {
         scrollView.documentView = textView
         detailView.addSubview(scrollView)
         
-        let shortcutLabel = NSTextField(labelWithString: "快捷键")
+        let shortcutLabel = NSTextField(labelWithString: L10n.t(.shortcut))
         shortcutLabel.frame = NSRect(x: 50, y: 70, width: 100, height: 20)
         detailView.addSubview(shortcutLabel)
         
@@ -540,7 +572,7 @@ extension SnippetEditorWindow: NSTextStorageDelegate {
 extension SnippetEditorWindow {
     @objc func addSnippetAction() {
         guard let folderId = destinationFolderIdForNewSnippet(),
-              let newSnippet = SnippetManager.shared.addSnippet(to: folderId, title: "新片段", content: "") else { return }
+              let newSnippet = SnippetManager.shared.addSnippet(to: folderId, title: L10n.t(.newSnippet), content: "") else { return }
         
         selectedFolderId = nil
         selectedSnippetId = newSnippet.id
@@ -549,7 +581,7 @@ extension SnippetEditorWindow {
     }
     
     @objc func addFolderAction() {
-        SnippetManager.shared.addFolder(title: "新文件夹")
+        SnippetManager.shared.addFolder(title: L10n.t(.newFolder))
         guard let folderId = SnippetManager.shared.folders.last?.id else { return }
         selectedFolderId = folderId
         selectedSnippetId = nil
@@ -564,10 +596,10 @@ extension SnippetEditorWindow {
         switch selection {
         case .folder(let folderId):
             let alert = NSAlert()
-            alert.messageText = "确定要删除文件夹吗？"
-            alert.informativeText = "文件夹内的片段也会被删除，此操作不可撤销。"
-            alert.addButton(withTitle: "删除")
-            alert.addButton(withTitle: "取消")
+            alert.messageText = L10n.t(.confirmDeleteFolder)
+            alert.informativeText = L10n.t(.deleteFolderWarning)
+            alert.addButton(withTitle: L10n.t(.delete))
+            alert.addButton(withTitle: L10n.t(.cancel))
             alert.alertStyle = .warning
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             
@@ -602,7 +634,7 @@ extension SnippetEditorWindow {
                 }
             } catch {
                 let alert = NSAlert()
-                alert.messageText = "导入失败"
+                alert.messageText = L10n.t(.importFailed)
                 alert.informativeText = error.localizedDescription
                 alert.runModal()
             }
@@ -611,7 +643,7 @@ extension SnippetEditorWindow {
     
     @objc func exportAction() {
         let savePanel = NSSavePanel()
-        savePanel.title = "导出片段"
+        savePanel.title = L10n.t(.exportSnippets)
         savePanel.nameFieldStringValue = "ClipySnippets.clipy"
         savePanel.allowedFileTypes = ["clipy", "xml"]
         savePanel.canCreateDirectories = true
@@ -623,7 +655,7 @@ extension SnippetEditorWindow {
                 try xml.write(to: url, atomically: true, encoding: .utf8)
             } catch {
                 let alert = NSAlert()
-                alert.messageText = "导出失败"
+                alert.messageText = L10n.t(.exportFailed)
                 alert.informativeText = error.localizedDescription
                 alert.runModal()
             }
@@ -698,9 +730,9 @@ extension SnippetEditorWindow: NSOutlineViewDataSource, NSOutlineViewDelegate {
         
         switch node.kind {
         case .folder(let id):
-            view?.textField?.stringValue = "📁 " + (Self.latestFolder(matching: id)?.title ?? "文件夹")
+            view?.textField?.stringValue = "📁 " + (Self.latestFolder(matching: id)?.title ?? L10n.t(.folderFallback))
         case .snippet(let id, _):
-            view?.textField?.stringValue = "📄 " + (Self.latestSnippet(matching: id)?.title ?? "片段")
+            view?.textField?.stringValue = "📄 " + (Self.latestSnippet(matching: id)?.title ?? L10n.t(.snippetFallback))
         }
         
         return view
@@ -776,27 +808,27 @@ extension SnippetEditorWindow: NSToolbarDelegate {
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         switch itemIdentifier.rawValue {
         case "addSnippet":
-            item.label = "添加片段"
+            item.label = L10n.t(.addSnippet)
             item.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: nil)
             item.target = self
             item.action = #selector(addSnippetAction)
         case "addFolder":
-            item.label = "添加文件夹"
+            item.label = L10n.t(.addFolder)
             item.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: nil)
             item.target = self
             item.action = #selector(addFolderAction)
         case "delete":
-            item.label = "删除"
+            item.label = L10n.t(.delete)
             item.image = NSImage(systemSymbolName: "minus", accessibilityDescription: nil)
             item.target = self
             item.action = #selector(deleteAction)
         case "import":
-            item.label = "导入"
+            item.label = L10n.t(.importAction)
             item.image = NSImage(systemSymbolName: "square.and.arrow.down", accessibilityDescription: nil)
             item.target = self
             item.action = #selector(importAction)
         case "export":
-            item.label = "导出"
+            item.label = L10n.t(.exportAction)
             item.image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: nil)
             item.target = self
             item.action = #selector(exportAction)

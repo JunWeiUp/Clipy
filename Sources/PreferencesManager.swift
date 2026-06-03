@@ -11,10 +11,26 @@ class PreferencesManager {
     private let syncSecretKey = "syncSecret"
     private let authorizedDevicesKey = "authorizedDevices"
     private let deviceNameKey = "deviceName"
+    private let appLanguageKey = "appLanguage"
     
     var deviceName: String {
         get { defaults.string(forKey: deviceNameKey) ?? Host.current().localizedName ?? "Mac" }
         set { defaults.set(newValue, forKey: deviceNameKey) }
+    }
+
+    var appLanguage: AppLanguage {
+        get {
+            guard let rawValue = defaults.string(forKey: appLanguageKey),
+                  let language = AppLanguage(rawValue: rawValue) else {
+                return AppLanguage.systemDefault
+            }
+            return language
+        }
+        set {
+            guard appLanguage != newValue else { return }
+            defaults.set(newValue.rawValue, forKey: appLanguageKey)
+            NotificationCenter.default.post(name: .appLanguageDidChange, object: nil)
+        }
     }
     
     var historyLimit: Int {

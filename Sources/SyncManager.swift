@@ -590,8 +590,8 @@ class SyncManager: NSObject, NetServiceDelegate {
                     
                     // Show notification
                     let notification = NSUserNotification()
-                    notification.title = "File Received"
-                    notification.informativeText = "Received \(header.fileName) from \(senderName)"
+                    notification.title = L10n.t(.fileReceived)
+                    notification.informativeText = L10n.format(.receivedFileFrom, header.fileName, senderName)
                     notification.soundName = NSUserNotificationDefaultSoundName
                     NSUserNotificationCenter.default.deliver(notification)
                 }

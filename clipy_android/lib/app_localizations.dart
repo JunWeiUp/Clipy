@@ -1,0 +1,136 @@
+import 'dart:ui';
+
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+enum AppLanguage {
+  zh('zh', '中文'),
+  en('en', 'English');
+
+  const AppLanguage(this.code, this.displayName);
+
+  final String code;
+  final String displayName;
+
+  static AppLanguage fromCode(String? code) {
+    return AppLanguage.values.firstWhere(
+      (language) => language.code == code,
+      orElse: () => systemDefault,
+    );
+  }
+
+  static AppLanguage get systemDefault {
+    return PlatformDispatcher.instance.locale.languageCode == 'zh'
+        ? AppLanguage.zh
+        : AppLanguage.en;
+  }
+}
+
+class AppLanguageController extends ChangeNotifier {
+  AppLanguageController._();
+
+  static final instance = AppLanguageController._();
+  static const _prefsKey = 'appLanguage';
+
+  AppLanguage _language = AppLanguage.systemDefault;
+
+  AppLanguage get language => _language;
+  AppStrings get strings => AppStrings(_language);
+  Locale get locale => Locale(_language.code);
+
+  Future<void> init() async {
+    final prefs = await SharedPreferences.getInstance();
+    _language = AppLanguage.fromCode(prefs.getString(_prefsKey));
+  }
+
+  Future<void> setLanguage(AppLanguage language) async {
+    if (_language == language) return;
+    _language = language;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefsKey, language.code);
+    notifyListeners();
+  }
+}
+
+extension AppStringsContext on BuildContext {
+  AppStrings get l10n => AppLanguageController.instance.strings;
+}
+
+class AppStrings {
+  AppStrings(this.language);
+
+  final AppLanguage language;
+
+  String get appTitle => 'ClipyClone';
+  String get languageLabel => _t('语言', 'Language');
+  String get history => _t('历史记录', 'History');
+  String get snippets => _t('片段', 'Snippets');
+  String get preferences => _t('偏好设置', 'Preferences');
+  String get settings => _t('设置', 'Settings');
+  String get clearHistory => _t('清空历史记录', 'Clear History');
+  String get appLogs => _t('应用日志', 'App Logs');
+  String get clearLogs => _t('清空日志', 'Clear Logs');
+  String get logsCopied => _t('日志已复制到剪贴板', 'Logs copied to clipboard');
+  String get copyAll => _t('复制全部', 'Copy All');
+  String get noLogs => _t('暂无日志。', 'No logs recorded yet.');
+  String get noClipboardHistory => _t('暂无剪贴板历史', 'No clipboard history yet');
+  String historyRange(int start, int end) => _t('历史 $start-$end', 'History $start-$end');
+  String sourceAndDate(String? source, String date) => '${source ?? unknown} • $date';
+  String get unknown => _t('未知', 'Unknown');
+  String get copiedToClipboard => _t('已复制到剪贴板', 'Copied to clipboard');
+  String get addSnippetFolder => _t('添加片段文件夹', 'Add Snippet Folder');
+  String get importXml => _t('导入 XML', 'Import XML');
+  String get snippetFolders => _t('片段文件夹', 'Snippet Folders');
+  String get addFolder => _t('添加文件夹', 'Add Folder');
+  String get edit => _t('编辑', 'Edit');
+  String get disable => _t('停用', 'Disable');
+  String get enable => _t('启用', 'Enable');
+  String get delete => _t('删除', 'Delete');
+  String get snippetCopied => _t('片段已复制到剪贴板', 'Snippet copied to clipboard');
+  String get addSnippet => _t('添加片段', 'Add Snippet');
+  String get newFolder => _t('新文件夹', 'New Folder');
+  String get folderName => _t('文件夹名称', 'Folder Name');
+  String get cancel => _t('取消', 'Cancel');
+  String get create => _t('创建', 'Create');
+  String get importSnippetsXml => _t('导入片段 XML', 'Import Snippets XML');
+  String get pasteXmlContent => _t('粘贴 XML 内容', 'Paste XML content');
+  String get import => _t('导入', 'Import');
+  String get editFolder => _t('编辑文件夹', 'Edit Folder');
+  String get save => _t('保存', 'Save');
+  String get deleteFolder => _t('删除文件夹', 'Delete Folder');
+  String deleteFolderMessage(String folderTitle) =>
+      _t('删除“$folderTitle”和所有片段？', 'Delete "$folderTitle" and all snippets?');
+  String get newSnippet => _t('新片段', 'New Snippet');
+  String get title => _t('标题', 'Title');
+  String get content => _t('内容', 'Content');
+  String get editSnippet => _t('编辑片段', 'Edit Snippet');
+  String get deleteSnippet => _t('删除片段', 'Delete Snippet');
+  String deleteSnippetMessage(String snippetTitle) =>
+      _t('删除“$snippetTitle”？', 'Delete "$snippetTitle"?');
+  String get historyLimit => _t('历史数量', 'History Limit');
+  String keepRecentItems(int count) => _t('保留最近 $count 条', 'Keep the most recent $count items');
+  String get excludedApps => _t('排除的应用（Bundle ID，每行一个）', 'Excluded Apps (bundle IDs, one per line)');
+  String get saveExcludedApps => _t('保存排除应用', 'Save Excluded Apps');
+  String get enableLanSync => _t('启用局域网同步', 'Enable LAN Sync');
+  String get syncPort => _t('同步端口', 'Sync Port');
+  String get authorizedDevicesComma => _t('授权设备（用逗号分隔）', 'Authorized Devices (comma separated)');
+  String get about => _t('关于', 'About');
+  String receivedFile(String fileName) => _t('已接收文件：$fileName', 'Received file: $fileName');
+  String get view => _t('查看', 'View');
+  String couldNotOpenFolder(Object error) => _t('无法打开文件夹：$error', 'Could not open folder: $error');
+  String get clipyHistory => _t('Clipy 历史', 'Clipy History');
+  String get receivedFiles => _t('已接收文件', 'Received Files');
+  String get viewLogs => _t('查看日志', 'View Logs');
+  String receiving(String fileName) => _t('正在接收：$fileName', 'Receiving: $fileName');
+  String get deviceNameForSync => _t('设备名称（用于同步）', 'Device Name (for Sync)');
+  String get enterDeviceName => _t('输入设备名称', 'Enter device name');
+  String get deviceNameUpdated => _t('设备名称已更新，同步已重启', 'Device name updated and sync restarted');
+  String get authorizedDevices => _t('授权设备', 'Authorized Devices');
+  String get noDevicesFound => _t('未发现设备', 'No devices found');
+  String get sameWifiHint => _t('请确认其他设备连接到同一个 Wi-Fi', 'Ensure other devices are on the same WiFi');
+  String get appRuntimeLogs => _t('用于排查问题的应用运行日志', 'App runtime logs for troubleshooting');
+  String get noFilesReceived => _t('暂无已接收文件', 'No files received yet');
+  String fromSender(String senderName) => _t('来自：$senderName', 'From: $senderName');
+
+  String _t(String zh, String en) => language == AppLanguage.zh ? zh : en;
+}

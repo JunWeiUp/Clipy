@@ -8,12 +8,14 @@ import 'clipboard_manager.dart';
 import 'sync_manager.dart';
 import 'log_manager.dart';
 import 'models.dart';
+import 'app_localizations.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ClipboardManager.instance.init();
   await SnippetManager.instance.init();
   await SyncManager.instance.init();
+  await AppLanguageController.instance.init();
   runApp(const MyApp());
 }
 
@@ -22,13 +24,24 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'ClipyClone',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
-      ),
-      home: Platform.isMacOS ? const MacHomePage() : const HomePage(),
+    return AnimatedBuilder(
+      animation: AppLanguageController.instance,
+      builder: (context, _) {
+        final strings = AppLanguageController.instance.strings;
+        return MaterialApp(
+          title: strings.appTitle,
+          locale: AppLanguageController.instance.locale,
+          supportedLocales: const [
+            Locale('zh'),
+            Locale('en'),
+          ],
+          theme: ThemeData(
+            primarySwatch: Colors.blue,
+            useMaterial3: true,
+          ),
+          home: Platform.isMacOS ? const MacHomePage() : const HomePage(),
+        );
+      },
     );
   }
 }
@@ -67,32 +80,33 @@ class _MacHomePageState extends State<MacHomePage> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('ClipyClone'),
+        title: Text(l10n.appTitle),
         actions: [
           IconButton(
             icon: const Icon(Icons.snippet_folder_outlined),
             onPressed: () => _switchTab(1),
-            tooltip: 'Snippets',
+            tooltip: l10n.snippets,
           ),
           IconButton(
             icon: const Icon(Icons.tune),
             onPressed: () => _switchTab(2),
-            tooltip: 'Preferences',
+            tooltip: l10n.preferences,
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
             onPressed: () => ClipboardManager.instance.clearHistory(),
-            tooltip: 'Clear History',
+            tooltip: l10n.clearHistory,
           ),
         ],
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [
-            Tab(text: 'History'),
-            Tab(text: 'Snippets'),
-            Tab(text: 'Preferences'),
+          tabs: [
+            Tab(text: l10n.history),
+            Tab(text: l10n.snippets),
+            Tab(text: l10n.preferences),
           ],
         ),
       ),
@@ -119,14 +133,15 @@ class LogPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('App Logs'),
+        title: Text(l10n.appLogs),
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_sweep),
             onPressed: () => LogManager.instance.clear(),
-            tooltip: 'Clear Logs',
+            tooltip: l10n.clearLogs,
           ),
           IconButton(
             icon: const Icon(Icons.copy),
@@ -134,10 +149,10 @@ class LogPage extends StatelessWidget {
               final allLogs = LogManager.instance.logs.join('\n');
               Clipboard.setData(ClipboardData(text: allLogs));
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Logs copied to clipboard')),
+                SnackBar(content: Text(l10n.logsCopied)),
               );
             },
-            tooltip: 'Copy All',
+            tooltip: l10n.copyAll,
           ),
         ],
       ),
@@ -146,7 +161,7 @@ class LogPage extends StatelessWidget {
         builder: (context, _) {
           final logs = LogManager.instance.logs;
           if (logs.isEmpty) {
-            return const Center(child: Text('No logs recorded yet.'));
+            return Center(child: Text(l10n.noLogs));
           }
           return ListView.builder(
             reverse: true,
@@ -177,9 +192,10 @@ class MacHistoryTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final history = ClipboardManager.instance.history;
     if (history.isEmpty) {
-      return const Center(child: Text('No clipboard history yet'));
+      return Center(child: Text(l10n.noClipboardHistory));
     }
 
     final sections = <Widget>[];
@@ -190,7 +206,7 @@ class MacHistoryTab extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
           child: Text(
-            'History ${i + 1}–$end',
+            l10n.historyRange(i + 1, end),
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
           ),
         ),
@@ -204,11 +220,11 @@ class MacHistoryTab extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
-            subtitle: Text('${entry.sourceApp ?? 'Unknown'} • ${entry.date.toString().split('.')[0]}'),
+            subtitle: Text(l10n.sourceAndDate(entry.sourceApp, entry.date.toString().split('.')[0])),
             onTap: () {
               ClipboardManager.instance.copyToClipboard(entry.item);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Copied to clipboard')),
+                SnackBar(content: Text(l10n.copiedToClipboard)),
               );
             },
           ),
@@ -240,6 +256,7 @@ class MacSnippetsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final manager = SnippetManager.instance;
     final folders = manager.folders;
     if (folders.isEmpty) {
@@ -249,12 +266,12 @@ class MacSnippetsTab extends StatelessWidget {
           children: [
             ElevatedButton(
               onPressed: () => _showAddFolderDialog(context),
-              child: const Text('Add Snippet Folder'),
+              child: Text(l10n.addSnippetFolder),
             ),
             const SizedBox(height: 12),
             OutlinedButton(
               onPressed: () => _showImportXmlDialog(context),
-              child: const Text('Import XML'),
+              child: Text(l10n.importXml),
             ),
           ],
         ),
@@ -267,20 +284,20 @@ class MacSnippetsTab extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
           child: Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Snippet Folders',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  l10n.snippetFolders,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
               ),
               OutlinedButton(
                 onPressed: () => _showImportXmlDialog(context),
-                child: const Text('Import XML'),
+                child: Text(l10n.importXml),
               ),
               const SizedBox(width: 8),
               ElevatedButton(
                 onPressed: () => _showAddFolderDialog(context),
-                child: const Text('Add Folder'),
+                child: Text(l10n.addFolder),
               ),
             ],
           ),
@@ -300,12 +317,12 @@ class MacSnippetsTab extends StatelessWidget {
                 }
               },
               itemBuilder: (context) => [
-                const PopupMenuItem(value: 'edit', child: Text('Edit')),
+                PopupMenuItem(value: 'edit', child: Text(l10n.edit)),
                 PopupMenuItem(
                   value: 'toggle',
-                  child: Text(folder.isEnabled ? 'Disable' : 'Enable'),
+                  child: Text(folder.isEnabled ? l10n.disable : l10n.enable),
                 ),
-                const PopupMenuItem(value: 'delete', child: Text('Delete')),
+                PopupMenuItem(value: 'delete', child: Text(l10n.delete)),
               ],
             ),
             children: [
@@ -323,7 +340,7 @@ class MacSnippetsTab extends StatelessWidget {
                             HistoryItem(type: 'text', value: snippet.content),
                           );
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Snippet copied to clipboard')),
+                            SnackBar(content: Text(l10n.snippetCopied)),
                           );
                         }
                       : null,
@@ -344,7 +361,7 @@ class MacSnippetsTab extends StatelessWidget {
               }),
               ListTile(
                 leading: const Icon(Icons.add),
-                title: const Text('Add Snippet'),
+                title: Text(l10n.addSnippet),
                 onTap: () => _showAddSnippetDialog(context, folder),
               ),
             ],
@@ -355,21 +372,22 @@ class MacSnippetsTab extends StatelessWidget {
   }
 
   Future<void> _showAddFolderDialog(BuildContext context) async {
+    final l10n = context.l10n;
     final controller = TextEditingController();
     final result = await showDialog<String>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('New Folder'),
+          title: Text(l10n.newFolder),
           content: TextField(
             controller: controller,
-            decoration: const InputDecoration(labelText: 'Folder Name'),
+            decoration: InputDecoration(labelText: l10n.folderName),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.cancel)),
             TextButton(
               onPressed: () => Navigator.pop(context, controller.text.trim()),
-              child: const Text('Create'),
+              child: Text(l10n.create),
             ),
           ],
         );
@@ -382,28 +400,29 @@ class MacSnippetsTab extends StatelessWidget {
   }
 
   Future<void> _showImportXmlDialog(BuildContext context) async {
+    final l10n = context.l10n;
     final controller = TextEditingController();
     final result = await showDialog<String>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Import Snippets XML'),
+          title: Text(l10n.importSnippetsXml),
           content: SizedBox(
             width: 520,
             child: TextField(
               controller: controller,
               maxLines: 12,
-              decoration: const InputDecoration(
-                labelText: 'Paste XML content',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: l10n.pasteXmlContent,
+                border: const OutlineInputBorder(),
               ),
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.cancel)),
             TextButton(
               onPressed: () => Navigator.pop(context, controller.text.trim()),
-              child: const Text('Import'),
+              child: Text(l10n.import),
             ),
           ],
         );
@@ -416,21 +435,22 @@ class MacSnippetsTab extends StatelessWidget {
   }
 
   Future<void> _showEditFolderDialog(BuildContext context, SnippetFolder folder) async {
+    final l10n = context.l10n;
     final controller = TextEditingController(text: folder.title);
     final result = await showDialog<String>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Edit Folder'),
+          title: Text(l10n.editFolder),
           content: TextField(
             controller: controller,
-            decoration: const InputDecoration(labelText: 'Folder Name'),
+            decoration: InputDecoration(labelText: l10n.folderName),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.cancel)),
             TextButton(
               onPressed: () => Navigator.pop(context, controller.text.trim()),
-              child: const Text('Save'),
+              child: Text(l10n.save),
             ),
           ],
         );
@@ -443,15 +463,16 @@ class MacSnippetsTab extends StatelessWidget {
   }
 
   Future<void> _showDeleteFolderDialog(BuildContext context, SnippetFolder folder) async {
+    final l10n = context.l10n;
     final result = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Delete Folder'),
-          content: Text('Delete "${folder.title}" and all snippets?'),
+          title: Text(l10n.deleteFolder),
+          content: Text(l10n.deleteFolderMessage(folder.title)),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(l10n.cancel)),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: Text(l10n.delete)),
           ],
         );
       },
@@ -462,31 +483,32 @@ class MacSnippetsTab extends StatelessWidget {
   }
 
   Future<void> _showAddSnippetDialog(BuildContext context, SnippetFolder folder) async {
+    final l10n = context.l10n;
     final titleController = TextEditingController();
     final contentController = TextEditingController();
     final result = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('New Snippet'),
+          title: Text(l10n.newSnippet),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: titleController,
-                decoration: const InputDecoration(labelText: 'Title'),
+                decoration: InputDecoration(labelText: l10n.title),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: contentController,
-                decoration: const InputDecoration(labelText: 'Content'),
+                decoration: InputDecoration(labelText: l10n.content),
                 maxLines: 4,
               ),
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Create')),
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(l10n.cancel)),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: Text(l10n.create)),
           ],
         );
       },
@@ -505,31 +527,32 @@ class MacSnippetsTab extends StatelessWidget {
     SnippetFolder folder,
     Snippet snippet,
   ) async {
+    final l10n = context.l10n;
     final titleController = TextEditingController(text: snippet.title);
     final contentController = TextEditingController(text: snippet.content);
     final result = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Edit Snippet'),
+          title: Text(l10n.editSnippet),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: titleController,
-                decoration: const InputDecoration(labelText: 'Title'),
+                decoration: InputDecoration(labelText: l10n.title),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: contentController,
-                decoration: const InputDecoration(labelText: 'Content'),
+                decoration: InputDecoration(labelText: l10n.content),
                 maxLines: 4,
               ),
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Save')),
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(l10n.cancel)),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: Text(l10n.save)),
           ],
         );
       },
@@ -549,15 +572,16 @@ class MacSnippetsTab extends StatelessWidget {
     SnippetFolder folder,
     Snippet snippet,
   ) async {
+    final l10n = context.l10n;
     final result = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Delete Snippet'),
-          content: Text('Delete "${snippet.title}"?'),
+          title: Text(l10n.deleteSnippet),
+          content: Text(l10n.deleteSnippetMessage(snippet.title)),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(l10n.cancel)),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: Text(l10n.delete)),
           ],
         );
       },
@@ -604,13 +628,32 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final clipboardManager = ClipboardManager.instance;
     final historyLimit = clipboardManager.historyLimit;
     return ListView(
       children: [
         ListTile(
-          title: const Text('History Limit'),
-          subtitle: Text('Keep the most recent $historyLimit items'),
+          title: Text(l10n.languageLabel),
+          trailing: DropdownButton<AppLanguage>(
+            value: AppLanguageController.instance.language,
+            onChanged: (language) async {
+              if (language == null) return;
+              await AppLanguageController.instance.setLanguage(language);
+              if (mounted) setState(() {});
+            },
+            items: AppLanguage.values.map((language) {
+              return DropdownMenuItem(
+                value: language,
+                child: Text(language.displayName),
+              );
+            }).toList(),
+          ),
+        ),
+        const Divider(),
+        ListTile(
+          title: Text(l10n.historyLimit),
+          subtitle: Text(l10n.keepRecentItems(historyLimit)),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -642,9 +685,9 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
           child: TextField(
             controller: _excludedController,
             maxLines: null,
-            decoration: const InputDecoration(
-              labelText: 'Excluded Apps (bundle IDs, one per line)',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: l10n.excludedApps,
+              border: const OutlineInputBorder(),
             ),
           ),
         ),
@@ -659,12 +702,12 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
                   .toList();
               await clipboardManager.updateExcludedApps(apps);
             },
-            child: const Text('Save Excluded Apps'),
+            child: Text(l10n.saveExcludedApps),
           ),
         ),
         const Divider(),
         SwitchListTile(
-          title: const Text('Enable LAN Sync'),
+          title: Text(l10n.enableLanSync),
           value: SyncManager.instance.isEnabled,
           onChanged: (value) async {
             SyncManager.instance.isEnabled = value;
@@ -682,9 +725,9 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: TextField(
             controller: _portController,
-            decoration: const InputDecoration(
-              labelText: 'Sync Port',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: l10n.syncPort,
+              border: const OutlineInputBorder(),
             ),
             keyboardType: TextInputType.number,
             onChanged: (value) async {
@@ -701,9 +744,9 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: TextField(
             controller: _devicesController,
-            decoration: const InputDecoration(
-              labelText: 'Authorized Devices (comma separated)',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: l10n.authorizedDevicesComma,
+              border: const OutlineInputBorder(),
             ),
             onChanged: (value) async {
               final devices = value.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
@@ -714,9 +757,9 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
           ),
         ),
         const Divider(),
-        const ListTile(
-          title: Text('About'),
-          subtitle: Text('ClipyClone macOS v1.0.0'),
+        ListTile(
+          title: Text(l10n.about),
+          subtitle: const Text('ClipyClone macOS v1.0.0'),
         ),
       ],
     );
@@ -758,9 +801,9 @@ class _HomePageState extends State<HomePage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Received file: $fileName'),
+            content: Text(context.l10n.receivedFile(fileName)),
             action: SnackBarAction(
-              label: 'View',
+              label: context.l10n.view,
               onPressed: () => Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => const ReceivedFilesPage()),
@@ -787,7 +830,7 @@ class _HomePageState extends State<HomePage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open folder: $e')),
+          SnackBar(content: Text(context.l10n.couldNotOpenFolder(e))),
         );
       }
     }
@@ -795,11 +838,12 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final history = ClipboardManager.instance.history;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Clipy History'),
+        title: Text(l10n.clipyHistory),
         actions: [
           IconButton(
             icon: const Icon(Icons.folder_open),
@@ -807,7 +851,7 @@ class _HomePageState extends State<HomePage> {
               context,
               MaterialPageRoute(builder: (context) => const ReceivedFilesPage()),
             ),
-            tooltip: 'Received Files',
+            tooltip: l10n.receivedFiles,
           ),
           IconButton(
             icon: const Icon(Icons.settings),
@@ -826,7 +870,7 @@ class _HomePageState extends State<HomePage> {
               context,
               MaterialPageRoute(builder: (context) => const LogPage()),
             ),
-            tooltip: 'View Logs',
+            tooltip: l10n.viewLogs,
           ),
         ],
       ),
@@ -834,7 +878,7 @@ class _HomePageState extends State<HomePage> {
         children: [
           if (_activeTransfers.isNotEmpty)
             Container(
-              color: Colors.blue.withOpacity(0.1),
+              color: Colors.blue.withValues(alpha: 0.1),
               child: Column(
                 children: _activeTransfers.values.map((progress) {
                   return Padding(
@@ -848,7 +892,7 @@ class _HomePageState extends State<HomePage> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                'Receiving: ${progress.fileName}',
+                                l10n.receiving(progress.fileName),
                                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -883,14 +927,14 @@ class _HomePageState extends State<HomePage> {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  subtitle: Text('${entry.sourceApp ?? 'Unknown'} • ${entry.date.toString().split('.')[0]}'),
+                  subtitle: Text(l10n.sourceAndDate(entry.sourceApp, entry.date.toString().split('.')[0])),
                   onTap: () {
                     if (isFile) {
                       _openFolder(entry.item.value.toString());
                     } else {
                       ClipboardManager.instance.copyToClipboard(entry.item);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Copied to clipboard')),
+                        SnackBar(content: Text(l10n.copiedToClipboard)),
                       );
                     }
                   },
@@ -946,10 +990,29 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(title: Text(l10n.settings)),
       body: ListView(
         children: [
+          ListTile(
+            title: Text(l10n.languageLabel),
+            trailing: DropdownButton<AppLanguage>(
+              value: AppLanguageController.instance.language,
+              onChanged: (language) async {
+                if (language == null) return;
+                await AppLanguageController.instance.setLanguage(language);
+                if (mounted) setState(() {});
+              },
+              items: AppLanguage.values.map((language) {
+                return DropdownMenuItem(
+                  value: language,
+                  child: Text(language.displayName),
+                );
+              }).toList(),
+            ),
+          ),
+          const Divider(),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
             child: Row(
@@ -957,10 +1020,10 @@ class _SettingsPageState extends State<SettingsPage> {
                 Expanded(
                   child: TextField(
                     controller: _nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Device Name (for Sync)',
-                      border: OutlineInputBorder(),
-                      hintText: 'Enter device name',
+                    decoration: InputDecoration(
+                      labelText: l10n.deviceNameForSync,
+                      border: const OutlineInputBorder(),
+                      hintText: l10n.enterDeviceName,
                     ),
                   ),
                 ),
@@ -969,22 +1032,22 @@ class _SettingsPageState extends State<SettingsPage> {
                   onPressed: () async {
                     final newName = _nameController.text.trim();
                     if (newName.isNotEmpty) {
+                      final messenger = ScaffoldMessenger.of(context);
+                      final message = l10n.deviceNameUpdated;
                       await SyncManager.instance.updateDeviceName(newName);
                       if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Device name updated and sync restarted')),
-                        );
+                        messenger.showSnackBar(SnackBar(content: Text(message)));
                       }
                     }
                   },
-                  child: const Text('Save'),
+                  child: Text(l10n.save),
                 ),
               ],
             ),
           ),
           const Divider(),
           SwitchListTile(
-            title: const Text('Enable LAN Sync'),
+            title: Text(l10n.enableLanSync),
             value: SyncManager.instance.isEnabled,
             onChanged: (value) async {
               SyncManager.instance.isEnabled = value;
@@ -1002,9 +1065,9 @@ class _SettingsPageState extends State<SettingsPage> {
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: TextField(
               controller: _portController,
-              decoration: const InputDecoration(
-                labelText: 'Sync Port',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: l10n.syncPort,
+                border: const OutlineInputBorder(),
               ),
               keyboardType: TextInputType.number,
               onChanged: (value) async {
@@ -1018,17 +1081,17 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: Text(
-              'Authorized Devices',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blue),
+              l10n.authorizedDevices,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blue),
             ),
           ),
           if (_availableDevices.isEmpty)
-            const ListTile(
-              title: Text('No devices found'),
-              subtitle: Text('Ensure other devices are on the same WiFi'),
+            ListTile(
+              title: Text(l10n.noDevicesFound),
+              subtitle: Text(l10n.sameWifiHint),
             )
           else
             ..._availableDevices.map((deviceName) {
@@ -1053,8 +1116,8 @@ class _SettingsPageState extends State<SettingsPage> {
           const Divider(),
           ListTile(
             leading: const Icon(Icons.list_alt),
-            title: const Text('View Logs'),
-            subtitle: const Text('App runtime logs for troubleshooting'),
+            title: Text(l10n.viewLogs),
+            subtitle: Text(l10n.appRuntimeLogs),
             onTap: () {
               Navigator.push(
                 context,
@@ -1064,7 +1127,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           const Divider(),
           ListTile(
-            title: const Text('About'),
+            title: Text(l10n.about),
             subtitle: Text('ClipyClone ${Platform.isIOS ? 'iOS' : 'Android'} v1.0.0'),
           ),
         ],
@@ -1126,7 +1189,7 @@ class _ReceivedFilesPageState extends State<ReceivedFilesPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open folder: $e')),
+          SnackBar(content: Text(context.l10n.couldNotOpenFolder(e))),
         );
       }
     }
@@ -1134,10 +1197,11 @@ class _ReceivedFilesPageState extends State<ReceivedFilesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
-      appBar: AppBar(title: const Text('Received Files')),
+      appBar: AppBar(title: Text(l10n.receivedFiles)),
       body: _files.isEmpty
-          ? const Center(child: Text('No files received yet'))
+          ? Center(child: Text(l10n.noFilesReceived))
           : ListView.builder(
               itemCount: _files.length,
               itemBuilder: (context, index) {
@@ -1147,7 +1211,7 @@ class _ReceivedFilesPageState extends State<ReceivedFilesPage> {
                   leading: const Icon(Icons.insert_drive_file),
                   title: Text(file['fileName']),
                   subtitle: Text(
-                    '${_formatSize(file['fileSize'])} • From: ${file['senderName']}\n${date.toString().split('.')[0]}',
+                    '${_formatSize(file['fileSize'])} • ${l10n.fromSender(file['senderName'])}\n${date.toString().split('.')[0]}',
                   ),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline),
