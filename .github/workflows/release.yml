@@ -47,7 +47,7 @@ jobs:
         run: |
           APP_VERSION="${{ steps.version.outputs.version }}" \
           BUILD_NUMBER="${{ github.run_number }}" \
-          ./build_app.sh
+          ./build_macos_app.sh
 
       - name: Package macOS app
         run: |
