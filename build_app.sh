@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # 配置变量
 APP_NAME="ClipyClone"
@@ -61,28 +62,12 @@ swiftc \
     -framework CoreGraphics \
     -framework Carbon
 
-if [ $? -ne 0 ]; then
-    echo "❌ 编译失败！"
-    exit 1
-fi
-
 # 4. 准备资源文件
 echo "📦 准备资源文件..."
 rm -rf AppIcon.iconset AppIcon.icns
 if [ -f "Clipy/Resources/AppIcon.png" ]; then
     echo "🎨 生成 AppIcon.icns..."
-    mkdir -p AppIcon.iconset
-    sips -z 16 16     Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_16x16.png
-    sips -z 32 32     Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_16x16@2x.png
-    sips -z 32 32     Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_32x32.png
-    sips -z 64 64     Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_32x32@2x.png
-    sips -z 128 128   Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_128x128.png
-    sips -z 256 256   Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_128x128@2x.png
-    sips -z 256 256   Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_256x256.png
-    sips -z 512 512   Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_256x256@2x.png
-    sips -z 512 512   Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_512x512.png
-    sips -z 1024 1024 Clipy/Resources/AppIcon.png --out AppIcon.iconset/icon_512x512@2x.png
-    if iconutil -c icns AppIcon.iconset && [ -f "AppIcon.icns" ]; then
+    if sips -s format icns Clipy/Resources/AppIcon.png --out AppIcon.icns >/dev/null && [ -f "AppIcon.icns" ]; then
         cp AppIcon.icns "${RESOURCES_DIR}/"
     else
         echo "⚠️ AppIcon.icns 生成失败，跳过图标复制。"
@@ -133,6 +118,10 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
 EOF
 
 # 5. 设置权限
+if [ ! -f "${MACOS_DIR}/${EXECUTABLE_NAME}" ]; then
+    echo "❌ 可执行文件不存在: ${MACOS_DIR}/${EXECUTABLE_NAME}"
+    exit 1
+fi
 chmod +x "${MACOS_DIR}/${EXECUTABLE_NAME}"
 
 echo "✅ 构建完成: ${APP_BUNDLE}"
