@@ -117,7 +117,7 @@ class MenuController: NSObject {
                     
                     let menuItem = NSMenuItem(title: prefix + displayTitle, action: #selector(menuItemClicked(_:)), keyEquivalent: keyEquivalent)
                     menuItem.target = self
-                    menuItem.representedObject = entry.item
+                    menuItem.representedObject = entry
                     
                     // Add app source if available
                     if let app = entry.sourceApp {
@@ -252,7 +252,10 @@ class MenuController: NSObject {
     }
     
     @objc private func menuItemClicked(_ sender: NSMenuItem) {
-        if let item = sender.representedObject as? HistoryItem {
+        if let entry = sender.representedObject as? HistoryEntry {
+            clipboardManager.moveHistoryEntryToFront(entry)
+            clipboardManager.copyToPasteboard(entry.item)
+        } else if let item = sender.representedObject as? HistoryItem {
             clipboardManager.copyToPasteboard(item)
         }
     }

@@ -354,6 +354,30 @@ class ClipboardManager {
         onHistoryChanged?(history)
     }
     
+    func moveHistoryEntryToFront(_ entry: HistoryEntry) {
+        let hash = entry.contentHash ?? contentHash(for: entry.item)
+        
+        history.removeAll { existingEntry in
+            isSameHistoryItem(existingEntry, as: entry.item, contentHash: hash)
+        }
+        
+        let updatedEntry = HistoryEntry(
+            item: entry.item,
+            date: Date(),
+            sourceApp: entry.sourceApp,
+            contentHash: hash
+        )
+        history.insert(updatedEntry, at: 0)
+        
+        if history.count > maxHistoryItems {
+            history.removeLast()
+        }
+        
+        updateRecentContentHashes()
+        saveHistory()
+        onHistoryChanged?(history)
+    }
+    
     func copyToPasteboard(_ item: HistoryItem) {
         pasteboard.clearContents()
         switch item {
@@ -385,6 +409,25 @@ class ClipboardManager {
         
         vKeyDown?.post(tap: .cghidEventTap)
         vKeyUp?.post(tap: .cghidEventTap)
+    }
+    
+    private func isSameHistoryItem(_ entry: HistoryEntry, as item: HistoryItem, contentHash hash: String?) -> Bool {
+        if let existingHash = entry.contentHash, let hash = hash {
+            return existingHash == hash
+        }
+        
+        switch (entry.item, item) {
+        case (.text(let s1), .text(let s2)):
+            return s1 == s2
+        case (.fileURL(let u1), .fileURL(let u2)):
+            return u1 == u2
+        case (.image(let d1), .image(let d2)),
+             (.rtf(let d1), .rtf(let d2)),
+             (.pdf(let d1), .pdf(let d2)):
+            return d1 == d2
+        default:
+            return false
+        }
     }
     
     private func contentHash(for item: HistoryItem) -> String? {
