@@ -36,7 +36,9 @@ class AppLanguageController extends ChangeNotifier {
 
   AppLanguage get language => _language;
   AppStrings get strings => AppStrings(_language);
-  Locale get locale => Locale(_language.code);
+  Locale get locale => _language == AppLanguage.zh
+      ? const Locale('zh', 'CN')
+      : const Locale('en', 'US');
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
@@ -74,6 +76,7 @@ class AppStrings {
   String get copyAll => _t('复制全部', 'Copy All');
   String get noLogs => _t('暂无日志。', 'No logs recorded yet.');
   String get noClipboardHistory => _t('暂无剪贴板历史', 'No clipboard history yet');
+  String get noSnippetsYet => _t('暂无片段', 'No snippets yet');
   String historyRange(int start, int end) => _t('历史 $start-$end', 'History $start-$end');
   String sourceAndDate(String? source, String date) => '${source ?? unknown} • $date';
   String get unknown => _t('未知', 'Unknown');
@@ -131,6 +134,24 @@ class AppStrings {
   String get appRuntimeLogs => _t('用于排查问题的应用运行日志', 'App runtime logs for troubleshooting');
   String get noFilesReceived => _t('暂无已接收文件', 'No files received yet');
   String fromSender(String senderName) => _t('来自：$senderName', 'From: $senderName');
+
+  // Transfer Station
+  String get transferStation => _t('超级中转站', 'Transfer Station');
+  String get addText => _t('添加文本', 'Add Text');
+  String get addFile => _t('添加文件', 'Add File');
+  String get clearAll => _t('清空', 'Clear All');
+  String get dragOrAddToTransfer => _t('拖拽或点击添加内容', 'Drag or tap to add content');
+  String get enterTextContent => _t('输入要添加到中转站的文本', 'Enter text to add to transfer station');
+  String get add => _t('添加', 'Add');
+  String get clearAllTransfer => _t('清空中转站', 'Clear Transfer Station');
+  String get clearAllTransferConfirm => _t('确定要清空所有中转站内容吗？', 'Clear all transfer station content?');
+  String get copyContent => _t('复制内容', 'Copy Content');
+  String get setTemporary => _t('设为临时', 'Set Temporary');
+  String get setPermanent => _t('设为永久', 'Set Permanent');
+  String get permanent => _t('永久', 'Permanent');
+  String get temporary => _t('临时', 'Temporary');
+  String itemCount(int total, int permanent) =>
+      _t('$total 条 ($permanent 永久)', '$total items ($permanent permanent)');
 
   String _t(String zh, String en) => language == AppLanguage.zh ? zh : en;
 }

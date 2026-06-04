@@ -4,6 +4,7 @@ class MenuController: NSObject {
     private var statusItem: NSStatusItem!
     private let clipboardManager = ClipboardManager.shared
     private let snippetManager = SnippetManager.shared
+    private lazy var transferWindow = TransferWindow()
     
     override init() {
         super.init()
@@ -228,6 +229,10 @@ class MenuController: NSObject {
         
         menu.addItem(NSMenuItem.separator())
         
+        let transferItem = NSMenuItem(title: L10n.t(.transferStation) + "...", action: #selector(openTransferStation), keyEquivalent: "T")
+        transferItem.target = self
+        menu.addItem(transferItem)
+
         let editSnippetsItem = NSMenuItem(title: L10n.t(.editSnippets), action: #selector(openSnippetEditor), keyEquivalent: "S")
         editSnippetsItem.target = self
         menu.addItem(editSnippetsItem)
@@ -299,6 +304,9 @@ class MenuController: NSObject {
             sender.state = .on
         }
         PreferencesManager.shared.authorizedDevices = authorizedDevices
+        if authorizedDevices.contains(deviceName) {
+            SyncManager.shared.requestTransferList(from: deviceName)
+        }
     }
     
     @objc private func clearHistory() {
@@ -315,6 +323,12 @@ class MenuController: NSObject {
         SnippetEditorWindow.shared.makeKeyAndOrderFront(nil)
     }
     
+    @objc private func openTransferStation() {
+        NSApp.activate(ignoringOtherApps: true)
+        SyncManager.shared.requestTransferListsForAvailableDevices()
+        transferWindow.showWindow()
+    }
+
     @objc private func openLogs() {
         LogWindow.show()
     }

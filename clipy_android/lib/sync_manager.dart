@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import 'package:crypto/crypto.dart';
 import 'log_manager.dart';
 import 'clipboard_manager.dart';
+import 'transfer_manager.dart';
 import 'compression_utils.dart';
 import 'permission_manager.dart';
 import 'storage_paths.dart';
@@ -116,6 +117,21 @@ class _PendingFile {
   _PendingFile({required this.header, required this.senderName, required this.file, required this.sink});
 }
 
+class _PendingTransferFile {
+  final FileHeader header;
+  final String senderName;
+  final File file;
+  final IOSink sink;
+  int receivedBytes = 0;
+
+  _PendingTransferFile({
+    required this.header,
+    required this.senderName,
+    required this.file,
+    required this.sink,
+  });
+}
+
 class SyncManager {
   static final SyncManager instance = SyncManager._();
   SyncManager._();
@@ -135,19 +151,27 @@ class SyncManager {
   Stream<FileProgress> get onFileProgress => _fileProgressController.stream;
 
   final Map<String, _PendingFile> _pendingFiles = {};
+  final Map<String, _PendingTransferFile> _pendingTransferFiles = {};
   final Map<String, DateTime> _lastProgressUpdate = {};
   
-  List<String> get availableDeviceNames =>
-      _discoveredServices.map((s) => s.name ?? 'Unknown').toList()..sort();
+  List<String> get availableDeviceNames {
+    final names = _discoveredServices
+        .map((s) => s.name)
+        .whereType<String>()
+        .where((name) => name.isNotEmpty && name != deviceId)
+        .toSet()
+        .toList()
+      ..sort();
+    return names;
+  }
 
   bool isEnabled = false;
   int port = 5566;
   List<String> authorizedDevices = [];
   
   String _deviceName = '';
-  String get deviceId => _deviceName.isEmpty 
-      ? '${Platform.isIOS ? 'iOS' : 'Android'}-${const Uuid().v4().substring(0, 8)}' 
-      : _deviceName;
+  String _fallbackDeviceId = '';
+  String get deviceId => _deviceName.isEmpty ? _fallbackDeviceId : _deviceName;
 
   final String _serviceType = '_clipy-sync._tcp';
 
@@ -156,7 +180,12 @@ class SyncManager {
     isEnabled = prefs.getBool('syncEnabled') ?? false;
     port = prefs.getInt('syncPort') ?? 5566;
     authorizedDevices = prefs.getStringList('authorizedDevices') ?? [];
-    _deviceName = prefs.getString('deviceName') ?? '';
+    _deviceName = (prefs.getString('deviceName') ?? '').trim();
+    _fallbackDeviceId = (prefs.getString('deviceId') ?? '').trim();
+    if (_fallbackDeviceId.isEmpty) {
+      _fallbackDeviceId = '${Platform.isIOS ? 'iOS' : 'Android'}-${const Uuid().v4().substring(0, 8)}';
+      await prefs.setString('deviceId', _fallbackDeviceId);
+    }
     
     if (isEnabled) {
       start();
@@ -164,9 +193,12 @@ class SyncManager {
   }
 
   Future<void> updateDeviceName(String name) async {
-    _deviceName = name;
+    final newName = name.trim();
+    if (newName.isEmpty || newName == deviceId) return;
+
+    _deviceName = newName;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('deviceName', name);
+    await prefs.setString('deviceName', newName);
     if (isEnabled) {
       await stop();
       await Future.delayed(const Duration(seconds: 1));
@@ -206,6 +238,8 @@ class SyncManager {
     }
     await _server?.close();
     _server = null;
+    _discoveredServices.clear();
+    _devicesChangedController.add(availableDeviceNames);
   }
 
   // MARK: - mDNS Publishing
@@ -226,10 +260,18 @@ class SyncManager {
       _discovery = await startDiscovery(_serviceType);
       _discovery!.addListener(() {
         _discoveredServices.clear();
-        // Force refresh by clearing old entries and re-adding
-        final newServices = _discovery!.services.where((s) => s.name != deviceId).toList();
+        final seenNames = <String>{};
+        final newServices = _discovery!.services.where((service) {
+          final name = service.name;
+          if (name == null || name.isEmpty || name == deviceId || seenNames.contains(name)) {
+            return false;
+          }
+          seenNames.add(name);
+          return true;
+        }).toList();
         _discoveredServices.addAll(newServices);
         _devicesChangedController.add(availableDeviceNames);
+        unawaited(requestTransferListsForAvailableDevices());
         appLog('Discovered devices updated (${newServices.length}): ${availableDeviceNames.join(', ')}');
       });
     } catch (e) {
@@ -369,6 +411,18 @@ class SyncManager {
       await _handleFileHeader(decrypted, message.deviceId);
     } else if (message.type == 'file/chunk') {
       await _handleFileChunk(decrypted, message.deviceId);
+    } else if (message.type == 'transfer/add') {
+      TransferManager.instance.handleRemoteAdd(decrypted, message.deviceId);
+    } else if (message.type == 'transfer/remove') {
+      TransferManager.instance.handleRemoteRemove(decrypted);
+    } else if (message.type == 'transfer/request') {
+      TransferManager.instance.syncAllTo(message.deviceId);
+    } else if (message.type == 'transfer/list') {
+      TransferManager.instance.handleRemoteList(decrypted, message.deviceId);
+    } else if (message.type == 'transfer/file/header') {
+      await _handleTransferFileHeader(decrypted, message.deviceId);
+    } else if (message.type == 'transfer/file/chunk') {
+      await _handleTransferFileChunk(decrypted, message.deviceId);
     }
   }
 
@@ -532,6 +586,68 @@ class SyncManager {
     await prefs.setString('fileHistory', jsonEncode(history));
   }
 
+  Future<void> _handleTransferFileHeader(String json, String sender) async {
+    try {
+      final header = FileHeader.fromJson(jsonDecode(json));
+      appLog('Transfer: received file header for ${header.fileName} from $sender');
+
+      final appDir = await StoragePaths.appStorageDirectory();
+      final transferDir = Directory('${appDir.path}/TransferFiles');
+      if (!await transferDir.exists()) {
+        await transferDir.create(recursive: true);
+      }
+
+      final filePath = await _getUniqueFileName(transferDir.path, header.fileName);
+      final file = File(filePath);
+      final sink = file.openWrite();
+      _pendingTransferFiles[header.fileId] = _PendingTransferFile(
+        header: header,
+        senderName: sender,
+        file: file,
+        sink: sink,
+      );
+    } catch (e) {
+      appLog('Transfer: error handling file header: $e', level: 'error');
+    }
+  }
+
+  Future<void> _handleTransferFileChunk(String json, String sender) async {
+    try {
+      final chunk = FileChunk.fromJson(jsonDecode(json));
+      final pending = _pendingTransferFiles[chunk.fileId];
+      if (pending == null) {
+        appLog('Transfer: received chunk for unknown fileId: ${chunk.fileId}', level: 'error');
+        return;
+      }
+
+      var data = Uint8List.fromList(base64Decode(chunk.data));
+      if (chunk.isCompressed) {
+        final decompressed = CompressionUtils.decompressData(data);
+        if (decompressed != null) {
+          data = decompressed;
+        }
+      }
+
+      pending.sink.add(data);
+      pending.receivedBytes += data.length;
+
+      if (chunk.isLast) {
+        await pending.sink.flush();
+        await pending.sink.close();
+        _pendingTransferFiles.remove(chunk.fileId);
+        await TransferManager.instance.addReceivedFileItem(
+          file: pending.file,
+          fileName: pending.header.fileName,
+          fileSize: pending.header.fileSize,
+          sourceDevice: pending.senderName,
+        );
+        appLog('Transfer: file transfer completed: ${pending.header.fileName}');
+      }
+    } catch (e) {
+      appLog('Transfer: error handling file chunk: $e', level: 'error');
+    }
+  }
+
   // MARK: - Encryption
   static const String _hardcodedSecret = "ClipySyncSecret2026";
 
@@ -615,6 +731,216 @@ class SyncManager {
         appLog('Sending sync to ${service.name}...');
         await _sendSync(jsonData, service);
       }
+    }
+  }
+
+  Future<void> broadcastTransferMessage({
+    required String type,
+    required String content,
+    required String hash,
+  }) async {
+    if (!isEnabled) return;
+
+    appLog('Broadcasting transfer message: $type');
+    final encrypted = _encrypt(content);
+    if (encrypted == null) return;
+
+    final message = SyncMessage(
+      deviceId: deviceId,
+      timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+      type: type,
+      content: encrypted,
+      hash: hash,
+    );
+
+    final jsonData = jsonEncode(message.toJson());
+
+    for (var service in _discoveredServices) {
+      if (authorizedDevices.contains(service.name)) {
+        appLog('Sending transfer message to ${service.name}...');
+        await _sendSync(jsonData, service);
+      }
+    }
+  }
+
+  Future<void> sendTransferMessage({
+    required String type,
+    required String content,
+    required String hash,
+    required String targetDevice,
+  }) async {
+    if (!isEnabled) return;
+
+    final encrypted = _encrypt(content);
+    if (encrypted == null) return;
+
+    final message = SyncMessage(
+      deviceId: deviceId,
+      timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+      type: type,
+      content: encrypted,
+      hash: hash,
+    );
+
+    final jsonData = jsonEncode(message.toJson());
+
+    final target = _discoveredServices.where((s) => s.name == targetDevice).toList();
+    if (target.isNotEmpty) {
+      appLog('Sending transfer message to $targetDevice...');
+      await _sendSync(jsonData, target.first);
+    } else {
+      appLog('Transfer: could not find endpoint for device: $targetDevice', level: 'error');
+    }
+  }
+
+  Future<void> requestTransferList({
+    required String deviceName,
+  }) async {
+    if (!isEnabled) return;
+    if (!authorizedDevices.contains(deviceName)) return;
+    appLog('Transfer: requesting station snapshot from $deviceName');
+    await sendTransferMessage(
+      type: 'transfer/request',
+      content: '{}',
+      hash: '',
+      targetDevice: deviceName,
+    );
+  }
+
+  Future<void> requestTransferListsForAvailableDevices() async {
+    for (final deviceName in availableDeviceNames) {
+      if (authorizedDevices.contains(deviceName)) {
+        await requestTransferList(deviceName: deviceName);
+      }
+    }
+  }
+
+  Future<void> broadcastTransferFile(File file) async {
+    if (!isEnabled) return;
+    for (final service in _discoveredServices) {
+      final deviceName = service.name;
+      if (deviceName != null && authorizedDevices.contains(deviceName)) {
+        await _sendFile(
+          file,
+          service: service,
+          headerType: 'transfer/file/header',
+          chunkType: 'transfer/file/chunk',
+          addToFileHistory: false,
+        );
+      }
+    }
+  }
+
+  Future<void> sendTransferFile(File file, {required String targetDevice}) async {
+    if (!isEnabled) return;
+    final targets = _discoveredServices.where((s) => s.name == targetDevice).toList();
+    if (targets.isEmpty) {
+      appLog('Transfer: could not find endpoint for device: $targetDevice', level: 'error');
+      return;
+    }
+    await _sendFile(
+      file,
+      service: targets.first,
+      headerType: 'transfer/file/header',
+      chunkType: 'transfer/file/chunk',
+      addToFileHistory: false,
+    );
+  }
+
+  Future<void> _sendFile(
+    File file, {
+    required Service service,
+    required String headerType,
+    required String chunkType,
+    required bool addToFileHistory,
+  }) async {
+    try {
+      if (!await file.exists()) {
+        appLog('File does not exist: ${file.path}', level: 'error');
+        return;
+      }
+
+      final fileId = const Uuid().v4();
+      final fileName = file.uri.pathSegments.last;
+      final fileSize = await file.length();
+      final headerJson = jsonEncode({
+        'fileId': fileId,
+        'fileName': fileName,
+        'fileSize': fileSize,
+      });
+
+      final encryptedHeader = _encrypt(headerJson);
+      if (encryptedHeader == null) return;
+      final headerMessage = SyncMessage(
+        deviceId: deviceId,
+        timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+        type: headerType,
+        content: encryptedHeader,
+        hash: '',
+      );
+      await _sendSync(jsonEncode(headerMessage.toJson()), service);
+
+      final shouldCompress = CompressionUtils.shouldCompressFile(file.path);
+      const chunkSize = 128 * 1024;
+      final raf = await file.open();
+      try {
+        var chunkIndex = 0;
+        var bytesRead = 0;
+        while (bytesRead < fileSize) {
+          final rawData = await raf.read(chunkSize);
+          if (rawData.isEmpty) break;
+
+          bytesRead += rawData.length;
+          var processedData = Uint8List.fromList(rawData);
+          var isCompressed = false;
+          int? originalSize;
+
+          if (shouldCompress) {
+            final compressed = CompressionUtils.compressData(processedData);
+            if (compressed != null && compressed.length < processedData.length) {
+              originalSize = processedData.length;
+              processedData = compressed;
+              isCompressed = true;
+            }
+          }
+
+          final chunkJson = jsonEncode({
+            'fileId': fileId,
+            'chunkIndex': chunkIndex,
+            'data': base64Encode(processedData),
+            'isLast': bytesRead >= fileSize,
+            'isCompressed': isCompressed,
+            if (originalSize != null) 'originalSize': originalSize,
+          });
+
+          final encryptedChunk = _encrypt(chunkJson);
+          if (encryptedChunk == null) break;
+          final chunkMessage = SyncMessage(
+            deviceId: deviceId,
+            timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+            type: chunkType,
+            content: encryptedChunk,
+            hash: '',
+          );
+          await _sendSync(jsonEncode(chunkMessage.toJson()), service);
+          await Future.delayed(const Duration(milliseconds: 30));
+          chunkIndex += 1;
+        }
+      } finally {
+        await raf.close();
+      }
+
+      if (addToFileHistory) {
+        await _addToFileHistory(
+          fileName: fileName,
+          filePath: file.path,
+          fileSize: fileSize,
+          senderName: 'Me (Sent to ${service.name ?? 'Unknown'})',
+        );
+      }
+      appLog('File transfer completed for $fileName');
+    } catch (e) {
+      appLog('Failed to send file: $e', level: 'error');
     }
   }
 

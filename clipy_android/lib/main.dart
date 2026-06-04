@@ -3,19 +3,48 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'clipboard_manager.dart';
 import 'sync_manager.dart';
+import 'transfer_manager.dart';
 import 'log_manager.dart';
 import 'models.dart';
 import 'app_localizations.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await ClipboardManager.instance.init();
-  await SnippetManager.instance.init();
-  await SyncManager.instance.init();
-  await AppLanguageController.instance.init();
+  
+  try {
+    await ClipboardManager.instance.init();
+  } catch (e) {
+    debugPrint('ClipboardManager init error: $e');
+  }
+  
+  try {
+    await SnippetManager.instance.init();
+  } catch (e) {
+    debugPrint('SnippetManager init error: $e');
+  }
+  
+  try {
+    await TransferManager.instance.init();
+  } catch (e) {
+    debugPrint('TransferManager init error: $e');
+  }
+  
+  try {
+    await SyncManager.instance.init();
+  } catch (e) {
+    debugPrint('SyncManager init error: $e');
+  }
+  
+  try {
+    await AppLanguageController.instance.init();
+  } catch (e) {
+    debugPrint('AppLanguageController init error: $e');
+  }
+  
   runApp(const MyApp());
 }
 
@@ -24,17 +53,18 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: AppLanguageController.instance,
+    return ListenableBuilder(
+      listenable: AppLanguageController.instance,
       builder: (context, _) {
         final strings = AppLanguageController.instance.strings;
         return MaterialApp(
           title: strings.appTitle,
           locale: AppLanguageController.instance.locale,
           supportedLocales: const [
-            Locale('zh'),
-            Locale('en'),
+            Locale('zh', 'CN'),
+            Locale('en', 'US'),
           ],
+          localizationsDelegates: GlobalMaterialLocalizations.delegates,
           theme: ThemeData(
             primarySwatch: Colors.blue,
             useMaterial3: true,
@@ -59,15 +89,17 @@ class _MacHomePageState extends State<MacHomePage> with SingleTickerProviderStat
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     ClipboardManager.instance.onHistoryChanged = _handleDataChanged;
     SnippetManager.instance.onSnippetsChanged = _handleDataChanged;
+    TransferManager.instance.onItemsChanged = (_) => _handleDataChanged();
   }
 
   @override
   void dispose() {
     ClipboardManager.instance.onHistoryChanged = null;
     SnippetManager.instance.onSnippetsChanged = null;
+    TransferManager.instance.onItemsChanged = null;
     _tabController.dispose();
     super.dispose();
   }
@@ -86,13 +118,18 @@ class _MacHomePageState extends State<MacHomePage> with SingleTickerProviderStat
         title: Text(l10n.appTitle),
         actions: [
           IconButton(
+            icon: const Icon(Icons.swap_horiz),
+            onPressed: () => _switchTab(2),
+            tooltip: l10n.transferStation,
+          ),
+          IconButton(
             icon: const Icon(Icons.snippet_folder_outlined),
             onPressed: () => _switchTab(1),
             tooltip: l10n.snippets,
           ),
           IconButton(
             icon: const Icon(Icons.tune),
-            onPressed: () => _switchTab(2),
+            onPressed: () => _switchTab(3),
             tooltip: l10n.preferences,
           ),
           IconButton(
@@ -106,6 +143,7 @@ class _MacHomePageState extends State<MacHomePage> with SingleTickerProviderStat
           tabs: [
             Tab(text: l10n.history),
             Tab(text: l10n.snippets),
+            Tab(text: l10n.transferStation),
             Tab(text: l10n.preferences),
           ],
         ),
@@ -115,6 +153,7 @@ class _MacHomePageState extends State<MacHomePage> with SingleTickerProviderStat
         children: const [
           MacHistoryTab(),
           MacSnippetsTab(),
+          MacTransferTab(),
           MacSettingsTab(),
         ],
       ),
@@ -592,6 +631,264 @@ class MacSnippetsTab extends StatelessWidget {
   }
 }
 
+class MacTransferTab extends StatefulWidget {
+  const MacTransferTab({super.key});
+
+  @override
+  State<MacTransferTab> createState() => _MacTransferTabState();
+}
+
+class _MacTransferTabState extends State<MacTransferTab> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(SyncManager.instance.requestTransferListsForAvailableDevices());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final manager = TransferManager.instance;
+    final items = manager.items;
+    final rows = _groupTransferItemsByDevice(items);
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(8),
+          child: Row(
+            children: [
+              ElevatedButton.icon(
+                onPressed: () => _showAddTextDialog(context),
+                icon: const Icon(Icons.text_fields, size: 18),
+                label: Text(l10n.addText),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: () => _showAddFileDialog(context),
+                icon: const Icon(Icons.attach_file, size: 18),
+                label: Text(l10n.addFile),
+              ),
+              const Spacer(),
+              if (items.isNotEmpty)
+                TextButton.icon(
+                  onPressed: () => _confirmClearAll(context),
+                  icon: const Icon(Icons.delete_sweep, size: 18),
+                  label: Text(l10n.clearAll),
+                ),
+            ],
+          ),
+        ),
+        if (items.isEmpty)
+          Expanded(
+            child: Center(
+              child: Text(
+                l10n.dragOrAddToTransfer,
+                style: TextStyle(color: Colors.grey[500], fontSize: 16),
+              ),
+            ),
+          )
+        else
+          Expanded(
+            child: ListView.builder(
+              itemCount: rows.length,
+              itemBuilder: (context, index) {
+                final row = rows[index];
+                if (row is String) {
+                  return _TransferDeviceHeader(deviceName: row);
+                }
+                return _TransferItemTile(item: row as TransferItem);
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _showAddTextDialog(BuildContext context) {
+    final l10n = context.l10n;
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.addText),
+        content: TextField(
+          controller: controller,
+          maxLines: 5,
+          decoration: InputDecoration(hintText: l10n.enterTextContent),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
+          TextButton(
+            onPressed: () {
+              final text = controller.text.trim();
+              if (text.isNotEmpty) {
+                TransferManager.instance.addTextItem(text);
+              }
+              Navigator.pop(ctx);
+            },
+            child: Text(l10n.add),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAddFileDialog(BuildContext context) {
+    // On macOS, file picker would be used. For now, show text input for file path.
+    final l10n = context.l10n;
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.addFile),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(hintText: '/path/to/file'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
+          TextButton(
+            onPressed: () {
+              final path = controller.text.trim();
+              if (path.isNotEmpty) {
+                final file = File(path);
+                if (file.existsSync()) {
+                  TransferManager.instance.addFileItem(file);
+                } else if (Directory(path).existsSync()) {
+                  // Handle as folder
+                  TransferManager.instance.addItem(
+                    TransferContent(type: 'folder', value: {
+                      'folderPath': path,
+                      'folderName': path.split('/').last,
+                      'fileCount': 0,
+                    }),
+                    title: path.split('/').last,
+                  );
+                }
+              }
+              Navigator.pop(ctx);
+            },
+            child: Text(l10n.add),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmClearAll(BuildContext context) {
+    final l10n = context.l10n;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.clearAllTransfer),
+        content: Text(l10n.clearAllTransferConfirm),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
+          TextButton(
+            onPressed: () {
+              TransferManager.instance.clearAll();
+              Navigator.pop(ctx);
+            },
+            child: Text(l10n.clearAll),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TransferItemTile extends StatelessWidget {
+  final TransferItem item;
+  const _TransferItemTile({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return Dismissible(
+      key: ValueKey(item.id),
+      background: Container(
+        color: Colors.red,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 16),
+        child: const Icon(Icons.delete, color: Colors.white),
+      ),
+      direction: DismissDirection.endToStart,
+      onDismissed: (_) => TransferManager.instance.removeItem(item.id),
+      child: ListTile(
+        leading: _iconForContent(item.content),
+        title: Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+        subtitle: Text(
+          '${item.content.typeLabel} • ${item.sourceDevice} • ${item.isPermanent ? l10n.permanent : l10n.temporary}',
+        ),
+        trailing: IconButton(
+          icon: Icon(item.isPermanent ? Icons.lock : Icons.lock_open, size: 18),
+          onPressed: () => TransferManager.instance.togglePermanent(item.id),
+          tooltip: item.isPermanent ? l10n.setTemporary : l10n.setPermanent,
+        ),
+        onTap: () {
+          if (item.content.type == 'text') {
+            ClipboardManager.instance.copyToClipboard(HistoryItem(type: 'text', value: item.content.value));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(l10n.copiedToClipboard)),
+            );
+          }
+        },
+      ),
+    );
+  }
+
+  Widget _iconForContent(TransferContent content) {
+    switch (content.type) {
+      case 'text':
+        return const Icon(Icons.short_text);
+      case 'rtf':
+        return const Icon(Icons.description_outlined);
+      case 'image':
+        return const Icon(Icons.image_outlined);
+      case 'file':
+        return const Icon(Icons.insert_drive_file_outlined);
+      case 'folder':
+        return const Icon(Icons.folder_outlined);
+      default:
+        return const Icon(Icons.help_outline);
+    }
+  }
+}
+
+List<Object> _groupTransferItemsByDevice(List<TransferItem> items) {
+  final grouped = <String, List<TransferItem>>{};
+  for (final item in items) {
+    grouped.putIfAbsent(item.sourceDevice, () => []).add(item);
+  }
+
+  final rows = <Object>[];
+  for (final entry in grouped.entries) {
+    rows.add(entry.key);
+    rows.addAll(entry.value);
+  }
+  return rows;
+}
+
+class _TransferDeviceHeader extends StatelessWidget {
+  final String deviceName;
+  const _TransferDeviceHeader({required this.deviceName});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Text(
+        deviceName,
+        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.w600,
+            ),
+      ),
+    );
+  }
+}
+
 class MacSettingsTab extends StatefulWidget {
   const MacSettingsTab({super.key});
 
@@ -774,6 +1071,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  int _selectedIndex = 0;
   StreamSubscription? _fileSubscription;
   StreamSubscription? _progressSubscription;
   final Map<String, FileProgress> _activeTransfers = {};
@@ -781,9 +1079,8 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    ClipboardManager.instance.onHistoryChanged = () {
-      if (mounted) setState(() {});
-    };
+    ClipboardManager.instance.onHistoryChanged = _handleDataChanged;
+    SnippetManager.instance.onSnippetsChanged = _handleDataChanged;
     
     _progressSubscription = SyncManager.instance.onFileProgress.listen((progress) {
       if (mounted) {
@@ -817,9 +1114,15 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    ClipboardManager.instance.onHistoryChanged = null;
+    SnippetManager.instance.onSnippetsChanged = null;
     _fileSubscription?.cancel();
     _progressSubscription?.cancel();
     super.dispose();
+  }
+
+  void _handleDataChanged() {
+    if (mounted) setState(() {});
   }
 
   static const _channel = MethodChannel('com.clipyclone.clipy_android/open_folder');
@@ -836,114 +1139,678 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Widget _buildHistoryTab() {
+    final l10n = context.l10n;
+    final history = ClipboardManager.instance.history;
+    return Column(
+      children: [
+        if (_activeTransfers.isNotEmpty)
+            Container(
+            color: Colors.blue.withValues(alpha: 0.1),
+            child: Column(
+              children: _activeTransfers.values.map((progress) {
+                return Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.downloading, size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              l10n.receiving(progress.fileName),
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Text(
+                            '${(progress.progress * 100).toStringAsFixed(0)}%',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      LinearProgressIndicator(value: progress.progress),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        Expanded(
+          child: history.isEmpty
+              ? Center(child: Text(l10n.noClipboardHistory, style: TextStyle(color: Colors.grey[500], fontSize: 16)))
+              : ListView.builder(
+                  itemCount: history.length,
+                  itemBuilder: (context, index) {
+                    final entry = history[index];
+                    final isFile = entry.item.type == 'fileURL';
+                    return ListTile(
+                      leading: Icon(
+                        isFile ? Icons.insert_drive_file_outlined : Icons.short_text,
+                        color: isFile ? Colors.blue : null,
+                      ),
+                      title: Text(
+                        entry.item.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(l10n.sourceAndDate(entry.sourceApp, entry.date.toString().split('.')[0])),
+                      onTap: () {
+                        if (isFile) {
+                          _openFolder(entry.item.value.toString());
+                        } else {
+                          ClipboardManager.instance.copyToClipboard(entry.item);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(l10n.copiedToClipboard)),
+                          );
+                        }
+                      },
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSnippetsTab() {
+    final l10n = context.l10n;
+    final folders = SnippetManager.instance.folders;
+    if (folders.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.snippet_folder_outlined, size: 64, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(l10n.noSnippetsYet, style: TextStyle(color: Colors.grey[500], fontSize: 16)),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => _showAddFolderDialog(context),
+              child: Text(l10n.addSnippetFolder),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: () => _showImportXmlDialog(context),
+              child: Text(l10n.importXml),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  l10n.snippetFolders,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+              ),
+              OutlinedButton(
+                onPressed: () => _showImportXmlDialog(context),
+                child: Text(l10n.importXml),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: () => _showAddFolderDialog(context),
+                child: Text(l10n.addFolder),
+              ),
+            ],
+          ),
+        ),
+        ...folders.map((folder) {
+          return ExpansionTile(
+            title: Text(folder.title),
+            leading: Icon(folder.isEnabled ? Icons.folder_outlined : Icons.folder_off_outlined),
+            trailing: PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'edit') {
+                  _showEditFolderDialog(context, folder);
+                } else if (value == 'toggle') {
+                  SnippetManager.instance.toggleFolderEnabled(folder.id, !folder.isEnabled);
+                } else if (value == 'delete') {
+                  _showDeleteFolderDialog(context, folder);
+                }
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem(value: 'edit', child: Text(l10n.edit)),
+                PopupMenuItem(
+                  value: 'toggle',
+                  child: Text(folder.isEnabled ? l10n.disable : l10n.enable),
+                ),
+                PopupMenuItem(value: 'delete', child: Text(l10n.delete)),
+              ],
+            ),
+            children: [
+              ...folder.snippets.map((snippet) {
+                return ListTile(
+                  title: Text(snippet.title),
+                  subtitle: Text(snippet.content, maxLines: 2, overflow: TextOverflow.ellipsis),
+                  onTap: folder.isEnabled
+                      ? () {
+                          ClipboardManager.instance.copyToClipboard(
+                            HistoryItem(type: 'text', value: snippet.content),
+                          );
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(l10n.snippetCopied)),
+                          );
+                        }
+                      : null,
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined, size: 20),
+                        onPressed: () => _showEditSnippetDialog(context, folder, snippet),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        onPressed: () => _showDeleteSnippetDialog(context, folder, snippet),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              ListTile(
+                leading: const Icon(Icons.add),
+                title: Text(l10n.addSnippet),
+                onTap: () => _showAddSnippetDialog(context, folder),
+              ),
+            ],
+          );
+        }),
+      ],
+    );
+  }
+
+  Future<void> _showAddFolderDialog(BuildContext context) async {
+    final l10n = context.l10n;
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(l10n.newFolder),
+          content: TextField(
+            controller: controller,
+            decoration: InputDecoration(labelText: l10n.folderName),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.cancel)),
+            TextButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: Text(l10n.create),
+            ),
+          ],
+        );
+      },
+    );
+    final title = result ?? '';
+    if (title.isNotEmpty) {
+      await SnippetManager.instance.addFolder(title);
+    }
+  }
+
+  Future<void> _showImportXmlDialog(BuildContext context) async {
+    final l10n = context.l10n;
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(l10n.importSnippetsXml),
+          content: TextField(
+            controller: controller,
+            maxLines: 8,
+            decoration: InputDecoration(
+              labelText: l10n.pasteXmlContent,
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.cancel)),
+            TextButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: Text(l10n.import),
+            ),
+          ],
+        );
+      },
+    );
+    final xml = result ?? '';
+    if (xml.isNotEmpty) {
+      await SnippetManager.instance.importFromXmlString(xml);
+    }
+  }
+
+  Future<void> _showEditFolderDialog(BuildContext context, SnippetFolder folder) async {
+    final l10n = context.l10n;
+    final controller = TextEditingController(text: folder.title);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(l10n.editFolder),
+          content: TextField(
+            controller: controller,
+            decoration: InputDecoration(labelText: l10n.folderName),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.cancel)),
+            TextButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: Text(l10n.save),
+            ),
+          ],
+        );
+      },
+    );
+    final title = result ?? '';
+    if (title.isNotEmpty) {
+      await SnippetManager.instance.updateFolderTitle(folder.id, title);
+    }
+  }
+
+  Future<void> _showDeleteFolderDialog(BuildContext context, SnippetFolder folder) async {
+    final l10n = context.l10n;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(l10n.deleteFolder),
+          content: Text(l10n.deleteFolderMessage(folder.title)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(l10n.cancel)),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: Text(l10n.delete)),
+          ],
+        );
+      },
+    );
+    if (result == true) {
+      await SnippetManager.instance.deleteFolder(folder.id);
+    }
+  }
+
+  Future<void> _showAddSnippetDialog(BuildContext context, SnippetFolder folder) async {
+    final l10n = context.l10n;
+    final titleController = TextEditingController();
+    final contentController = TextEditingController();
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(l10n.newSnippet),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: titleController,
+                decoration: InputDecoration(labelText: l10n.title),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: contentController,
+                decoration: InputDecoration(labelText: l10n.content),
+                maxLines: 4,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(l10n.cancel)),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: Text(l10n.create)),
+          ],
+        );
+      },
+    );
+    if (result == true) {
+      await SnippetManager.instance.addSnippet(
+        folder.id,
+        titleController.text.trim(),
+        contentController.text.trim(),
+      );
+    }
+  }
+
+  Future<void> _showEditSnippetDialog(
+    BuildContext context,
+    SnippetFolder folder,
+    Snippet snippet,
+  ) async {
+    final l10n = context.l10n;
+    final titleController = TextEditingController(text: snippet.title);
+    final contentController = TextEditingController(text: snippet.content);
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(l10n.editSnippet),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: titleController,
+                decoration: InputDecoration(labelText: l10n.title),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: contentController,
+                decoration: InputDecoration(labelText: l10n.content),
+                maxLines: 4,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(l10n.cancel)),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: Text(l10n.save)),
+          ],
+        );
+      },
+    );
+    if (result == true) {
+      await SnippetManager.instance.updateSnippet(
+        folder.id,
+        snippet.id,
+        titleController.text.trim(),
+        contentController.text.trim(),
+      );
+    }
+  }
+
+  Future<void> _showDeleteSnippetDialog(
+    BuildContext context,
+    SnippetFolder folder,
+    Snippet snippet,
+  ) async {
+    final l10n = context.l10n;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(l10n.deleteSnippet),
+          content: Text(l10n.deleteSnippetMessage(snippet.title)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(l10n.cancel)),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: Text(l10n.delete)),
+          ],
+        );
+      },
+    );
+    if (result == true) {
+      await SnippetManager.instance.deleteSnippet(folder.id, snippet.id);
+    }
+  }
+
+  Widget _buildSettingsTab() {
+    return _MobileSettingsContent(
+      onOpenLogs: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const LogPage())),
+      onOpenTransfer: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const TransferPage())),
+      onOpenReceivedFiles: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ReceivedFilesPage())),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final history = ClipboardManager.instance.history;
+
+    final titles = [l10n.clipyHistory, l10n.snippets, l10n.settings];
+    final bodies = [_buildHistoryTab(), _buildSnippetsTab(), _buildSettingsTab()];
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(l10n.clipyHistory),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.folder_open),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const ReceivedFilesPage()),
-            ),
-            tooltip: l10n.receivedFiles,
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const SettingsPage()),
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () => ClipboardManager.instance.clearHistory(),
-          ),
-          IconButton(
-            icon: const Icon(Icons.list_alt),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const LogPage()),
-            ),
-            tooltip: l10n.viewLogs,
-          ),
+        title: Text(titles[_selectedIndex]),
+        actions: _selectedIndex == 0
+            ? [
+                IconButton(
+                  icon: const Icon(Icons.swap_horiz),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const TransferPage()),
+                  ),
+                  tooltip: l10n.transferStation,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.folder_open),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const ReceivedFilesPage()),
+                  ),
+                  tooltip: l10n.receivedFiles,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () => ClipboardManager.instance.clearHistory(),
+                  tooltip: l10n.clearHistory,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.list_alt),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const LogPage()),
+                  ),
+                  tooltip: l10n.viewLogs,
+                ),
+              ]
+            : null,
+      ),
+      body: bodies[_selectedIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _selectedIndex,
+        onTap: (index) => setState(() => _selectedIndex = index),
+        items: [
+          BottomNavigationBarItem(icon: const Icon(Icons.history), label: l10n.history),
+          BottomNavigationBarItem(icon: const Icon(Icons.snippet_folder_outlined), label: l10n.snippets),
+          BottomNavigationBarItem(icon: const Icon(Icons.settings), label: l10n.settings),
         ],
       ),
-      body: Column(
-        children: [
-          if (_activeTransfers.isNotEmpty)
-            Container(
-              color: Colors.blue.withValues(alpha: 0.1),
-              child: Column(
-                children: _activeTransfers.values.map((progress) {
-                  return Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.downloading, size: 16),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                l10n.receiving(progress.fileName),
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            Text(
-                              '${(progress.progress * 100).toStringAsFixed(0)}%',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        LinearProgressIndicator(value: progress.progress),
-                      ],
-                    ),
-                  );
-                }).toList(),
+    );
+  }
+}
+
+class _MobileSettingsContent extends StatefulWidget {
+  final VoidCallback onOpenLogs;
+  final VoidCallback onOpenTransfer;
+  final VoidCallback onOpenReceivedFiles;
+
+  const _MobileSettingsContent({
+    required this.onOpenLogs,
+    required this.onOpenTransfer,
+    required this.onOpenReceivedFiles,
+  });
+
+  @override
+  State<_MobileSettingsContent> createState() => _MobileSettingsContentState();
+}
+
+class _MobileSettingsContentState extends State<_MobileSettingsContent> {
+  late TextEditingController _portController;
+  late TextEditingController _nameController;
+  StreamSubscription? _devicesSubscription;
+  List<String> _availableDevices = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _portController = TextEditingController(
+      text: SyncManager.instance.port.toString(),
+    );
+    _nameController = TextEditingController(
+      text: SyncManager.instance.deviceId,
+    );
+    _availableDevices = SyncManager.instance.availableDeviceNames;
+    _devicesSubscription = SyncManager.instance.onDevicesChanged.listen((devices) {
+      if (mounted) {
+        setState(() {
+          _availableDevices = devices;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _portController.dispose();
+    _nameController.dispose();
+    _devicesSubscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return ListView(
+      children: [
+        ListTile(
+          title: Text(l10n.languageLabel),
+          trailing: DropdownButton<AppLanguage>(
+            value: AppLanguageController.instance.language,
+            onChanged: (language) async {
+              if (language == null) return;
+              await AppLanguageController.instance.setLanguage(language);
+              if (mounted) setState(() {});
+            },
+            items: AppLanguage.values.map((language) {
+              return DropdownMenuItem(
+                value: language,
+                child: Text(language.displayName),
+              );
+            }).toList(),
+          ),
+        ),
+        const Divider(),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _nameController,
+                  decoration: InputDecoration(
+                    labelText: l10n.deviceNameForSync,
+                    border: const OutlineInputBorder(),
+                    hintText: l10n.enterDeviceName,
+                  ),
+                ),
               ),
-            ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: history.length,
-              itemBuilder: (context, index) {
-                final entry = history[index];
-                final isFile = entry.item.type == 'fileURL';
-                return ListTile(
-                  leading: Icon(
-                    isFile ? Icons.insert_drive_file_outlined : Icons.short_text,
-                    color: isFile ? Colors.blue : null,
-                  ),
-                  title: Text(
-                    entry.item.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(l10n.sourceAndDate(entry.sourceApp, entry.date.toString().split('.')[0])),
-                  onTap: () {
-                    if (isFile) {
-                      _openFolder(entry.item.value.toString());
-                    } else {
-                      ClipboardManager.instance.copyToClipboard(entry.item);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(l10n.copiedToClipboard)),
-                      );
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: () async {
+                  final newName = _nameController.text.trim();
+                  if (newName.isNotEmpty) {
+                    final messenger = ScaffoldMessenger.of(context);
+                    final message = l10n.deviceNameUpdated;
+                    await SyncManager.instance.updateDeviceName(newName);
+                    if (mounted) {
+                      messenger.showSnackBar(SnackBar(content: Text(message)));
                     }
-                  },
-                );
-              },
-            ),
+                  }
+                },
+                child: Text(l10n.save),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+        const Divider(),
+        SwitchListTile(
+          title: Text(l10n.enableLanSync),
+          value: SyncManager.instance.isEnabled,
+          onChanged: (value) async {
+            SyncManager.instance.isEnabled = value;
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('syncEnabled', value);
+            if (value) {
+              await SyncManager.instance.start();
+            } else {
+              await SyncManager.instance.stop();
+            }
+            setState(() {});
+          },
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          child: TextField(
+            controller: _portController,
+            decoration: InputDecoration(
+              labelText: l10n.syncPort,
+              border: const OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            onChanged: (value) async {
+              final port = int.tryParse(value);
+              if (port != null) {
+                SyncManager.instance.port = port;
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setInt('syncPort', port);
+              }
+            },
+          ),
+        ),
+        const Divider(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Text(
+            l10n.authorizedDevices,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blue),
+          ),
+        ),
+        if (_availableDevices.isEmpty)
+          ListTile(
+            title: Text(l10n.noDevicesFound),
+            subtitle: Text(l10n.sameWifiHint),
+          )
+        else
+          ..._availableDevices.map((deviceName) {
+            final isAuthorized = SyncManager.instance.authorizedDevices.contains(deviceName);
+            return CheckboxListTile(
+              title: Text(deviceName),
+              value: isAuthorized,
+              onChanged: (bool? value) async {
+                final devices = List<String>.from(SyncManager.instance.authorizedDevices);
+                if (value == true) {
+                  if (!devices.contains(deviceName)) devices.add(deviceName);
+                } else {
+                  devices.remove(deviceName);
+                }
+                SyncManager.instance.authorizedDevices = devices;
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setStringList('authorizedDevices', devices);
+                if (value == true) {
+                  await SyncManager.instance.requestTransferList(deviceName: deviceName);
+                }
+                setState(() {});
+              },
+            );
+          }),
+        const Divider(),
+        ListTile(
+          leading: const Icon(Icons.swap_horiz),
+          title: Text(l10n.transferStation),
+          onTap: widget.onOpenTransfer,
+        ),
+        ListTile(
+          leading: const Icon(Icons.folder_open),
+          title: Text(l10n.receivedFiles),
+          onTap: widget.onOpenReceivedFiles,
+        ),
+        ListTile(
+          leading: const Icon(Icons.list_alt),
+          title: Text(l10n.viewLogs),
+          subtitle: Text(l10n.appRuntimeLogs),
+          onTap: widget.onOpenLogs,
+        ),
+        const Divider(),
+        ListTile(
+          title: Text(l10n.about),
+          subtitle: Text('ClipyClone ${Platform.isIOS ? 'iOS' : 'Android'} v1.0.0'),
+        ),
+      ],
     );
   }
 }
@@ -1109,6 +1976,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   SyncManager.instance.authorizedDevices = devices;
                   final prefs = await SharedPreferences.getInstance();
                   await prefs.setStringList('authorizedDevices', devices);
+                  if (value == true) {
+                    await SyncManager.instance.requestTransferList(deviceName: deviceName);
+                  }
                   setState(() {});
                 },
               );
@@ -1221,6 +2091,182 @@ class _ReceivedFilesPageState extends State<ReceivedFilesPage> {
                 );
               },
             ),
+    );
+  }
+}
+
+class TransferPage extends StatefulWidget {
+  const TransferPage({super.key});
+
+  @override
+  State<TransferPage> createState() => _TransferPageState();
+}
+
+class _TransferPageState extends State<TransferPage> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(SyncManager.instance.requestTransferListsForAvailableDevices());
+    TransferManager.instance.onItemsChanged = (_) {
+      if (mounted) setState(() {});
+    };
+  }
+
+  @override
+  void dispose() {
+    TransferManager.instance.onItemsChanged = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final items = TransferManager.instance.items;
+    final permanentCount = items.where((i) => i.isPermanent).length;
+    final rows = _groupTransferItemsByDevice(items);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(l10n.transferStation),
+        actions: [
+          if (items.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.delete_sweep),
+              onPressed: () => _confirmClearAll(context),
+              tooltip: l10n.clearAll,
+            ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              children: [
+                ElevatedButton.icon(
+                  onPressed: () => _showAddTextDialog(context),
+                  icon: const Icon(Icons.text_fields, size: 18),
+                  label: Text(l10n.addText),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: () => _showAddFileDialog(context),
+                  icon: const Icon(Icons.attach_file, size: 18),
+                  label: Text(l10n.addFile),
+                ),
+                const Spacer(),
+                Text(
+                  l10n.itemCount(items.length, permanentCount),
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          if (items.isEmpty)
+            Expanded(
+              child: Center(
+                child: Text(
+                  l10n.dragOrAddToTransfer,
+                  style: TextStyle(color: Colors.grey[500], fontSize: 16),
+                ),
+              ),
+            )
+          else
+            Expanded(
+              child: ListView.builder(
+                itemCount: rows.length,
+                itemBuilder: (context, index) {
+                  final row = rows[index];
+                  if (row is String) {
+                    return _TransferDeviceHeader(deviceName: row);
+                  }
+                  return _TransferItemTile(item: row as TransferItem);
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _showAddTextDialog(BuildContext context) {
+    final l10n = context.l10n;
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.addText),
+        content: TextField(
+          controller: controller,
+          maxLines: 5,
+          decoration: InputDecoration(hintText: l10n.enterTextContent),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
+          TextButton(
+            onPressed: () {
+              final text = controller.text.trim();
+              if (text.isNotEmpty) {
+                TransferManager.instance.addTextItem(text);
+              }
+              Navigator.pop(ctx);
+            },
+            child: Text(l10n.add),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAddFileDialog(BuildContext context) {
+    final l10n = context.l10n;
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.addFile),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(hintText: '/path/to/file'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
+          TextButton(
+            onPressed: () {
+              final path = controller.text.trim();
+              if (path.isNotEmpty) {
+                final file = File(path);
+                if (file.existsSync()) {
+                  TransferManager.instance.addFileItem(file);
+                }
+              }
+              Navigator.pop(ctx);
+            },
+            child: Text(l10n.add),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmClearAll(BuildContext context) {
+    final l10n = context.l10n;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.clearAllTransfer),
+        content: Text(l10n.clearAllTransferConfirm),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
+          TextButton(
+            onPressed: () {
+              TransferManager.instance.clearAll();
+              Navigator.pop(ctx);
+            },
+            child: Text(l10n.clearAll),
+          ),
+        ],
+      ),
     );
   }
 }

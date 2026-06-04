@@ -30,6 +30,155 @@ class HistoryItem {
   }
 }
 
+class TransferContent {
+  final String type; // 'text', 'rtf', 'image', 'file', 'folder'
+  final dynamic value;
+  // For file: value = {'filePath': ..., 'fileName': ..., 'fileSize': ...}
+  // For folder: value = {'folderPath': ..., 'folderName': ..., 'fileCount': ...}
+
+  TransferContent({required this.type, required this.value});
+
+  Map<String, dynamic> toJson() {
+    // Match Swift enum Codable structure
+    switch (type) {
+      case 'text':
+        return {'text': value};
+      case 'rtf':
+        return {'rtf': value};
+      case 'image':
+        return {'image': value};
+      case 'file':
+        return {
+          'filePath': value['filePath'],
+          'fileName': value['fileName'],
+          'fileSize': value['fileSize'],
+        };
+      case 'folder':
+        return {
+          'folderPath': value['folderPath'],
+          'folderName': value['folderName'],
+          'fileCount': value['fileCount'],
+        };
+      default:
+        return {type: value};
+    }
+  }
+
+  factory TransferContent.fromJson(Map<String, dynamic> json) {
+    if (json.containsKey('text')) {
+      return TransferContent(type: 'text', value: json['text']);
+    } else if (json.containsKey('rtf')) {
+      return TransferContent(type: 'rtf', value: json['rtf']);
+    } else if (json.containsKey('image')) {
+      return TransferContent(type: 'image', value: json['image']);
+    } else if (json.containsKey('filePath')) {
+      return TransferContent(type: 'file', value: {
+        'filePath': json['filePath'],
+        'fileName': json['fileName'],
+        'fileSize': json['fileSize'],
+      });
+    } else if (json.containsKey('folderPath')) {
+      return TransferContent(type: 'folder', value: {
+        'folderPath': json['folderPath'],
+        'folderName': json['folderName'],
+        'fileCount': json['fileCount'],
+      });
+    }
+    return TransferContent(type: 'text', value: '');
+  }
+
+  String get typeLabel {
+    switch (type) {
+      case 'text': return 'Text';
+      case 'rtf': return 'RTF';
+      case 'image': return 'Image';
+      case 'file': return 'File';
+      case 'folder': return 'Folder';
+      default: return type;
+    }
+  }
+
+  String get displayTitle {
+    switch (type) {
+      case 'text':
+        final str = (value as String).trim().replaceAll('\n', ' ');
+        return str.length > 60 ? '${str.substring(0, 60)}...' : str;
+      case 'rtf':
+        return '[Rich Text]';
+      case 'image':
+        return '[Image]';
+      case 'file':
+        return value['fileName'] ?? 'File';
+      case 'folder':
+        return '${value['folderName'] ?? 'Folder'} (${value['fileCount'] ?? 0} files)';
+      default:
+        return '[$type]';
+    }
+  }
+}
+
+class TransferItem {
+  final String id;
+  String title;
+  final TransferContent content;
+  final DateTime createdAt;
+  bool isPermanent;
+  final String sourceDevice;
+  final String contentHash;
+
+  TransferItem({
+    required this.id,
+    required this.title,
+    required this.content,
+    required this.createdAt,
+    this.isPermanent = false,
+    required this.sourceDevice,
+    required this.contentHash,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'content': content.toJson(),
+        'createdAt': createdAt.toUtc().toIso8601String(),
+        'isPermanent': isPermanent,
+        'sourceDevice': sourceDevice,
+        'contentHash': contentHash,
+      };
+
+  factory TransferItem.fromJson(Map<String, dynamic> json) {
+    DateTime createdAt;
+    if (json['createdAt'] is String) {
+      createdAt = DateTime.parse(json['createdAt']);
+    } else if (json['createdAt'] is num) {
+      createdAt = DateTime.fromMillisecondsSinceEpoch(
+          (json['createdAt'] * 1000 + 978307200000).toInt());
+    } else {
+      createdAt = DateTime.now();
+    }
+
+    return TransferItem(
+      id: json['id'],
+      title: json['title'],
+      content: TransferContent.fromJson(json['content']),
+      createdAt: createdAt,
+      isPermanent: json['isPermanent'] ?? false,
+      sourceDevice: json['sourceDevice'],
+      contentHash: json['contentHash'],
+    );
+  }
+
+  Map<String, dynamic> toPayload() => {
+        'id': id,
+        'title': title,
+        'content': content.toJson(),
+        'createdAt': createdAt.millisecondsSinceEpoch / 1000,
+        'isPermanent': isPermanent,
+        'sourceDevice': sourceDevice,
+        'contentHash': contentHash,
+      };
+}
+
 class HistoryEntry {
   final HistoryItem item;
   final DateTime date;

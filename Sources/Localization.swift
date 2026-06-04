@@ -92,6 +92,25 @@ enum L10nKey: String {
     case selectAll
     case fileReceived
     case receivedFileFrom
+    case transferStation
+    case addText
+    case addFile
+    case addFolderTransfer
+    case clearAll
+    case title
+    case type
+    case dragOrAddToTransfer
+    case enterTextContent
+    case add
+    case selectFiles
+    case selectFolder
+    case clearAllTransfer
+    case clearAllTransferConfirm
+    case copyContent
+    case showInFinder
+    case openFolder
+    case setTemporary
+    case setPermanent
 }
 
 struct L10n {
@@ -175,7 +194,26 @@ struct L10n {
             .paste: "粘贴",
             .selectAll: "全选",
             .fileReceived: "文件已接收",
-            .receivedFileFrom: "已从 %@ 接收 %@"
+            .receivedFileFrom: "已从 %@ 接收 %@",
+            .transferStation: "超级中转站",
+            .addText: "添加文本",
+            .addFile: "添加文件",
+            .addFolderTransfer: "添加文件夹",
+            .clearAll: "清空",
+            .title: "标题",
+            .type: "类型",
+            .dragOrAddToTransfer: "拖拽文件到此处，或点击上方按钮添加内容",
+            .enterTextContent: "输入要添加到中转站的文本内容：",
+            .add: "添加",
+            .selectFiles: "选择要添加到中转站的文件",
+            .selectFolder: "选择要添加到中转站的文件夹",
+            .clearAllTransfer: "清空中转站",
+            .clearAllTransferConfirm: "确定要清空所有中转站内容吗？此操作不可撤销。",
+            .copyContent: "复制内容",
+            .showInFinder: "在 Finder 中显示",
+            .openFolder: "打开文件夹",
+            .setTemporary: "设为临时",
+            .setPermanent: "设为永久"
         ],
         .en: [
             .recordShortcut: "Click to record shortcut",
@@ -248,7 +286,26 @@ struct L10n {
             .paste: "Paste",
             .selectAll: "Select All",
             .fileReceived: "File Received",
-            .receivedFileFrom: "Received %@ from %@"
+            .receivedFileFrom: "Received %@ from %@",
+            .transferStation: "Transfer Station",
+            .addText: "Add Text",
+            .addFile: "Add File",
+            .addFolderTransfer: "Add Folder",
+            .clearAll: "Clear All",
+            .title: "Title",
+            .type: "Type",
+            .dragOrAddToTransfer: "Drag files here, or click the buttons above to add content",
+            .enterTextContent: "Enter text content to add to the transfer station:",
+            .add: "Add",
+            .selectFiles: "Select files to add to the transfer station",
+            .selectFolder: "Select a folder to add to the transfer station",
+            .clearAllTransfer: "Clear Transfer Station",
+            .clearAllTransferConfirm: "Are you sure you want to clear all transfer station content? This cannot be undone.",
+            .copyContent: "Copy Content",
+            .showInFinder: "Show in Finder",
+            .openFolder: "Open Folder",
+            .setTemporary: "Set Temporary",
+            .setPermanent: "Set Permanent"
         ]
     ]
 }

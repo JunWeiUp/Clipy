@@ -31,6 +31,8 @@ mkdir -p "${BUILD_SRC_DIR}/Sources"
 cp \
     Sources/Localization.swift \
     Sources/ClipboardManager.swift \
+    Sources/TransferManager.swift \
+    Sources/TransferWindow.swift \
     Sources/MenuController.swift \
     Sources/PreferencesManager.swift \
     Sources/SnippetManager.swift \
@@ -46,6 +48,8 @@ cp \
 swiftc \
     "${BUILD_SRC_DIR}/Sources/Localization.swift" \
     "${BUILD_SRC_DIR}/Sources/ClipboardManager.swift" \
+    "${BUILD_SRC_DIR}/Sources/TransferManager.swift" \
+    "${BUILD_SRC_DIR}/Sources/TransferWindow.swift" \
     "${BUILD_SRC_DIR}/Sources/MenuController.swift" \
     "${BUILD_SRC_DIR}/Sources/PreferencesManager.swift" \
     "${BUILD_SRC_DIR}/Sources/SnippetManager.swift" \
