@@ -7,6 +7,7 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     private var scrollView: NSScrollView?
     private var emptyLabel: NSTextField?
     private var statusLabel: NSTextField?
+    private var isUpdatingContextMenuSelection = false
 
     private let transferManager = TransferManager.shared
 
@@ -35,7 +36,7 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     private func createWindow() {
         let windowRect = NSRect(x: 0, y: 0, width: 620, height: 480)
         let styleMask: NSWindow.StyleMask = [.titled, .closable, .resizable, .miniaturizable]
-        let win = TransferDropWindow(contentRect: windowRect, styleMask: styleMask, backing: .buffered, defer: false)
+        let win = NSWindow(contentRect: windowRect, styleMask: styleMask, backing: .buffered, defer: false)
 
         win.title = L10n.t(.transferStation)
         win.minSize = NSSize(width: 480, height: 320)
@@ -82,9 +83,18 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         scroll.hasHorizontalScroller = false
         scroll.drawsBackground = false
 
-        let table = NSTableView()
+        let table = TransferTableView()
         table.dataSource = self
         table.delegate = self
+        table.contextMenuProvider = { [weak self, weak table] row in
+            guard let self = self, let table = table else { return nil }
+            self.isUpdatingContextMenuSelection = true
+            if !table.selectedRowIndexes.contains(row) {
+                table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            }
+            self.isUpdatingContextMenuSelection = false
+            return self.contextMenu(for: table, row: row)
+        }
         table.usesAlternatingRowBackgroundColors = true
         table.allowsMultipleSelection = true
         table.rowHeight = 36
@@ -126,8 +136,8 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         self.tableView = table
 
         // Register for drag and drop
-        table.registerForDraggedTypes([.fileURL, .string, .tiff, .png, .rtf])
-        scroll.registerForDraggedTypes([.fileURL, .string, .tiff, .png, .rtf])
+        table.registerForDraggedTypes([NSPasteboard.PasteboardType.fileURL, .string, .tiff, .png, .rtf])
+        scroll.registerForDraggedTypes([NSPasteboard.PasteboardType.fileURL, .string, .tiff, .png, .rtf])
 
         // Status bar
         let statusRect = NSRect(x: 8, y: 4, width: windowRect.width - 16, height: 18)
@@ -146,7 +156,8 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         empty.font = NSFont.systemFont(ofSize: 16)
         empty.textColor = .tertiaryLabelColor
         empty.frame = NSRect(x: 0, y: 0, width: windowRect.width, height: 40)
-        empty.autoresizingMask = [.width, .height]
+        empty.autoresizingMask = [.width]
+        empty.isHidden = true
         contentView.addSubview(empty)
         self.emptyLabel = empty
 
@@ -154,7 +165,7 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         self.window = win
 
         // Setup drop zone on the window itself
-        win.registerForDraggedTypes([.fileURL, .string, .tiff, .png, .rtf])
+        win.registerForDraggedTypes([NSPasteboard.PasteboardType.fileURL, .string, .tiff, .png, .rtf])
 
         // Observers
         transferManager.onItemsChanged = { [weak self] _ in
@@ -164,6 +175,14 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         }
 
         reloadData()
+
+        // Make the window a dragging destination
+        let dragView = WindowDragView(frame: contentView.bounds)
+        dragView.autoresizingMask = [.width, .height]
+        dragView.onDrop = { [weak self] sender in
+            return self?.handleDrop(sender) ?? false
+        }
+        contentView.addSubview(dragView, positioned: .below, relativeTo: nil)
     }
 
     // MARK: - Table View
@@ -236,6 +255,7 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        guard !isUpdatingContextMenuSelection else { return }
         guard let tableView = notification.object as? NSTableView else { return }
         let row = tableView.selectedRow
         guard row >= 0, row < transferManager.items.count else { return }
@@ -259,7 +279,7 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
 
     // MARK: - Context Menu
 
-    func tableView(_ tableView: NSTableView, menuForRow row: Int) -> NSMenu? {
+    private func contextMenu(for _: NSTableView, row: Int) -> NSMenu? {
         guard row < transferManager.items.count else { return nil }
         let item = transferManager.items[row]
 
@@ -292,6 +312,16 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
             openItem.target = self
             openItem.representedObject = item
             menu.addItem(openItem)
+
+            let revealItem = NSMenuItem(title: L10n.t(.showInFinder), action: #selector(revealInFinderClicked(_:)), keyEquivalent: "")
+            revealItem.target = self
+            revealItem.representedObject = item
+            menu.addItem(revealItem)
+
+            let saveAsItem = NSMenuItem(title: L10n.t(.saveAs), action: #selector(saveAsClicked(_:)), keyEquivalent: "")
+            saveAsItem.target = self
+            saveAsItem.representedObject = item
+            menu.addItem(saveAsItem)
         }
 
         menu.addItem(NSMenuItem.separator())
@@ -331,7 +361,7 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
 
     // MARK: - Drop Handling
 
-    private func handleDrop(_ sender: NSDraggingInfo) -> Bool {
+    func handleDrop(_ sender: NSDraggingInfo) -> Bool {
         let pb = sender.draggingPasteboard
 
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] {
@@ -461,6 +491,8 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         guard let item = sender.representedObject as? TransferItem else { return }
         if case .file(let path, _, _) = item.content {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        } else if case .folder(let path, _, _) = item.content {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         }
     }
 
@@ -473,30 +505,39 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
 
     @objc private func saveAsClicked(_ sender: NSMenuItem) {
         guard let item = sender.representedObject as? TransferItem else { return }
-        if case .file(let path, let fileName, _) = item.content {
-            let panel = NSSavePanel()
-            panel.nameFieldStringValue = fileName
-            panel.beginSheetModal(for: window!) { response in
-                if response == .OK, let destURL = panel.url {
-                    do {
-                        if FileManager.default.fileExists(atPath: destURL.path) {
-                            try FileManager.default.removeItem(at: destURL)
-                        }
-                        try FileManager.default.copyItem(at: URL(fileURLWithPath: path), to: destURL)
-                        let alert = NSAlert()
-                        alert.messageText = L10n.t(.saveAsSuccess)
-                        alert.informativeText = destURL.path
-                        alert.alertStyle = .informational
-                        alert.addButton(withTitle: L10n.t(.ok))
-                        alert.beginSheetModal(for: self.window!, completionHandler: nil)
-                    } catch {
-                        let alert = NSAlert()
-                        alert.messageText = "Error"
-                        alert.informativeText = error.localizedDescription
-                        alert.alertStyle = .warning
-                        alert.addButton(withTitle: L10n.t(.ok))
-                        alert.beginSheetModal(for: self.window!, completionHandler: nil)
+        let source: (path: String, name: String)
+        switch item.content {
+        case .file(let path, let fileName, _):
+            source = (path, fileName)
+        case .folder(let path, let folderName, _):
+            source = (path, folderName)
+        default:
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = source.name
+        panel.canCreateDirectories = true
+        panel.beginSheetModal(for: window!) { response in
+            if response == .OK, let destURL = panel.url {
+                do {
+                    if FileManager.default.fileExists(atPath: destURL.path) {
+                        try FileManager.default.removeItem(at: destURL)
                     }
+                    try FileManager.default.copyItem(at: URL(fileURLWithPath: source.path), to: destURL)
+                    let alert = NSAlert()
+                    alert.messageText = L10n.t(.saveAsSuccess)
+                    alert.informativeText = destURL.path
+                    alert.alertStyle = .informational
+                    alert.addButton(withTitle: L10n.t(.ok))
+                    alert.beginSheetModal(for: self.window!, completionHandler: nil)
+                } catch {
+                    let alert = NSAlert()
+                    alert.messageText = "Error"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: L10n.t(.ok))
+                    alert.beginSheetModal(for: self.window!, completionHandler: nil)
                 }
             }
         }
@@ -528,4 +569,39 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         statusLabel?.stringValue = "\(count) items (\(permanentCount) permanent)"
         emptyLabel?.isHidden = count > 0
     }
+}
+
+// MARK: - TransferTableView
+
+private class TransferTableView: NSTableView {
+    var contextMenuProvider: ((Int) -> NSMenu?)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let row = self.row(at: point)
+        guard row >= 0 else { return nil }
+
+        return contextMenuProvider?(row)
+    }
+}
+
+// MARK: - WindowDragView
+
+class WindowDragView: NSView {
+    var onDrop: ((NSDraggingInfo) -> Bool)?
+
+    override func awakeFromNib() {
+        super.awakeFromNib()
+        registerForDraggedTypes([NSPasteboard.PasteboardType.fileURL, .string, .tiff, .png, .rtf])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        return onDrop?(sender) ?? false
+    }
+
+    override var acceptsFirstResponder: Bool { return false }
 }
