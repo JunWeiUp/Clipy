@@ -150,6 +150,11 @@ class AppStrings {
   String get setPermanent => _t('设为永久', 'Set Permanent');
   String get permanent => _t('永久', 'Permanent');
   String get temporary => _t('临时', 'Temporary');
+  String get openFile => _t('打开文件', 'Open File');
+  String get saveFile => _t('另存为', 'Save As');
+  String get fileSaved => _t('文件已保存', 'File saved');
+  String get fileOpenFailed => _t('无法打开文件', 'Could not open file');
+  String get saveToLocation => _t('选择保存位置', 'Choose save location');
   String itemCount(int total, int permanent) =>
       _t('$total 条 ($permanent 永久)', '$total items ($permanent permanent)');
 

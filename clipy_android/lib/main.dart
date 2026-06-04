@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:open_filex/open_filex.dart';
 import 'clipboard_manager.dart';
 import 'sync_manager.dart';
 import 'transfer_manager.dart';
@@ -734,46 +736,18 @@ class _MacTransferTabState extends State<MacTransferTab> {
     );
   }
 
-  void _showAddFileDialog(BuildContext context) {
-    // On macOS, file picker would be used. For now, show text input for file path.
-    final l10n = context.l10n;
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.addFile),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(hintText: '/path/to/file'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
-          TextButton(
-            onPressed: () {
-              final path = controller.text.trim();
-              if (path.isNotEmpty) {
-                final file = File(path);
-                if (file.existsSync()) {
-                  TransferManager.instance.addFileItem(file);
-                } else if (Directory(path).existsSync()) {
-                  // Handle as folder
-                  TransferManager.instance.addItem(
-                    TransferContent(type: 'folder', value: {
-                      'folderPath': path,
-                      'folderName': path.split('/').last,
-                      'fileCount': 0,
-                    }),
-                    title: path.split('/').last,
-                  );
-                }
-              }
-              Navigator.pop(ctx);
-            },
-            child: Text(l10n.add),
-          ),
-        ],
-      ),
-    );
+  Future<void> _showAddFileDialog(BuildContext context) async {
+    final result = await FilePicker.pickFiles(allowMultiple: true);
+    if (result != null && result.files.isNotEmpty) {
+      for (final file in result.files) {
+        if (file.path != null) {
+          final ioFile = File(file.path!);
+          if (ioFile.existsSync()) {
+            TransferManager.instance.addFileItem(ioFile);
+          }
+        }
+      }
+    }
   }
 
   void _confirmClearAll(BuildContext context) {
@@ -805,6 +779,9 @@ class _TransferItemTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final isFile = item.content.type == 'file';
+    final isText = item.content.type == 'text';
+
     return Dismissible(
       key: ValueKey(item.id),
       background: Container(
@@ -821,24 +798,85 @@ class _TransferItemTile extends StatelessWidget {
         subtitle: Text(
           '${item.content.typeLabel} • ${item.sourceDevice} • ${item.isPermanent ? l10n.permanent : l10n.temporary}',
         ),
-        trailing: IconButton(
-          icon: Icon(item.isPermanent ? Icons.lock : Icons.lock_open, size: 18),
-          onPressed: () => TransferManager.instance.togglePermanent(item.id),
-          tooltip: item.isPermanent ? l10n.setTemporary : l10n.setPermanent,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isFile)
+              IconButton(
+                icon: const Icon(Icons.open_in_new, size: 18),
+                onPressed: () => _openFile(context),
+                tooltip: l10n.openFile,
+              ),
+            if (isFile)
+              IconButton(
+                icon: const Icon(Icons.save_alt, size: 18),
+                onPressed: () => _saveFile(context),
+                tooltip: l10n.saveFile,
+              ),
+            IconButton(
+              icon: Icon(item.isPermanent ? Icons.lock : Icons.lock_open, size: 18),
+              onPressed: () => TransferManager.instance.togglePermanent(item.id),
+              tooltip: item.isPermanent ? l10n.setTemporary : l10n.setPermanent,
+            ),
+          ],
         ),
         onTap: () {
-          if (item.content.type == 'text') {
+          if (isText) {
             ClipboardManager.instance.copyToClipboard(HistoryItem(type: 'text', value: item.content.value));
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text(l10n.copiedToClipboard)),
             );
+          } else if (isFile) {
+            _openFile(context);
           }
         },
       ),
     );
   }
 
+  Future<void> _openFile(BuildContext context) async {
+    final l10n = context.l10n;
+    if (item.content.type != 'file') return;
+    final filePath = item.content.value['filePath'] as String?;
+    if (filePath == null) return;
+
+    final result = await OpenFilex.open(filePath);
+    if (result.type != ResultType.done && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.fileOpenFailed)),
+      );
+    }
+  }
+
+  Future<void> _saveFile(BuildContext context) async {
+    final l10n = context.l10n;
+    if (item.content.type != 'file') return;
+    final filePath = item.content.value['filePath'] as String?;
+    final fileName = item.content.value['fileName'] as String? ?? 'file';
+    if (filePath == null) return;
+
+    final sourceFile = File(filePath);
+    if (!await sourceFile.exists()) return;
+
+    final destPath = await FilePicker.saveFile(
+      dialogTitle: l10n.saveToLocation,
+      fileName: fileName,
+    );
+
+    if (destPath != null) {
+      await sourceFile.copy(destPath);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.fileSaved)),
+        );
+      }
+    }
+  }
+
   Widget _iconForContent(TransferContent content) {
+    if (content.type == 'file') {
+      return _iconForExtension(content.fileExtension);
+    }
     switch (content.type) {
       case 'text':
         return const Icon(Icons.short_text);
@@ -846,12 +884,67 @@ class _TransferItemTile extends StatelessWidget {
         return const Icon(Icons.description_outlined);
       case 'image':
         return const Icon(Icons.image_outlined);
-      case 'file':
-        return const Icon(Icons.insert_drive_file_outlined);
       case 'folder':
         return const Icon(Icons.folder_outlined);
       default:
         return const Icon(Icons.help_outline);
+    }
+  }
+
+  Widget _iconForExtension(String? ext) {
+    switch (ext) {
+      case 'pdf':
+        return const Icon(Icons.picture_as_pdf, color: Colors.red);
+      case 'doc':
+      case 'docx':
+        return const Icon(Icons.description, color: Colors.blue);
+      case 'xls':
+      case 'xlsx':
+      case 'csv':
+        return const Icon(Icons.table_chart, color: Colors.green);
+      case 'ppt':
+      case 'pptx':
+        return const Icon(Icons.slideshow, color: Colors.orange);
+      case 'zip':
+      case 'rar':
+      case '7z':
+      case 'tar':
+      case 'gz':
+        return const Icon(Icons.archive, color: Colors.brown);
+      case 'mp3':
+      case 'wav':
+      case 'aac':
+      case 'flac':
+      case 'ogg':
+        return const Icon(Icons.audio_file, color: Colors.purple);
+      case 'mp4':
+      case 'avi':
+      case 'mov':
+      case 'mkv':
+      case 'flv':
+        return const Icon(Icons.video_file, color: Colors.pink);
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'gif':
+      case 'bmp':
+      case 'webp':
+      case 'svg':
+        return const Icon(Icons.image, color: Colors.teal);
+      case 'txt':
+      case 'md':
+      case 'json':
+      case 'xml':
+      case 'yaml':
+      case 'yml':
+        return const Icon(Icons.article, color: Colors.grey);
+      case 'apk':
+        return const Icon(Icons.android, color: Colors.green);
+      case 'exe':
+      case 'dmg':
+        return const Icon(Icons.settings_applications, color: Colors.blueGrey);
+      default:
+        return const Icon(Icons.insert_drive_file, color: Colors.blue);
     }
   }
 }
@@ -2218,35 +2311,18 @@ class _TransferPageState extends State<TransferPage> {
     );
   }
 
-  void _showAddFileDialog(BuildContext context) {
-    final l10n = context.l10n;
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.addFile),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(hintText: '/path/to/file'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
-          TextButton(
-            onPressed: () {
-              final path = controller.text.trim();
-              if (path.isNotEmpty) {
-                final file = File(path);
-                if (file.existsSync()) {
-                  TransferManager.instance.addFileItem(file);
-                }
-              }
-              Navigator.pop(ctx);
-            },
-            child: Text(l10n.add),
-          ),
-        ],
-      ),
-    );
+  Future<void> _showAddFileDialog(BuildContext context) async {
+    final result = await FilePicker.pickFiles(allowMultiple: true);
+    if (result != null && result.files.isNotEmpty) {
+      for (final file in result.files) {
+        if (file.path != null) {
+          final ioFile = File(file.path!);
+          if (ioFile.existsSync()) {
+            TransferManager.instance.addFileItem(ioFile);
+          }
+        }
+      }
+    }
   }
 
   void _confirmClearAll(BuildContext context) {

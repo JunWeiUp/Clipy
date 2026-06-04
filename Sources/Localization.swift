@@ -109,6 +109,9 @@ enum L10nKey: String {
     case copyContent
     case showInFinder
     case openFolder
+    case openFile
+    case saveAs
+    case saveAsSuccess
     case setTemporary
     case setPermanent
 }
@@ -212,6 +215,9 @@ struct L10n {
             .copyContent: "复制内容",
             .showInFinder: "在 Finder 中显示",
             .openFolder: "打开文件夹",
+            .openFile: "打开文件",
+            .saveAs: "另存为...",
+            .saveAsSuccess: "文件已保存",
             .setTemporary: "设为临时",
             .setPermanent: "设为永久"
         ],
@@ -304,6 +310,9 @@ struct L10n {
             .copyContent: "Copy Content",
             .showInFinder: "Show in Finder",
             .openFolder: "Open Folder",
+            .openFile: "Open File",
+            .saveAs: "Save As...",
+            .saveAsSuccess: "File saved",
             .setTemporary: "Set Temporary",
             .setPermanent: "Set Permanent"
         ]

@@ -115,6 +115,15 @@ class TransferContent {
         return '[$type]';
     }
   }
+
+  String? get fileExtension {
+    if (type == 'file' && value is Map) {
+      final name = value['fileName'] as String? ?? '';
+      final dot = name.lastIndexOf('.');
+      if (dot >= 0) return name.substring(dot + 1).toLowerCase();
+    }
+    return null;
+  }
 }
 
 class TransferItem {

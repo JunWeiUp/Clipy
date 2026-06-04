@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSDraggingDestination {
+class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     private var window: NSWindow?
     private var tableView: NSTableView?
     private var scrollView: NSScrollView?
@@ -35,7 +35,7 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSDr
     private func createWindow() {
         let windowRect = NSRect(x: 0, y: 0, width: 620, height: 480)
         let styleMask: NSWindow.StyleMask = [.titled, .closable, .resizable, .miniaturizable]
-        let win = NSWindow(contentRect: windowRect, styleMask: styleMask, backing: .buffered, defer: false)
+        let win = TransferDropWindow(contentRect: windowRect, styleMask: styleMask, backing: .buffered, defer: false)
 
         win.title = L10n.t(.transferStation)
         win.minSize = NSSize(width: 480, height: 320)
@@ -164,14 +164,6 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSDr
         }
 
         reloadData()
-
-        // Make the window a dragging destination
-        let dragView = WindowDragView(frame: contentView.bounds)
-        dragView.autoresizingMask = [.width, .height]
-        dragView.onDrop = { [weak self] sender in
-            return self?.handleDrop(sender) ?? false
-        }
-        contentView.addSubview(dragView, positioned: .below, relativeTo: nil)
     }
 
     // MARK: - Table View
@@ -244,7 +236,25 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSDr
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        // future use
+        guard let tableView = notification.object as? NSTableView else { return }
+        let row = tableView.selectedRow
+        guard row >= 0, row < transferManager.items.count else { return }
+        let item = transferManager.items[row]
+
+        switch item.content {
+        case .file(let path, _, _):
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        case .folder(let path, _, _):
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        case .text(let str):
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(str, forType: .string)
+        default:
+            break
+        }
+
+        tableView.deselectRow(row)
     }
 
     // MARK: - Context Menu
@@ -261,10 +271,20 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSDr
         menu.addItem(copyItem)
 
         if case .file = item.content {
+            let openItem = NSMenuItem(title: L10n.t(.openFile), action: #selector(openFileClicked(_:)), keyEquivalent: "")
+            openItem.target = self
+            openItem.representedObject = item
+            menu.addItem(openItem)
+
             let revealItem = NSMenuItem(title: L10n.t(.showInFinder), action: #selector(revealInFinderClicked(_:)), keyEquivalent: "")
             revealItem.target = self
             revealItem.representedObject = item
             menu.addItem(revealItem)
+
+            let saveAsItem = NSMenuItem(title: L10n.t(.saveAs), action: #selector(saveAsClicked(_:)), keyEquivalent: "")
+            saveAsItem.target = self
+            saveAsItem.representedObject = item
+            menu.addItem(saveAsItem)
         }
 
         if case .folder = item.content {
@@ -444,6 +464,44 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSDr
         }
     }
 
+    @objc private func openFileClicked(_ sender: NSMenuItem) {
+        guard let item = sender.representedObject as? TransferItem else { return }
+        if case .file(let path, _, _) = item.content {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        }
+    }
+
+    @objc private func saveAsClicked(_ sender: NSMenuItem) {
+        guard let item = sender.representedObject as? TransferItem else { return }
+        if case .file(let path, let fileName, _) = item.content {
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = fileName
+            panel.beginSheetModal(for: window!) { response in
+                if response == .OK, let destURL = panel.url {
+                    do {
+                        if FileManager.default.fileExists(atPath: destURL.path) {
+                            try FileManager.default.removeItem(at: destURL)
+                        }
+                        try FileManager.default.copyItem(at: URL(fileURLWithPath: path), to: destURL)
+                        let alert = NSAlert()
+                        alert.messageText = L10n.t(.saveAsSuccess)
+                        alert.informativeText = destURL.path
+                        alert.alertStyle = .informational
+                        alert.addButton(withTitle: L10n.t(.ok))
+                        alert.beginSheetModal(for: self.window!, completionHandler: nil)
+                    } catch {
+                        let alert = NSAlert()
+                        alert.messageText = "Error"
+                        alert.informativeText = error.localizedDescription
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: L10n.t(.ok))
+                        alert.beginSheetModal(for: self.window!, completionHandler: nil)
+                    }
+                }
+            }
+        }
+    }
+
     @objc private func openFolderClicked(_ sender: NSMenuItem) {
         guard let item = sender.representedObject as? TransferItem else { return }
         if case .folder(let path, _, _) = item.content {
@@ -470,25 +528,4 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSDr
         statusLabel?.stringValue = "\(count) items (\(permanentCount) permanent)"
         emptyLabel?.isHidden = count > 0
     }
-}
-
-// MARK: - WindowDragView
-
-class WindowDragView: NSView {
-    var onDrop: ((NSDraggingInfo) -> Bool)?
-
-    override func awakeFromNib() {
-        super.awakeFromNib()
-        registerForDraggedTypes([.fileURL, .string, .tiff, .png, .rtf])
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        return .copy
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        return onDrop?(sender) ?? false
-    }
-
-    override var acceptsFirstResponder: Bool { return false }
 }
