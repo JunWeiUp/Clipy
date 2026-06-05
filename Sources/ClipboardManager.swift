@@ -348,6 +348,25 @@ class ClipboardManager {
         addToHistory(.text(content), sourceApp: "Remote Device")
     }
 
+    func searchHistory(query: String) -> [HistoryEntry] {
+        guard !query.isEmpty else { return Array(history.prefix(20)) }
+        let lowercased = query.lowercased()
+        return history.filter { entry in
+            switch entry.item {
+            case .text(let str):
+                return str.lowercased().contains(lowercased)
+            case .fileURL(let url):
+                return url.lastPathComponent.lowercased().contains(lowercased)
+            case .image:
+                return "image".contains(lowercased)
+            case .rtf:
+                return "rich text".contains(lowercased)
+            case .pdf:
+                return "pdf".contains(lowercased)
+            }
+        }
+    }
+
     func clearHistory() {
         history.removeAll()
         saveHistory()

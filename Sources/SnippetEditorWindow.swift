@@ -106,7 +106,15 @@ class ShortcutRecorderView: NSView {
 
 class SnippetEditorWindow: NSWindow {
     static let shared = SnippetEditorWindow()
-    
+
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "w" {
+            close()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+
     private final class SidebarNode {
         enum Kind {
             case folder(UUID)

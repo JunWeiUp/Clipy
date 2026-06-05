@@ -82,7 +82,15 @@ struct LogView: View {
 
 class LogWindow: NSWindow {
     static var shared: LogWindow?
-    
+
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "w" {
+            close()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+
     init() {
         let logView = LogView()
         let hostingController = NSHostingController(rootView: logView)

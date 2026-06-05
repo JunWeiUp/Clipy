@@ -40,6 +40,7 @@ cp \
     Sources/HotKeyManager.swift \
     Sources/SettingsWindow.swift \
     Sources/SnippetEditorWindow.swift \
+    Sources/SearchWindow.swift \
     Sources/LogManager.swift \
     Sources/LogWindow.swift \
     Sources/main.swift \
@@ -57,6 +58,7 @@ swiftc \
     "${BUILD_SRC_DIR}/Sources/HotKeyManager.swift" \
     "${BUILD_SRC_DIR}/Sources/SettingsWindow.swift" \
     "${BUILD_SRC_DIR}/Sources/SnippetEditorWindow.swift" \
+    "${BUILD_SRC_DIR}/Sources/SearchWindow.swift" \
     "${BUILD_SRC_DIR}/Sources/LogManager.swift" \
     "${BUILD_SRC_DIR}/Sources/LogWindow.swift" \
     "${BUILD_SRC_DIR}/Sources/main.swift" \

@@ -782,55 +782,123 @@ class _TransferItemTile extends StatelessWidget {
     final isFile = item.content.type == 'file';
     final isText = item.content.type == 'text';
 
-    return Dismissible(
-      key: ValueKey(item.id),
-      background: Container(
-        color: Colors.red,
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 16),
-        child: const Icon(Icons.delete, color: Colors.white),
-      ),
-      direction: DismissDirection.endToStart,
-      onDismissed: (_) => TransferManager.instance.removeItem(item.id),
-      child: ListTile(
-        leading: _iconForContent(item.content),
-        title: Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-        subtitle: Text(
-          '${item.content.typeLabel} • ${item.sourceDevice} • ${item.isPermanent ? l10n.permanent : l10n.temporary}',
+    return GestureDetector(
+      onLongPress: () => _showContextMenu(context),
+      child: Dismissible(
+        key: ValueKey(item.id),
+        background: Container(
+          color: Colors.red,
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 16),
+          child: const Icon(Icons.delete, color: Colors.white),
         ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (isFile)
+        direction: DismissDirection.endToStart,
+        onDismissed: (_) => TransferManager.instance.removeItem(item.id),
+        child: ListTile(
+          leading: _iconForContent(item.content),
+          title: Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+          subtitle: Text(
+            '${item.content.typeLabel} • ${item.sourceDevice} • ${item.isPermanent ? l10n.permanent : l10n.temporary}',
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isFile)
+                IconButton(
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  onPressed: () => _openFile(context),
+                  tooltip: l10n.openFile,
+                ),
+              if (isFile)
+                IconButton(
+                  icon: const Icon(Icons.save_alt, size: 18),
+                  onPressed: () => _saveFile(context),
+                  tooltip: l10n.saveFile,
+                ),
               IconButton(
-                icon: const Icon(Icons.open_in_new, size: 18),
-                onPressed: () => _openFile(context),
-                tooltip: l10n.openFile,
+                icon: Icon(item.isPermanent ? Icons.lock : Icons.lock_open, size: 18),
+                onPressed: () => TransferManager.instance.togglePermanent(item.id),
+                tooltip: item.isPermanent ? l10n.setTemporary : l10n.setPermanent,
               ),
-            if (isFile)
-              IconButton(
-                icon: const Icon(Icons.save_alt, size: 18),
-                onPressed: () => _saveFile(context),
-                tooltip: l10n.saveFile,
-              ),
-            IconButton(
-              icon: Icon(item.isPermanent ? Icons.lock : Icons.lock_open, size: 18),
-              onPressed: () => TransferManager.instance.togglePermanent(item.id),
-              tooltip: item.isPermanent ? l10n.setTemporary : l10n.setPermanent,
-            ),
-          ],
+            ],
+          ),
+          onTap: () {
+            if (isText) {
+              ClipboardManager.instance.copyToClipboard(HistoryItem(type: 'text', value: item.content.value));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(l10n.copiedToClipboard)),
+              );
+            } else if (isFile) {
+              _openFile(context);
+            }
+          },
         ),
-        onTap: () {
-          if (isText) {
-            ClipboardManager.instance.copyToClipboard(HistoryItem(type: 'text', value: item.content.value));
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(l10n.copiedToClipboard)),
-            );
-          } else if (isFile) {
-            _openFile(context);
-          }
-        },
       ),
+    );
+  }
+
+  void _showContextMenu(BuildContext context) {
+    final l10n = context.l10n;
+    final isFile = item.content.type == 'file';
+    final isText = item.content.type == 'text';
+
+    showModalBottomSheet(
+      context: context,
+      builder: (BuildContext sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isText)
+                ListTile(
+                  leading: const Icon(Icons.copy),
+                  title: Text(l10n.copyContent),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    ClipboardManager.instance.copyToClipboard(HistoryItem(type: 'text', value: item.content.value));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(l10n.copiedToClipboard)),
+                    );
+                  },
+                ),
+              if (isFile)
+                ListTile(
+                  leading: const Icon(Icons.open_in_new),
+                  title: Text(l10n.openFile),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _openFile(context);
+                  },
+                ),
+              if (isFile)
+                ListTile(
+                  leading: const Icon(Icons.save_alt),
+                  title: Text(l10n.saveFile),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _saveFile(context);
+                  },
+                ),
+              ListTile(
+                leading: Icon(item.isPermanent ? Icons.lock_open : Icons.lock),
+                title: Text(item.isPermanent ? l10n.setTemporary : l10n.setPermanent),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  TransferManager.instance.togglePermanent(item.id);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete, color: Colors.red),
+                title: Text(l10n.delete, style: const TextStyle(color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  TransferManager.instance.removeItem(item.id);
+                },
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

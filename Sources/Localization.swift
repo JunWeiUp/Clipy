@@ -114,6 +114,10 @@ enum L10nKey: String {
     case saveAsSuccess
     case setTemporary
     case setPermanent
+    case searchHistory
+    case searchHistoryPlaceholder
+    case noSearchResults
+    case time
 }
 
 struct L10n {
@@ -219,7 +223,11 @@ struct L10n {
             .saveAs: "另存为...",
             .saveAsSuccess: "文件已保存",
             .setTemporary: "设为临时",
-            .setPermanent: "设为永久"
+            .setPermanent: "设为永久",
+            .searchHistory: "搜索历史...",
+            .searchHistoryPlaceholder: "搜索剪贴板历史记录",
+            .noSearchResults: "没有匹配的结果",
+            .time: "时间"
         ],
         .en: [
             .recordShortcut: "Click to record shortcut",
@@ -314,7 +322,11 @@ struct L10n {
             .saveAs: "Save As...",
             .saveAsSuccess: "File saved",
             .setTemporary: "Set Temporary",
-            .setPermanent: "Set Permanent"
+            .setPermanent: "Set Permanent",
+            .searchHistory: "Search History...",
+            .searchHistoryPlaceholder: "Search clipboard history",
+            .noSearchResults: "No matching results",
+            .time: "Time"
         ]
     ]
 }

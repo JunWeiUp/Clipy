@@ -89,7 +89,13 @@ class MenuController: NSObject {
         let historyHeader = NSMenuItem(title: L10n.t(.history), action: nil, keyEquivalent: "")
         historyHeader.isEnabled = false
         menu.addItem(historyHeader)
-        
+
+        let searchItem = NSMenuItem(title: L10n.t(.searchHistory), action: #selector(openSearch), keyEquivalent: "f")
+        searchItem.keyEquivalentModifierMask = [.command, .shift]
+        searchItem.target = self
+        menu.addItem(searchItem)
+        menu.addItem(NSMenuItem.separator())
+
         if history.isEmpty {
             let emptyItem = NSMenuItem(title: L10n.t(.noHistory), action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
@@ -331,6 +337,11 @@ class MenuController: NSObject {
 
     @objc private func openLogs() {
         LogWindow.show()
+    }
+
+    @objc private func openSearch() {
+        NSApp.activate(ignoringOtherApps: true)
+        SearchWindow.shared.showWindow()
     }
 
     @objc private func languageDidChange() {

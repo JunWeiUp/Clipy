@@ -3,7 +3,15 @@ import AppKit
 class SettingsWindow: NSWindow {
     static let shared = SettingsWindow()
     private var deviceNameField: NSTextField?
-    
+
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "w" {
+            close()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+
     init() {
         let styleMask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable]
         super.init(contentRect: NSRect(x: 0, y: 0, width: 400, height: 450),

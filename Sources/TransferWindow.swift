@@ -8,6 +8,7 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     private var emptyLabel: NSTextField?
     private var statusLabel: NSTextField?
     private var isUpdatingContextMenuSelection = false
+    private var keyMonitor: Any?
 
     private let transferManager = TransferManager.shared
 
@@ -28,6 +29,10 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func closeWindow() {
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
+        }
         window?.close()
     }
 
@@ -163,6 +168,15 @@ class TransferWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
 
         win.contentView = contentView
         self.window = win
+
+        // Cmd+W to close window
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "w" {
+                self?.closeWindow()
+                return nil
+            }
+            return event
+        }
 
         // Setup drop zone on the window itself
         win.registerForDraggedTypes([NSPasteboard.PasteboardType.fileURL, .string, .tiff, .png, .rtf])
