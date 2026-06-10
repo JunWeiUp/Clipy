@@ -5,6 +5,7 @@ class MenuController: NSObject {
     private let clipboardManager = ClipboardManager.shared
     private let snippetManager = SnippetManager.shared
     private lazy var transferWindow = TransferWindow()
+    private lazy var notificationWindow = NotificationWindow()
     
     override init() {
         super.init()
@@ -18,6 +19,11 @@ class MenuController: NSObject {
             name: .appLanguageDidChange,
             object: nil
         )
+        NotificationManager.shared.onNotificationsChanged = { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.updateMenu(with: self?.clipboardManager.history ?? [])
+            }
+        }
     }
     
     private func setupHotKeyObserver() {
@@ -196,6 +202,16 @@ class MenuController: NSObject {
         
         menu.addItem(NSMenuItem.separator())
         
+        // --- Phone Notifications Section ---
+        let notificationCount = NotificationManager.shared.notifications.count
+        let notificationTitle = "\(L10n.t(.phoneNotifications)) (\(notificationCount))..."
+        let notificationItem = NSMenuItem(title: notificationTitle, action: #selector(openNotifications), keyEquivalent: "N")
+        notificationItem.target = self
+        notificationItem.toolTip = L10n.t(.notificationSync)
+        menu.addItem(notificationItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
         // --- Authorized Devices Section ---
         let devicesHeader = NSMenuItem(title: L10n.t(.authorizedDevices), action: nil, keyEquivalent: "")
         devicesHeader.isEnabled = false
@@ -317,6 +333,10 @@ class MenuController: NSObject {
     
     @objc private func clearHistory() {
         clipboardManager.clearHistory()
+    }
+
+    @objc private func openNotifications() {
+        notificationWindow.showWindow()
     }
     
     @objc private func openPreferences() {

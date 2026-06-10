@@ -529,8 +529,24 @@ class SyncManager: NSObject, NetServiceDelegate {
                 handleTransferFileHeader(decrypted, from: message.deviceId)
             } else if message.type == "transfer/file/chunk" {
                 handleTransferFileChunk(decrypted, from: message.deviceId)
+            } else if message.type == "notification/post" {
+                NotificationManager.shared.handleRemoteNotification(decrypted, from: message.deviceId)
+            } else if message.type == "notification/dismiss" {
+                NotificationManager.shared.handleRemoteDismiss(decrypted)
+            } else if message.type == "notification/clear_all" {
+                NotificationManager.shared.handleRemoteClearAll()
+            } else if message.type == "notification/config" {
+                handleNotificationConfig(decrypted)
             }
         }
+    }
+
+    private func handleNotificationConfig(_ decrypted: String) {
+        guard let data = decrypted.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let packages = json["allowedPackages"] as? [String] else { return }
+        NotificationManager.shared.allowedPackages = Set(packages)
+        NotificationManager.shared.savePreferences()
     }
     
     private func handleFileHeader(_ json: String, from sender: String) {
@@ -754,6 +770,39 @@ class SyncManager: NSObject, NetServiceDelegate {
             }
         } catch {
             appLog("Transfer: failed to write chunk: \(error)", level: .error)
+        }
+    }
+
+    // MARK: - Notification Sync
+    func broadcastNotificationMessage(type: String, content: String, hash: String) {
+        appLog("Broadcasting notification message: \(type)")
+        guard PreferencesManager.shared.isSyncEnabled else { return }
+
+        guard let encryptedContent = encrypt(content) else { return }
+
+        let message = SyncMessage(
+            deviceId: deviceId,
+            timestamp: Date().timeIntervalSince1970,
+            type: type,
+            content: encryptedContent,
+            hash: hash
+        )
+
+        guard let jsonData = try? JSONEncoder().encode(message) else { return }
+
+        let authorizedDevices = PreferencesManager.shared.authorizedDevices
+        let targetResults = discoveredEndpoints.values.filter { result in
+            if case let .service(name, _, _, _) = result.endpoint {
+                return authorizedDevices.contains(name)
+            }
+            return false
+        }
+
+        for result in targetResults {
+            if case let .service(name, _, _, _) = result.endpoint {
+                appLog("Sending notification message to: \(name)")
+            }
+            sendSync(jsonData, to: result.endpoint)
         }
     }
 

@@ -1,11 +1,14 @@
 package com.clipyclone.clipy_android
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.Settings
+import android.service.notification.NotificationListenerService
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -18,6 +21,7 @@ class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.clipyclone.clipy_android/open_folder"
     private val PERMISSIONS_CHANNEL = "com.clipyclone.clipy_android/permissions"
     private val STORAGE_CHANNEL = "com.clipyclone.clipy_android/storage"
+    private val NOTIFICATIONS_CHANNEL = "com.clipyclone.clipy_android/notifications"
     private val STORAGE_PERMISSION_REQUEST_CODE = 1001
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -71,6 +75,116 @@ class MainActivity: FlutterActivity() {
                 }
             }
         }
+
+        val notificationsChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NOTIFICATIONS_CHANNEL)
+        ClipyNotificationListenerService.setMethodChannel(notificationsChannel)
+        notificationsChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "isListenerPermissionGranted" -> {
+                    val enabled = isNotificationListenerEnabled()
+                    if (enabled && ClipyNotificationListenerService.instance == null) {
+                        requestNotificationListenerRebind()
+                    }
+                    result.success(enabled)
+                }
+                "openListenerSettings" -> {
+                    val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
+                    result.success(null)
+                }
+                "dismissNotification" -> {
+                    val packageName = call.argument<String>("packageName")
+                    val notificationKey = call.argument<String>("notificationKey")
+                    val listener = ClipyNotificationListenerService.instance
+                    if (listener != null && packageName != null) {
+                        listener.dismissNotification(packageName, notificationKey)
+                        result.success(null)
+                    } else {
+                        result.error("NO_LISTENER", "NotificationListenerService not running", null)
+                    }
+                }
+                "openNotification" -> {
+                    val packageName = call.argument<String>("packageName")
+                    val notificationKey = call.argument<String>("notificationKey")
+                    val listener = ClipyNotificationListenerService.instance
+                    if (listener != null && packageName != null) {
+                        listener.openNotification(packageName, notificationKey)
+                        result.success(null)
+                    } else {
+                        result.error("NO_LISTENER", "NotificationListenerService not running", null)
+                    }
+                }
+                "refreshActiveNotifications" -> {
+                    val listener = ClipyNotificationListenerService.instance
+                    if (listener != null) {
+                        listener.emitActiveNotifications()
+                        result.success(null)
+                    } else if (isNotificationListenerEnabled()) {
+                        requestNotificationListenerRebind()
+                        result.success(null)
+                    } else {
+                        result.error("NO_LISTENER", "NotificationListenerService not running", null)
+                    }
+                }
+                "clearAllNotifications" -> {
+                    val listener = ClipyNotificationListenerService.instance
+                    if (listener != null) {
+                        listener.clearAllNotifications()
+                        result.success(null)
+                    } else {
+                        result.error("NO_LISTENER", "NotificationListenerService not running", null)
+                    }
+                }
+                "getInstalledApps" -> {
+                    result.success(getInstalledAppsList())
+                }
+                else -> {
+                    result.notImplemented()
+                }
+            }
+        }
+    }
+
+    private fun isNotificationListenerEnabled(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+        if (flat.isNullOrEmpty()) return false
+        val cn = ComponentName(this, ClipyNotificationListenerService::class.java)
+        return flat.contains(cn.flattenToString())
+    }
+
+    private fun requestNotificationListenerRebind() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try {
+                val cn = ComponentName(this, ClipyNotificationListenerService::class.java)
+                NotificationListenerService.requestRebind(cn)
+            } catch (e: Exception) {
+                // Some OEM ROMs reject explicit rebind requests.
+            }
+        }
+    }
+
+    private fun getInstalledAppsList(): List<Map<String, Any>> {
+        val pm = packageManager
+        val apps = mutableListOf<Map<String, Any>>()
+        @Suppress("DEPRECATION")
+        val appInfos = pm.getInstalledApplications(0)
+
+        for (appInfo in appInfos) {
+            val packageName = appInfo.packageName ?: continue
+            val appName = pm.getApplicationLabel(appInfo).toString().ifBlank { packageName }
+            val isSystem = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0 ||
+                (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+            apps.add(mapOf(
+                "packageName" to packageName,
+                "appName" to appName,
+                "isSystem" to isSystem,
+            ))
+        }
+
+        return apps
+            .distinctBy { it["packageName"] as String }
+            .sortedWith(compareBy<Map<String, Any>> { it["isSystem"] as Boolean }.thenBy { it["appName"] as String })
     }
 
     private fun checkStoragePermission(): Boolean {

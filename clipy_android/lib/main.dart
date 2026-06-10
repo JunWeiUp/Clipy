@@ -10,6 +10,8 @@ import 'package:open_filex/open_filex.dart';
 import 'clipboard_manager.dart';
 import 'sync_manager.dart';
 import 'transfer_manager.dart';
+import 'notification_manager.dart';
+import 'notification_sync_page.dart';
 import 'log_manager.dart';
 import 'models.dart';
 import 'app_localizations.dart';
@@ -39,6 +41,12 @@ void main() async {
     await SyncManager.instance.init();
   } catch (e) {
     debugPrint('SyncManager init error: $e');
+  }
+  
+  try {
+    await NotificationManager.instance.init();
+  } catch (e) {
+    debugPrint('NotificationManager init error: $e');
   }
   
   try {
@@ -1730,6 +1738,14 @@ class _HomePageState extends State<HomePage> {
         actions: _selectedIndex == 0
             ? [
                 IconButton(
+                  icon: const Icon(Icons.notifications_outlined),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const NotificationSyncPage()),
+                  ),
+                  tooltip: l10n.notificationSync,
+                ),
+                IconButton(
                   icon: const Icon(Icons.swap_horiz),
                   onPressed: () => Navigator.push(
                     context,
@@ -1951,7 +1967,17 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
           }),
         const Divider(),
         ListTile(
-          leading: const Icon(Icons.swap_horiz),
+          leading: const Icon(Icons.notifications_active, color: Colors.blue),
+          title: Text(l10n.notificationSync),
+          subtitle: Text(l10n.enableNotificationSync),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const NotificationSyncPage()),
+          ),
+        ),
+        const Divider(),
+        ListTile(
           title: Text(l10n.transferStation),
           onTap: widget.onOpenTransfer,
         ),
@@ -2144,6 +2170,17 @@ class _SettingsPageState extends State<SettingsPage> {
                 },
               );
             }),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.notifications_active, color: Colors.blue),
+            title: Text(l10n.notificationSync),
+            subtitle: Text(l10n.enableNotificationSync),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const NotificationSyncPage()),
+            ),
+          ),
           const Divider(),
           ListTile(
             leading: const Icon(Icons.list_alt),

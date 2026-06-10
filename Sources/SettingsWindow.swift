@@ -14,7 +14,7 @@ class SettingsWindow: NSWindow {
 
     init() {
         let styleMask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable]
-        super.init(contentRect: NSRect(x: 0, y: 0, width: 400, height: 450),
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 400, height: 530),
                    styleMask: styleMask,
                    backing: .buffered,
                    defer: false)
@@ -33,7 +33,7 @@ class SettingsWindow: NSWindow {
     
     private func setupUI() {
         self.title = L10n.t(.preferences)
-        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 450))
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 530))
         self.contentView = contentView
         
         let languageLabel = NSTextField(labelWithString: L10n.t(.language))
@@ -128,8 +128,28 @@ class SettingsWindow: NSWindow {
         devicesField.action = #selector(authorizedDevicesChanged(_:))
         contentView.addSubview(devicesField)
         
+        // Notification Sync Section
+        let notifSeparator = NSBox(frame: NSRect(x: 20, y: 55, width: 360, height: 1))
+        notifSeparator.boxType = .separator
+        contentView.addSubview(notifSeparator)
+        
+        let notifSyncCheckbox = NSButton(checkboxWithTitle: L10n.t(.enableNotificationSync), target: self, action: #selector(notificationSyncToggled(_:)))
+        notifSyncCheckbox.frame = NSRect(x: 20, y: 30, width: 200, height: 20)
+        notifSyncCheckbox.state = NotificationManager.shared.notificationSyncEnabled ? .on : .off
+        contentView.addSubview(notifSyncCheckbox)
+        
+        let notifSoundCheckbox = NSButton(checkboxWithTitle: L10n.t(.notificationSound), target: self, action: #selector(notificationSoundToggled(_:)))
+        notifSoundCheckbox.frame = NSRect(x: 220, y: 30, width: 160, height: 20)
+        notifSoundCheckbox.state = NotificationManager.shared.notificationSound ? .on : .off
+        contentView.addSubview(notifSoundCheckbox)
+        
+        let notifFilterLabel = NSTextField(labelWithString: L10n.t(.notificationFilter) + " (" + L10n.t(.authorizedDevicesComma) + "):")
+        notifFilterLabel.frame = NSRect(x: 20, y: 5, width: 360, height: 20)
+        notifFilterLabel.font = NSFont.systemFont(ofSize: 11)
+        contentView.addSubview(notifFilterLabel)
+        
         let closeButton = NSButton(title: L10n.t(.close), target: self, action: #selector(closeWindow))
-        closeButton.frame = NSRect(x: 300, y: 20, width: 80, height: 32)
+        closeButton.frame = NSRect(x: 300, y: -25, width: 80, height: 32)
         contentView.addSubview(closeButton)
     }
 
@@ -199,6 +219,16 @@ class SettingsWindow: NSWindow {
         let secret = String(sender.stringValue.prefix(10))
         sender.stringValue = secret
         PreferencesManager.shared.syncSecret = secret
+    }
+
+    @objc private func notificationSyncToggled(_ sender: NSButton) {
+        NotificationManager.shared.notificationSyncEnabled = (sender.state == .on)
+        NotificationManager.shared.savePreferences()
+    }
+
+    @objc private func notificationSoundToggled(_ sender: NSButton) {
+        NotificationManager.shared.notificationSound = (sender.state == .on)
+        NotificationManager.shared.savePreferences()
     }
     
     @objc private func closeWindow() {

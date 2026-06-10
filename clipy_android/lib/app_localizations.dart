@@ -135,6 +135,37 @@ class AppStrings {
   String get noFilesReceived => _t('暂无已接收文件', 'No files received yet');
   String fromSender(String senderName) => _t('来自：$senderName', 'From: $senderName');
 
+  // Notification Sync
+  String get notificationSync => _t('通知同步', 'Notification Sync');
+  String get enableNotificationSync => _t('启用通知同步', 'Enable Notification Sync');
+  String get notificationPermissionRequired => _t('需要通知监听权限', 'Notification listener permission required');
+  String get grantPermission => _t('去授权', 'Grant Permission');
+  String get syncNotificationsFrom => _t('同步以下应用的通知', 'Sync notifications from these apps');
+  String get noAppsAvailable => _t('暂无可用应用', 'No apps available');
+  String get phoneNotifications => _t('手机通知', 'Phone Notifications');
+  String get noNotifications => _t('暂无通知', 'No notifications');
+  String get clearAllNotifications => _t('清空通知', 'Clear Notifications');
+  String get notificationSettings => _t('通知设置', 'Notification Settings');
+  String get dismissOnPhone => _t('在手机上清除', 'Dismiss on Phone');
+  String get notificationListenerPermission => _t('通知监听权限', 'Notification Listener Permission');
+  String get permissionGranted => _t('已授权', 'Permission Granted');
+  String get permissionNotGranted => _t('未授权', 'Not Granted');
+  String notificationFrom(String appName) => _t('来自 $appName', 'From $appName');
+  String get searchApps => _t('搜索应用...', 'Search apps...');
+  String get selectedAppsCount => _t('已选择应用', 'Selected apps');
+  String get notificationHistory => _t('通知历史', 'Notification History');
+  String get noNotificationHistory => _t('暂无通知历史记录', 'No notification history yet');
+  String get clearNotificationHistory => _t('清空通知历史', 'Clear Notification History');
+  String get clearNotificationHistoryConfirm => _t('确定要清空所有通知历史吗？', 'Clear all notification history?');
+  String get openNotificationSettings => _t('打开系统通知设置', 'Open System Notification Settings');
+  String get permissionGuide => _t('授权后才能监听手机通知并同步到其他设备', 'Grant permission to listen for and sync phone notifications');
+  String notificationsCount(int count) => _t('$count 条通知', '$count notifications');
+  String get selectAll => _t('全选', 'Select All');
+  String get deselectAll => _t('全部取消', 'Deselect All');
+  String get userApps => _t('用户应用', 'User Apps');
+  String get systemApps => _t('系统应用', 'System Apps');
+  String appCount(int count) => _t('$count 个应用', '$count apps');
+
   // Transfer Station
   String get transferStation => _t('超级中转站', 'Transfer Station');
   String get addText => _t('添加文本', 'Add Text');

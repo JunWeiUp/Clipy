@@ -10,6 +10,7 @@ import 'package:crypto/crypto.dart';
 import 'log_manager.dart';
 import 'clipboard_manager.dart';
 import 'transfer_manager.dart';
+import 'notification_manager.dart';
 import 'compression_utils.dart';
 import 'permission_manager.dart';
 import 'storage_paths.dart';
@@ -423,6 +424,53 @@ class SyncManager {
       await _handleTransferFileHeader(decrypted, message.deviceId);
     } else if (message.type == 'transfer/file/chunk') {
       await _handleTransferFileChunk(decrypted, message.deviceId);
+    } else if (message.type == 'notification/post') {
+      NotificationManager.instance.handleRemoteNotification(decrypted, message.deviceId);
+    } else if (message.type == 'notification/dismiss') {
+      NotificationManager.instance.handleRemoteDismiss(decrypted);
+    } else if (message.type == 'notification/clear_all') {
+      NotificationManager.instance.clearAll();
+    } else if (message.type == 'notification/config') {
+      _handleNotificationConfig(decrypted);
+    }
+  }
+
+  void _handleNotificationConfig(String decrypted) {
+    try {
+      final json = jsonDecode(decrypted);
+      final packages = (json['allowedPackages'] as List?)?.cast<String>() ?? [];
+      NotificationManager.instance.updateAllowedPackages(packages);
+    } catch (e) {
+      appLog('Error handling notification config: $e', level: 'error');
+    }
+  }
+
+  Future<void> broadcastNotificationMessage({
+    required String type,
+    required String content,
+    required String hash,
+  }) async {
+    if (!isEnabled) return;
+
+    appLog('Broadcasting notification message: $type');
+    final encrypted = _encrypt(content);
+    if (encrypted == null) return;
+
+    final message = SyncMessage(
+      deviceId: deviceId,
+      timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+      type: type,
+      content: encrypted,
+      hash: hash,
+    );
+
+    final jsonData = jsonEncode(message.toJson());
+
+    for (var service in _discoveredServices) {
+      if (authorizedDevices.contains(service.name)) {
+        appLog('Sending notification message to ${service.name}...');
+        await _sendSync(jsonData, service);
+      }
     }
   }
 

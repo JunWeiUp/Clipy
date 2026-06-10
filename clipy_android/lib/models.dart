@@ -1,4 +1,3 @@
-
 class HistoryItem {
   final String type; // 'text', 'image', 'rtf', 'pdf', 'fileURL'
   final dynamic value;
@@ -89,12 +88,18 @@ class TransferContent {
 
   String get typeLabel {
     switch (type) {
-      case 'text': return 'Text';
-      case 'rtf': return 'RTF';
-      case 'image': return 'Image';
-      case 'file': return 'File';
-      case 'folder': return 'Folder';
-      default: return type;
+      case 'text':
+        return 'Text';
+      case 'rtf':
+        return 'RTF';
+      case 'image':
+        return 'Image';
+      case 'file':
+        return 'File';
+      case 'folder':
+        return 'Folder';
+      default:
+        return type;
     }
   }
 
@@ -194,12 +199,18 @@ class HistoryEntry {
   final String? sourceApp;
   final String? contentHash;
 
-  HistoryEntry({required this.item, required this.date, this.sourceApp, this.contentHash});
+  HistoryEntry(
+      {required this.item,
+      required this.date,
+      this.sourceApp,
+      this.contentHash});
 
   Map<String, dynamic> toJson() {
     return {
       'item': item.toJson(),
-      'date': date.toUtc().toIso8601String(), // Ensure UTC with 'Z' for Swift compatibility
+      'date': date
+          .toUtc()
+          .toIso8601String(), // Ensure UTC with 'Z' for Swift compatibility
       'sourceApp': sourceApp,
       'contentHash': contentHash,
     };
@@ -224,6 +235,91 @@ class HistoryEntry {
       date: date,
       sourceApp: json['sourceApp'],
       contentHash: json['contentHash'],
+    );
+  }
+}
+
+class NotificationEntry {
+  final String id;
+  final String? notificationKey;
+  final String packageName;
+  final String appName;
+  final String title;
+  final String? subtitle;
+  final String body;
+  final int postTime;
+  final String? groupKey;
+  final bool isClearable;
+  final Map<String, dynamic> extras;
+
+  NotificationEntry({
+    required this.id,
+    this.notificationKey,
+    required this.packageName,
+    required this.appName,
+    required this.title,
+    this.subtitle,
+    required this.body,
+    required this.postTime,
+    this.groupKey,
+    this.isClearable = true,
+    this.extras = const {},
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'notificationKey': notificationKey,
+        'packageName': packageName,
+        'appName': appName,
+        'title': title,
+        'subtitle': subtitle,
+        'body': body,
+        'postTime': postTime,
+        'groupKey': groupKey,
+        'isClearable': isClearable,
+        'extras': extras,
+      };
+
+  factory NotificationEntry.fromJson(Map<String, dynamic> json) {
+    return NotificationEntry(
+      id: json['id'],
+      notificationKey: json['notificationKey'],
+      packageName: json['packageName'],
+      appName: json['appName'],
+      title: json['title'],
+      subtitle: json['subtitle'],
+      body: json['body'] ?? '',
+      postTime: (json['postTime'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
+      groupKey: json['groupKey'],
+      isClearable: json['isClearable'] ?? true,
+      extras: Map<String, dynamic>.from(json['extras'] as Map? ?? {}),
+    );
+  }
+}
+
+class NotificationDismissRequest {
+  final String packageName;
+  final String? groupKey;
+  final String? notificationKey;
+
+  NotificationDismissRequest({
+    required this.packageName,
+    this.groupKey,
+    this.notificationKey,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'packageName': packageName,
+        'groupKey': groupKey,
+        'notificationKey': notificationKey,
+      };
+
+  factory NotificationDismissRequest.fromJson(Map<String, dynamic> json) {
+    return NotificationDismissRequest(
+      packageName: json['packageName'],
+      groupKey: json['groupKey'],
+      notificationKey: json['notificationKey'],
     );
   }
 }
@@ -306,9 +402,8 @@ class SnippetFolder {
     return SnippetFolder(
       id: json['id'],
       title: json['title'],
-      snippets: (json['snippets'] as List)
-          .map((s) => Snippet.fromJson(s))
-          .toList(),
+      snippets:
+          (json['snippets'] as List).map((s) => Snippet.fromJson(s)).toList(),
       isEnabled: json['isEnabled'] ?? true,
       shortcut: json['shortcut'] != null
           ? ShortcutCombo.fromJson(json['shortcut'])

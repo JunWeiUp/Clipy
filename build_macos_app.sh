@@ -37,6 +37,8 @@ cp \
     Sources/PreferencesManager.swift \
     Sources/SnippetManager.swift \
     Sources/SyncManager.swift \
+    Sources/NotificationManager.swift \
+    Sources/NotificationWindow.swift \
     Sources/HotKeyManager.swift \
     Sources/SettingsWindow.swift \
     Sources/SnippetEditorWindow.swift \
@@ -55,6 +57,8 @@ swiftc \
     "${BUILD_SRC_DIR}/Sources/PreferencesManager.swift" \
     "${BUILD_SRC_DIR}/Sources/SnippetManager.swift" \
     "${BUILD_SRC_DIR}/Sources/SyncManager.swift" \
+    "${BUILD_SRC_DIR}/Sources/NotificationManager.swift" \
+    "${BUILD_SRC_DIR}/Sources/NotificationWindow.swift" \
     "${BUILD_SRC_DIR}/Sources/HotKeyManager.swift" \
     "${BUILD_SRC_DIR}/Sources/SettingsWindow.swift" \
     "${BUILD_SRC_DIR}/Sources/SnippetEditorWindow.swift" \
@@ -66,7 +70,8 @@ swiftc \
     -o "${MACOS_DIR}/${EXECUTABLE_NAME}" \
     -framework AppKit \
     -framework CoreGraphics \
-    -framework Carbon
+    -framework Carbon \
+    -framework UserNotifications
 
 # 4. 准备资源文件
 echo "📦 准备资源文件..."

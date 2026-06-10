@@ -118,6 +118,15 @@ enum L10nKey: String {
     case searchHistoryPlaceholder
     case noSearchResults
     case time
+    case phoneNotifications
+    case noNotifications
+    case enableNotificationSync
+    case notificationSync
+    case dismissOnPhone
+    case clearAllOnPhone
+    case notificationFilter
+    case notificationSound
+    case clearNotifications
 }
 
 struct L10n {
@@ -227,7 +236,16 @@ struct L10n {
             .searchHistory: "搜索历史...",
             .searchHistoryPlaceholder: "搜索剪贴板历史记录",
             .noSearchResults: "没有匹配的结果",
-            .time: "时间"
+            .time: "时间",
+            .phoneNotifications: "手机通知",
+            .noNotifications: "暂无通知",
+            .enableNotificationSync: "启用通知同步",
+            .notificationSync: "通知同步",
+            .dismissOnPhone: "在手机上清除",
+            .clearAllOnPhone: "清除所有手机通知",
+            .notificationFilter: "通知过滤",
+            .notificationSound: "通知声音",
+            .clearNotifications: "清空通知",
         ],
         .en: [
             .recordShortcut: "Click to record shortcut",
@@ -326,7 +344,16 @@ struct L10n {
             .searchHistory: "Search History...",
             .searchHistoryPlaceholder: "Search clipboard history",
             .noSearchResults: "No matching results",
-            .time: "Time"
+            .time: "Time",
+            .phoneNotifications: "Phone Notifications",
+            .noNotifications: "No Notifications",
+            .enableNotificationSync: "Enable Notification Sync",
+            .notificationSync: "Notification Sync",
+            .dismissOnPhone: "Dismiss on Phone",
+            .clearAllOnPhone: "Clear All on Phone",
+            .notificationFilter: "Notification Filter",
+            .notificationSound: "Notification Sound",
+            .clearNotifications: "Clear Notifications",
         ]
     ]
 }
