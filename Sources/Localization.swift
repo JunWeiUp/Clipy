@@ -32,6 +32,7 @@ enum L10nKey: String {
     case deviceNameUpdated
     case ok
     case historyLimit
+    case moreHistory
     case changesNextCopy
     case excludedBundleIds
     case enableLanSync
@@ -41,6 +42,7 @@ enum L10nKey: String {
     case history
     case noHistory
     case snippets
+    case noSnippets
     case fileHistory
     case noFiles
     case source
@@ -127,6 +129,41 @@ enum L10nKey: String {
     case notificationFilter
     case notificationSound
     case clearNotifications
+    case launchAtLogin
+    case launchAtLoginFailed
+    case accessibilityPermission
+    case accessibilityGranted
+    case accessibilityNotGranted
+    case accessibilityRequiredTitle
+    case accessibilityRequiredMessage
+    case openSystemSettings
+    case relativeTimeJustNow
+    case relativeTimeMinutes
+    case relativeTimeHours
+    case relativeTimeDays
+    case transferStatusFormat
+    case error
+    case clearShortcut
+    case searchResultCount
+    case location
+    case pasteFileName
+    case pasteFile
+    case pinToTop
+    case unpinFromTop
+    case preview
+    case selectHistoryToPreview
+    case historyTypeText
+    case historyTypeImage
+    case historyTypeRTF
+    case historyTypePDF
+    case historyTypeFile
+    case historyTypeHTML
+    case historyTypeMarkdown
+    case historyTypePlainText
+    case historyTypeJSON
+    case historyPreviewTruncated
+    case historyPreviewLoadFailed
+    case historyDataSize
 }
 
 struct L10n {
@@ -151,7 +188,8 @@ struct L10n {
             .deviceNameUpdated: "设备名称已更新为“%@”，同步服务已重启。",
             .ok: "确定",
             .historyLimit: "历史数量：",
-            .changesNextCopy: "（下次复制时生效）",
+            .moreHistory: "  更多...",
+            .changesNextCopy: "（修改后立即生效）",
             .excludedBundleIds: "排除的 Bundle ID（用逗号分隔）：",
             .enableLanSync: "启用局域网同步",
             .syncPort: "同步端口：",
@@ -160,6 +198,7 @@ struct L10n {
             .history: "历史记录",
             .noHistory: "  暂无历史记录",
             .snippets: "片段",
+            .noSnippets: "  暂无片段",
             .fileHistory: "文件历史",
             .noFiles: "暂无文件",
             .source: "来源",
@@ -234,7 +273,7 @@ struct L10n {
             .setTemporary: "设为临时",
             .setPermanent: "设为永久",
             .searchHistory: "搜索历史...",
-            .searchHistoryPlaceholder: "搜索剪贴板历史记录",
+            .searchHistoryPlaceholder: "搜索内容、路径或来源应用",
             .noSearchResults: "没有匹配的结果",
             .time: "时间",
             .phoneNotifications: "手机通知",
@@ -246,6 +285,41 @@ struct L10n {
             .notificationFilter: "通知过滤",
             .notificationSound: "通知声音",
             .clearNotifications: "清空通知",
+            .launchAtLogin: "登录时启动",
+            .launchAtLoginFailed: "无法更新登录时启动设置，请重试。",
+            .accessibilityPermission: "辅助功能权限（自动粘贴需要）：",
+            .accessibilityGranted: "已授权",
+            .accessibilityNotGranted: "未授权",
+            .accessibilityRequiredTitle: "需要辅助功能权限",
+            .accessibilityRequiredMessage: "Clipy 需要辅助功能权限才能模拟 ⌘V 自动粘贴。内容已复制到剪贴板，你也可以手动粘贴。请在系统设置中启用 ClipyClone。",
+            .openSystemSettings: "打开系统设置",
+            .relativeTimeJustNow: "刚刚",
+            .relativeTimeMinutes: "%d分钟前",
+            .relativeTimeHours: "%d小时前",
+            .relativeTimeDays: "%d天前",
+            .transferStatusFormat: "%d 项（%d 永久）",
+            .error: "错误",
+            .clearShortcut: "清除",
+            .searchResultCount: "%d 条历史",
+            .location: "位置",
+            .pasteFileName: "粘贴文件名",
+            .pasteFile: "粘贴文件",
+            .pinToTop: "置顶",
+            .unpinFromTop: "取消置顶",
+            .preview: "预览",
+            .selectHistoryToPreview: "选择一条历史记录以预览",
+            .historyTypeText: "文本",
+            .historyTypeImage: "图片",
+            .historyTypeRTF: "富文本",
+            .historyTypePDF: "PDF 文档",
+            .historyTypeFile: "文件",
+            .historyTypeHTML: "HTML",
+            .historyTypeMarkdown: "Markdown",
+            .historyTypePlainText: "纯文本",
+            .historyTypeJSON: "JSON",
+            .historyPreviewTruncated: "内容已截断（文件过大）",
+            .historyPreviewLoadFailed: "无法加载预览",
+            .historyDataSize: "大小：%@",
         ],
         .en: [
             .recordShortcut: "Click to record shortcut",
@@ -259,7 +333,8 @@ struct L10n {
             .deviceNameUpdated: "Device name updated to \"%@\". Sync services restarted.",
             .ok: "OK",
             .historyLimit: "History Limit:",
-            .changesNextCopy: "(Changes take effect on next copy)",
+            .moreHistory: "  More...",
+            .changesNextCopy: "(Takes effect immediately)",
             .excludedBundleIds: "Excluded Bundle IDs (comma separated):",
             .enableLanSync: "Enable LAN Sync",
             .syncPort: "Sync Port:",
@@ -268,6 +343,7 @@ struct L10n {
             .history: "History",
             .noHistory: "  No History",
             .snippets: "Snippets",
+            .noSnippets: "  No Snippets",
             .fileHistory: "File History",
             .noFiles: "No Files",
             .source: "Source",
@@ -342,7 +418,7 @@ struct L10n {
             .setTemporary: "Set Temporary",
             .setPermanent: "Set Permanent",
             .searchHistory: "Search History...",
-            .searchHistoryPlaceholder: "Search clipboard history",
+            .searchHistoryPlaceholder: "Search content, path, or source app",
             .noSearchResults: "No matching results",
             .time: "Time",
             .phoneNotifications: "Phone Notifications",
@@ -354,6 +430,41 @@ struct L10n {
             .notificationFilter: "Notification Filter",
             .notificationSound: "Notification Sound",
             .clearNotifications: "Clear Notifications",
+            .launchAtLogin: "Launch at Login",
+            .launchAtLoginFailed: "Unable to update launch at login settings. Please try again.",
+            .accessibilityPermission: "Accessibility Permission (required for auto-paste):",
+            .accessibilityGranted: "Granted",
+            .accessibilityNotGranted: "Not Granted",
+            .accessibilityRequiredTitle: "Accessibility Permission Required",
+            .accessibilityRequiredMessage: "Clipy needs Accessibility permission to simulate ⌘V for auto-paste. The content has been copied to your clipboard; you can paste manually. Enable ClipyClone in System Settings.",
+            .openSystemSettings: "Open System Settings",
+            .relativeTimeJustNow: "Just now",
+            .relativeTimeMinutes: "%dm ago",
+            .relativeTimeHours: "%dh ago",
+            .relativeTimeDays: "%dd ago",
+            .transferStatusFormat: "%d items (%d permanent)",
+            .error: "Error",
+            .clearShortcut: "Clear",
+            .searchResultCount: "%d history items",
+            .location: "Location",
+            .pasteFileName: "Paste File Name",
+            .pasteFile: "Paste File",
+            .pinToTop: "Pin to Top",
+            .unpinFromTop: "Unpin",
+            .preview: "Preview",
+            .selectHistoryToPreview: "Select a history item to preview",
+            .historyTypeText: "Text",
+            .historyTypeImage: "Image",
+            .historyTypeRTF: "Rich Text",
+            .historyTypePDF: "PDF Document",
+            .historyTypeFile: "File",
+            .historyTypeHTML: "HTML",
+            .historyTypeMarkdown: "Markdown",
+            .historyTypePlainText: "Plain Text",
+            .historyTypeJSON: "JSON",
+            .historyPreviewTruncated: "Content truncated (file too large)",
+            .historyPreviewLoadFailed: "Failed to load preview",
+            .historyDataSize: "Size: %@",
         ]
     ]
 }

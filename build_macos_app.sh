@@ -12,6 +12,49 @@ CONTENTS_DIR="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 
+SWIFT_SOURCES=(
+    Sources/Localization.swift
+    Sources/ClipboardManager.swift
+    Sources/TransferManager.swift
+    Sources/TransferWindow.swift
+    Sources/MenuController.swift
+    Sources/PreferencesManager.swift
+    Sources/SnippetManager.swift
+    Sources/SyncManager.swift
+    Sources/NotificationManager.swift
+    Sources/NotificationWindow.swift
+    Sources/HotKeyManager.swift
+    Sources/SettingsWindow.swift
+    Sources/SnippetEditorWindow.swift
+    Sources/ShortcutRecorderView.swift
+    Sources/SearchWindow.swift
+    Sources/LogManager.swift
+    Sources/LogWindow.swift
+    Sources/LaunchAtLoginManager.swift
+    Sources/AccessibilityManager.swift
+    Sources/UI/DesignTokens.swift
+    Sources/UI/AppLanguageObserver.swift
+    Sources/UI/HostingWindow.swift
+    Sources/UI/AppWindowLayout.swift
+    Sources/UI/AppToolbar.swift
+    Sources/UI/StatusBarView.swift
+    Sources/UI/EmptyStateView.swift
+    Sources/UI/CountBadge.swift
+    Sources/UI/RelativeTimeFormatter.swift
+    Sources/UI/ShortcutRecorderRepresentable.swift
+    Sources/UI/LeftAlignedTextInput.swift
+    Sources/UI/SettingsView.swift
+    Sources/UI/SearchView.swift
+    Sources/UI/HistoryPreviewView.swift
+    Sources/UI/HistoryPreviewRepresentables.swift
+    Sources/UI/TransferView.swift
+    Sources/UI/NotificationView.swift
+    Sources/UI/SnippetEditorViewModel.swift
+    Sources/UI/SnippetEditorSidebarRepresentable.swift
+    Sources/UI/SnippetEditorView.swift
+    Sources/main.swift
+)
+
 echo "🚀 开始构建 ${APP_NAME}.app..."
 
 # 1. 清理旧版本
@@ -27,51 +70,32 @@ mkdir -p "${RESOURCES_DIR}"
 echo "🔨 正在编译 Swift 源代码..."
 BUILD_SRC_DIR="$(mktemp -d "${TMPDIR:-/tmp}/clipybuild.XXXXXX")"
 trap 'rm -rf "${BUILD_SRC_DIR}"' EXIT
-mkdir -p "${BUILD_SRC_DIR}/Sources"
-cp \
-    Sources/Localization.swift \
-    Sources/ClipboardManager.swift \
-    Sources/TransferManager.swift \
-    Sources/TransferWindow.swift \
-    Sources/MenuController.swift \
-    Sources/PreferencesManager.swift \
-    Sources/SnippetManager.swift \
-    Sources/SyncManager.swift \
-    Sources/NotificationManager.swift \
-    Sources/NotificationWindow.swift \
-    Sources/HotKeyManager.swift \
-    Sources/SettingsWindow.swift \
-    Sources/SnippetEditorWindow.swift \
-    Sources/SearchWindow.swift \
-    Sources/LogManager.swift \
-    Sources/LogWindow.swift \
-    Sources/main.swift \
-    "${BUILD_SRC_DIR}/Sources/"
+mkdir -p "${BUILD_SRC_DIR}/Sources/UI"
+for src in "${SWIFT_SOURCES[@]}"; do
+    dest="${BUILD_SRC_DIR}/${src}"
+    mkdir -p "$(dirname "${dest}")"
+    cp "${src}" "${dest}"
+done
+
+BUILD_SRC_PATHS=()
+for src in "${SWIFT_SOURCES[@]}"; do
+    BUILD_SRC_PATHS+=("${BUILD_SRC_DIR}/${src}")
+done
 
 swiftc \
-    "${BUILD_SRC_DIR}/Sources/Localization.swift" \
-    "${BUILD_SRC_DIR}/Sources/ClipboardManager.swift" \
-    "${BUILD_SRC_DIR}/Sources/TransferManager.swift" \
-    "${BUILD_SRC_DIR}/Sources/TransferWindow.swift" \
-    "${BUILD_SRC_DIR}/Sources/MenuController.swift" \
-    "${BUILD_SRC_DIR}/Sources/PreferencesManager.swift" \
-    "${BUILD_SRC_DIR}/Sources/SnippetManager.swift" \
-    "${BUILD_SRC_DIR}/Sources/SyncManager.swift" \
-    "${BUILD_SRC_DIR}/Sources/NotificationManager.swift" \
-    "${BUILD_SRC_DIR}/Sources/NotificationWindow.swift" \
-    "${BUILD_SRC_DIR}/Sources/HotKeyManager.swift" \
-    "${BUILD_SRC_DIR}/Sources/SettingsWindow.swift" \
-    "${BUILD_SRC_DIR}/Sources/SnippetEditorWindow.swift" \
-    "${BUILD_SRC_DIR}/Sources/SearchWindow.swift" \
-    "${BUILD_SRC_DIR}/Sources/LogManager.swift" \
-    "${BUILD_SRC_DIR}/Sources/LogWindow.swift" \
-    "${BUILD_SRC_DIR}/Sources/main.swift" \
+    "${BUILD_SRC_PATHS[@]}" \
     -whole-module-optimization \
     -o "${MACOS_DIR}/${EXECUTABLE_NAME}" \
     -framework AppKit \
+    -framework SwiftUI \
     -framework CoreGraphics \
     -framework Carbon \
-    -framework UserNotifications
+    -framework UserNotifications \
+    -framework ServiceManagement \
+    -framework ApplicationServices \
+    -framework UniformTypeIdentifiers \
+    -framework PDFKit \
+    -framework WebKit
 
 # 4. 准备资源文件
 echo "📦 准备资源文件..."
@@ -108,7 +132,7 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <key>CFBundleVersion</key>
     <string>${BUILD_NUMBER}</string>
     <key>LSMinimumSystemVersion</key>
-    <string>10.13</string>
+    <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSPrincipalClass</key>

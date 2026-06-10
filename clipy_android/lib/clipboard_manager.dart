@@ -18,7 +18,7 @@ class ClipboardManager {
   String? _lastText;
   String? _lastSyncHash;
   late File _storageFile;
-  int _historyLimit = 50;
+  int _historyLimit = 1000;
   List<String> _excludedApps = [];
 
   int get historyLimit => _historyLimit;
@@ -48,7 +48,7 @@ class ClipboardManager {
 
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
-    _historyLimit = prefs.getInt('historyLimit') ?? 50;
+    _historyLimit = prefs.getInt('historyLimit') ?? 1000;
     _excludedApps = prefs.getStringList('excludedApps') ?? [];
     appLog('Preferences loaded: limit=$_historyLimit, excludedCount=${_excludedApps.length}');
   }

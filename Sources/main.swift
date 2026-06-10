@@ -16,6 +16,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
         menuController = MenuController()
+        LaunchAtLoginManager.syncWithPreference()
         SyncManager.shared.start()
         print("Clipy clone started!")
     }

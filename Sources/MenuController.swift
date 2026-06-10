@@ -1,6 +1,7 @@
 import AppKit
 
 class MenuController: NSObject {
+    private static let menuDirectHistoryLimit = 50
     private var statusItem: NSStatusItem!
     private let clipboardManager = ClipboardManager.shared
     private let snippetManager = SnippetManager.shared
@@ -37,22 +38,40 @@ class MenuController: NSObject {
     }
     
     private func showFolderMenu(_ folder: SnippetFolder) {
+        let menu = buildSnippetSubmenu(for: folder)
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    private func buildSnippetSubmenu(for folder: SnippetFolder) -> NSMenu {
         let menu = NSMenu()
+
+        let searchItem = NSMenuItem(title: L10n.t(.searchHistory), action: #selector(openSearch), keyEquivalent: "f")
+        searchItem.keyEquivalentModifierMask = [.command, .shift]
+        searchItem.target = self
+        menu.addItem(searchItem)
+        menu.addItem(NSMenuItem.separator())
+
+        if folder.snippets.isEmpty {
+            let emptyItem = NSMenuItem(title: L10n.t(.noSnippets), action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            menu.addItem(emptyItem)
+            return menu
+        }
+
         for (index, snippet) in folder.snippets.enumerated() {
             let menuIndex = (index + 1) % 10
             let prefix = "\(menuIndex). "
             let keyEquivalent = index < 10 ? "\(menuIndex)" : ""
-            
+
             let menuItem = NSMenuItem(title: prefix + snippet.title, action: #selector(menuItemClicked(_:)), keyEquivalent: keyEquivalent)
             menuItem.target = self
             menuItem.representedObject = HistoryItem.text(snippet.content)
             menu.addItem(menuItem)
         }
-        
-        // Show menu at mouse location
-        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+
+        return menu
     }
-    
+
     private func setupSnippetObserver() {
         snippetManager.onSnippetsChanged = { [weak self] _ in
             self?.updateMenu(with: self?.clipboardManager.history ?? [])
@@ -107,48 +126,18 @@ class MenuController: NSObject {
             emptyItem.isEnabled = false
             menu.addItem(emptyItem)
         } else {
-            // Grouping history into folders (Clipy style: 10 items per folder)
-            let groupSize = 10
-            let groups = stride(from: 0, to: history.count, by: groupSize)
-            
-            for start in groups {
-                let end = min(start + groupSize, history.count)
-                let groupMenu = NSMenu()
-                let groupTitle = "\(start + 1) - \(end)"
-                let groupFolderItem = NSMenuItem(title: "  " + groupTitle, action: nil, keyEquivalent: "")
-                
-                for i in start..<end {
-                    let entry = history[i]
-                    let title = entry.item.title
-                    let displayTitle = title.count > 50 ? String(title.prefix(50)) + "..." : title
-                    
-                    // Add index prefix (1, 2, ..., 9, 0)
-                    let indexInGroup = i - start
-                    let menuIndex = (indexInGroup + 1) % 10
-                    let prefix = "\(menuIndex). "
-                    let keyEquivalent = "\(menuIndex)"
-                    
-                    let menuItem = NSMenuItem(title: prefix + displayTitle, action: #selector(menuItemClicked(_:)), keyEquivalent: keyEquivalent)
-                    menuItem.target = self
-                    menuItem.representedObject = entry
-                    
-                    // Add app source if available
-                    if let app = entry.sourceApp {
-                        menuItem.toolTip = "\(L10n.t(.source)): \(app)"
-                    }
-                    
-                    // Add image preview
-                    if case .image(let data) = entry.item, let image = NSImage(data: data) {
-                        let iconSize = NSSize(width: 24, height: 24)
-                        image.size = iconSize
-                        menuItem.image = image
-                    }
-                    
-                    groupMenu.addItem(menuItem)
-                }
-                
-                groupFolderItem.submenu = groupMenu
-                menu.addItem(groupFolderItem)
+            let directLimit = Self.menuDirectHistoryLimit
+            let visibleHistory = Array(history.prefix(directLimit))
+            let overflowHistory = Array(history.dropFirst(directLimit))
+
+            addHistoryGroups(to: menu, history: visibleHistory, startIndex: 0)
+
+            if !overflowHistory.isEmpty {
+                let moreMenu = NSMenu()
+                addHistoryGroups(to: moreMenu, history: overflowHistory, startIndex: directLimit)
+                let moreItem = NSMenuItem(title: L10n.t(.moreHistory), action: nil, keyEquivalent: "")
+                moreItem.submenu = moreMenu
+                menu.addItem(moreItem)
             }
         }
         
@@ -158,22 +147,22 @@ class MenuController: NSObject {
         let snippetHeader = NSMenuItem(title: L10n.t(.snippets), action: nil, keyEquivalent: "")
         snippetHeader.isEnabled = false
         menu.addItem(snippetHeader)
-        
+
         for folder in snippetManager.folders {
             let categoryMenu = NSMenu()
             let categoryItem = NSMenuItem(title: "  " + folder.title, action: nil, keyEquivalent: "")
-            
+
             for (index, snippet) in folder.snippets.enumerated() {
                 let menuIndex = (index + 1) % 10
                 let prefix = "\(menuIndex). "
                 let keyEquivalent = index < 10 ? "\(menuIndex)" : ""
-                
+
                 let menuItem = NSMenuItem(title: prefix + snippet.title, action: #selector(menuItemClicked(_:)), keyEquivalent: keyEquivalent)
                 menuItem.target = self
                 menuItem.representedObject = HistoryItem.text(snippet.content)
                 categoryMenu.addItem(menuItem)
             }
-            
+
             categoryItem.submenu = categoryMenu
             menu.addItem(categoryItem)
         }
@@ -277,7 +266,97 @@ class MenuController: NSObject {
         
         statusItem.menu = menu
     }
+
+    private func addHistoryGroups(to menu: NSMenu, history: [HistoryEntry], startIndex: Int) {
+        let groupSize = 10
+        for start in stride(from: 0, to: history.count, by: groupSize) {
+            let end = min(start + groupSize, history.count)
+            let groupMenu = NSMenu()
+            let groupTitle = "\(startIndex + start + 1) - \(startIndex + end)"
+            let groupFolderItem = NSMenuItem(title: "  " + groupTitle, action: nil, keyEquivalent: "")
+
+            for i in start..<end {
+                let entry = history[i]
+                let menuItem = makeHistoryMenuItem(entry: entry, indexInGroup: i - start, startIndex: startIndex)
+                groupMenu.addItem(menuItem)
+            }
+
+            groupFolderItem.submenu = groupMenu
+            menu.addItem(groupFolderItem)
+        }
+    }
     
+    private func makeHistoryMenuItem(entry: HistoryEntry, indexInGroup: Int, startIndex: Int) -> NSMenuItem {
+        let title = entry.item.title
+        let displayTitle = title.count > 50 ? String(title.prefix(50)) + "..." : title
+
+        let menuIndex = (indexInGroup + 1) % 10
+        let prefix = "\(menuIndex). "
+        let keyEquivalent = startIndex >= Self.menuDirectHistoryLimit ? "" : "\(menuIndex)"
+
+        if entry.item.isFile, let urls = entry.item.fileURLs {
+            let fileItem = NSMenuItem(title: prefix + displayTitle, action: nil, keyEquivalent: keyEquivalent)
+            let fileSubmenu = NSMenu()
+
+            let pasteNameItem = NSMenuItem(title: L10n.t(.pasteFileName), action: #selector(pasteFileNameClicked(_:)), keyEquivalent: "")
+            pasteNameItem.target = self
+            pasteNameItem.representedObject = entry
+            fileSubmenu.addItem(pasteNameItem)
+
+            let pasteFileItem = NSMenuItem(title: L10n.t(.pasteFile), action: #selector(pasteFileClicked(_:)), keyEquivalent: "")
+            pasteFileItem.target = self
+            pasteFileItem.representedObject = entry
+            fileSubmenu.addItem(pasteFileItem)
+
+            let revealItem = NSMenuItem(title: L10n.t(.showInFinder), action: #selector(revealHistoryFileInFinder(_:)), keyEquivalent: "")
+            revealItem.target = self
+            revealItem.representedObject = entry
+            fileSubmenu.addItem(revealItem)
+
+            fileItem.submenu = fileSubmenu
+            fileItem.toolTip = historyFileToolTip(for: entry, urls: urls)
+            fileItem.image = NSWorkspace.shared.icon(forFile: urls[0].path)
+            return fileItem
+        }
+
+        let menuItem = NSMenuItem(title: prefix + displayTitle, action: #selector(menuItemClicked(_:)), keyEquivalent: keyEquivalent)
+        menuItem.target = self
+        menuItem.representedObject = entry
+        menuItem.toolTip = historyToolTip(for: entry)
+
+        if case .image(let data) = entry.item, let image = NSImage(data: data) {
+            let iconSize = NSSize(width: 24, height: 24)
+            image.size = iconSize
+            menuItem.image = image
+        }
+
+        return menuItem
+    }
+
+    private func historyToolTip(for entry: HistoryEntry) -> String? {
+        var parts: [String] = []
+        if let location = entry.item.locationSummary {
+            parts.append("\(L10n.t(.location)): \(location)")
+        }
+        if let app = entry.sourceApp {
+            parts.append("\(L10n.t(.source)): \(app)")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
+    }
+
+    private func historyFileToolTip(for entry: HistoryEntry, urls: [URL]) -> String {
+        var parts: [String] = []
+        if let location = entry.item.locationSummary {
+            parts.append("\(L10n.t(.location)): \(location)")
+        } else {
+            parts.append(urls.map(\.path).joined(separator: "\n"))
+        }
+        if let app = entry.sourceApp {
+            parts.append("\(L10n.t(.source)): \(app)")
+        }
+        return parts.joined(separator: "\n")
+    }
+
     @objc private func menuItemClicked(_ sender: NSMenuItem) {
         if let entry = sender.representedObject as? HistoryEntry {
             clipboardManager.moveHistoryEntryToFront(entry)
@@ -285,6 +364,24 @@ class MenuController: NSObject {
         } else if let item = sender.representedObject as? HistoryItem {
             clipboardManager.copyToPasteboard(item)
         }
+    }
+
+    @objc private func pasteFileNameClicked(_ sender: NSMenuItem) {
+        guard let entry = sender.representedObject as? HistoryEntry,
+              let urls = entry.item.fileURLs else { return }
+        clipboardManager.moveHistoryEntryToFront(entry)
+        clipboardManager.copyFileNamesToPasteboard(urls)
+    }
+
+    @objc private func pasteFileClicked(_ sender: NSMenuItem) {
+        guard let entry = sender.representedObject as? HistoryEntry else { return }
+        clipboardManager.moveHistoryEntryToFront(entry)
+        clipboardManager.writeToPasteboard(entry.item)
+    }
+
+    @objc private func revealHistoryFileInFinder(_ sender: NSMenuItem) {
+        guard let entry = sender.representedObject as? HistoryEntry else { return }
+        clipboardManager.revealInFinder(for: entry)
     }
     
     @objc private func fileHistoryItemClicked(_ sender: NSMenuItem) {

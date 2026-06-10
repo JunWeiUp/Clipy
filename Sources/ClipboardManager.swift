@@ -3,17 +3,22 @@ import Foundation
 import CoreGraphics
 import CryptoKit
 
+extension Notification.Name {
+    static let clipboardHistoryDidChange = Notification.Name("clipboardHistoryDidChange")
+}
+
 enum HistoryItem: Codable {
     case text(String)
     case image(Data)
     case rtf(Data)
     case pdf(Data)
-    case fileURL(URL)
-    
+    case html(Data)
+    case files([URL])
+
     enum CodingKeys: String, CodingKey {
-        case text, image, rtf, pdf, fileURL
+        case text, image, rtf, pdf, html, fileURL, files
     }
-    
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if let value = try? container.decode(String.self, forKey: .text) {
@@ -24,13 +29,17 @@ enum HistoryItem: Codable {
             self = .rtf(value)
         } else if let value = try? container.decode(Data.self, forKey: .pdf) {
             self = .pdf(value)
+        } else if let value = try? container.decode(Data.self, forKey: .html) {
+            self = .html(value)
+        } else if let value = try? container.decode([URL].self, forKey: .files) {
+            self = .files(value)
         } else if let value = try? container.decode(URL.self, forKey: .fileURL) {
-            self = .fileURL(value)
+            self = .files([value])
         } else {
             throw DecodingError.dataCorruptedError(forKey: .text, in: container, debugDescription: "Invalid HistoryItem format")
         }
     }
-    
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
@@ -38,8 +47,24 @@ enum HistoryItem: Codable {
         case .image(let value): try container.encode(value, forKey: .image)
         case .rtf(let value): try container.encode(value, forKey: .rtf)
         case .pdf(let value): try container.encode(value, forKey: .pdf)
-        case .fileURL(let value): try container.encode(value, forKey: .fileURL)
+        case .html(let value): try container.encode(value, forKey: .html)
+        case .files(let urls):
+            if urls.count == 1 {
+                try container.encode(urls[0], forKey: .fileURL)
+            } else {
+                try container.encode(urls, forKey: .files)
+            }
         }
+    }
+
+    var fileURLs: [URL]? {
+        if case .files(let urls) = self { return urls }
+        return nil
+    }
+
+    var isFile: Bool {
+        if case .files = self { return true }
+        return false
     }
 
     var title: String {
@@ -52,9 +77,51 @@ enum HistoryItem: Codable {
             return "[Rich Text]"
         case .pdf:
             return "[PDF Document]"
-        case .fileURL(let url):
-            return "[File] \(url.lastPathComponent)"
+        case .html:
+            return "[HTML]"
+        case .files(let urls):
+            guard !urls.isEmpty else { return "[File]" }
+            if urls.count == 1 {
+                return urls[0].lastPathComponent
+            }
+            let names = urls.map(\.lastPathComponent).joined(separator: ", ")
+            return "[\(urls.count) Files] \(names)"
         }
+    }
+
+    var locationSummary: String? {
+        guard case .files(let urls) = self, !urls.isEmpty else { return nil }
+        if urls.count == 1 {
+            return FilePathDisplay.string(for: urls[0])
+        }
+        return urls.map { FilePathDisplay.string(for: $0) }.joined(separator: "\n")
+    }
+
+    var fileNamesText: String? {
+        guard case .files(let urls) = self, !urls.isEmpty else { return nil }
+        return urls.map(\.lastPathComponent).joined(separator: "\n")
+    }
+}
+
+enum FilePathDisplay {
+    static func string(for url: URL) -> String {
+        shorten(url.path)
+    }
+
+    static func shorten(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if path.hasPrefix(home + "/") {
+            return "~/" + path.dropFirst(home.count + 1)
+        }
+        if path == home {
+            return "~"
+        }
+        return path
+    }
+
+    static func revealInFinder(urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
     }
 }
 
@@ -63,6 +130,34 @@ struct HistoryEntry: Codable {
     let date: Date
     let sourceApp: String?
     let contentHash: String?
+    var isPinned: Bool
+
+    init(
+        item: HistoryItem,
+        date: Date,
+        sourceApp: String?,
+        contentHash: String?,
+        isPinned: Bool = false
+    ) {
+        self.item = item
+        self.date = date
+        self.sourceApp = sourceApp
+        self.contentHash = contentHash
+        self.isPinned = isPinned
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case item, date, sourceApp, contentHash, isPinned
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        item = try container.decode(HistoryItem.self, forKey: .item)
+        date = try container.decode(Date.self, forKey: .date)
+        sourceApp = try container.decodeIfPresent(String.self, forKey: .sourceApp)
+        contentHash = try container.decodeIfPresent(String.self, forKey: .contentHash)
+        isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+    }
 }
 
 struct FileHistoryItem: Codable {
@@ -202,6 +297,7 @@ class ClipboardManager {
         if let data = try? Data(contentsOf: storageURL),
            let savedHistory = try? decoder.decode([HistoryEntry].self, from: data) {
             self.history = savedHistory
+            history = orderedHistory()
         }
     }
     
@@ -265,23 +361,22 @@ class ClipboardManager {
         }
 
         var newItem: HistoryItem?
-        
-        if let newString = pasteboard.string(forType: .string), !newString.isEmpty {
-            newItem = .text(newString)
+
+        if let fileURLs = readFileURLsFromPasteboard(), !fileURLs.isEmpty {
+            newItem = .files(fileURLs)
         } else if let rtfData = pasteboard.data(forType: .rtf) {
             newItem = .rtf(rtfData)
+        } else if let htmlData = pasteboard.data(forType: .html) {
+            newItem = .html(htmlData)
         } else if let pdfData = pasteboard.data(forType: .pdf) {
             newItem = .pdf(pdfData)
-        } else if let fileURLString = pasteboard.string(forType: .fileURL), let url = URL(string: fileURLString) {
-            newItem = .fileURL(url)
         } else if let imageData = pasteboard.data(forType: .tiff) ?? pasteboard.data(forType: .png) {
             newItem = .image(imageData)
+        } else if let newString = pasteboard.string(forType: .string), !newString.isEmpty {
+            newItem = .text(newString)
         }
         
         if let item = newItem {
-            let hash = contentHash(for: item)
-            
-            
             addToHistory(item, sourceApp: sourceApp)
         }
     }
@@ -297,23 +392,33 @@ class ClipboardManager {
             }
         }
 
+        var preservedPin = false
         history.removeAll { entry in
+            let isDuplicate: Bool
             if let h = entry.contentHash, let nh = hash {
-                return h == nh
+                isDuplicate = h == nh
+            } else {
+                switch (entry.item, item) {
+                case (.text(let s1), .text(let s2)): isDuplicate = s1 == s2
+                case (.files(let u1), .files(let u2)): isDuplicate = u1 == u2
+                default: isDuplicate = false
+                }
             }
-            switch (entry.item, item) {
-            case (.text(let s1), .text(let s2)): return s1 == s2
-            case (.fileURL(let u1), .fileURL(let u2)): return u1 == u2
-            default: return false
+            if isDuplicate {
+                preservedPin = entry.isPinned
             }
+            return isDuplicate
         }
 
-        let entry = HistoryEntry(item: item, date: Date(), sourceApp: sourceApp, contentHash: hash)
-        history.insert(entry, at: 0)
-
-        if history.count > maxHistoryItems {
-            history.removeLast()
-        }
+        let entry = HistoryEntry(
+            item: item,
+            date: Date(),
+            sourceApp: sourceApp,
+            contentHash: hash,
+            isPinned: preservedPin
+        )
+        insertEntry(entry)
+        trimHistoryIfNeeded()
 
         // Update recent content hashes for performance
         if let hash = hash {
@@ -325,7 +430,12 @@ class ClipboardManager {
         }
 
         saveHistory()
+        notifyHistoryChanged()
+    }
+
+    private func notifyHistoryChanged() {
         onHistoryChanged?(history)
+        NotificationCenter.default.post(name: .clipboardHistoryDidChange, object: nil)
     }
     
     func handleRemoteSync(content: String, hash: String) {
@@ -349,55 +459,124 @@ class ClipboardManager {
     }
 
     func searchHistory(query: String) -> [HistoryEntry] {
-        guard !query.isEmpty else { return Array(history.prefix(20)) }
+        let ordered = orderedHistory()
+        guard !query.isEmpty else { return Array(ordered.prefix(20)) }
         let lowercased = query.lowercased()
-        return history.filter { entry in
+        let matched = ordered.filter { entry in
+            if let source = entry.sourceApp, source.lowercased().contains(lowercased) {
+                return true
+            }
             switch entry.item {
             case .text(let str):
                 return str.lowercased().contains(lowercased)
-            case .fileURL(let url):
-                return url.lastPathComponent.lowercased().contains(lowercased)
+            case .files(let urls):
+                return urls.contains { url in
+                    url.lastPathComponent.lowercased().contains(lowercased)
+                        || url.path.lowercased().contains(lowercased)
+                        || FilePathDisplay.string(for: url).lowercased().contains(lowercased)
+                }
             case .image:
                 return "image".contains(lowercased)
             case .rtf:
                 return "rich text".contains(lowercased)
             case .pdf:
                 return "pdf".contains(lowercased)
+            case .html(let data):
+                return "html".contains(lowercased)
+                    || (HistoryPreviewSupport.htmlString(from: data).map {
+                        $0.lowercased().contains(lowercased)
+                    } ?? false)
             }
         }
+        return sortPinnedFirst(matched)
+    }
+
+    func orderedHistory() -> [HistoryEntry] {
+        let pinned = history.filter(\.isPinned)
+        let unpinned = history.filter { !$0.isPinned }
+        return pinned + unpinned
+    }
+
+    func togglePin(for entry: HistoryEntry) {
+        guard let index = indexOfEntry(matching: entry) else { return }
+        var updated = history[index]
+        updated.isPinned.toggle()
+        history.remove(at: index)
+        insertEntry(updated)
+        saveHistory()
+        notifyHistoryChanged()
     }
 
     func clearHistory() {
         history.removeAll()
         saveHistory()
-        onHistoryChanged?(history)
+        notifyHistoryChanged()
+    }
+
+    func applyHistoryLimit() {
+        let previousCount = history.count
+        trimHistoryIfNeeded()
+        guard history.count != previousCount else { return }
+        updateRecentContentHashes()
+        saveHistory()
+        notifyHistoryChanged()
     }
     
     func moveHistoryEntryToFront(_ entry: HistoryEntry) {
         let hash = entry.contentHash ?? contentHash(for: entry.item)
-        
+
         history.removeAll { existingEntry in
             isSameHistoryItem(existingEntry, as: entry.item, contentHash: hash)
         }
-        
+
         let updatedEntry = HistoryEntry(
             item: entry.item,
             date: Date(),
             sourceApp: entry.sourceApp,
-            contentHash: hash
+            contentHash: hash,
+            isPinned: entry.isPinned
         )
-        history.insert(updatedEntry, at: 0)
-        
-        if history.count > maxHistoryItems {
-            history.removeLast()
-        }
-        
+        insertEntry(updatedEntry)
+        trimHistoryIfNeeded()
+
         updateRecentContentHashes()
         saveHistory()
-        onHistoryChanged?(history)
+        notifyHistoryChanged()
+    }
+
+    private func insertEntry(_ entry: HistoryEntry) {
+        if entry.isPinned {
+            history.insert(entry, at: 0)
+            return
+        }
+        let insertIndex = history.firstIndex(where: { !$0.isPinned }) ?? history.count
+        history.insert(entry, at: insertIndex)
+    }
+
+    private func trimHistoryIfNeeded() {
+        while history.count > maxHistoryItems {
+            if let index = history.lastIndex(where: { !$0.isPinned }) {
+                history.remove(at: index)
+            } else {
+                history.removeLast()
+            }
+        }
+    }
+
+    private func sortPinnedFirst(_ entries: [HistoryEntry]) -> [HistoryEntry] {
+        let pinned = entries.filter(\.isPinned)
+        let unpinned = entries.filter { !$0.isPinned }
+        return pinned + unpinned
+    }
+
+    private func indexOfEntry(matching entry: HistoryEntry) -> Int? {
+        let hash = entry.contentHash ?? contentHash(for: entry.item)
+        return history.firstIndex { existingEntry in
+            isSameHistoryItem(existingEntry, as: entry.item, contentHash: hash)
+        }
     }
     
-    func copyToPasteboard(_ item: HistoryItem) {
+    func writeToPasteboard(_ item: HistoryItem) {
         pasteboard.clearContents()
         switch item {
         case .text(let str):
@@ -408,10 +587,31 @@ class ClipboardManager {
             pasteboard.setData(data, forType: .rtf)
         case .pdf(let data):
             pasteboard.setData(data, forType: .pdf)
-        case .fileURL(let url):
-            pasteboard.setString(url.absoluteString, forType: .fileURL)
+        case .html(let data):
+            pasteboard.setData(data, forType: .html)
+        case .files(let urls):
+            pasteboard.writeObjects(urls as [NSURL])
         }
         changeCount = pasteboard.changeCount
+    }
+
+    func writeFileNamesToPasteboard(_ urls: [URL]) {
+        let text = urls.map(\.lastPathComponent).joined(separator: "\n")
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        changeCount = pasteboard.changeCount
+    }
+
+    func copyFileNamesToPasteboard(_ urls: [URL], simulatePaste: Bool = true) {
+        writeFileNamesToPasteboard(urls)
+        guard simulatePaste, AccessibilityManager.ensureTrustedForPaste() else { return }
+        paste()
+    }
+
+    func copyToPasteboard(_ item: HistoryItem, simulatePaste: Bool = true) {
+        writeToPasteboard(item)
+        if case .files = item { return }
+        guard simulatePaste, AccessibilityManager.ensureTrustedForPaste() else { return }
         paste()
     }
     
@@ -438,11 +638,12 @@ class ClipboardManager {
         switch (entry.item, item) {
         case (.text(let s1), .text(let s2)):
             return s1 == s2
-        case (.fileURL(let u1), .fileURL(let u2)):
+        case (.files(let u1), .files(let u2)):
             return u1 == u2
         case (.image(let d1), .image(let d2)),
              (.rtf(let d1), .rtf(let d2)),
-             (.pdf(let d1), .pdf(let d2)):
+             (.pdf(let d1), .pdf(let d2)),
+             (.html(let d1), .html(let d2)):
             return d1 == d2
         default:
             return false
@@ -463,13 +664,44 @@ class ClipboardManager {
             return sha256Hex(data)
         case .pdf(let data):
             return sha256Hex(data)
-        case .fileURL(let url):
-            let s = url.absoluteString
+        case .html(let data):
+            return sha256Hex(data)
+        case .files(let urls):
+            let s = urls.map(\.absoluteString).joined(separator: "\n")
             guard let data = s.data(using: .utf8) else { return nil }
             return sha256Hex(data)
         }
     }
-    
+
+    private func readFileURLsFromPasteboard() -> [URL]? {
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [
+            .urlReadingFileURLsOnly: true,
+        ]) as? [URL], !urls.isEmpty {
+            return urls
+        }
+
+        let legacyType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        if let paths = pasteboard.propertyList(forType: legacyType) as? [String], !paths.isEmpty {
+            return paths.map { URL(fileURLWithPath: $0) }
+        }
+
+        if let fileURLString = pasteboard.string(forType: .fileURL) {
+            if let url = URL(string: fileURLString), url.isFileURL {
+                return [url]
+            }
+            if fileURLString.hasPrefix("/") {
+                return [URL(fileURLWithPath: fileURLString)]
+            }
+        }
+
+        return nil
+    }
+
+    func revealInFinder(for entry: HistoryEntry) {
+        guard let urls = entry.item.fileURLs else { return }
+        FilePathDisplay.revealInFinder(urls: urls)
+    }
+
     private func sha256Hex(_ data: Data) -> String {
         let digest = CryptoKit.SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()

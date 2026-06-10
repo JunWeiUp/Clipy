@@ -12,6 +12,7 @@ class PreferencesManager {
     private let authorizedDevicesKey = "authorizedDevices"
     private let deviceNameKey = "deviceName"
     private let appLanguageKey = "appLanguage"
+    private let launchAtLoginKey = "launchAtLogin"
     
     var deviceName: String {
         get { defaults.string(forKey: deviceNameKey) ?? Host.current().localizedName ?? "Mac" }
@@ -34,7 +35,7 @@ class PreferencesManager {
     }
     
     var historyLimit: Int {
-        get { defaults.integer(forKey: historyLimitKey) == 0 ? 50 : defaults.integer(forKey: historyLimitKey) }
+        get { defaults.integer(forKey: historyLimitKey) == 0 ? 1000 : defaults.integer(forKey: historyLimitKey) }
         set { defaults.set(newValue, forKey: historyLimitKey) }
     }
     
@@ -71,6 +72,11 @@ class PreferencesManager {
     var authorizedDevices: [String] {
         get { defaults.stringArray(forKey: authorizedDevicesKey) ?? [] }
         set { defaults.set(newValue, forKey: authorizedDevicesKey) }
+    }
+
+    var launchAtLogin: Bool {
+        get { defaults.bool(forKey: launchAtLoginKey) }
+        set { defaults.set(newValue, forKey: launchAtLoginKey) }
     }
     
     private init() {}
