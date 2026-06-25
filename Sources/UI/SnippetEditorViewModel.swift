@@ -16,6 +16,18 @@ final class SnippetEditorViewModel: ObservableObject {
 
     private var sidebarRefreshWorkItem: DispatchWorkItem?
 
+    init() {
+        NotificationCenter.default.addObserver(
+            forName: .snippetEditorSelectSnippet,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let snippetID = notification.object as? UUID else { return }
+            self?.selectSnippet(snippetID)
+            self?.reloadSidebar()
+        }
+    }
+
     var currentSelection: SidebarSelection? {
         if let snippetId = selectedSnippetId, Self.latestSnippet(matching: snippetId) != nil {
             return .snippet(snippetId)

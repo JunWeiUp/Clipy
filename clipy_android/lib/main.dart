@@ -12,6 +12,9 @@ import 'sync_manager.dart';
 import 'transfer_manager.dart';
 import 'notification_manager.dart';
 import 'notification_sync_page.dart';
+import 'collector_manager.dart';
+import 'collector_page.dart';
+import 'notification_health_monitor.dart';
 import 'log_manager.dart';
 import 'models.dart';
 import 'app_localizations.dart';
@@ -47,6 +50,18 @@ void main() async {
     await NotificationManager.instance.init();
   } catch (e) {
     debugPrint('NotificationManager init error: $e');
+  }
+
+  try {
+    await CollectorManager.instance.init();
+  } catch (e) {
+    debugPrint('CollectorManager init error: $e');
+  }
+
+  try {
+    NotificationHealthMonitor.instance.start();
+  } catch (e) {
+    debugPrint('NotificationHealthMonitor init error: $e');
   }
   
   try {
@@ -1718,10 +1733,35 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildSettingsTab() {
-    return _MobileSettingsContent(
-      onOpenLogs: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const LogPage())),
-      onOpenTransfer: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const TransferPage())),
-      onOpenReceivedFiles: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ReceivedFilesPage())),
+    final l10n = context.l10n;
+    return ListView(
+      children: [
+        SwitchListTile(
+          title: Text(l10n.collectorEnabled),
+          value: CollectorManager.instance.isEnabled,
+          onChanged: (value) async {
+            await CollectorManager.instance.setEnabled(value);
+            if (mounted) setState(() {});
+          },
+        ),
+        SwitchListTile(
+          title: Text(l10n.collectorClipboardOnly),
+          value: ClipboardManager.instance.collectorClipboardOnly,
+          onChanged: (value) async {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('collectorClipboardOnly', value);
+            await ClipboardManager.instance.reloadPreferences();
+            if (mounted) setState(() {});
+          },
+        ),
+        const Divider(),
+        _MobileSettingsContent(
+          onOpenLogs: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const LogPage())),
+          onOpenTransfer: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const TransferPage())),
+          onOpenReceivedFiles: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ReceivedFilesPage())),
+          onOpenNotificationSync: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const NotificationSyncPage())),
+        ),
+      ],
     );
   }
 
@@ -1729,8 +1769,8 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
 
-    final titles = [l10n.clipyHistory, l10n.snippets, l10n.settings];
-    final bodies = [_buildHistoryTab(), _buildSnippetsTab(), _buildSettingsTab()];
+    final titles = [l10n.clipyHistory, l10n.snippets, l10n.collector, l10n.settings];
+    final bodies = [_buildHistoryTab(), _buildSnippetsTab(), const CollectorPage(), _buildSettingsTab()];
 
     return Scaffold(
       appBar: AppBar(
@@ -1781,9 +1821,11 @@ class _HomePageState extends State<HomePage> {
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         onTap: (index) => setState(() => _selectedIndex = index),
+        type: BottomNavigationBarType.fixed,
         items: [
           BottomNavigationBarItem(icon: const Icon(Icons.history), label: l10n.history),
           BottomNavigationBarItem(icon: const Icon(Icons.snippet_folder_outlined), label: l10n.snippets),
+          BottomNavigationBarItem(icon: const Icon(Icons.sensors), label: l10n.collector),
           BottomNavigationBarItem(icon: const Icon(Icons.settings), label: l10n.settings),
         ],
       ),
@@ -1795,11 +1837,13 @@ class _MobileSettingsContent extends StatefulWidget {
   final VoidCallback onOpenLogs;
   final VoidCallback onOpenTransfer;
   final VoidCallback onOpenReceivedFiles;
+  final VoidCallback onOpenNotificationSync;
 
   const _MobileSettingsContent({
     required this.onOpenLogs,
     required this.onOpenTransfer,
     required this.onOpenReceivedFiles,
+    required this.onOpenNotificationSync,
   });
 
   @override
@@ -1971,10 +2015,7 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
           title: Text(l10n.notificationSync),
           subtitle: Text(l10n.enableNotificationSync),
           trailing: const Icon(Icons.chevron_right),
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const NotificationSyncPage()),
-          ),
+          onTap: widget.onOpenNotificationSync,
         ),
         const Divider(),
         ListTile(

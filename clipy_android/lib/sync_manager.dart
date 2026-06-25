@@ -432,6 +432,8 @@ class SyncManager {
       NotificationManager.instance.clearAll();
     } else if (message.type == 'notification/config') {
       _handleNotificationConfig(decrypted);
+    } else if (message.type == 'collector/event') {
+      // Mac may send collector events in the future; currently Android is sender-only.
     }
   }
 
@@ -469,6 +471,33 @@ class SyncManager {
     for (var service in _discoveredServices) {
       if (authorizedDevices.contains(service.name)) {
         appLog('Sending notification message to ${service.name}...');
+        await _sendSync(jsonData, service);
+      }
+    }
+  }
+
+  Future<void> broadcastCollectorEvent({
+    required String content,
+    required String hash,
+  }) async {
+    if (!isEnabled) return;
+
+    appLog('Broadcasting collector event');
+    final encrypted = _encrypt(content);
+    if (encrypted == null) return;
+
+    final message = SyncMessage(
+      deviceId: deviceId,
+      timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+      type: 'collector/event',
+      content: encrypted,
+      hash: hash,
+    );
+
+    final jsonData = jsonEncode(message.toJson());
+    for (var service in _discoveredServices) {
+      if (authorizedDevices.contains(service.name)) {
+        appLog('Sending collector event to ${service.name}...');
         await _sendSync(jsonData, service);
       }
     }

@@ -15,6 +15,13 @@ RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 SWIFT_SOURCES=(
     Sources/Localization.swift
     Sources/ClipboardManager.swift
+    Sources/HistorySearchRanker.swift
+    Sources/HistorySearchTypes.swift
+    Sources/HistorySearchIndexBuilder.swift
+    Sources/HistorySearchStateStore.swift
+    Sources/SearchGlobalHotKeyManager.swift
+    Sources/SecureStorageCrypto.swift
+    Sources/HistoryKeychain.swift
     Sources/TransferManager.swift
     Sources/TransferWindow.swift
     Sources/MenuController.swift
@@ -23,6 +30,9 @@ SWIFT_SOURCES=(
     Sources/SyncManager.swift
     Sources/NotificationManager.swift
     Sources/NotificationWindow.swift
+    Sources/DeviceCollectorTypes.swift
+    Sources/DeviceCollectorManager.swift
+    Sources/CollectorWindow.swift
     Sources/HotKeyManager.swift
     Sources/SettingsWindow.swift
     Sources/SnippetEditorWindow.swift
@@ -45,10 +55,12 @@ SWIFT_SOURCES=(
     Sources/UI/LeftAlignedTextInput.swift
     Sources/UI/SettingsView.swift
     Sources/UI/SearchView.swift
+    Sources/UI/HighlightedText.swift
     Sources/UI/HistoryPreviewView.swift
     Sources/UI/HistoryPreviewRepresentables.swift
     Sources/UI/TransferView.swift
     Sources/UI/NotificationView.swift
+    Sources/UI/CollectorView.swift
     Sources/UI/SnippetEditorViewModel.swift
     Sources/UI/SnippetEditorSidebarRepresentable.swift
     Sources/UI/SnippetEditorView.swift
@@ -93,6 +105,8 @@ swiftc \
     -framework UserNotifications \
     -framework ServiceManagement \
     -framework ApplicationServices \
+    -framework Security \
+    -framework Vision \
     -framework UniformTypeIdentifiers \
     -framework PDFKit \
     -framework WebKit

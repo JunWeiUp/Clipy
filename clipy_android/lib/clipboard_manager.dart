@@ -9,6 +9,7 @@ import 'log_manager.dart';
 import 'models.dart';
 import 'storage_paths.dart';
 import 'sync_manager.dart';
+import 'collector_manager.dart';
 
 class ClipboardManager {
   static final ClipboardManager instance = ClipboardManager._();
@@ -20,9 +21,15 @@ class ClipboardManager {
   late File _storageFile;
   int _historyLimit = 1000;
   List<String> _excludedApps = [];
+  bool _collectorClipboardOnly = false;
 
   int get historyLimit => _historyLimit;
   List<String> get excludedApps => List.unmodifiable(_excludedApps);
+  bool get collectorClipboardOnly => _collectorClipboardOnly;
+
+  Future<void> reloadPreferences() async {
+    await _loadPreferences();
+  }
 
   Future<void> init() async {
     appLog('Initializing ClipboardManager...');
@@ -50,7 +57,8 @@ class ClipboardManager {
     final prefs = await SharedPreferences.getInstance();
     _historyLimit = prefs.getInt('historyLimit') ?? 1000;
     _excludedApps = prefs.getStringList('excludedApps') ?? [];
-    appLog('Preferences loaded: limit=$_historyLimit, excludedCount=${_excludedApps.length}');
+    _collectorClipboardOnly = prefs.getBool('collectorClipboardOnly') ?? false;
+    appLog('Preferences loaded: limit=$_historyLimit, excludedCount=${_excludedApps.length}, collectorClipboardOnly=$_collectorClipboardOnly');
   }
 
   Future<void> _saveHistory() async {
@@ -101,10 +109,16 @@ class ClipboardManager {
     if (broadcast && normalizedEntry.contentHash != _lastSyncHash) {
       if (normalizedEntry.item.type == 'text') {
         appLog('Broadcasting new local copy...');
-        SyncManager.instance.broadcastSync(
-          normalizedEntry.item.value as String,
-          normalizedEntry.contentHash!,
+        CollectorManager.instance.emitClipboard(
+          text: normalizedEntry.item.value as String,
+          hash: normalizedEntry.contentHash!,
         );
+        if (!_collectorClipboardOnly) {
+          SyncManager.instance.broadcastSync(
+            normalizedEntry.item.value as String,
+            normalizedEntry.contentHash!,
+          );
+        }
       }
     }
 

@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.PowerManager
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import androidx.core.app.ActivityCompat
@@ -22,7 +23,10 @@ class MainActivity: FlutterActivity() {
     private val PERMISSIONS_CHANNEL = "com.clipyclone.clipy_android/permissions"
     private val STORAGE_CHANNEL = "com.clipyclone.clipy_android/storage"
     private val NOTIFICATIONS_CHANNEL = "com.clipyclone.clipy_android/notifications"
+    private val COLLECTOR_CHANNEL = "com.clipyclone.clipy_android/collector"
     private val STORAGE_PERMISSION_REQUEST_CODE = 1001
+    private val COLLECTOR_PERMISSION_REQUEST_CODE = 1002
+    private var pendingCollectorPermission: String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -139,10 +143,132 @@ class MainActivity: FlutterActivity() {
                 "getInstalledApps" -> {
                     result.success(getInstalledAppsList())
                 }
+                "getListenerStatus" -> {
+                    val permissionGranted = isNotificationListenerEnabled()
+                    val listener = ClipyNotificationListenerService.instance
+                    if (permissionGranted && listener == null) {
+                        requestNotificationListenerRebind()
+                    }
+                    val activeCount = try {
+                        listener?.activeNotifications?.size ?: 0
+                    } catch (_: Exception) {
+                        0
+                    }
+                    result.success(
+                        mapOf(
+                            "permissionGranted" to permissionGranted,
+                            "serviceConnected" to (ClipyNotificationListenerService.instance != null),
+                            "activeNotificationCount" to activeCount,
+                        ),
+                    )
+                }
+                "requestListenerRebind" -> {
+                    if (isNotificationListenerEnabled()) {
+                        requestNotificationListenerRebind()
+                    }
+                    result.success(null)
+                }
                 else -> {
                     result.notImplemented()
                 }
             }
+        }
+
+        val collectorChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, COLLECTOR_CHANNEL)
+        CollectorEventBridge.setMethodChannel(collectorChannel)
+        collectorChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "startForegroundService" -> {
+                    val intent = Intent(this, CollectorForegroundService::class.java).apply {
+                        action = CollectorForegroundService.ACTION_START
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(intent)
+                    } else {
+                        startService(intent)
+                    }
+                    result.success(null)
+                }
+                "stopForegroundService" -> {
+                    val intent = Intent(this, CollectorForegroundService::class.java).apply {
+                        action = CollectorForegroundService.ACTION_STOP
+                    }
+                    startService(intent)
+                    result.success(null)
+                }
+                "checkPermission" -> {
+                    val permission = call.argument<String>("permission")
+                    result.success(permission?.let { hasPermission(it) } ?: false)
+                }
+                "requestPermission" -> {
+                    val permission = call.argument<String>("permission")
+                    if (permission == null) {
+                        result.error("INVALID_ARGUMENT", "permission is required", null)
+                        return@setMethodCallHandler
+                    }
+                    pendingCollectorPermission = permission
+                    ActivityCompat.requestPermissions(
+                        this,
+                        arrayOf(permission),
+                        COLLECTOR_PERMISSION_REQUEST_CODE,
+                    )
+                    result.success(null)
+                }
+                "openPermissionSettings" -> {
+                    val type = call.argument<String>("type") ?: ""
+                    openPermissionSettings(type)
+                    result.success(null)
+                }
+                "isBatteryOptimizationIgnored" -> {
+                    result.success(isBatteryOptimizationIgnored())
+                }
+                "requestIgnoreBatteryOptimization" -> {
+                    requestIgnoreBatteryOptimization()
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun hasPermission(permission: String): Boolean {
+        return when (permission) {
+            "notification_listener" -> isNotificationListenerEnabled()
+            else -> ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun openPermissionSettings(type: String) {
+        val intent = when (type) {
+            "notification_listener" -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+            "location" -> Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+            "battery" -> Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            "app_details" -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", packageName, null)
+            }
+            else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", packageName, null)
+            }
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(intent)
+    }
+
+    private fun isBatteryOptimizationIgnored(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        return powerManager.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun requestIgnoreBatteryOptimization() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            openPermissionSettings("battery")
         }
     }
 

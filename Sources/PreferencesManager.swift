@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 class PreferencesManager {
@@ -13,6 +14,18 @@ class PreferencesManager {
     private let deviceNameKey = "deviceName"
     private let appLanguageKey = "appLanguage"
     private let launchAtLoginKey = "launchAtLogin"
+    private let historyEncryptionEnabledKey = "historyEncryptionEnabled"
+    private let searchGlobalShortcutEnabledKey = "searchGlobalShortcutEnabled"
+    private let searchHistoryShortcutKey = "searchHistoryShortcut"
+    private let collectorSyncEnabledKey = "collectorSyncEnabled"
+    private let collectorAlertEnabledKey = "collectorAlertEnabled"
+    private let collectorNotificationEnabledKey = "collectorNotificationEnabled"
+    private let collectorSmsEnabledKey = "collectorSmsEnabled"
+    private let collectorCallEnabledKey = "collectorCallEnabled"
+    private let collectorCallLogEnabledKey = "collectorCallLogEnabled"
+    private let collectorClipboardEnabledKey = "collectorClipboardEnabled"
+    private let collectorLocationEnabledKey = "collectorLocationEnabled"
+    private let collectorSystemEnabledKey = "collectorSystemEnabled"
     
     var deviceName: String {
         get { defaults.string(forKey: deviceNameKey) ?? Host.current().localizedName ?? "Mac" }
@@ -77,6 +90,86 @@ class PreferencesManager {
     var launchAtLogin: Bool {
         get { defaults.bool(forKey: launchAtLoginKey) }
         set { defaults.set(newValue, forKey: launchAtLoginKey) }
+    }
+
+    var isHistoryEncryptionEnabled: Bool {
+        get { defaults.bool(forKey: historyEncryptionEnabledKey) }
+        set { defaults.set(newValue, forKey: historyEncryptionEnabledKey) }
+    }
+
+    var isSearchGlobalShortcutEnabled: Bool {
+        get {
+            if defaults.object(forKey: searchGlobalShortcutEnabledKey) == nil { return true }
+            return defaults.bool(forKey: searchGlobalShortcutEnabledKey)
+        }
+        set { defaults.set(newValue, forKey: searchGlobalShortcutEnabledKey) }
+    }
+
+    var searchHistoryShortcut: ShortcutCombo? {
+        get {
+            if let data = defaults.data(forKey: searchHistoryShortcutKey),
+               let combo = try? JSONDecoder().decode(ShortcutCombo.self, from: data) {
+                return combo
+            }
+            return ShortcutCombo(keyCode: 0x03, modifierFlags: NSEvent.ModifierFlags([.command, .shift]).rawValue)
+        }
+        set {
+            if let newValue, let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: searchHistoryShortcutKey)
+            } else {
+                defaults.removeObject(forKey: searchHistoryShortcutKey)
+            }
+        }
+    }
+
+    var isCollectorSyncEnabled: Bool {
+        get {
+            if defaults.object(forKey: collectorSyncEnabledKey) == nil {
+                return defaults.object(forKey: "notificationSyncEnabled") as? Bool ?? true
+            }
+            return defaults.bool(forKey: collectorSyncEnabledKey)
+        }
+        set { defaults.set(newValue, forKey: collectorSyncEnabledKey) }
+    }
+
+    var isCollectorAlertEnabled: Bool {
+        get { defaults.object(forKey: collectorAlertEnabledKey) == nil ? true : defaults.bool(forKey: collectorAlertEnabledKey) }
+        set { defaults.set(newValue, forKey: collectorAlertEnabledKey) }
+    }
+
+    var isCollectorNotificationEnabled: Bool {
+        get { defaults.object(forKey: collectorNotificationEnabledKey) == nil ? true : defaults.bool(forKey: collectorNotificationEnabledKey) }
+        set { defaults.set(newValue, forKey: collectorNotificationEnabledKey) }
+    }
+
+    var isCollectorSmsEnabled: Bool {
+        get { defaults.object(forKey: collectorSmsEnabledKey) == nil ? true : defaults.bool(forKey: collectorSmsEnabledKey) }
+        set { defaults.set(newValue, forKey: collectorSmsEnabledKey) }
+    }
+
+    var isCollectorCallEnabled: Bool {
+        get { defaults.object(forKey: collectorCallEnabledKey) == nil ? true : defaults.bool(forKey: collectorCallEnabledKey) }
+        set { defaults.set(newValue, forKey: collectorCallEnabledKey) }
+    }
+
+    var isCollectorCallLogEnabled: Bool {
+        get { defaults.object(forKey: collectorCallLogEnabledKey) == nil ? true : defaults.bool(forKey: collectorCallLogEnabledKey) }
+        set { defaults.set(newValue, forKey: collectorCallLogEnabledKey) }
+    }
+
+    var isCollectorClipboardEnabled: Bool {
+        get { defaults.object(forKey: collectorClipboardEnabledKey) == nil ? true : defaults.bool(forKey: collectorClipboardEnabledKey) }
+        set { defaults.set(newValue, forKey: collectorClipboardEnabledKey) }
+    }
+
+    var isCollectorLocationEnabled: Bool {
+        get { defaults.object(forKey: collectorLocationEnabledKey) == nil ? true : defaults.bool(forKey: collectorLocationEnabledKey) }
+        set { defaults.set(newValue, forKey: collectorLocationEnabledKey) }
+    }
+
+    var isCollectorSystemEnabled: Bool {
+        get { defaults.object(forKey: collectorSystemEnabledKey) == nil ? true : defaults.bool(forKey: collectorSystemEnabledKey) }
+        set { defaults.set(newValue, forKey: collectorSystemEnabledKey) }
     }
     
     private init() {}

@@ -411,3 +411,79 @@ class SnippetFolder {
     );
   }
 }
+
+class CollectorCategories {
+  static const notification = 'notification';
+  static const sms = 'sms';
+  static const call = 'call';
+  static const callLog = 'call_log';
+  static const clipboard = 'clipboard';
+  static const location = 'location';
+  static const system = 'system';
+
+  static const all = [
+    notification,
+    sms,
+    call,
+    callLog,
+    clipboard,
+    location,
+    system,
+  ];
+}
+
+class CollectorEvent {
+  final String id;
+  final String category;
+  final int timestamp;
+  final String deviceId;
+  final Map<String, dynamic> payload;
+
+  CollectorEvent({
+    required this.id,
+    required this.category,
+    required this.timestamp,
+    required this.deviceId,
+    required this.payload,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'category': category,
+        'timestamp': timestamp,
+        'deviceId': deviceId,
+        'payload': payload,
+      };
+
+  factory CollectorEvent.fromJson(Map<String, dynamic> json) {
+    return CollectorEvent(
+      id: json['id'] as String,
+      category: json['category'] as String,
+      timestamp: (json['timestamp'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
+      deviceId: json['deviceId'] as String? ?? '',
+      payload: Map<String, dynamic>.from(json['payload'] as Map? ?? {}),
+    );
+  }
+}
+
+class NotificationListenerStatus {
+  final bool permissionGranted;
+  final bool serviceConnected;
+  final int activeNotificationCount;
+
+  const NotificationListenerStatus({
+    required this.permissionGranted,
+    required this.serviceConnected,
+    required this.activeNotificationCount,
+  });
+
+  factory NotificationListenerStatus.fromMap(Map<dynamic, dynamic> map) {
+    return NotificationListenerStatus(
+      permissionGranted: map['permissionGranted'] as bool? ?? false,
+      serviceConnected: map['serviceConnected'] as bool? ?? false,
+      activeNotificationCount:
+          (map['activeNotificationCount'] as num?)?.toInt() ?? 0,
+    );
+  }
+}

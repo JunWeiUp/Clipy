@@ -29,6 +29,20 @@ final class HostingWindow<Content: View>: NSWindow {
         }
         if let frameAutosaveName {
             setFrameAutosaveName(frameAutosaveName)
+        } else {
+            setContentSize(NSSize(width: size.width, height: size.height))
+        }
+        if let minSize {
+            var clampedFrame = frame
+            if clampedFrame.width < minSize.width {
+                clampedFrame.size.width = minSize.width
+            }
+            if clampedFrame.height < minSize.height {
+                clampedFrame.size.height = minSize.height
+            }
+            if clampedFrame != frame {
+                setFrame(clampedFrame, display: false)
+            }
         }
 
         backgroundColor = .windowBackgroundColor
@@ -37,7 +51,13 @@ final class HostingWindow<Content: View>: NSWindow {
 
         let root = content()
             .environmentObject(AppLanguageObserver.shared)
-        contentViewController = NSHostingController(rootView: root)
+        let intendedFrame = frame
+        let hostingController = NSHostingController(rootView: root)
+        if #available(macOS 13.0, *) {
+            hostingController.sizingOptions = [.minSize]
+        }
+        contentViewController = hostingController
+        setFrame(intendedFrame, display: false)
     }
 
     func show() {

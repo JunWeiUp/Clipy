@@ -7,6 +7,7 @@ class MenuController: NSObject {
     private let snippetManager = SnippetManager.shared
     private lazy var transferWindow = TransferWindow()
     private lazy var notificationWindow = NotificationWindow()
+    private lazy var collectorWindow = CollectorWindow()
     
     override init() {
         super.init()
@@ -16,11 +17,23 @@ class MenuController: NSObject {
         setupHotKeyObserver()
         NotificationCenter.default.addObserver(
             self,
+            selector: #selector(registerGlobalHotKeys),
+            name: .globalHotKeysShouldRegister,
+            object: nil
+        )
+        registerGlobalHotKeys()
+        NotificationCenter.default.addObserver(
+            self,
             selector: #selector(languageDidChange),
             name: .appLanguageDidChange,
             object: nil
         )
         NotificationManager.shared.onNotificationsChanged = { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.updateMenu(with: self?.clipboardManager.history ?? [])
+            }
+        }
+        DeviceCollectorManager.shared.onEventsChanged = { [weak self] _ in
             DispatchQueue.main.async {
                 self?.updateMenu(with: self?.clipboardManager.history ?? [])
             }
@@ -111,7 +124,11 @@ class MenuController: NSObject {
         let menu = NSMenu()
         
         // --- History Section ---
-        let historyHeader = NSMenuItem(title: L10n.t(.history), action: nil, keyEquivalent: "")
+        let historyHeader = NSMenuItem(
+            title: L10n.format(.historyWithCount, history.count),
+            action: nil,
+            keyEquivalent: ""
+        )
         historyHeader.isEnabled = false
         menu.addItem(historyHeader)
 
@@ -191,13 +208,13 @@ class MenuController: NSObject {
         
         menu.addItem(NSMenuItem.separator())
         
-        // --- Phone Notifications Section ---
-        let notificationCount = NotificationManager.shared.notifications.count
-        let notificationTitle = "\(L10n.t(.phoneNotifications)) (\(notificationCount))..."
-        let notificationItem = NSMenuItem(title: notificationTitle, action: #selector(openNotifications), keyEquivalent: "N")
-        notificationItem.target = self
-        notificationItem.toolTip = L10n.t(.notificationSync)
-        menu.addItem(notificationItem)
+        // --- Phone Collector Section ---
+        let collectorCount = DeviceCollectorManager.shared.events.count
+        let collectorTitle = "\(L10n.t(.phoneCollector)) (\(collectorCount))..."
+        let collectorItem = NSMenuItem(title: collectorTitle, action: #selector(openCollector), keyEquivalent: "N")
+        collectorItem.target = self
+        collectorItem.toolTip = L10n.t(.enableCollectorSync)
+        menu.addItem(collectorItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -432,8 +449,12 @@ class MenuController: NSObject {
         clipboardManager.clearHistory()
     }
 
+    @objc private func openCollector() {
+        collectorWindow.showWindow()
+    }
+
     @objc private func openNotifications() {
-        notificationWindow.showWindow()
+        collectorWindow.showWindow()
     }
     
     @objc private func openPreferences() {
@@ -459,6 +480,10 @@ class MenuController: NSObject {
     @objc private func openSearch() {
         NSApp.activate(ignoringOtherApps: true)
         SearchWindow.shared.showWindow()
+    }
+
+    @objc private func registerGlobalHotKeys() {
+        SearchGlobalHotKeyManager.register()
     }
 
     @objc private func languageDidChange() {

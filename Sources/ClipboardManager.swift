@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import CoreGraphics
+import ApplicationServices
 import CryptoKit
 
 extension Notification.Name {
@@ -103,6 +104,48 @@ enum HistoryItem: Codable {
     }
 }
 
+enum HistoryTypeFilter: String, CaseIterable, Identifiable {
+    case all
+    case text
+    case image
+    case file
+    case richText
+
+    var id: String { rawValue }
+
+    var labelKey: L10nKey {
+        switch self {
+        case .all: return .historyFilterAll
+        case .text: return .historyTypeText
+        case .image: return .historyTypeImage
+        case .file: return .historyTypeFile
+        case .richText: return .historyFilterRichText
+        }
+    }
+
+    func matches(_ item: HistoryItem) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .text:
+            if case .text = item { return true }
+            return false
+        case .image:
+            if case .image = item { return true }
+            return false
+        case .file:
+            return item.isFile
+        case .richText:
+            switch item {
+            case .rtf, .html, .pdf:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+}
+
 enum FilePathDisplay {
     static func string(for url: URL) -> String {
         shorten(url.path)
@@ -129,25 +172,38 @@ struct HistoryEntry: Codable {
     let item: HistoryItem
     let date: Date
     let sourceApp: String?
+    let sourceBundleId: String?
     let contentHash: String?
     var isPinned: Bool
+    var searchIndex: String?
+    var lastUsedAt: Date?
+    var useCount: Int
 
     init(
         item: HistoryItem,
         date: Date,
         sourceApp: String?,
+        sourceBundleId: String? = nil,
         contentHash: String?,
-        isPinned: Bool = false
+        isPinned: Bool = false,
+        searchIndex: String? = nil,
+        lastUsedAt: Date? = nil,
+        useCount: Int = 0
     ) {
         self.item = item
         self.date = date
         self.sourceApp = sourceApp
+        self.sourceBundleId = sourceBundleId
         self.contentHash = contentHash
         self.isPinned = isPinned
+        self.searchIndex = searchIndex
+        self.lastUsedAt = lastUsedAt
+        self.useCount = useCount
     }
 
     enum CodingKeys: String, CodingKey {
-        case item, date, sourceApp, contentHash, isPinned
+        case item, date, sourceApp, sourceBundleId, contentHash, isPinned
+        case searchIndex, lastUsedAt, useCount
     }
 
     init(from decoder: Decoder) throws {
@@ -155,8 +211,12 @@ struct HistoryEntry: Codable {
         item = try container.decode(HistoryItem.self, forKey: .item)
         date = try container.decode(Date.self, forKey: .date)
         sourceApp = try container.decodeIfPresent(String.self, forKey: .sourceApp)
+        sourceBundleId = try container.decodeIfPresent(String.self, forKey: .sourceBundleId)
         contentHash = try container.decodeIfPresent(String.self, forKey: .contentHash)
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        searchIndex = try container.decodeIfPresent(String.self, forKey: .searchIndex)
+        lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt)
+        useCount = try container.decodeIfPresent(Int.self, forKey: .useCount) ?? 0
     }
 }
 
@@ -167,6 +227,12 @@ struct FileHistoryItem: Codable {
     let fileSize: Int64
     let timestamp: Date
     let senderName: String
+}
+
+private struct HistoryStorageEnvelope: Codable {
+    let version: Int
+    let encrypted: Bool
+    let payload: String
 }
 
 class ClipboardManager {
@@ -188,6 +254,9 @@ class ClipboardManager {
     private let minCheckInterval: TimeInterval = 0.3 // Reduced from 0.5s to 0.3s with better logic
     private var recentContentHashes: Set<String> = []
     private let recentContentHashesMaxSize = 50
+    private var pendingIndexHashes: Set<String> = []
+    private var pasteEventTap: CFMachPort?
+    private var pasteEventTapRunLoopSource: CFRunLoopSource?
 
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -249,6 +318,8 @@ class ClipboardManager {
         loadHistory()
         loadFileHistory()
         startPolling()
+        backfillSearchIndexesIfNeeded()
+        startPasteUsageMonitoringIfNeeded()
         
         // Initialize recent content hashes from existing history
         updateRecentContentHashes()
@@ -294,16 +365,69 @@ class ClipboardManager {
     }
     
     private func loadHistory() {
-        if let data = try? Data(contentsOf: storageURL),
-           let savedHistory = try? decoder.decode([HistoryEntry].self, from: data) {
-            self.history = savedHistory
-            history = orderedHistory()
+        guard let data = try? Data(contentsOf: storageURL) else { return }
+
+        if let envelope = try? decoder.decode(HistoryStorageEnvelope.self, from: data), envelope.encrypted {
+            guard let encryptedData = Data(base64Encoded: envelope.payload),
+                  let key = HistoryKeychain.loadKey(),
+                  let decrypted = try? SecureStorageCrypto.decrypt(encryptedData, using: key),
+                  let savedHistory = try? decoder.decode([HistoryEntry].self, from: decrypted) else {
+                appLog("Failed to decrypt clipboard history", level: .error)
+                return
+            }
+            history = savedHistory
+        } else if let savedHistory = try? decoder.decode([HistoryEntry].self, from: data) {
+            history = savedHistory
         }
+
+        history = orderedHistory()
     }
-    
-    private func saveHistory() {
-        if let data = try? encoder.encode(history) {
-            try? data.write(to: storageURL)
+
+    @discardableResult
+    func setHistoryEncryptionEnabled(_ enabled: Bool) -> Bool {
+        let previous = PreferencesManager.shared.isHistoryEncryptionEnabled
+        guard previous != enabled else { return true }
+
+        PreferencesManager.shared.isHistoryEncryptionEnabled = enabled
+        guard saveHistory() else {
+            PreferencesManager.shared.isHistoryEncryptionEnabled = previous
+            _ = saveHistory()
+            return false
+        }
+        return true
+    }
+
+    @discardableResult
+    private func saveHistory() -> Bool {
+        guard let data = try? encoder.encode(history) else { return false }
+
+        if PreferencesManager.shared.isHistoryEncryptionEnabled {
+            guard let key = HistoryKeychain.loadOrCreateKey(),
+                  let encrypted = try? SecureStorageCrypto.encrypt(data, using: key) else {
+                appLog("Failed to encrypt clipboard history", level: .error)
+                return false
+            }
+            let envelope = HistoryStorageEnvelope(
+                version: 1,
+                encrypted: true,
+                payload: encrypted.base64EncodedString()
+            )
+            guard let envelopeData = try? encoder.encode(envelope) else { return false }
+            do {
+                try envelopeData.write(to: storageURL, options: .atomic)
+                return true
+            } catch {
+                appLog("Failed to write encrypted clipboard history: \(error)", level: .error)
+                return false
+            }
+        }
+
+        do {
+            try data.write(to: storageURL, options: .atomic)
+            return true
+        } catch {
+            appLog("Failed to write clipboard history: \(error)", level: .error)
+            return false
         }
     }
 
@@ -360,28 +484,98 @@ class ClipboardManager {
             return
         }
 
-        var newItem: HistoryItem?
-
-        if let fileURLs = readFileURLsFromPasteboard(), !fileURLs.isEmpty {
-            newItem = .files(fileURLs)
-        } else if let rtfData = pasteboard.data(forType: .rtf) {
-            newItem = .rtf(rtfData)
-        } else if let htmlData = pasteboard.data(forType: .html) {
-            newItem = .html(htmlData)
-        } else if let pdfData = pasteboard.data(forType: .pdf) {
-            newItem = .pdf(pdfData)
-        } else if let imageData = pasteboard.data(forType: .tiff) ?? pasteboard.data(forType: .png) {
-            newItem = .image(imageData)
-        } else if let newString = pasteboard.string(forType: .string), !newString.isEmpty {
-            newItem = .text(newString)
-        }
-        
-        if let item = newItem {
-            addToHistory(item, sourceApp: sourceApp)
-        }
+        guard let item = historyItemFromCurrentPasteboard() else { return }
+        addToHistory(item, sourceApp: sourceApp, sourceBundleId: bundleIdentifier)
     }
 
-    private func addToHistory(_ item: HistoryItem, sourceApp: String?) {
+    private func historyItemFromCurrentPasteboard() -> HistoryItem? {
+        if let fileURLs = readFileURLsFromPasteboard(), !fileURLs.isEmpty {
+            return .files(fileURLs)
+        }
+        if let rtfData = pasteboard.data(forType: .rtf) {
+            return .rtf(rtfData)
+        }
+        if let htmlData = pasteboard.data(forType: .html) {
+            return .html(htmlData)
+        }
+        if let pdfData = pasteboard.data(forType: .pdf) {
+            return .pdf(pdfData)
+        }
+        if let imageData = pasteboard.data(forType: .tiff) ?? pasteboard.data(forType: .png) {
+            return .image(imageData)
+        }
+        if let newString = pasteboard.string(forType: .string), !newString.isEmpty {
+            return .text(newString)
+        }
+        return nil
+    }
+
+    func startPasteUsageMonitoringIfNeeded() {
+        guard AccessibilityManager.isTrusted, pasteEventTap == nil else { return }
+
+        let eventMask = (1 << CGEventType.keyDown.rawValue)
+        let userInfo = Unmanaged.passUnretained(self).toOpaque()
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(eventMask),
+            callback: { _, type, event, refcon in
+                guard let refcon else {
+                    return Unmanaged.passRetained(event)
+                }
+                guard type == .keyDown else {
+                    return Unmanaged.passRetained(event)
+                }
+
+                let flags = event.flags
+                guard flags.contains(.maskCommand),
+                      !flags.contains(.maskAlternate),
+                      event.getIntegerValueField(.keyboardEventKeycode) == 0x09 else {
+                    return Unmanaged.passRetained(event)
+                }
+
+                let manager = Unmanaged<ClipboardManager>.fromOpaque(refcon).takeUnretainedValue()
+                DispatchQueue.main.async {
+                    manager.recordUsageIfPasteboardMatchesHistory()
+                }
+                return Unmanaged.passRetained(event)
+            },
+            userInfo: userInfo
+        ) else {
+            return
+        }
+
+        pasteEventTap = tap
+        pasteEventTapRunLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        if let pasteEventTapRunLoopSource {
+            CFRunLoopAddSource(CFRunLoopGetMain(), pasteEventTapRunLoopSource, .commonModes)
+        }
+        CGEvent.tapEnable(tap: tap, enable: true)
+    }
+
+    func recordUsageIfPasteboardMatchesHistory() {
+        guard let item = historyItemFromCurrentPasteboard(),
+              let entry = historyEntry(matching: item) else { return }
+        recordHistoryUsage(entry)
+        moveHistoryEntryToFront(entry)
+    }
+
+    private func historyEntry(matching item: HistoryItem) -> HistoryEntry? {
+        let hash = contentHash(for: item)
+        if let index = history.firstIndex(where: { isSameHistoryItem($0, as: item, contentHash: hash) }) {
+            return history[index]
+        }
+        if case .text(let text) = item {
+            return history.first { entry in
+                guard case .files = entry.item else { return false }
+                return plainText(for: entry.item) == text
+            }
+        }
+        return nil
+    }
+
+    private func addToHistory(_ item: HistoryItem, sourceApp: String?, sourceBundleId: String? = nil) {
         let hash = contentHash(for: item)
         appLog("Adding to history: \(item.title), Hash: \(hash?.prefix(8) ?? "N/A")")
 
@@ -393,6 +587,8 @@ class ClipboardManager {
         }
 
         var preservedPin = false
+        var preservedUseCount = 0
+        var preservedLastUsedAt: Date?
         history.removeAll { entry in
             let isDuplicate: Bool
             if let h = entry.contentHash, let nh = hash {
@@ -406,19 +602,27 @@ class ClipboardManager {
             }
             if isDuplicate {
                 preservedPin = entry.isPinned
+                preservedUseCount = entry.useCount
+                preservedLastUsedAt = entry.lastUsedAt
             }
             return isDuplicate
         }
 
+        let searchIndex = HistorySearchIndexBuilder.buildIndex(for: item)
         let entry = HistoryEntry(
             item: item,
             date: Date(),
             sourceApp: sourceApp,
+            sourceBundleId: sourceBundleId,
             contentHash: hash,
-            isPinned: preservedPin
+            isPinned: preservedPin,
+            searchIndex: searchIndex,
+            lastUsedAt: preservedLastUsedAt,
+            useCount: preservedUseCount
         )
         insertEntry(entry)
         trimHistoryIfNeeded()
+        scheduleImageOCRIfNeeded(for: entry)
 
         // Update recent content hashes for performance
         if let hash = hash {
@@ -458,37 +662,96 @@ class ClipboardManager {
         addToHistory(.text(content), sourceApp: "Remote Device")
     }
 
-    func searchHistory(query: String) -> [HistoryEntry] {
+    func availableSourceApps() -> [String] {
+        let apps = Set(history.compactMap(\.sourceApp))
+        return apps.sorted()
+    }
+
+    func searchHistory(
+        query: String,
+        typeFilter: HistoryTypeFilter = .all,
+        sourceApp: String? = nil
+    ) -> [HistoryEntry] {
+        searchHistory(options: SearchHistoryOptions(
+            query: query,
+            typeFilter: typeFilter,
+            sourceApp: sourceApp
+        )).map(\.entry)
+    }
+
+    func searchHistory(options: SearchHistoryOptions) -> [HistorySearchResult] {
+        let parsed = HistorySearchQueryParser.parse(options.query)
+        let effectiveType = parsed.typeFilter ?? options.typeFilter
+        let effectiveSource = parsed.sourceApp ?? options.sourceApp
+        let effectivePinnedOnly = parsed.pinnedOnly || options.pinnedOnly
+        let effectivePath = parsed.pathContains ?? options.pathContains
+        let effectiveURLOnly = parsed.urlOnly || options.urlOnly
+        let textQuery = parsed.textTerms.joined(separator: " ")
+
         let ordered = orderedHistory()
-        guard !query.isEmpty else { return Array(ordered.prefix(20)) }
-        let lowercased = query.lowercased()
-        let matched = ordered.filter { entry in
-            if let source = entry.sourceApp, source.lowercased().contains(lowercased) {
-                return true
+        let filtered = ordered.filter { entry in
+            guard effectiveType.matches(entry.item) else { return false }
+            if let effectiveSource, entry.sourceApp?.localizedCaseInsensitiveContains(effectiveSource) != true {
+                return false
             }
-            switch entry.item {
-            case .text(let str):
-                return str.lowercased().contains(lowercased)
-            case .files(let urls):
-                return urls.contains { url in
-                    url.lastPathComponent.lowercased().contains(lowercased)
-                        || url.path.lowercased().contains(lowercased)
-                        || FilePathDisplay.string(for: url).lowercased().contains(lowercased)
-                }
-            case .image:
-                return "image".contains(lowercased)
-            case .rtf:
-                return "rich text".contains(lowercased)
-            case .pdf:
-                return "pdf".contains(lowercased)
-            case .html(let data):
-                return "html".contains(lowercased)
-                    || (HistoryPreviewSupport.htmlString(from: data).map {
-                        $0.lowercased().contains(lowercased)
-                    } ?? false)
+            guard options.dateFilter.matches(entry.date) else { return false }
+            if effectivePinnedOnly, !entry.isPinned { return false }
+            if let effectivePath {
+                let paths = entry.item.fileURLs?.map(\.path).joined(separator: "\n") ?? ""
+                if !paths.localizedCaseInsensitiveContains(effectivePath) { return false }
+            }
+            if effectiveURLOnly {
+                guard case .text(let str) = entry.item, str.contains("://") else { return false }
+            }
+            if let category = options.contentCategory, !category.matches(entry) {
+                return false
+            }
+            return true
+        }
+
+        let trimmed = textQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return filtered.map {
+                HistorySearchResult(entry: $0, highlightRanges: [])
             }
         }
-        return sortPinnedFirst(matched)
+
+        return HistorySearchRanker.rank(
+            entries: filtered,
+            query: trimmed,
+            useRegex: options.useRegex
+        )
+    }
+
+    func removeHistoryEntry(_ entry: HistoryEntry) {
+        let hash = entry.contentHash ?? contentHash(for: entry.item)
+        let previousCount = history.count
+        history.removeAll { isSameHistoryItem($0, as: entry.item, contentHash: hash) }
+        guard history.count != previousCount else { return }
+        updateRecentContentHashes()
+        saveHistory()
+        notifyHistoryChanged()
+    }
+
+    func removeHistoryEntries(_ entries: [HistoryEntry]) {
+        guard !entries.isEmpty else { return }
+        let previousCount = history.count
+        for entry in entries {
+            let hash = entry.contentHash ?? contentHash(for: entry.item)
+            history.removeAll { isSameHistoryItem($0, as: entry.item, contentHash: hash) }
+        }
+        guard history.count != previousCount else { return }
+        updateRecentContentHashes()
+        saveHistory()
+        notifyHistoryChanged()
+    }
+
+    func recordHistoryUsage(_ entry: HistoryEntry) {
+        guard let index = indexOfEntry(matching: entry) else { return }
+        history[index].useCount += 1
+        history[index].lastUsedAt = Date()
+        saveHistory()
+        notifyHistoryChanged()
     }
 
     func orderedHistory() -> [HistoryEntry] {
@@ -525,18 +788,25 @@ class ClipboardManager {
     func moveHistoryEntryToFront(_ entry: HistoryEntry) {
         let hash = entry.contentHash ?? contentHash(for: entry.item)
 
-        history.removeAll { existingEntry in
-            isSameHistoryItem(existingEntry, as: entry.item, contentHash: hash)
-        }
+        guard let existingIndex = history.firstIndex(where: {
+            isSameHistoryItem($0, as: entry.item, contentHash: hash)
+        }) else { return }
 
-        let updatedEntry = HistoryEntry(
-            item: entry.item,
+        var updated = history[existingIndex]
+        history.remove(at: existingIndex)
+
+        updated = HistoryEntry(
+            item: updated.item,
             date: Date(),
-            sourceApp: entry.sourceApp,
-            contentHash: hash,
-            isPinned: entry.isPinned
+            sourceApp: updated.sourceApp,
+            sourceBundleId: updated.sourceBundleId,
+            contentHash: updated.contentHash,
+            isPinned: updated.isPinned,
+            searchIndex: updated.searchIndex,
+            lastUsedAt: updated.lastUsedAt,
+            useCount: updated.useCount
         )
-        insertEntry(updatedEntry)
+        insertEntry(updated)
         trimHistoryIfNeeded()
 
         updateRecentContentHashes()
@@ -576,6 +846,109 @@ class ClipboardManager {
         }
     }
     
+    func writePlainTextToPasteboard(_ item: HistoryItem) {
+        pasteboard.clearContents()
+        if let text = plainText(for: item) {
+            pasteboard.setString(text, forType: .string)
+            changeCount = pasteboard.changeCount
+        }
+    }
+
+    func plainText(for item: HistoryItem) -> String? {
+        switch item {
+        case .text(let str):
+            return str
+        case .rtf(let data):
+            return HistorySearchIndexBuilder.buildIndex(for: .rtf(data))
+        case .html(let data):
+            return HistorySearchIndexBuilder.buildIndex(for: .html(data))
+        case .pdf(let data):
+            return HistorySearchIndexBuilder.buildIndex(for: .pdf(data))
+        case .image:
+            return nil
+        case .files(let urls):
+            return urls.map(\.lastPathComponent).joined(separator: "\n")
+        }
+    }
+
+    func applyHistoryEntry(_ entry: HistoryEntry, action: HistorySelectAction) {
+        switch action {
+        case .copyOnly:
+            if case .files(let urls) = entry.item {
+                writeFileNamesToPasteboard(urls)
+            } else {
+                writeToPasteboard(entry.item)
+            }
+            moveHistoryEntryToFront(entry)
+        case .pastePlainAndClose, .pastePlainKeepOpen:
+            writePlainTextToPasteboard(entry.item)
+            moveHistoryEntryToFront(entry)
+            let keepOpen = action == .pastePlainKeepOpen
+            if !keepOpen { SearchWindow.shared.closeWindow() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self.simulatePasteIfTrusted() }
+        case .pasteKeepOpen:
+            performPaste(entry: entry, pasteFileAsName: true, closeWindow: false)
+        case .pasteAndClose:
+            performPaste(entry: entry, pasteFileAsName: true, closeWindow: true)
+        }
+    }
+
+    private func performPaste(entry: HistoryEntry, pasteFileAsName: Bool, closeWindow: Bool) {
+        moveHistoryEntryToFront(entry)
+
+        let shouldAutoPaste: Bool
+        if case .files(let urls) = entry.item, pasteFileAsName {
+            writeFileNamesToPasteboard(urls)
+            shouldAutoPaste = true
+        } else if case .files = entry.item {
+            writeToPasteboard(entry.item)
+            shouldAutoPaste = false
+        } else {
+            writeToPasteboard(entry.item)
+            shouldAutoPaste = {
+                if case .text = entry.item { return true }
+                return false
+            }()
+        }
+
+        if closeWindow {
+            SearchWindow.shared.closeWindow()
+        }
+
+        guard shouldAutoPaste else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self.simulatePasteIfTrusted() }
+    }
+
+    private func backfillSearchIndexesIfNeeded() {
+        var changed = false
+        for index in history.indices where history[index].searchIndex == nil {
+            if let built = HistorySearchIndexBuilder.buildIndex(for: history[index].item) {
+                history[index].searchIndex = built
+                changed = true
+            }
+            scheduleImageOCRIfNeeded(for: history[index])
+        }
+        if changed {
+            saveHistory()
+        }
+    }
+
+    private func scheduleImageOCRIfNeeded(for entry: HistoryEntry) {
+        guard case .image = entry.item, let hash = entry.contentHash else { return }
+        guard !pendingIndexHashes.contains(hash) else { return }
+        pendingIndexHashes.insert(hash)
+        HistorySearchIndexBuilder.scheduleOCR(for: entry, contentHash: hash) { [weak self] contentHash, text in
+            guard let self else { return }
+            self.pendingIndexHashes.remove(contentHash)
+            guard let index = self.history.firstIndex(where: { $0.contentHash == contentHash }) else { return }
+            if self.history[index].searchIndex == nil || self.history[index].searchIndex?.isEmpty == true {
+                self.history[index].searchIndex = text
+                self.saveHistory()
+                self.notifyHistoryChanged()
+            }
+        }
+    }
+
     func writeToPasteboard(_ item: HistoryItem) {
         pasteboard.clearContents()
         switch item {
@@ -611,7 +984,13 @@ class ClipboardManager {
     func copyToPasteboard(_ item: HistoryItem, simulatePaste: Bool = true) {
         writeToPasteboard(item)
         if case .files = item { return }
-        guard simulatePaste, AccessibilityManager.ensureTrustedForPaste() else { return }
+        guard simulatePaste else { return }
+        simulatePasteIfTrusted()
+    }
+
+    func simulatePasteIfTrusted() {
+        startPasteUsageMonitoringIfNeeded()
+        guard AccessibilityManager.ensureTrustedForPaste() else { return }
         paste()
     }
     

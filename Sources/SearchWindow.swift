@@ -20,4 +20,8 @@ final class SearchWindow {
         window?.title = L10n.t(.searchHistory)
         window?.show()
     }
+
+    func closeWindow() {
+        window?.close()
+    }
 }

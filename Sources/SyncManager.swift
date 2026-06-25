@@ -537,6 +537,8 @@ class SyncManager: NSObject, NetServiceDelegate {
                 NotificationManager.shared.handleRemoteClearAll()
             } else if message.type == "notification/config" {
                 handleNotificationConfig(decrypted)
+            } else if message.type == "collector/event" {
+                DeviceCollectorManager.shared.handleRemoteEvent(decrypted, from: message.deviceId)
             }
         }
     }

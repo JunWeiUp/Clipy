@@ -7,6 +7,7 @@ import 'log_manager.dart';
 import 'models.dart';
 import 'storage_paths.dart';
 import 'sync_manager.dart';
+import 'collector_manager.dart';
 
 class NotificationManager {
   static final NotificationManager instance = NotificationManager._();
@@ -21,6 +22,8 @@ class NotificationManager {
 
   List<String> allowedPackages = [];
   bool isEnabled = false;
+  DateTime? lastNotificationReceivedAt;
+  DateTime? monitoringStartedAt;
   File? _historyFile;
   Future<void> _storageWriteQueue = Future.value();
 
@@ -35,7 +38,7 @@ class NotificationManager {
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    isEnabled = prefs.getBool('notificationSyncEnabled') ?? false;
+    isEnabled = prefs.getBool('notificationSyncEnabled') ?? true;
     allowedPackages = prefs.getStringList('notificationAllowedPackages') ?? [];
 
     await _initStorage();
@@ -43,6 +46,7 @@ class NotificationManager {
     await _migrateLegacyHistory(prefs);
 
     _channel.setMethodCallHandler(_handleMethodCall);
+    monitoringStartedAt = DateTime.now();
     if (isEnabled) {
       unawaited(refreshActiveNotifications());
     }
@@ -95,6 +99,7 @@ class NotificationManager {
     final accepted = _upsertNotification(entry);
     appLog('NotificationManager: posted ${entry.packageName}: ${entry.title}');
     if (accepted) {
+      lastNotificationReceivedAt = DateTime.now();
       _broadcastToSync(entry);
     }
   }
@@ -175,6 +180,7 @@ class NotificationManager {
   }
 
   void _broadcastToSync(NotificationEntry entry) {
+    CollectorManager.instance.emitNotification(entry);
     final content = jsonEncode(entry.toJson());
     final hash = entry.id;
     SyncManager.instance.broadcastNotificationMessage(
@@ -211,14 +217,40 @@ class NotificationManager {
   }
 
   Future<bool> isListenerPermissionGranted() async {
+    final status = await getListenerStatus();
+    return status.permissionGranted;
+  }
+
+  Future<NotificationListenerStatus> getListenerStatus() async {
     try {
-      final result =
-          await _channel.invokeMethod<bool>('isListenerPermissionGranted');
-      return result ?? false;
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getListenerStatus',
+      );
+      if (result == null) {
+        return const NotificationListenerStatus(
+          permissionGranted: false,
+          serviceConnected: false,
+          activeNotificationCount: 0,
+        );
+      }
+      return NotificationListenerStatus.fromMap(result);
     } catch (e) {
-      appLog('NotificationManager: error checking listener permission: $e',
+      appLog('NotificationManager: error getting listener status: $e',
           level: 'error');
-      return false;
+      return const NotificationListenerStatus(
+        permissionGranted: false,
+        serviceConnected: false,
+        activeNotificationCount: 0,
+      );
+    }
+  }
+
+  Future<void> requestListenerRebind() async {
+    try {
+      await _channel.invokeMethod('requestListenerRebind');
+    } catch (e) {
+      appLog('NotificationManager: error requesting listener rebind: $e',
+          level: 'warning');
     }
   }
 

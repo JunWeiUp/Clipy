@@ -120,6 +120,7 @@ enum L10nKey: String {
     case searchHistoryPlaceholder
     case noSearchResults
     case time
+    case pasteCount
     case phoneNotifications
     case noNotifications
     case enableNotificationSync
@@ -129,6 +130,20 @@ enum L10nKey: String {
     case notificationFilter
     case notificationSound
     case clearNotifications
+    case phoneCollector
+    case noCollectorEvents
+    case collectorEventCount
+    case collectorSearchPlaceholder
+    case collectorFilterAll
+    case enableCollectorSync
+    case collectorAlertOnSmsCall
+    case collectorCategoryNotification
+    case collectorCategorySms
+    case collectorCategoryCall
+    case collectorCategoryCallLog
+    case collectorCategoryClipboard
+    case collectorCategoryLocation
+    case collectorCategorySystem
     case launchAtLogin
     case launchAtLoginFailed
     case accessibilityPermission
@@ -145,6 +160,11 @@ enum L10nKey: String {
     case error
     case clearShortcut
     case searchResultCount
+    case historyTotalCount
+    case historyShownOfTotal
+    case noSearchResultsWithTotal
+    case historyCurrentCount
+    case historyWithCount
     case location
     case pasteFileName
     case pasteFile
@@ -164,6 +184,27 @@ enum L10nKey: String {
     case historyPreviewTruncated
     case historyPreviewLoadFailed
     case historyDataSize
+    case historyFilterAll
+    case historyFilterRichText
+    case historyFilterSource
+    case historyFilterAllSources
+    case encryptHistoryAtRest
+    case encryptHistoryAtRestDescription
+    case historyEncryptionFailed
+    case historyRegexSearch
+    case historyDateFilter
+    case historyDateFilterAll
+    case historyDateFilterToday
+    case historyDateFilterWeek
+    case historyDateFilterMonth
+    case historyCategoryURL
+    case historyCategoryEmail
+    case historyCategoryCode
+    case historyCategoryJSON
+    case pastePlainText
+    case saveAsSnippet
+    case searchGlobalShortcut
+    case searchGlobalShortcutDescription
 }
 
 struct L10n {
@@ -276,6 +317,7 @@ struct L10n {
             .searchHistoryPlaceholder: "搜索内容、路径或来源应用",
             .noSearchResults: "没有匹配的结果",
             .time: "时间",
+            .pasteCount: "粘贴次数",
             .phoneNotifications: "手机通知",
             .noNotifications: "暂无通知",
             .enableNotificationSync: "启用通知同步",
@@ -285,6 +327,20 @@ struct L10n {
             .notificationFilter: "通知过滤",
             .notificationSound: "通知声音",
             .clearNotifications: "清空通知",
+            .phoneCollector: "手机采集",
+            .noCollectorEvents: "暂无采集数据",
+            .collectorEventCount: "%d 条采集记录",
+            .collectorSearchPlaceholder: "搜索号码、内容或应用",
+            .collectorFilterAll: "全部",
+            .enableCollectorSync: "启用手机采集同步",
+            .collectorAlertOnSmsCall: "短信/来电时弹出通知",
+            .collectorCategoryNotification: "通知",
+            .collectorCategorySms: "短信",
+            .collectorCategoryCall: "通话",
+            .collectorCategoryCallLog: "通话记录",
+            .collectorCategoryClipboard: "剪贴板",
+            .collectorCategoryLocation: "位置",
+            .collectorCategorySystem: "系统状态",
             .launchAtLogin: "登录时启动",
             .launchAtLoginFailed: "无法更新登录时启动设置，请重试。",
             .accessibilityPermission: "辅助功能权限（自动粘贴需要）：",
@@ -301,6 +357,11 @@ struct L10n {
             .error: "错误",
             .clearShortcut: "清除",
             .searchResultCount: "%d 条历史",
+            .historyTotalCount: "共 %d 条历史",
+            .historyShownOfTotal: "显示 %d / 共 %d 条",
+            .noSearchResultsWithTotal: "没有匹配的结果（共 %d 条）",
+            .historyCurrentCount: "当前已保存 %d 条",
+            .historyWithCount: "历史记录（%d）",
             .location: "位置",
             .pasteFileName: "粘贴文件名",
             .pasteFile: "粘贴文件",
@@ -320,6 +381,27 @@ struct L10n {
             .historyPreviewTruncated: "内容已截断（文件过大）",
             .historyPreviewLoadFailed: "无法加载预览",
             .historyDataSize: "大小：%@",
+            .historyFilterAll: "全部",
+            .historyFilterRichText: "富文本",
+            .historyFilterSource: "来源",
+            .historyFilterAllSources: "全部来源",
+            .encryptHistoryAtRest: "加密本地历史",
+            .encryptHistoryAtRestDescription: "使用 Keychain 密钥 AES-GCM 加密 history_v2.json，密钥仅保存在本机。",
+            .historyEncryptionFailed: "无法更新历史加密设置，请重试。",
+            .historyRegexSearch: "正则",
+            .historyDateFilter: "时间",
+            .historyDateFilterAll: "全部",
+            .historyDateFilterToday: "今天",
+            .historyDateFilterWeek: "7 天",
+            .historyDateFilterMonth: "30 天",
+            .historyCategoryURL: "URL",
+            .historyCategoryEmail: "邮箱",
+            .historyCategoryCode: "代码",
+            .historyCategoryJSON: "JSON",
+            .pastePlainText: "粘贴为纯文本",
+            .saveAsSnippet: "保存为片段",
+            .searchGlobalShortcut: "全局搜索快捷键",
+            .searchGlobalShortcutDescription: "在任何应用中按下此快捷键打开历史搜索窗口。",
         ],
         .en: [
             .recordShortcut: "Click to record shortcut",
@@ -421,6 +503,7 @@ struct L10n {
             .searchHistoryPlaceholder: "Search content, path, or source app",
             .noSearchResults: "No matching results",
             .time: "Time",
+            .pasteCount: "Paste Count",
             .phoneNotifications: "Phone Notifications",
             .noNotifications: "No Notifications",
             .enableNotificationSync: "Enable Notification Sync",
@@ -430,6 +513,20 @@ struct L10n {
             .notificationFilter: "Notification Filter",
             .notificationSound: "Notification Sound",
             .clearNotifications: "Clear Notifications",
+            .phoneCollector: "Phone Collector",
+            .noCollectorEvents: "No collected events",
+            .collectorEventCount: "%d collected events",
+            .collectorSearchPlaceholder: "Search number, content, or app",
+            .collectorFilterAll: "All",
+            .enableCollectorSync: "Enable Phone Collector Sync",
+            .collectorAlertOnSmsCall: "Alert on SMS/Calls",
+            .collectorCategoryNotification: "Notifications",
+            .collectorCategorySms: "SMS",
+            .collectorCategoryCall: "Calls",
+            .collectorCategoryCallLog: "Call Log",
+            .collectorCategoryClipboard: "Clipboard",
+            .collectorCategoryLocation: "Location",
+            .collectorCategorySystem: "System",
             .launchAtLogin: "Launch at Login",
             .launchAtLoginFailed: "Unable to update launch at login settings. Please try again.",
             .accessibilityPermission: "Accessibility Permission (required for auto-paste):",
@@ -446,6 +543,11 @@ struct L10n {
             .error: "Error",
             .clearShortcut: "Clear",
             .searchResultCount: "%d history items",
+            .historyTotalCount: "%d items total",
+            .historyShownOfTotal: "Showing %d / %d items",
+            .noSearchResultsWithTotal: "No results (%d items total)",
+            .historyCurrentCount: "%d items saved",
+            .historyWithCount: "History (%d)",
             .location: "Location",
             .pasteFileName: "Paste File Name",
             .pasteFile: "Paste File",
@@ -465,6 +567,27 @@ struct L10n {
             .historyPreviewTruncated: "Content truncated (file too large)",
             .historyPreviewLoadFailed: "Failed to load preview",
             .historyDataSize: "Size: %@",
+            .historyFilterAll: "All",
+            .historyFilterRichText: "Rich Text",
+            .historyFilterSource: "Source",
+            .historyFilterAllSources: "All Sources",
+            .encryptHistoryAtRest: "Encrypt Local History",
+            .encryptHistoryAtRestDescription: "Encrypt history_v2.json with a Keychain-derived AES-GCM key stored on this device only.",
+            .historyEncryptionFailed: "Could not update history encryption. Please try again.",
+            .historyRegexSearch: "Regex",
+            .historyDateFilter: "Time",
+            .historyDateFilterAll: "All",
+            .historyDateFilterToday: "Today",
+            .historyDateFilterWeek: "7 Days",
+            .historyDateFilterMonth: "30 Days",
+            .historyCategoryURL: "URL",
+            .historyCategoryEmail: "Email",
+            .historyCategoryCode: "Code",
+            .historyCategoryJSON: "JSON",
+            .pastePlainText: "Paste as Plain Text",
+            .saveAsSnippet: "Save as Snippet",
+            .searchGlobalShortcut: "Global Search Shortcut",
+            .searchGlobalShortcutDescription: "Press this shortcut from any app to open history search.",
         ]
     ]
 }

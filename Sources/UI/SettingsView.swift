@@ -8,12 +8,25 @@ struct SettingsView: View {
     @State private var historyLimit: Int
     @State private var historyLimitText: String
     @FocusState private var historyLimitFocused: Bool
+    @State private var currentHistoryCount: Int
     @State private var excludedApps: String
+    @State private var historyEncryptionEnabled: Bool
+    @State private var searchGlobalShortcutEnabled: Bool
+    @State private var searchHistoryShortcut: ShortcutCombo?
     @State private var syncEnabled: Bool
     @State private var syncPort: String
     @State private var authorizedDevices: String
     @State private var notificationSyncEnabled: Bool
     @State private var notificationSound: Bool
+    @State private var collectorSyncEnabled: Bool
+    @State private var collectorAlertEnabled: Bool
+    @State private var collectorNotificationEnabled: Bool
+    @State private var collectorSmsEnabled: Bool
+    @State private var collectorCallEnabled: Bool
+    @State private var collectorCallLogEnabled: Bool
+    @State private var collectorClipboardEnabled: Bool
+    @State private var collectorLocationEnabled: Bool
+    @State private var collectorSystemEnabled: Bool
     @State private var accessibilityGranted: Bool
 
     init() {
@@ -24,12 +37,25 @@ struct SettingsView: View {
         let limit = prefs.historyLimit
         _historyLimit = State(initialValue: limit)
         _historyLimitText = State(initialValue: "\(limit)")
+        _currentHistoryCount = State(initialValue: ClipboardManager.shared.history.count)
         _excludedApps = State(initialValue: prefs.excludedApps.joined(separator: ", "))
+        _historyEncryptionEnabled = State(initialValue: prefs.isHistoryEncryptionEnabled)
+        _searchGlobalShortcutEnabled = State(initialValue: prefs.isSearchGlobalShortcutEnabled)
+        _searchHistoryShortcut = State(initialValue: prefs.searchHistoryShortcut)
         _syncEnabled = State(initialValue: prefs.isSyncEnabled)
         _syncPort = State(initialValue: "\(prefs.syncPort)")
         _authorizedDevices = State(initialValue: prefs.authorizedDevices.joined(separator: ", "))
         _notificationSyncEnabled = State(initialValue: NotificationManager.shared.notificationSyncEnabled)
         _notificationSound = State(initialValue: NotificationManager.shared.notificationSound)
+        _collectorSyncEnabled = State(initialValue: prefs.isCollectorSyncEnabled)
+        _collectorAlertEnabled = State(initialValue: prefs.isCollectorAlertEnabled)
+        _collectorNotificationEnabled = State(initialValue: prefs.isCollectorNotificationEnabled)
+        _collectorSmsEnabled = State(initialValue: prefs.isCollectorSmsEnabled)
+        _collectorCallEnabled = State(initialValue: prefs.isCollectorCallEnabled)
+        _collectorCallLogEnabled = State(initialValue: prefs.isCollectorCallLogEnabled)
+        _collectorClipboardEnabled = State(initialValue: prefs.isCollectorClipboardEnabled)
+        _collectorLocationEnabled = State(initialValue: prefs.isCollectorLocationEnabled)
+        _collectorSystemEnabled = State(initialValue: prefs.isCollectorSystemEnabled)
         _accessibilityGranted = State(initialValue: AccessibilityManager.isTrusted)
     }
 
@@ -103,6 +129,9 @@ struct SettingsView: View {
                 Text(L10n.t(.changesNextCopy))
                     .font(AppFont.caption)
                     .foregroundStyle(.secondary)
+                Text(L10n.format(.historyCurrentCount, currentHistoryCount))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
 
                 TextField(L10n.t(.excludedBundleIds), text: $excludedApps)
                     .onChange(of: excludedApps) { newValue in
@@ -112,6 +141,34 @@ struct SettingsView: View {
                             .filter { !$0.isEmpty }
                         PreferencesManager.shared.excludedApps = apps
                     }
+
+                Toggle(L10n.t(.encryptHistoryAtRest), isOn: $historyEncryptionEnabled)
+                    .onChange(of: historyEncryptionEnabled) { newValue in
+                        if !ClipboardManager.shared.setHistoryEncryptionEnabled(newValue) {
+                            historyEncryptionEnabled = !newValue
+                            AlertPresenter.showWarning(
+                                title: L10n.t(.error),
+                                message: L10n.t(.historyEncryptionFailed)
+                            )
+                        }
+                    }
+                Text(L10n.t(.encryptHistoryAtRestDescription))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle(L10n.t(.searchGlobalShortcut), isOn: $searchGlobalShortcutEnabled)
+                    .onChange(of: searchGlobalShortcutEnabled) { newValue in
+                        PreferencesManager.shared.isSearchGlobalShortcutEnabled = newValue
+                        SearchGlobalHotKeyManager.register()
+                    }
+                ShortcutRecorderRepresentable(combo: $searchHistoryShortcut) { combo in
+                    PreferencesManager.shared.searchHistoryShortcut = combo
+                    SearchGlobalHotKeyManager.register()
+                }
+                .frame(height: 30)
+                Text(L10n.t(.searchGlobalShortcutDescription))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -139,6 +196,49 @@ struct SettingsView: View {
                             .map { $0.trimmingCharacters(in: .whitespaces) }
                             .filter { !$0.isEmpty }
                         PreferencesManager.shared.authorizedDevices = devices
+                    }
+            }
+
+            Section {
+                Toggle(L10n.t(.enableCollectorSync), isOn: $collectorSyncEnabled)
+                    .onChange(of: collectorSyncEnabled) { newValue in
+                        PreferencesManager.shared.isCollectorSyncEnabled = newValue
+                        NotificationManager.shared.notificationSyncEnabled = newValue
+                        NotificationManager.shared.savePreferences()
+                    }
+
+                Toggle(L10n.t(.collectorAlertOnSmsCall), isOn: $collectorAlertEnabled)
+                    .onChange(of: collectorAlertEnabled) { newValue in
+                        PreferencesManager.shared.isCollectorAlertEnabled = newValue
+                    }
+
+                Toggle(L10n.t(.collectorCategoryNotification), isOn: $collectorNotificationEnabled)
+                    .onChange(of: collectorNotificationEnabled) { newValue in
+                        PreferencesManager.shared.isCollectorNotificationEnabled = newValue
+                    }
+                Toggle(L10n.t(.collectorCategorySms), isOn: $collectorSmsEnabled)
+                    .onChange(of: collectorSmsEnabled) { newValue in
+                        PreferencesManager.shared.isCollectorSmsEnabled = newValue
+                    }
+                Toggle(L10n.t(.collectorCategoryCall), isOn: $collectorCallEnabled)
+                    .onChange(of: collectorCallEnabled) { newValue in
+                        PreferencesManager.shared.isCollectorCallEnabled = newValue
+                    }
+                Toggle(L10n.t(.collectorCategoryCallLog), isOn: $collectorCallLogEnabled)
+                    .onChange(of: collectorCallLogEnabled) { newValue in
+                        PreferencesManager.shared.isCollectorCallLogEnabled = newValue
+                    }
+                Toggle(L10n.t(.collectorCategoryClipboard), isOn: $collectorClipboardEnabled)
+                    .onChange(of: collectorClipboardEnabled) { newValue in
+                        PreferencesManager.shared.isCollectorClipboardEnabled = newValue
+                    }
+                Toggle(L10n.t(.collectorCategoryLocation), isOn: $collectorLocationEnabled)
+                    .onChange(of: collectorLocationEnabled) { newValue in
+                        PreferencesManager.shared.isCollectorLocationEnabled = newValue
+                    }
+                Toggle(L10n.t(.collectorCategorySystem), isOn: $collectorSystemEnabled)
+                    .onChange(of: collectorSystemEnabled) { newValue in
+                        PreferencesManager.shared.isCollectorSystemEnabled = newValue
                     }
             }
 
@@ -176,6 +276,10 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             accessibilityGranted = AccessibilityManager.isTrusted
             launchAtLogin = LaunchAtLoginManager.isEnabled
+            currentHistoryCount = ClipboardManager.shared.history.count
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .clipboardHistoryDidChange)) { _ in
+            currentHistoryCount = ClipboardManager.shared.history.count
         }
     }
 

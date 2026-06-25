@@ -109,8 +109,9 @@ class SnippetManager {
                 }
             }
         }
+        NotificationCenter.default.post(name: .globalHotKeysShouldRegister, object: nil)
     }
-    
+
     private func createDefaultSnippets() {
         let greetings = SnippetFolder(id: UUID(), title: "Greetings", snippets: [
             Snippet(id: UUID(), title: "Hi", content: "Hi there!"),
@@ -220,6 +221,15 @@ class SnippetManager {
             return newSnippet
         }
         return nil
+    }
+
+    @discardableResult
+    func addSnippetToDefaultFolder(title: String, content: String) -> Snippet? {
+        if folders.isEmpty {
+            addFolder(title: L10n.t(.snippets))
+        }
+        guard let folderId = folders.first?.id else { return nil }
+        return addSnippet(to: folderId, title: title, content: content)
     }
     
     /// 调整根级文件夹顺序（`dropIndex` 为拖放目标插入位置，与 `NSOutlineView` 一致）。

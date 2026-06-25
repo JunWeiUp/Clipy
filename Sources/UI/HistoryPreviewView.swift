@@ -48,6 +48,9 @@ struct HistoryPreviewView: View {
             Text("\(L10n.t(.time)): \(RelativeTimeFormatter.string(from: entry.date))")
                 .font(AppFont.caption)
                 .foregroundStyle(.secondary)
+            Text("\(L10n.t(.pasteCount)): \(entry.useCount)")
+                .font(AppFont.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, AppSpacing.sm)
         .padding(.vertical, AppSpacing.xs)
