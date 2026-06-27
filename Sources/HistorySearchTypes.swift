@@ -98,8 +98,8 @@ enum HistoryContentCategory: String, CaseIterable, Identifiable {
     }
 
     private func text(of entry: HistoryEntry) -> String? {
-        if case .text(let str) = entry.item { return str }
-        return entry.searchIndex
+        if let index = entry.searchIndex, !index.isEmpty { return index }
+        return entry.resolvedText
     }
 }
 

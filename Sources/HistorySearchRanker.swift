@@ -8,7 +8,12 @@ enum HistorySearchRanker {
     private static let occurrenceBonus = 5
     private static let useCountMultiplier = 10
 
-    static func rank(entries: [HistoryEntry], query: String, useRegex: Bool = false) -> [HistorySearchResult] {
+    static func rank(
+        entries: [HistoryEntry],
+        query: String,
+        useRegex: Bool = false,
+        loadFullTextIfNeeded: Bool = false
+    ) -> [HistorySearchResult] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return entries.map { HistorySearchResult(entry: $0, highlightRanges: []) }
@@ -25,9 +30,18 @@ enum HistorySearchRanker {
         let ranked = entries.compactMap { entry -> HistorySearchResult? in
             let displayText = entry.item.title
             if useRegex {
-                return regexResult(entry: entry, pattern: trimmed, displayText: displayText)
+                return regexResult(
+                    entry: entry,
+                    pattern: trimmed,
+                    displayText: displayText,
+                    loadFullTextIfNeeded: loadFullTextIfNeeded
+                )
             }
-            guard let score = score(entry: entry, terms: terms) else { return nil }
+            guard let score = score(
+                entry: entry,
+                terms: terms,
+                loadFullTextIfNeeded: loadFullTextIfNeeded
+            ) else { return nil }
             let ranges = highlightRanges(for: displayText, terms: terms)
             return HistorySearchResult(entry: entry, highlightRanges: ranges, score: score)
         }
@@ -43,8 +57,17 @@ enum HistorySearchRanker {
         }
     }
 
-    private static func regexResult(entry: HistoryEntry, pattern: String, displayText: String) -> HistorySearchResult? {
-        let fields = searchableTexts(for: entry)
+    private static func regexResult(
+        entry: HistoryEntry,
+        pattern: String,
+        displayText: String,
+        loadFullTextIfNeeded: Bool
+    ) -> HistorySearchResult? {
+        let fields = searchableTexts(
+            for: entry,
+            terms: [pattern],
+            loadFullTextIfNeeded: loadFullTextIfNeeded
+        )
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
         for field in fields {
             let normalized = normalizeSearchText(field)
@@ -57,8 +80,8 @@ enum HistorySearchRanker {
         return nil
     }
 
-    private static func score(entry: HistoryEntry, terms: [String]) -> Int? {
-        let fields = searchableTexts(for: entry)
+    private static func score(entry: HistoryEntry, terms: [String], loadFullTextIfNeeded: Bool) -> Int? {
+        let fields = searchableTexts(for: entry, terms: terms, loadFullTextIfNeeded: loadFullTextIfNeeded)
         let haystack = fields.joined(separator: "\n").lowercased()
 
         var total = 0
@@ -106,7 +129,11 @@ enum HistorySearchRanker {
         return best
     }
 
-    static func searchableTexts(for entry: HistoryEntry) -> [String] {
+    static func searchableTexts(
+        for entry: HistoryEntry,
+        terms: [String] = [],
+        loadFullTextIfNeeded: Bool = false
+    ) -> [String] {
         var texts: [String] = []
         if let source = entry.sourceApp {
             texts.append(source)
@@ -119,8 +146,13 @@ enum HistorySearchRanker {
         }
 
         switch entry.item {
-        case .text(let str):
-            texts.append(str)
+        case .text(let preview):
+            texts.append(preview)
+            if loadFullTextIfNeeded, entry.textPath != nil,
+               shouldLoadFullText(preview: preview, terms: terms),
+               let full = entry.resolvedText {
+                texts.append(full)
+            }
         case .image:
             texts.append("image")
         case .rtf:
@@ -137,6 +169,13 @@ enum HistorySearchRanker {
             }
         }
         return texts
+    }
+
+    private static func shouldLoadFullText(preview: String, terms: [String]) -> Bool {
+        let meaningful = terms.filter { !$0.isEmpty }
+        guard !meaningful.isEmpty else { return true }
+        let previewLower = preview.lowercased()
+        return meaningful.contains { !previewLower.contains($0.lowercased()) }
     }
 
     static func highlightRanges(for text: String, terms: [String]) -> [Range<String.Index>] {

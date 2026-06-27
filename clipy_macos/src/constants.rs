@@ -1,0 +1,10 @@
+pub const APP_NAME: &str = "Clipy";
+pub const BUNDLE_ID: &str = "com.yourdomain.ClipyClone";
+pub const DATA_DIR_NAME: &str = "ClipyClone";
+pub const SYNC_SERVICE_TYPE: &str = "_clipy-sync._tcp.";
+pub const SYNC_SECRET: &str = "ClipySyncSecret2026";
+pub const DEFAULT_SYNC_PORT: u16 = 5566;
+pub const FILE_CHUNK_SIZE: usize = 128 * 1024;
+pub const CLIPBOARD_EVENT_CHANNEL_CAPACITY: usize = 256;
+pub const UI_NOTIFY_CHANNEL_CAPACITY: usize = 256;
+pub const DEFAULT_HISTORY_LOAD_COUNT: usize = 100;

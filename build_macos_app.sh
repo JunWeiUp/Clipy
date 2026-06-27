@@ -14,6 +14,8 @@ RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 
 SWIFT_SOURCES=(
     Sources/Localization.swift
+    Sources/HistoryMediaStore.swift
+    Sources/HistoryRepository.swift
     Sources/ClipboardManager.swift
     Sources/HistorySearchRanker.swift
     Sources/HistorySearchTypes.swift
@@ -22,8 +24,6 @@ SWIFT_SOURCES=(
     Sources/SearchGlobalHotKeyManager.swift
     Sources/SecureStorageCrypto.swift
     Sources/HistoryKeychain.swift
-    Sources/TransferManager.swift
-    Sources/TransferWindow.swift
     Sources/MenuController.swift
     Sources/PreferencesManager.swift
     Sources/SnippetManager.swift
@@ -58,7 +58,6 @@ SWIFT_SOURCES=(
     Sources/UI/HighlightedText.swift
     Sources/UI/HistoryPreviewView.swift
     Sources/UI/HistoryPreviewRepresentables.swift
-    Sources/UI/TransferView.swift
     Sources/UI/NotificationView.swift
     Sources/UI/CollectorView.swift
     Sources/UI/SnippetEditorViewModel.swift

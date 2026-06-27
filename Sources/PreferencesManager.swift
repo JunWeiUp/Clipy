@@ -6,6 +6,7 @@ class PreferencesManager {
     
     private let defaults = UserDefaults.standard
     private let historyLimitKey = "historyLimit"
+    private let historyLoadCountKey = "historyLoadCount"
     private let excludedAppsKey = "excludedApps"
     private let syncEnabledKey = "syncEnabled"
     private let syncPortKey = "syncPort"
@@ -50,6 +51,15 @@ class PreferencesManager {
     var historyLimit: Int {
         get { defaults.integer(forKey: historyLimitKey) == 0 ? 1000 : defaults.integer(forKey: historyLimitKey) }
         set { defaults.set(newValue, forKey: historyLimitKey) }
+    }
+
+    /// 每次从磁盘加载到内存的历史条数（默认 100）
+    var historyLoadCount: Int {
+        get {
+            let value = defaults.integer(forKey: historyLoadCountKey)
+            return value == 0 ? 100 : value
+        }
+        set { defaults.set(newValue, forKey: historyLoadCountKey) }
     }
     
     var excludedApps: [String] {

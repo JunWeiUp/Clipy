@@ -1,11 +1,11 @@
 import AppKit
 
 class MenuController: NSObject {
-    private static let menuDirectHistoryLimit = 50
+    private static let menuDisplayLimit = 50
+    private static let menuShortcutHistoryLimit = 50
     private var statusItem: NSStatusItem!
     private let clipboardManager = ClipboardManager.shared
     private let snippetManager = SnippetManager.shared
-    private lazy var transferWindow = TransferWindow()
     private lazy var notificationWindow = NotificationWindow()
     private lazy var collectorWindow = CollectorWindow()
     
@@ -125,7 +125,7 @@ class MenuController: NSObject {
         
         // --- History Section ---
         let historyHeader = NSMenuItem(
-            title: L10n.format(.historyWithCount, history.count),
+            title: L10n.format(.historyWithCount, clipboardManager.totalHistoryCount),
             action: nil,
             keyEquivalent: ""
         )
@@ -143,19 +143,7 @@ class MenuController: NSObject {
             emptyItem.isEnabled = false
             menu.addItem(emptyItem)
         } else {
-            let directLimit = Self.menuDirectHistoryLimit
-            let visibleHistory = Array(history.prefix(directLimit))
-            let overflowHistory = Array(history.dropFirst(directLimit))
-
-            addHistoryGroups(to: menu, history: visibleHistory, startIndex: 0)
-
-            if !overflowHistory.isEmpty {
-                let moreMenu = NSMenu()
-                addHistoryGroups(to: moreMenu, history: overflowHistory, startIndex: directLimit)
-                let moreItem = NSMenuItem(title: L10n.t(.moreHistory), action: nil, keyEquivalent: "")
-                moreItem.submenu = moreMenu
-                menu.addItem(moreItem)
-            }
+            addHistoryGroups(to: menu, history: Array(history.prefix(Self.menuDisplayLimit)), startIndex: 0)
         }
         
         menu.addItem(NSMenuItem.separator())
@@ -218,8 +206,8 @@ class MenuController: NSObject {
         
         menu.addItem(NSMenuItem.separator())
         
-        // --- Authorized Devices Section ---
-        let devicesHeader = NSMenuItem(title: L10n.t(.authorizedDevices), action: nil, keyEquivalent: "")
+        // --- LAN Devices (send file) ---
+        let devicesHeader = NSMenuItem(title: L10n.t(.lanDevices), action: nil, keyEquivalent: "")
         devicesHeader.isEnabled = false
         menu.addItem(devicesHeader)
         
@@ -230,36 +218,18 @@ class MenuController: NSObject {
             menu.addItem(emptyItem)
         } else {
             for deviceName in availableDevices {
-                let deviceMenuItem = NSMenuItem(title: "  " + deviceName, action: nil, keyEquivalent: "")
-                let deviceSubmenu = NSMenu()
-                
-                // Authorization Toggle
-                let authItem = NSMenuItem(title: L10n.t(.authorized), action: #selector(toggleDeviceAuthorization(_:)), keyEquivalent: "")
-                authItem.target = self
-                authItem.representedObject = deviceName
-                let isAuthorized = PreferencesManager.shared.authorizedDevices.contains(deviceName)
-                authItem.state = isAuthorized ? .on : .off
-                deviceSubmenu.addItem(authItem)
-                
-                // Send File Action (only if authorized)
-                if isAuthorized {
-                    deviceSubmenu.addItem(NSMenuItem.separator())
-                    let sendFileItem = NSMenuItem(title: L10n.t(.sendFile), action: #selector(sendFileClicked(_:)), keyEquivalent: "")
-                    sendFileItem.target = self
-                    sendFileItem.representedObject = deviceName
-                    deviceSubmenu.addItem(sendFileItem)
-                }
-                
-                deviceMenuItem.submenu = deviceSubmenu
-                menu.addItem(deviceMenuItem)
+                let sendFileItem = NSMenuItem(
+                    title: "  \(deviceName) — \(L10n.t(.sendFile))",
+                    action: #selector(sendFileClicked(_:)),
+                    keyEquivalent: ""
+                )
+                sendFileItem.target = self
+                sendFileItem.representedObject = deviceName
+                menu.addItem(sendFileItem)
             }
         }
         
         menu.addItem(NSMenuItem.separator())
-        
-        let transferItem = NSMenuItem(title: L10n.t(.transferStation) + "...", action: #selector(openTransferStation), keyEquivalent: "T")
-        transferItem.target = self
-        menu.addItem(transferItem)
 
         let editSnippetsItem = NSMenuItem(title: L10n.t(.editSnippets), action: #selector(openSnippetEditor), keyEquivalent: "S")
         editSnippetsItem.target = self
@@ -309,7 +279,7 @@ class MenuController: NSObject {
 
         let menuIndex = (indexInGroup + 1) % 10
         let prefix = "\(menuIndex). "
-        let keyEquivalent = startIndex >= Self.menuDirectHistoryLimit ? "" : "\(menuIndex)"
+        let keyEquivalent = startIndex + indexInGroup < Self.menuShortcutHistoryLimit ? "\(menuIndex)" : ""
 
         if entry.item.isFile, let urls = entry.item.fileURLs {
             let fileItem = NSMenuItem(title: prefix + displayTitle, action: nil, keyEquivalent: keyEquivalent)
@@ -341,7 +311,7 @@ class MenuController: NSObject {
         menuItem.representedObject = entry
         menuItem.toolTip = historyToolTip(for: entry)
 
-        if case .image(let data) = entry.item, let image = NSImage(data: data) {
+        if case .image(let path) = entry.item, let image = NSImage(contentsOf: URL(fileURLWithPath: path)) {
             let iconSize = NSSize(width: 24, height: 24)
             image.size = iconSize
             menuItem.image = image
@@ -428,23 +398,6 @@ class MenuController: NSObject {
         }
     }
     
-    @objc private func toggleDeviceAuthorization(_ sender: NSMenuItem) {
-        guard let deviceName = sender.representedObject as? String else { return }
-        
-        var authorizedDevices = PreferencesManager.shared.authorizedDevices
-        if authorizedDevices.contains(deviceName) {
-            authorizedDevices.removeAll { $0 == deviceName }
-            sender.state = .off
-        } else {
-            authorizedDevices.append(deviceName)
-            sender.state = .on
-        }
-        PreferencesManager.shared.authorizedDevices = authorizedDevices
-        if authorizedDevices.contains(deviceName) {
-            SyncManager.shared.requestTransferList(from: deviceName)
-        }
-    }
-    
     @objc private func clearHistory() {
         clipboardManager.clearHistory()
     }
@@ -467,12 +420,6 @@ class MenuController: NSObject {
         SnippetEditorWindow.shared.makeKeyAndOrderFront(nil)
     }
     
-    @objc private func openTransferStation() {
-        NSApp.activate(ignoringOtherApps: true)
-        SyncManager.shared.requestTransferListsForAvailableDevices()
-        transferWindow.showWindow()
-    }
-
     @objc private func openLogs() {
         LogWindow.show()
     }

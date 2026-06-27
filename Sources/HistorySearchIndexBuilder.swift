@@ -4,21 +4,23 @@ import PDFKit
 import Vision
 
 enum HistorySearchIndexBuilder {
-    private static let maxIndexLength = 8_000
+    private static let maxIndexLength = 500
     private static let indexQueue = DispatchQueue(label: "com.clipy.history-index", qos: .utility)
 
     static func buildIndex(for item: HistoryItem) -> String? {
+        let store = HistoryMediaStore.shared
         switch item {
-        case .text(let str):
-            return truncate(str)
-        case .rtf(let data):
-            return truncate(rtfPlainText(from: data))
-        case .html(let data):
-            if let html = HistoryPreviewSupport.htmlString(from: data) {
-                return truncate(stripHTML(html))
-            }
+        case .text:
             return nil
-        case .pdf(let data):
+        case .rtf(let path):
+            guard let data = store.data(at: path) else { return nil }
+            return truncate(rtfPlainText(from: data))
+        case .html(let path):
+            guard let data = store.data(at: path),
+                  let html = HistoryPreviewSupport.htmlString(from: data) else { return nil }
+            return truncate(stripHTML(html))
+        case .pdf(let path):
+            guard let data = store.data(at: path) else { return nil }
             return truncate(pdfPlainText(from: data))
         case .image:
             return nil
@@ -29,7 +31,8 @@ enum HistorySearchIndexBuilder {
     }
 
     static func scheduleOCR(for entry: HistoryEntry, contentHash: String, updater: @escaping (String, String) -> Void) {
-        guard case .image(let data) = entry.item, let image = NSImage(data: data),
+        guard case .image(let path) = entry.item,
+              let image = NSImage(contentsOf: URL(fileURLWithPath: path)),
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
 
         indexQueue.async {

@@ -66,7 +66,6 @@ class AppStrings {
   String get appTitle => 'ClipyClone';
   String get languageLabel => _t('语言', 'Language');
   String get history => _t('历史记录', 'History');
-  String get snippets => _t('片段', 'Snippets');
   String get preferences => _t('偏好设置', 'Preferences');
   String get settings => _t('设置', 'Settings');
   String get status => _t('状态', 'Status');
@@ -148,40 +147,13 @@ class AppStrings {
   String get copyAll => _t('复制全部', 'Copy All');
   String get noLogs => _t('暂无日志。', 'No logs recorded yet.');
   String get noClipboardHistory => _t('暂无剪贴板历史', 'No clipboard history yet');
-  String get noSnippetsYet => _t('暂无片段', 'No snippets yet');
   String historyRange(int start, int end) => _t('历史 $start-$end', 'History $start-$end');
   String sourceAndDate(String? source, String date) => '${source ?? unknown} • $date';
   String get unknown => _t('未知', 'Unknown');
   String get copiedToClipboard => _t('已复制到剪贴板', 'Copied to clipboard');
-  String get addSnippetFolder => _t('添加片段文件夹', 'Add Snippet Folder');
-  String get importXml => _t('导入 XML', 'Import XML');
-  String get snippetFolders => _t('片段文件夹', 'Snippet Folders');
-  String get addFolder => _t('添加文件夹', 'Add Folder');
-  String get edit => _t('编辑', 'Edit');
-  String get disable => _t('停用', 'Disable');
-  String get enable => _t('启用', 'Enable');
-  String get delete => _t('删除', 'Delete');
-  String get snippetCopied => _t('片段已复制到剪贴板', 'Snippet copied to clipboard');
-  String get addSnippet => _t('添加片段', 'Add Snippet');
-  String get newFolder => _t('新文件夹', 'New Folder');
-  String get folderName => _t('文件夹名称', 'Folder Name');
   String get cancel => _t('取消', 'Cancel');
-  String get create => _t('创建', 'Create');
-  String get importSnippetsXml => _t('导入片段 XML', 'Import Snippets XML');
-  String get pasteXmlContent => _t('粘贴 XML 内容', 'Paste XML content');
-  String get import => _t('导入', 'Import');
-  String get editFolder => _t('编辑文件夹', 'Edit Folder');
   String get save => _t('保存', 'Save');
-  String get deleteFolder => _t('删除文件夹', 'Delete Folder');
-  String deleteFolderMessage(String folderTitle) =>
-      _t('删除“$folderTitle”和所有片段？', 'Delete "$folderTitle" and all snippets?');
-  String get newSnippet => _t('新片段', 'New Snippet');
-  String get title => _t('标题', 'Title');
-  String get content => _t('内容', 'Content');
-  String get editSnippet => _t('编辑片段', 'Edit Snippet');
-  String get deleteSnippet => _t('删除片段', 'Delete Snippet');
-  String deleteSnippetMessage(String snippetTitle) =>
-      _t('删除“$snippetTitle”？', 'Delete "$snippetTitle"?');
+  String get delete => _t('删除', 'Delete');
   String get historyLimit => _t('历史数量', 'History Limit');
   String keepRecentItems(int count) => _t('保留最近 $count 条', 'Keep the most recent $count items');
   String get excludedApps => _t('排除的应用（Bundle ID，每行一个）', 'Excluded Apps (bundle IDs, one per line)');
@@ -201,6 +173,14 @@ class AppStrings {
   String get enterDeviceName => _t('输入设备名称', 'Enter device name');
   String get deviceNameUpdated => _t('设备名称已更新，同步已重启', 'Device name updated and sync restarted');
   String get authorizedDevices => _t('授权设备', 'Authorized Devices');
+  String get syncTargetsHint => _t(
+        '勾选需要同步剪贴板的设备。仅需在本机授权，对方无需勾选即可接收。',
+        'Select devices to sync clipboard to. Only this device needs to authorize; the other side can receive without checking you.',
+      );
+  String get lanDevices => _t('局域网设备', 'Devices on Network');
+  String get sendFile => _t('发送文件…', 'Send File…');
+  String fileSentTo(String deviceName) =>
+      _t('已发送至 $deviceName', 'Sent to $deviceName');
   String get noDevicesFound => _t('未发现设备', 'No devices found');
   String get sameWifiHint => _t('请确认其他设备连接到同一个 Wi-Fi', 'Ensure other devices are on the same WiFi');
   String get appRuntimeLogs => _t('用于排查问题的应用运行日志', 'App runtime logs for troubleshooting');
@@ -238,28 +218,8 @@ class AppStrings {
   String get systemApps => _t('系统应用', 'System Apps');
   String appCount(int count) => _t('$count 个应用', '$count apps');
 
-  // Transfer Station
-  String get transferStation => _t('超级中转站', 'Transfer Station');
-  String get addText => _t('添加文本', 'Add Text');
-  String get addFile => _t('添加文件', 'Add File');
   String get clearAll => _t('清空', 'Clear All');
-  String get dragOrAddToTransfer => _t('拖拽或点击添加内容', 'Drag or tap to add content');
-  String get enterTextContent => _t('输入要添加到中转站的文本', 'Enter text to add to transfer station');
-  String get add => _t('添加', 'Add');
-  String get clearAllTransfer => _t('清空中转站', 'Clear Transfer Station');
-  String get clearAllTransferConfirm => _t('确定要清空所有中转站内容吗？', 'Clear all transfer station content?');
   String get copyContent => _t('复制内容', 'Copy Content');
-  String get setTemporary => _t('设为临时', 'Set Temporary');
-  String get setPermanent => _t('设为永久', 'Set Permanent');
-  String get permanent => _t('永久', 'Permanent');
-  String get temporary => _t('临时', 'Temporary');
-  String get openFile => _t('打开文件', 'Open File');
-  String get saveFile => _t('另存为', 'Save As');
-  String get fileSaved => _t('文件已保存', 'File saved');
-  String get fileOpenFailed => _t('无法打开文件', 'Could not open file');
-  String get saveToLocation => _t('选择保存位置', 'Choose save location');
-  String itemCount(int total, int permanent) =>
-      _t('$total 条 ($permanent 永久)', '$total items ($permanent permanent)');
 
   String _t(String zh, String en) => language == AppLanguage.zh ? zh : en;
 }

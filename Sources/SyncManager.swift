@@ -361,9 +361,14 @@ class SyncManager: NSObject, NetServiceDelegate {
             }
             
             DispatchQueue.main.async {
-                self.onDevicesChanged?(self.availableDeviceNames)
+                let names = self.availableDeviceNames
+                self.onDevicesChanged?(names)
+                NotificationCenter.default.post(
+                    name: .syncAvailableDevicesDidChange,
+                    object: self,
+                    userInfo: ["devices": names]
+                )
             }
-            self.requestTransferListsForAvailableDevices()
         }
         
         browser.start(queue: syncQueue)
@@ -503,8 +508,9 @@ class SyncManager: NSObject, NetServiceDelegate {
             return
         }
         
-        // Authorization check
-        if !PreferencesManager.shared.authorizedDevices.contains(message.deviceId) {
+        let isFileMessage = message.type == "file/header" || message.type == "file/chunk"
+        let isClipboardMessage = message.type == "text/plain"
+        if !isFileMessage && !isClipboardMessage && !PreferencesManager.shared.authorizedDevices.contains(message.deviceId) {
             appLog("Rejecting sync from unauthorized device: \(message.deviceId)", level: .warning)
             return
         }
@@ -517,18 +523,6 @@ class SyncManager: NSObject, NetServiceDelegate {
                 handleFileHeader(decrypted, from: message.deviceId)
             } else if message.type == "file/chunk" {
                 handleFileChunk(decrypted, from: message.deviceId)
-            } else if message.type == "transfer/add" {
-                TransferManager.shared.handleRemoteAdd(decrypted, from: message.deviceId)
-            } else if message.type == "transfer/remove" {
-                TransferManager.shared.handleRemoteRemove(decrypted)
-            } else if message.type == "transfer/request" {
-                TransferManager.shared.syncAllTo(message.deviceId)
-            } else if message.type == "transfer/list" {
-                TransferManager.shared.handleRemoteList(decrypted, from: message.deviceId)
-            } else if message.type == "transfer/file/header" {
-                handleTransferFileHeader(decrypted, from: message.deviceId)
-            } else if message.type == "transfer/file/chunk" {
-                handleTransferFileChunk(decrypted, from: message.deviceId)
             } else if message.type == "notification/post" {
                 NotificationManager.shared.handleRemoteNotification(decrypted, from: message.deviceId)
             } else if message.type == "notification/dismiss" {
@@ -632,149 +626,6 @@ class SyncManager: NSObject, NetServiceDelegate {
         }
     }
     
-    // MARK: - Transfer Station Sync
-    func broadcastTransferMessage(type: String, content: String, hash: String) {
-        appLog("Broadcasting transfer message: \(type)")
-        guard PreferencesManager.shared.isSyncEnabled else { return }
-
-        guard let encryptedContent = encrypt(content) else { return }
-
-        let message = SyncMessage(
-            deviceId: deviceId,
-            timestamp: Date().timeIntervalSince1970,
-            type: type,
-            content: encryptedContent,
-            hash: hash
-        )
-
-        guard let jsonData = try? JSONEncoder().encode(message) else { return }
-
-        let authorizedDevices = PreferencesManager.shared.authorizedDevices
-        let targetResults = discoveredEndpoints.values.filter { result in
-            if case let .service(name, _, _, _) = result.endpoint {
-                return authorizedDevices.contains(name)
-            }
-            return false
-        }
-
-        for result in targetResults {
-            if case let .service(name, _, _, _) = result.endpoint {
-                appLog("Sending transfer message to: \(name)")
-            }
-            sendSync(jsonData, to: result.endpoint)
-        }
-    }
-
-    func sendTransferMessage(type: String, content: String, hash: String, to targetName: String) {
-        guard PreferencesManager.shared.isSyncEnabled else { return }
-        guard let encryptedContent = encrypt(content) else { return }
-
-        let message = SyncMessage(
-            deviceId: deviceId,
-            timestamp: Date().timeIntervalSince1970,
-            type: type,
-            content: encryptedContent,
-            hash: hash
-        )
-
-        guard let jsonData = try? JSONEncoder().encode(message) else { return }
-
-        guard let result = discoveredEndpoints.values.first(where: { result in
-            if case let .service(name, _, _, _) = result.endpoint {
-                return name == targetName
-            }
-            return false
-        }) else {
-            appLog("Transfer: could not find endpoint for device: \(targetName)", level: .error)
-            return
-        }
-
-        sendSync(jsonData, to: result.endpoint)
-    }
-
-    func requestTransferList(from deviceName: String) {
-        guard PreferencesManager.shared.isSyncEnabled else { return }
-        guard PreferencesManager.shared.authorizedDevices.contains(deviceName) else { return }
-        appLog("Transfer: requesting station snapshot from \(deviceName)")
-        sendTransferMessage(type: "transfer/request", content: "{}", hash: "", to: deviceName)
-    }
-
-    func requestTransferListsForAvailableDevices() {
-        let authorizedDevices = Set(PreferencesManager.shared.authorizedDevices)
-        for deviceName in availableDeviceNames where authorizedDevices.contains(deviceName) {
-            requestTransferList(from: deviceName)
-        }
-    }
-
-    private var pendingTransferFiles: [String: (header: FileHeader, senderName: String, localURL: URL)] = [:]
-
-    private func handleTransferFileHeader(_ json: String, from sender: String) {
-        guard let data = json.data(using: .utf8),
-              let header = try? JSONDecoder().decode(FileHeader.self, from: data) else {
-            appLog("Transfer: failed to decode file header", level: .error)
-            return
-        }
-
-        appLog("Transfer: received file header for \(header.fileName) from \(sender)")
-
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let destDir = appSupport.appendingPathComponent("ClipyClone/TransferFiles")
-        try? FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
-
-        let localURL = destDir.appendingPathComponent(header.fileName)
-        try? FileManager.default.removeItem(at: localURL)
-        FileManager.default.createFile(atPath: localURL.path, contents: nil)
-
-        pendingTransferFiles[header.fileId] = (header, sender, localURL)
-    }
-
-    private func handleTransferFileChunk(_ json: String, from sender: String) {
-        guard let data = json.data(using: .utf8),
-              let chunk = try? JSONDecoder().decode(FileChunk.self, from: data) else {
-            appLog("Transfer: failed to decode file chunk", level: .error)
-            return
-        }
-
-        guard let (header, _, localURL) = pendingTransferFiles[chunk.fileId] else {
-            appLog("Transfer: received chunk for unknown fileId: \(chunk.fileId)", level: .error)
-            return
-        }
-
-        guard var chunkData = Data(base64Encoded: chunk.data) else {
-            appLog("Transfer: failed to decode base64 chunk data", level: .error)
-            return
-        }
-
-        if chunk.isCompressed, let originalSize = chunk.originalSize {
-            if let decompressedData = decompressData(chunkData, originalSize: originalSize) {
-                chunkData = decompressedData
-            }
-        }
-
-        do {
-            let fileHandle = try FileHandle(forWritingTo: localURL)
-            defer { try? fileHandle.close() }
-            try fileHandle.seekToEnd()
-            try fileHandle.write(contentsOf: chunkData)
-
-            if chunk.isLast {
-                appLog("Transfer: file transfer completed: \(header.fileName)")
-                pendingTransferFiles.removeValue(forKey: chunk.fileId)
-
-                DispatchQueue.main.async {
-                    TransferManager.shared.addReceivedFileItem(
-                        from: localURL,
-                        fileName: header.fileName,
-                        fileSize: header.fileSize,
-                        sourceDevice: sender
-                    )
-                }
-            }
-        } catch {
-            appLog("Transfer: failed to write chunk: \(error)", level: .error)
-        }
-    }
-
     // MARK: - Notification Sync
     func broadcastNotificationMessage(type: String, content: String, hash: String) {
         appLog("Broadcasting notification message: \(type)")
@@ -845,18 +696,6 @@ class SyncManager: NSObject, NetServiceDelegate {
     
     func sendFile(at url: URL, toDevice targetName: String) {
         sendFile(at: url, toDevice: targetName, headerType: "file/header", chunkType: "file/chunk", addToFileHistory: true)
-    }
-
-    func broadcastTransferFile(at url: URL) {
-        guard PreferencesManager.shared.isSyncEnabled else { return }
-        let authorizedDevices = Set(PreferencesManager.shared.authorizedDevices)
-        for deviceName in availableDeviceNames where authorizedDevices.contains(deviceName) {
-            sendTransferFile(at: url, toDevice: deviceName)
-        }
-    }
-
-    func sendTransferFile(at url: URL, toDevice targetName: String) {
-        sendFile(at: url, toDevice: targetName, headerType: "transfer/file/header", chunkType: "transfer/file/chunk", addToFileHistory: false)
     }
 
     private func sendFile(
@@ -1058,4 +897,8 @@ class SyncManager: NSObject, NetServiceDelegate {
         
         connection.start(queue: syncQueue)
     }
+}
+
+extension Notification.Name {
+    static let syncAvailableDevicesDidChange = Notification.Name("SyncAvailableDevicesDidChange")
 }

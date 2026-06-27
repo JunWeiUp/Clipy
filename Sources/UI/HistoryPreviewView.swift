@@ -22,7 +22,7 @@ struct HistoryPreviewView: View {
         VStack(alignment: .leading, spacing: 0) {
             previewHeader(for: entry)
             Divider()
-            previewBody(for: entry.item)
+            previewBody(for: entry)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -57,16 +57,21 @@ struct HistoryPreviewView: View {
     }
 
     @ViewBuilder
-    private func previewBody(for item: HistoryItem) -> some View {
-        switch item {
-        case .text(let str):
-            textItemPreview(str)
+    private func previewBody(for entry: HistoryEntry) -> some View {
+        switch entry.item {
+        case .text:
+            if let text = entry.resolvedText {
+                textItemPreview(text)
+            } else {
+                EmptyStateView(message: L10n.t(.historyPreviewLoadFailed))
+            }
 
-        case .image(let data):
-            imagePreview(data: data)
+        case .image(let path):
+            imagePreview(path: path)
 
-        case .rtf(let data):
-            if let attributed = rtfAttributedString(from: data) {
+        case .rtf(let path):
+            if let data = HistoryMediaStore.shared.data(at: path),
+               let attributed = rtfAttributedString(from: data) {
                 if attributed.length > HistoryPreviewSupport.swiftUITextThreshold {
                     PlainTextPreviewRepresentable(text: attributed.string)
                 } else {
@@ -81,15 +86,19 @@ struct HistoryPreviewView: View {
                 typePlaceholder(icon: "doc.richtext", label: L10n.t(.historyTypeRTF))
             }
 
-        case .pdf(let data):
-            if PDFDocument(data: data) != nil {
-                PDFDataPreviewRepresentable(data: data)
-            } else {
+        case .pdf(let path):
+            let url = URL(fileURLWithPath: path)
+            if PDFDocument(url: url) != nil {
+                PDFFilePreviewRepresentable(url: url)
+            } else if let data = HistoryMediaStore.shared.data(at: path) {
                 pdfFallback(size: data.count)
+            } else {
+                pdfFallback(size: 0)
             }
 
-        case .html(let data):
-            if let html = HistoryPreviewSupport.htmlString(from: data) {
+        case .html(let path):
+            if let data = HistoryMediaStore.shared.data(at: path),
+               let html = HistoryPreviewSupport.htmlString(from: data) {
                 HTMLPreviewRepresentable(html: html)
                     .padding(AppSpacing.xs)
             } else {
@@ -168,8 +177,9 @@ struct HistoryPreviewView: View {
     }
 
     @ViewBuilder
-    private func imagePreview(data: Data) -> some View {
-        if let image = NSImage(data: data) {
+    private func imagePreview(path: String) -> some View {
+        let url = URL(fileURLWithPath: path)
+        if let image = NSImage(contentsOf: url) {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFit()

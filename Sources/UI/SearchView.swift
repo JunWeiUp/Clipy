@@ -23,8 +23,30 @@ final class SearchViewModel: ObservableObject {
     private var debounceWorkItem: DispatchWorkItem?
     private var historyObserver: NSObjectProtocol?
 
-    var primarySelectedID: HistoryEntry.ID? {
-        selectedIDs.first ?? results.first?.id
+    private var isLoadingMore = false
+
+    func onResultRowAppear(_ result: HistorySearchResult) {
+        guard result.id == results.last?.id else { return }
+        loadMoreIfNeeded()
+    }
+
+    private func loadMoreIfNeeded() {
+        guard canAutoLoadMore, !isLoadingMore else { return }
+        isLoadingMore = true
+        ClipboardManager.shared.loadMoreHistory()
+        performSearch(immediate: true)
+        isLoadingMore = false
+    }
+
+    private var canAutoLoadMore: Bool {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedQuery.isEmpty
+            && typeFilter == .all
+            && sourceAppFilter.isEmpty
+            && dateFilter == .all
+            && contentCategory == nil
+            && !useRegex
+            && ClipboardManager.shared.hasMoreHistory
     }
 
     func onAppear() {
@@ -91,7 +113,7 @@ final class SearchViewModel: ObservableObject {
             contentCategory: contentCategory,
             useRegex: useRegex
         ))
-        let totalCount = manager.history.count
+        let totalCount = manager.totalHistoryCount
 
         if totalCount == 0 {
             statusText = L10n.t(.noHistory)
@@ -113,6 +135,11 @@ final class SearchViewModel: ObservableObject {
         if selectedIDs.isEmpty {
             selectedIDs = [results.first?.id].compactMap { $0 }.reduce(into: Set()) { $0.insert($1) }
         }
+
+    }
+
+    var primarySelectedID: HistoryEntry.ID? {
+        selectedIDs.first ?? results.first?.id
     }
 
     func moveSelection(by offset: Int) {
@@ -181,7 +208,7 @@ final class SearchViewModel: ObservableObject {
         let title = String(entry.item.title.prefix(40))
         let content: String
         switch entry.item {
-        case .text(let str): content = str
+        case .text: content = entry.resolvedText ?? entry.item.title
         case .files(let urls): content = urls.map(\.lastPathComponent).joined(separator: "\n")
         default: content = ClipboardManager.shared.plainText(for: entry.item) ?? entry.item.title
         }
@@ -283,6 +310,7 @@ struct SearchView: View {
                             }
                         }
                     }
+
                 }
             }
         } content: {
@@ -342,6 +370,7 @@ struct SearchView: View {
                     )
                 }
                 .onDrag { dragItemProvider(for: result.entry) }
+                .onAppear { viewModel.onResultRowAppear(result) }
             }
             TableColumn(L10n.t(.location)) { result in
                 Text(locationPreview(for: result.entry))
@@ -417,7 +446,7 @@ struct SearchView: View {
             Image(nsImage: NSWorkspace.shared.icon(forFile: first.path))
                 .resizable()
                 .frame(width: 16, height: 16)
-        } else if case .image(let data) = entry.item, let image = NSImage(data: data) {
+        } else if case .image(let path) = entry.item, let image = NSImage(contentsOf: URL(fileURLWithPath: path)) {
             Image(nsImage: image)
                 .resizable()
                 .frame(width: 16, height: 16)
@@ -458,17 +487,21 @@ struct SearchView: View {
 
     private func dragItemProvider(for entry: HistoryEntry) -> NSItemProvider {
         switch entry.item {
-        case .text(let str):
-            return NSItemProvider(object: str as NSString)
-        case .image(let data):
-            return NSItemProvider(item: data as NSSecureCoding, typeIdentifier: UTType.tiff.identifier)
+        case .text:
+            let text = entry.resolvedText ?? ""
+            return NSItemProvider(object: text as NSString)
+        case .image(let path):
+            if let data = HistoryMediaStore.shared.data(at: path) {
+                return NSItemProvider(item: data as NSSecureCoding, typeIdentifier: UTType.tiff.identifier)
+            }
+            return NSItemProvider()
         case .files(let urls):
             if let url = urls.first {
                 return NSItemProvider(object: url as NSURL)
             }
             return NSItemProvider()
         default:
-            if let text = ClipboardManager.shared.plainText(for: entry.item) {
+            if let text = ClipboardManager.shared.plainText(for: entry) {
                 return NSItemProvider(object: text as NSString)
             }
             return NSItemProvider(object: entry.item.title as NSString)

@@ -15,7 +15,8 @@ struct SettingsView: View {
     @State private var searchHistoryShortcut: ShortcutCombo?
     @State private var syncEnabled: Bool
     @State private var syncPort: String
-    @State private var authorizedDevices: String
+    @State private var availableDevices: [String] = []
+    @State private var selectedSyncTargets: Set<String> = Set(PreferencesManager.shared.authorizedDevices)
     @State private var notificationSyncEnabled: Bool
     @State private var notificationSound: Bool
     @State private var collectorSyncEnabled: Bool
@@ -44,7 +45,6 @@ struct SettingsView: View {
         _searchHistoryShortcut = State(initialValue: prefs.searchHistoryShortcut)
         _syncEnabled = State(initialValue: prefs.isSyncEnabled)
         _syncPort = State(initialValue: "\(prefs.syncPort)")
-        _authorizedDevices = State(initialValue: prefs.authorizedDevices.joined(separator: ", "))
         _notificationSyncEnabled = State(initialValue: NotificationManager.shared.notificationSyncEnabled)
         _notificationSound = State(initialValue: NotificationManager.shared.notificationSound)
         _collectorSyncEnabled = State(initialValue: prefs.isCollectorSyncEnabled)
@@ -189,14 +189,33 @@ struct SettingsView: View {
                         }
                     }
 
-                TextField(L10n.t(.authorizedDevicesComma), text: $authorizedDevices)
-                    .onChange(of: authorizedDevices) { newValue in
-                        let devices = newValue
-                            .components(separatedBy: ",")
-                            .map { $0.trimmingCharacters(in: .whitespaces) }
-                            .filter { !$0.isEmpty }
-                        PreferencesManager.shared.authorizedDevices = devices
+                Text(L10n.t(.authorizedDevices))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+                Text(L10n.t(.syncTargetsHint))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+
+                if availableDevices.isEmpty {
+                    Text(L10n.t(.noDevicesFound))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(availableDevices, id: \.self) { deviceName in
+                        Toggle(isOn: Binding(
+                            get: { selectedSyncTargets.contains(deviceName) },
+                            set: { enabled in
+                                if enabled {
+                                    selectedSyncTargets.insert(deviceName)
+                                } else {
+                                    selectedSyncTargets.remove(deviceName)
+                                }
+                                PreferencesManager.shared.authorizedDevices = selectedSyncTargets.sorted()
+                            }
+                        )) {
+                            Text(deviceName)
+                        }
                     }
+                }
             }
 
             Section {
@@ -273,6 +292,15 @@ struct SettingsView: View {
             }
         }
         .frame(width: AppWindowSize.settings.width, height: AppWindowSize.settings.height)
+        .onReceive(NotificationCenter.default.publisher(for: .syncAvailableDevicesDidChange)) { notification in
+            if let devices = notification.userInfo?["devices"] as? [String] {
+                availableDevices = devices
+            }
+        }
+        .onAppear {
+            availableDevices = SyncManager.shared.availableDeviceNames
+            selectedSyncTargets = Set(PreferencesManager.shared.authorizedDevices)
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             accessibilityGranted = AccessibilityManager.isTrusted
             launchAtLogin = LaunchAtLoginManager.isEnabled

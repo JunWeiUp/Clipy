@@ -38,6 +38,7 @@ enum L10nKey: String {
     case enableLanSync
     case syncPort
     case authorizedDevicesComma
+    case syncTargetsHint
     case close
     case history
     case noHistory
@@ -47,6 +48,7 @@ enum L10nKey: String {
     case noFiles
     case source
     case from
+    case lanDevices
     case authorizedDevices
     case noDevicesFound
     case authorized
@@ -162,6 +164,7 @@ enum L10nKey: String {
     case searchResultCount
     case historyTotalCount
     case historyShownOfTotal
+    case historyLoadMore
     case noSearchResultsWithTotal
     case historyCurrentCount
     case historyWithCount
@@ -235,6 +238,7 @@ struct L10n {
             .enableLanSync: "启用局域网同步",
             .syncPort: "同步端口：",
             .authorizedDevicesComma: "授权设备（用逗号分隔）：",
+            .syncTargetsHint: "勾选需要同步剪贴板的设备。仅需在本机授权，对方无需勾选即可接收。",
             .close: "关闭",
             .history: "历史记录",
             .noHistory: "  暂无历史记录",
@@ -245,6 +249,7 @@ struct L10n {
             .source: "来源",
             .from: "来自",
             .authorizedDevices: "授权设备",
+            .lanDevices: "局域网设备",
             .noDevicesFound: "  未发现设备",
             .authorized: "已授权",
             .sendFile: "发送文件...",
@@ -359,6 +364,7 @@ struct L10n {
             .searchResultCount: "%d 条历史",
             .historyTotalCount: "共 %d 条历史",
             .historyShownOfTotal: "显示 %d / 共 %d 条",
+            .historyLoadMore: "加载更多",
             .noSearchResultsWithTotal: "没有匹配的结果（共 %d 条）",
             .historyCurrentCount: "当前已保存 %d 条",
             .historyWithCount: "历史记录（%d）",
@@ -386,7 +392,7 @@ struct L10n {
             .historyFilterSource: "来源",
             .historyFilterAllSources: "全部来源",
             .encryptHistoryAtRest: "加密本地历史",
-            .encryptHistoryAtRestDescription: "使用 Keychain 密钥 AES-GCM 加密 history_v2.json，密钥仅保存在本机。",
+            .encryptHistoryAtRestDescription: "使用 Keychain 密钥 AES-GCM 加密外置的历史文本与媒体文件，密钥仅保存在本机。",
             .historyEncryptionFailed: "无法更新历史加密设置，请重试。",
             .historyRegexSearch: "正则",
             .historyDateFilter: "时间",
@@ -421,6 +427,7 @@ struct L10n {
             .enableLanSync: "Enable LAN Sync",
             .syncPort: "Sync Port:",
             .authorizedDevicesComma: "Authorized Devices (comma separated):",
+            .syncTargetsHint: "Select devices to sync clipboard to. Only this device needs to authorize; the other side can receive without checking you.",
             .close: "Close",
             .history: "History",
             .noHistory: "  No History",
@@ -431,6 +438,7 @@ struct L10n {
             .source: "Source",
             .from: "From",
             .authorizedDevices: "Authorized Devices",
+            .lanDevices: "Devices on Network",
             .noDevicesFound: "  No Devices Found",
             .authorized: "Authorized",
             .sendFile: "Send File...",
@@ -545,6 +553,7 @@ struct L10n {
             .searchResultCount: "%d history items",
             .historyTotalCount: "%d items total",
             .historyShownOfTotal: "Showing %d / %d items",
+            .historyLoadMore: "Load More",
             .noSearchResultsWithTotal: "No results (%d items total)",
             .historyCurrentCount: "%d items saved",
             .historyWithCount: "History (%d)",
@@ -572,7 +581,7 @@ struct L10n {
             .historyFilterSource: "Source",
             .historyFilterAllSources: "All Sources",
             .encryptHistoryAtRest: "Encrypt Local History",
-            .encryptHistoryAtRestDescription: "Encrypt history_v2.json with a Keychain-derived AES-GCM key stored on this device only.",
+            .encryptHistoryAtRestDescription: "Encrypt externalized history text and media files with a Keychain-derived AES-GCM key stored on this device only.",
             .historyEncryptionFailed: "Could not update history encryption. Please try again.",
             .historyRegexSearch: "Regex",
             .historyDateFilter: "Time",

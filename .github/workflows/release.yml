@@ -43,11 +43,23 @@ jobs:
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "tag=v${VERSION}" >> "${GITHUB_OUTPUT}"
 
-      - name: Build macOS app
+      - name: Build macOS app (Swift)
         run: |
           APP_VERSION="${{ steps.version.outputs.version }}" \
           BUILD_NUMBER="${{ github.run_number }}" \
           ./build_macos_app.sh
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Metal Toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Build macOS app (Rust + GPUI)
+        run: |
+          APP_VERSION="${{ steps.version.outputs.version }}" \
+          BUILD_NUMBER="${{ github.run_number }}" \
+          ./build_rust_macos_app.sh
 
       - name: Package macOS app
         run: |

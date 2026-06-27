@@ -1,0 +1,60 @@
+[package]
+name = "clipy"
+version = "1.0.0"
+edition = "2021"
+description = "Cross-platform clipboard manager for macOS (Rust + GPUI)"
+license = "MIT"
+publish = false
+
+[dependencies]
+clipboard-rs = "0.3.4"
+gpui = { version = "0.2.2", default-features = false }
+gpui-component = { version = "0.5.1", default-features = false }
+global-hotkey = "0.8.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+plist = "1"
+regex = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+dirs = "6"
+thiserror = "2"
+toml = "0.8"
+image = { version = "0.25", default-features = false, features = ["png"] }
+tray-icon = "0.24.0"
+auto-launch = "0.6.0"
+async-channel = "2.5.0"
+rust-embed = "8"
+seahash = "4.1"
+sha2 = "0.10"
+aes-gcm = "0.10"
+base64 = "0.22"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "macros", "time"] }
+mdns-sd = "0.13"
+uuid = { version = "1", features = ["v4"] }
+enigo = "0.6.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "std"] }
+parking_lot = "0.12"
+getrandom = { version = "0.3", features = ["std"] }
+once_cell = "1"
+raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication", "NSApplication", "NSWindow", "NSScreen", "NSView", "NSColor"] }
+objc2-foundation = { version = "0.3", features = ["NSString"] }
+security-framework = "3"
+
+[build-dependencies]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[package.metadata.bundle]
+name = "Clipy"
+identifier = "com.yourdomain.ClipyClone"
+icon = ["assets/logo.png"]
+osx_minimum_system_version = "13.0"
