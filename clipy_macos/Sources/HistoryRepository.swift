@@ -53,6 +53,23 @@ final class HistoryRepository {
         }
     }
 
+    func fetchSummaries(limit: Int) -> [HistorySummary] {
+        queue.sync { fetchSummariesLocked(limit: limit) }
+    }
+
+    func fetchByRowid(_ rowid: Int64, includeSearchIndex: Bool = false) -> HistoryEntry? {
+        queue.sync {
+            let sql = "SELECT * FROM history_entries WHERE rowid = ? LIMIT 1"
+            return queryEntries(sql: sql, bind: { stmt in
+                sqlite3_bind_int64(stmt, 1, rowid)
+            }, includeSearchIndex: includeSearchIndex).first
+        }
+    }
+
+    func fetchRowid(contentHash: String?, item: HistoryItem) -> Int64? {
+        queue.sync { fetchRowidLocked(contentHash: contentHash, item: item) }
+    }
+
     func fetchAll(includeSearchIndex: Bool = true) -> [HistoryEntry] {
         queue.sync {
             fetchLocked(limit: Int.max, includeSearchIndex: includeSearchIndex, filters: nil, textQuery: nil)
@@ -249,6 +266,96 @@ final class HistoryRepository {
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
         return Int(sqlite3_column_int(stmt, 0))
+    }
+
+    private func fetchSummariesLocked(limit: Int) -> [HistorySummary] {
+        guard let db, limit > 0 else { return [] }
+        let sql = """
+        SELECT rowid, content_hash, item_type, text_path, text_preview, media_path, files_json,
+               date, source_app, source_bundle_id, is_pinned
+        FROM history_entries
+        ORDER BY is_pinned DESC, date DESC
+        LIMIT ?
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, Int32(limit))
+
+        var summaries: [HistorySummary] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let summary = summaryFromStatement(stmt) {
+                summaries.append(summary)
+            }
+        }
+        return summaries
+    }
+
+    private func fetchRowidLocked(contentHash: String?, item: HistoryItem) -> Int64? {
+        guard let db else { return nil }
+        if let contentHash {
+            let sql = "SELECT rowid FROM history_entries WHERE content_hash = ? LIMIT 1"
+            return queryRowid(sql: sql) { bindText($0, 1, contentHash) }
+        }
+
+        let kind = itemKind(for: item)
+        let sql: String
+        switch item {
+        case .text:
+            sql = "SELECT rowid FROM history_entries WHERE item_type = 'text' AND text_preview = ? LIMIT 1"
+        case .image, .rtf, .pdf, .html:
+            sql = "SELECT rowid FROM history_entries WHERE item_type = ? AND media_path = ? LIMIT 1"
+        case .files:
+            sql = "SELECT rowid FROM history_entries WHERE item_type = 'files' AND files_json = ? LIMIT 1"
+        }
+
+        return queryRowid(sql: sql) { stmt in
+            switch item {
+            case .text(let preview):
+                bindText(stmt, 1, preview)
+            case .image(let path), .rtf(let path), .pdf(let path), .html(let path):
+                bindText(stmt, 1, kind.rawValue)
+                bindText(stmt, 2, path)
+            case .files(let urls):
+                bindText(stmt, 1, encodeFiles(urls))
+            }
+        }
+    }
+
+    private func queryRowid(sql: String, bind: (OpaquePointer?) -> Void) -> Int64? {
+        guard let db else { return nil }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return sqlite3_column_int64(stmt, 0)
+    }
+
+    private func summaryFromStatement(_ stmt: OpaquePointer?) -> HistorySummary? {
+        guard let stmt,
+              let typeCString = sqlite3_column_text(stmt, 2) else { return nil }
+        let itemType = String(cString: typeCString)
+        let textPreview = optionalString(stmt, 4)
+        let mediaPath = optionalString(stmt, 5)
+        let filesJSON = optionalString(stmt, 6)
+        guard let item = decodeItem(
+            type: itemType,
+            textPreview: textPreview,
+            mediaPath: mediaPath,
+            filesJSON: filesJSON
+        ) else { return nil }
+
+        return HistorySummary(
+            rowid: sqlite3_column_int64(stmt, 0),
+            item: item,
+            date: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 7)),
+            sourceApp: optionalString(stmt, 8),
+            sourceBundleId: optionalString(stmt, 9),
+            contentHash: optionalString(stmt, 1),
+            isPinned: sqlite3_column_int(stmt, 10) != 0,
+            textPath: optionalString(stmt, 3)
+        )
     }
 
     @discardableResult

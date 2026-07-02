@@ -38,7 +38,7 @@ struct SettingsView: View {
         let limit = prefs.historyLimit
         _historyLimit = State(initialValue: limit)
         _historyLimitText = State(initialValue: "\(limit)")
-        _currentHistoryCount = State(initialValue: ClipboardManager.shared.history.count)
+        _currentHistoryCount = State(initialValue: ClipboardManager.shared.totalHistoryCount)
         _excludedApps = State(initialValue: prefs.excludedApps.joined(separator: ", "))
         _historyEncryptionEnabled = State(initialValue: prefs.isHistoryEncryptionEnabled)
         _searchGlobalShortcutEnabled = State(initialValue: prefs.isSearchGlobalShortcutEnabled)
@@ -304,10 +304,10 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             accessibilityGranted = AccessibilityManager.isTrusted
             launchAtLogin = LaunchAtLoginManager.isEnabled
-            currentHistoryCount = ClipboardManager.shared.history.count
+            currentHistoryCount = ClipboardManager.shared.totalHistoryCount
         }
         .onReceive(NotificationCenter.default.publisher(for: .clipboardHistoryDidChange)) { _ in
-            currentHistoryCount = ClipboardManager.shared.history.count
+            currentHistoryCount = ClipboardManager.shared.totalHistoryCount
         }
     }
 

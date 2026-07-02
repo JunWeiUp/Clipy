@@ -188,6 +188,49 @@ enum FilePathDisplay {
     }
 }
 
+struct HistorySummary {
+    let rowid: Int64
+    var item: HistoryItem
+    var date: Date
+    let sourceApp: String?
+    let sourceBundleId: String?
+    let contentHash: String?
+    var isPinned: Bool
+    let textPath: String?
+
+    func asEntry(
+        searchIndex: String? = nil,
+        lastUsedAt: Date? = nil,
+        useCount: Int = 0
+    ) -> HistoryEntry {
+        HistoryEntry(
+            item: item,
+            date: date,
+            sourceApp: sourceApp,
+            sourceBundleId: sourceBundleId,
+            contentHash: contentHash,
+            isPinned: isPinned,
+            searchIndex: searchIndex,
+            lastUsedAt: lastUsedAt,
+            useCount: useCount,
+            textPath: textPath
+        )
+    }
+
+    static func from(entry: HistoryEntry, rowid: Int64) -> HistorySummary {
+        HistorySummary(
+            rowid: rowid,
+            item: entry.item,
+            date: entry.date,
+            sourceApp: entry.sourceApp,
+            sourceBundleId: entry.sourceBundleId,
+            contentHash: entry.contentHash,
+            isPinned: entry.isPinned,
+            textPath: entry.textPath
+        )
+    }
+}
+
 struct HistoryEntry: Codable {
     var item: HistoryItem
     var date: Date
@@ -259,7 +302,7 @@ class ClipboardManager {
     private let pasteboard = NSPasteboard.general
     private var changeCount: Int
     private var timer: Timer?
-    private(set) var history: [HistoryEntry] = []
+    private(set) var recentSummaries: [HistorySummary] = []
     private(set) var totalHistoryCount = 0
     private var menuHistoryLimit: Int { PreferencesManager.shared.historyLoadCount }
     var fileHistory: [FileHistoryItem] = []
@@ -322,7 +365,7 @@ class ClipboardManager {
         return decoder
     }()
 
-    var onHistoryChanged: (([HistoryEntry]) -> Void)?
+    var onHistoryChanged: (() -> Void)?
     var onFileHistoryChanged: (([FileHistoryItem]) -> Void)?
 
     private init() {
@@ -348,8 +391,8 @@ class ClipboardManager {
     
     private func updateRecentContentHashes() {
         recentContentHashes.removeAll()
-        for entry in history.prefix(recentContentHashesMaxSize) {
-            if let hash = entry.contentHash {
+        for summary in recentSummaries.prefix(recentContentHashesMaxSize) {
+            if let hash = summary.contentHash {
                 recentContentHashes.insert(hash)
             }
         }
@@ -390,13 +433,17 @@ class ClipboardManager {
             reimportHistoryForLegacyMediaMigration()
         }
         totalHistoryCount = repository.count()
-        history = repository.fetch(limit: menuHistoryLimit)
+        recentSummaries = repository.fetchSummaries(limit: menuHistoryLimit)
         pruneUnreferencedMediaFiles()
     }
 
-    private func reloadLoadedHistory() {
+    private func reloadLoadedSummaries() {
         totalHistoryCount = repository.count()
-        history = repository.fetch(limit: menuHistoryLimit)
+        recentSummaries = repository.fetchSummaries(limit: menuHistoryLimit)
+    }
+
+    func resolveEntry(_ summary: HistorySummary) -> HistoryEntry {
+        repository.fetchByRowid(summary.rowid) ?? summary.asEntry()
     }
 
     private func reimportHistoryForLegacyMediaMigration() {
@@ -559,26 +606,15 @@ class ClipboardManager {
         return nil
     }
 
-    private func patchLoadedHistoryEntry(_ entry: HistoryEntry) {
-        let hash = entry.contentHash ?? contentHash(for: entry.item)
-        guard let index = history.firstIndex(where: { isSameHistoryItem($0, as: entry.item, contentHash: hash) }) else {
+    private func moveLoadedSummaryToFront(rowid: Int64, date: Date, isPinned: Bool) {
+        guard let index = recentSummaries.firstIndex(where: { $0.rowid == rowid }) else {
+            reloadLoadedSummaries()
             return
         }
-        history[index] = entry
-    }
-
-    private func moveLoadedHistoryEntryToFront(_ entry: HistoryEntry) {
-        let hash = entry.contentHash ?? contentHash(for: entry.item)
-        guard let index = history.firstIndex(where: { isSameHistoryItem($0, as: entry.item, contentHash: hash) }) else {
-            reloadLoadedHistory()
-            return
-        }
-        var updated = history.remove(at: index)
-        updated.date = entry.date
-        updated.lastUsedAt = entry.lastUsedAt
-        updated.useCount = entry.useCount
-        updated.isPinned = entry.isPinned
-        history.insert(updated, at: 0)
+        var updated = recentSummaries.remove(at: index)
+        updated.date = date
+        updated.isPinned = isPinned
+        recentSummaries.insert(updated, at: 0)
     }
 
     private func addToHistory(_ item: HistoryItem, sourceApp: String?, sourceBundleId: String? = nil) {
@@ -607,7 +643,7 @@ class ClipboardManager {
 
         _ = repository.insertOrReplace(entry)
         repository.trimToLimit(maxHistoryItems)
-        reloadLoadedHistory()
+        reloadLoadedSummaries()
 
         scheduleImageOCRIfNeeded(for: entry)
 
@@ -622,7 +658,7 @@ class ClipboardManager {
     }
 
     private func notifyHistoryChanged() {
-        onHistoryChanged?(history)
+        onHistoryChanged?()
         NotificationCenter.default.post(name: .clipboardHistoryDidChange, object: nil)
     }
     
@@ -741,7 +777,7 @@ class ClipboardManager {
     func removeHistoryEntry(_ entry: HistoryEntry) {
         let hash = entry.contentHash ?? contentHash(for: entry.item)
         guard repository.delete(contentHash: hash, item: entry.item) else { return }
-        reloadLoadedHistory()
+        reloadLoadedSummaries()
         updateRecentContentHashes()
         pruneUnreferencedMediaFiles()
         notifyHistoryChanged()
@@ -757,7 +793,7 @@ class ClipboardManager {
             }
         }
         guard removed else { return }
-        reloadLoadedHistory()
+        reloadLoadedSummaries()
         updateRecentContentHashes()
         pruneUnreferencedMediaFiles()
         notifyHistoryChanged()
@@ -765,16 +801,10 @@ class ClipboardManager {
 
     func recordHistoryUsage(_ entry: HistoryEntry) {
         let hash = entry.contentHash ?? contentHash(for: entry.item)
-        guard let updated = repository.update(contentHash: hash, item: entry.item, transform: { stored in
+        guard repository.update(contentHash: hash, item: entry.item, transform: { stored in
             stored.useCount += 1
             stored.lastUsedAt = Date()
-        }) else { return }
-        patchLoadedHistoryEntry(updated)
-        notifyHistoryChanged()
-    }
-
-    func orderedHistory() -> [HistoryEntry] {
-        history
+        }) != nil else { return }
     }
 
     func togglePin(for entry: HistoryEntry) {
@@ -783,7 +813,7 @@ class ClipboardManager {
             stored.isPinned.toggle()
             stored.date = Date()
         }) != nil else { return }
-        reloadLoadedHistory()
+        reloadLoadedSummaries()
         notifyHistoryChanged()
     }
 
@@ -791,7 +821,7 @@ class ClipboardManager {
         _ = repository.deleteAll()
         HistoryMediaStore.shared.removeAllManagedFiles()
         HistoryThumbnailCache.clear()
-        reloadLoadedHistory()
+        reloadLoadedSummaries()
         updateRecentContentHashes()
         notifyHistoryChanged()
     }
@@ -799,7 +829,7 @@ class ClipboardManager {
     func applyHistoryLimit() {
         let previousTotal = totalHistoryCount
         repository.trimToLimit(maxHistoryItems)
-        reloadLoadedHistory()
+        reloadLoadedSummaries()
         guard totalHistoryCount != previousTotal else { return }
         updateRecentContentHashes()
         pruneUnreferencedMediaFiles()
@@ -811,7 +841,11 @@ class ClipboardManager {
         guard let updated = repository.update(contentHash: hash, item: entry.item, transform: { stored in
             stored.date = Date()
         }) else { return }
-        moveLoadedHistoryEntryToFront(updated)
+        if let rowid = repository.fetchRowid(contentHash: hash, item: entry.item) {
+            moveLoadedSummaryToFront(rowid: rowid, date: updated.date, isPinned: updated.isPinned)
+        } else {
+            reloadLoadedSummaries()
+        }
         updateRecentContentHashes()
         notifyHistoryChanged()
     }

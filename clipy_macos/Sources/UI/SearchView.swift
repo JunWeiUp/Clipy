@@ -230,7 +230,7 @@ final class SearchViewModel: ObservableObject {
     }
 
     func isPinned(_ entry: HistoryEntry) -> Bool {
-        ClipboardManager.shared.history.first { matchesSelection($0, entry) }?.isPinned ?? entry.isPinned
+        entry.isPinned
     }
 
     func highlightRanges(for result: HistorySearchResult) -> [Range<String.Index>] {
