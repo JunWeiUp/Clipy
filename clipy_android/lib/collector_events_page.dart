@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'app_localizations.dart';
 import 'collector_manager.dart';
 import 'models.dart';
+import 'notification_manager.dart';
+import 'sync_manager.dart';
 
 class CollectorEventsPage extends StatefulWidget {
   const CollectorEventsPage({super.key});
@@ -13,6 +15,7 @@ class CollectorEventsPage extends StatefulWidget {
 
 class _CollectorEventsPageState extends State<CollectorEventsPage> {
   StreamSubscription? _eventsSubscription;
+  StreamSubscription? _notificationsSubscription;
 
   @override
   void initState() {
@@ -21,18 +24,39 @@ class _CollectorEventsPageState extends State<CollectorEventsPage> {
         CollectorManager.instance.onEventsChanged.listen((_) {
       if (mounted) setState(() {});
     });
+    _notificationsSubscription =
+        NotificationManager.instance.onNotificationsChanged.listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
     _eventsSubscription?.cancel();
+    _notificationsSubscription?.cancel();
     super.dispose();
+  }
+
+  List<CollectorEvent> _mergedEvents() {
+    final deviceId = SyncManager.instance.deviceId;
+    final events = CollectorManager.instance.recentEvents
+        .where((event) => event.category != CollectorCategories.notification)
+        .toList();
+    final notifications = NotificationManager.instance.activeNotifications
+        .map(
+          (entry) => CollectorEvent.fromNotificationEntry(entry, deviceId),
+        )
+        .toList();
+
+    final merged = [...events, ...notifications]
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return merged.take(100).toList();
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final events = CollectorManager.instance.recentEvents;
+    final events = _mergedEvents();
 
     if (events.isEmpty) {
       return Center(
@@ -70,7 +94,7 @@ class _EventTile extends StatelessWidget {
       title: Text(l10n.collectorCategoryLabel(event.category)),
       subtitle: Text(
         _subtitleForEvent(event),
-        maxLines: 3,
+        maxLines: 4,
         overflow: TextOverflow.ellipsis,
       ),
       trailing: Text(
@@ -109,7 +133,7 @@ String _subtitleForEvent(CollectorEvent event) {
   final payload = event.payload;
   switch (event.category) {
     case CollectorCategories.notification:
-      return '${payload['appName'] ?? ''}: ${payload['title'] ?? ''}';
+      return _notificationSubtitle(payload);
     case CollectorCategories.sms:
       return '${payload['address'] ?? ''}: ${payload['body'] ?? ''}';
     case CollectorCategories.call:
@@ -124,4 +148,22 @@ String _subtitleForEvent(CollectorEvent event) {
     default:
       return payload.values.join(' · ');
   }
+}
+
+String _notificationSubtitle(Map<String, dynamic> payload) {
+  final appName = (payload['appName'] ?? '').toString();
+  final title = (payload['title'] ?? '').toString().trim();
+  final subtitle = (payload['subtitle'] ?? '').toString().trim();
+  final body = (payload['body'] ?? '').toString().trim();
+  final headline = title.isNotEmpty
+      ? title
+      : (body.isNotEmpty ? body : appName);
+  final lines = <String>['$appName: $headline'];
+  if (subtitle.isNotEmpty && subtitle != headline) {
+    lines.add(subtitle);
+  }
+  if (body.isNotEmpty && body != headline && body != subtitle) {
+    lines.add(body);
+  }
+  return lines.join('\n');
 }

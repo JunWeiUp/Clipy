@@ -32,6 +32,11 @@ class NotificationManager {
   Stream<List<NotificationEntry>> get onNotificationsChanged =>
       _notificationsChangedController.stream;
 
+  final _allowedPackagesChangedController =
+      StreamController<List<String>>.broadcast();
+  Stream<List<String>> get onAllowedPackagesChanged =>
+      _allowedPackagesChangedController.stream;
+
   final List<NotificationEntry> _activeNotifications = [];
   List<NotificationEntry> get activeNotifications =>
       List.unmodifiable(_activeNotifications);
@@ -180,13 +185,18 @@ class NotificationManager {
   }
 
   void _broadcastToSync(NotificationEntry entry) {
-    CollectorManager.instance.emitNotification(entry);
     final content = jsonEncode(entry.toJson());
     final hash = entry.id;
     SyncManager.instance.broadcastNotificationMessage(
       type: 'notification/post',
       content: content,
       hash: hash,
+    );
+    CollectorManager.instance.broadcastNotificationToMac(
+      CollectorEvent.fromNotificationEntry(
+        entry,
+        SyncManager.instance.deviceId,
+      ),
     );
   }
 
@@ -267,12 +277,6 @@ class NotificationManager {
     if (!isEnabled) return;
     try {
       await _channel.invokeMethod('refreshActiveNotifications');
-      Future<void>.delayed(const Duration(seconds: 2), () async {
-        if (!isEnabled) return;
-        try {
-          await _channel.invokeMethod('refreshActiveNotifications');
-        } catch (_) {}
-      });
     } catch (e) {
       appLog('NotificationManager: error refreshing active notifications: $e',
           level: 'warning');
@@ -322,23 +326,35 @@ class NotificationManager {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getInstalledApps() async {
+  List<Map<String, dynamic>>? _installedAppsCache;
+
+  Future<List<Map<String, dynamic>>> getInstalledApps({bool forceRefresh = false}) async {
+    if (!forceRefresh && _installedAppsCache != null) {
+      return _installedAppsCache!;
+    }
     try {
       final result =
           await _channel.invokeMethod<List<dynamic>>('getInstalledApps');
       if (result == null) return [];
-      return result.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      final apps =
+          result.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      _installedAppsCache = apps;
+      return apps;
     } catch (e) {
       appLog('NotificationManager: error getting installed apps: $e',
           level: 'error');
-      return [];
+      return _installedAppsCache ?? [];
     }
   }
 
-  Future<void> setEnabled(bool enabled) async {
+  Future<void> setEnabled(bool enabled, {bool syncCollectorCategory = true}) async {
     isEnabled = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('notificationSyncEnabled', enabled);
+    if (syncCollectorCategory) {
+      await CollectorManager.instance
+          .syncNotificationCategoryEnabled(enabled);
+    }
     if (enabled) {
       await refreshActiveNotifications();
     }
@@ -348,7 +364,50 @@ class NotificationManager {
     allowedPackages = packages;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('notificationAllowedPackages', packages);
-    await refreshActiveNotifications();
+    _allowedPackagesChangedController.add(allowedPackages);
+  }
+
+  bool isPackageSyncEnabled(String packageName) {
+    if (packageName == _selfPackageName) return false;
+    if (allowedPackages.isEmpty) return true;
+    return allowedPackages.contains(packageName);
+  }
+
+  Future<void> setPackageSyncEnabled(String packageName, bool enabled) async {
+    if (packageName == _selfPackageName) return;
+
+    var packages = List<String>.from(allowedPackages);
+    if (allowedPackages.isEmpty) {
+      if (enabled) return;
+      final known = await _knownPackageNames();
+      packages = known.where((pkg) => pkg != packageName).toList();
+    } else {
+      if (enabled) {
+        if (!packages.contains(packageName)) {
+          packages.add(packageName);
+        }
+      } else {
+        packages.remove(packageName);
+      }
+      packages = packages.toSet().toList()..sort();
+    }
+
+    await updateAllowedPackages(packages);
+  }
+
+  Future<List<String>> _knownPackageNames() async {
+    final packages = <String>{};
+    for (final app in await getInstalledApps()) {
+      final packageName = app['packageName'] as String?;
+      if (packageName != null && packageName.isNotEmpty) {
+        packages.add(packageName);
+      }
+    }
+    for (final entry in _activeNotifications) {
+      packages.add(entry.packageName);
+    }
+    packages.remove(_selfPackageName);
+    return packages.toList()..sort();
   }
 
   void removeNotification(String id) {

@@ -306,6 +306,28 @@ class MenuController: NSObject {
             return fileItem
         }
 
+        if case .html = entry.item {
+            let plainTitle = clipboardManager.plainText(for: entry) ?? title
+            let htmlDisplayTitle = plainTitle.count > 50 ? String(plainTitle.prefix(50)) + "..." : plainTitle
+            let htmlItem = NSMenuItem(title: prefix + htmlDisplayTitle, action: nil, keyEquivalent: keyEquivalent)
+            let htmlSubmenu = NSMenu()
+
+            let pastePlainItem = NSMenuItem(title: L10n.t(.pastePlainText), action: #selector(pasteHTMLPlainTextClicked(_:)), keyEquivalent: "")
+            pastePlainItem.target = self
+            pastePlainItem.representedObject = entry
+            htmlSubmenu.addItem(pastePlainItem)
+
+            let pasteFormattedItem = NSMenuItem(title: L10n.t(.copyContent), action: #selector(pasteHTMLFormattedClicked(_:)), keyEquivalent: "")
+            pasteFormattedItem.target = self
+            pasteFormattedItem.representedObject = entry
+            htmlSubmenu.addItem(pasteFormattedItem)
+
+            htmlItem.submenu = htmlSubmenu
+            htmlItem.toolTip = historyToolTip(for: entry)
+            htmlItem.image = NSImage(systemSymbolName: "chevron.left.forwardslash.chevron.right", accessibilityDescription: L10n.t(.historyTypeHTML))
+            return htmlItem
+        }
+
         let menuItem = NSMenuItem(title: prefix + displayTitle, action: #selector(menuItemClicked(_:)), keyEquivalent: keyEquivalent)
         menuItem.target = self
         menuItem.representedObject = entry
@@ -369,6 +391,21 @@ class MenuController: NSObject {
     @objc private func revealHistoryFileInFinder(_ sender: NSMenuItem) {
         guard let entry = sender.representedObject as? HistoryEntry else { return }
         clipboardManager.revealInFinder(for: entry)
+    }
+
+    @objc private func pasteHTMLPlainTextClicked(_ sender: NSMenuItem) {
+        guard let entry = sender.representedObject as? HistoryEntry else { return }
+        clipboardManager.moveHistoryEntryToFront(entry)
+        clipboardManager.writePlainTextToPasteboard(entry.item, textPath: entry.textPath)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            self.clipboardManager.simulatePasteIfTrusted()
+        }
+    }
+
+    @objc private func pasteHTMLFormattedClicked(_ sender: NSMenuItem) {
+        guard let entry = sender.representedObject as? HistoryEntry else { return }
+        clipboardManager.moveHistoryEntryToFront(entry)
+        clipboardManager.copyToPasteboard(entry.item)
     }
     
     @objc private func fileHistoryItemClicked(_ sender: NSMenuItem) {

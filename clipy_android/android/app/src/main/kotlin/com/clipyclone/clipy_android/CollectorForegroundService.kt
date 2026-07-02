@@ -1,15 +1,22 @@
 package com.clipyclone.clipy_android
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.Context
 import android.content.IntentFilter
+import android.provider.Telephony
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 
 class CollectorForegroundService : Service() {
     companion object {
@@ -41,10 +48,36 @@ class CollectorForegroundService : Service() {
             }
         }
 
-        startForeground(NOTIFICATION_ID, buildNotification())
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            buildNotification(),
+            foregroundServiceType(),
+        )
+        ensureSmsReceiverRegistered()
         systemStatusReceiver?.emitCurrentStatus(this)
         locationCollector?.requestUpdate()
         return START_STICKY
+    }
+
+    private fun foregroundServiceType(): Int {
+        var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        if (hasLocationPermission()) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        }
+        return type
+    }
+
+    private fun hasLocationPermission(): Boolean {
+        val fine = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        return fine || coarse
     }
 
     override fun onDestroy() {
@@ -53,17 +86,7 @@ class CollectorForegroundService : Service() {
     }
 
     private fun registerCollectors() {
-        try {
-            smsReceiver = SmsReceiver().also {
-                val filter = IntentFilter().apply {
-                    addAction("android.provider.Telephony.SMS_RECEIVED")
-                }
-                registerReceiver(it, filter)
-            }
-        } catch (_: Exception) {
-            smsReceiver = null
-        }
-
+        ensureSmsReceiverRegistered()
         try {
             callStateReceiver = CallStateReceiver().also {
                 val filter = IntentFilter().apply {
@@ -89,6 +112,40 @@ class CollectorForegroundService : Service() {
 
         callLogObserver = CallLogObserver(this).also { it.start() }
         locationCollector = LocationCollector(this).also { it.start() }
+    }
+
+    private fun ensureSmsReceiverRegistered() {
+        if (smsReceiver != null || !hasSmsPermission()) return
+        try {
+            smsReceiver = SmsReceiver().also { receiver ->
+                val filter = IntentFilter(Telephony.Sms.Intents.SMS_RECEIVED_ACTION)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    registerReceiver(
+                        receiver,
+                        filter,
+                        Manifest.permission.RECEIVE_SMS,
+                        null,
+                        Context.RECEIVER_EXPORTED,
+                    )
+                } else {
+                    registerReceiver(receiver, filter)
+                }
+            }
+        } catch (_: Exception) {
+            smsReceiver = null
+        }
+    }
+
+    private fun hasSmsPermission(): Boolean {
+        val receive = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECEIVE_SMS,
+        ) == PackageManager.PERMISSION_GRANTED
+        val read = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_SMS,
+        ) == PackageManager.PERMISSION_GRANTED
+        return receive && read
     }
 
     private fun unregisterCollectors() {

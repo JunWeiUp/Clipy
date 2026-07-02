@@ -94,6 +94,11 @@ class AppStrings {
   String get granted => _t('已授权', 'Granted');
   String get notGranted => _t('未授权', 'Not Granted');
   String get grant => _t('授权', 'Grant');
+  String get openAppSettings => _t('打开设置', 'Open Settings');
+  String get smsPermissionDeniedHint => _t(
+        '短信权限未授予。如未弹出授权框，请到系统设置中手动开启。',
+        'SMS permission was not granted. If no prompt appeared, enable it manually in system settings.',
+      );
   String get startCollectorService => _t('启动采集服务', 'Start Collector Service');
   String get collectorServiceStarted => _t('采集服务已启动', 'Collector service started');
   String get refreshPermissions => _t('刷新权限状态', 'Refresh Permissions');
@@ -193,6 +198,10 @@ class AppStrings {
   String get notificationPermissionRequired => _t('需要通知监听权限', 'Notification listener permission required');
   String get grantPermission => _t('去授权', 'Grant Permission');
   String get syncNotificationsFrom => _t('同步以下应用的通知', 'Sync notifications from these apps');
+  String get syncThisApp => _t('同步此应用', 'Sync this app');
+  String get stopSyncingThisApp => _t('停止同步此应用', 'Stop syncing this app');
+  String get appSyncEnabled => _t('已开启同步', 'Sync enabled');
+  String get appSyncDisabled => _t('未同步', 'Not syncing');
   String get noAppsAvailable => _t('暂无可用应用', 'No apps available');
   String get phoneNotifications => _t('手机通知', 'Phone Notifications');
   String get noNotifications => _t('暂无通知', 'No notifications');

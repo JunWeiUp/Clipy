@@ -132,6 +132,18 @@ class NotificationEntry {
       extras: Map<String, dynamic>.from(json['extras'] as Map? ?? {}),
     );
   }
+
+  Map<String, dynamic> toCollectorPayload() => {
+        'notificationKey': notificationKey,
+        'packageName': packageName,
+        'appName': appName,
+        'title': title,
+        'subtitle': subtitle,
+        'body': body,
+        'groupKey': groupKey,
+        'isClearable': isClearable,
+        ...extras.map((key, value) => MapEntry('extra_$key', value)),
+      };
 }
 
 class NotificationDismissRequest {
@@ -211,6 +223,19 @@ class CollectorEvent {
           DateTime.now().millisecondsSinceEpoch,
       deviceId: json['deviceId'] as String? ?? '',
       payload: Map<String, dynamic>.from(json['payload'] as Map? ?? {}),
+    );
+  }
+
+  factory CollectorEvent.fromNotificationEntry(
+    NotificationEntry entry,
+    String deviceId,
+  ) {
+    return CollectorEvent(
+      id: entry.id,
+      category: CollectorCategories.notification,
+      timestamp: entry.postTime,
+      deviceId: deviceId,
+      payload: entry.toCollectorPayload(),
     );
   }
 }

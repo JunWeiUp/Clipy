@@ -53,6 +53,17 @@ class CollectorManager {
     if (isEnabled) {
       await startForegroundService();
     }
+    await _alignNotificationCategoryWithNotificationManager();
+  }
+
+  Future<void> _alignNotificationCategoryWithNotificationManager() async {
+    final prefs = await SharedPreferences.getInstance();
+    final enabled = prefs.getBool('notificationSyncEnabled') ?? true;
+    categoryEnabled[CollectorCategories.notification] = enabled;
+    await prefs.setBool(
+      'collectorCategory_${CollectorCategories.notification}',
+      enabled,
+    );
   }
 
   Future<dynamic> _handleMethodCall(MethodCall call) async {
@@ -109,25 +120,6 @@ class CollectorManager {
     }
   }
 
-  Future<void> emitNotification(NotificationEntry entry) async {
-    await emit(
-      category: CollectorCategories.notification,
-      id: entry.id,
-      timestamp: entry.postTime,
-      payload: {
-        'notificationKey': entry.notificationKey,
-        'packageName': entry.packageName,
-        'appName': entry.appName,
-        'title': entry.title,
-        'subtitle': entry.subtitle,
-        'body': entry.body,
-        'groupKey': entry.groupKey,
-        'isClearable': entry.isClearable,
-        ...entry.extras.map((key, value) => MapEntry('extra_$key', value)),
-      },
-    );
-  }
-
   Future<void> emitClipboard({
     required String text,
     required String hash,
@@ -158,6 +150,25 @@ class CollectorManager {
     categoryEnabled[category] = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('collectorCategory_$category', value);
+  }
+
+  Future<void> syncNotificationCategoryEnabled(bool value) async {
+    categoryEnabled[CollectorCategories.notification] = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(
+      'collectorCategory_${CollectorCategories.notification}',
+      value,
+    );
+  }
+
+  Future<void> broadcastNotificationToMac(CollectorEvent event) async {
+    if (!isEnabled) return;
+    if (categoryEnabled[CollectorCategories.notification] != true) return;
+    if (!SyncManager.instance.isEnabled) return;
+    await SyncManager.instance.broadcastCollectorEvent(
+      content: jsonEncode(event.toJson()),
+      hash: event.id,
+    );
   }
 
   Future<void> startForegroundService() async {
@@ -192,13 +203,35 @@ class CollectorManager {
   }
 
   Future<void> requestPermission(String permission) async {
+    await requestPermissions([permission]);
+  }
+
+  Future<void> requestPermissions(List<String> permissions) async {
     if (!Platform.isAndroid) return;
     try {
-      await _channel
-          .invokeMethod('requestPermission', {'permission': permission});
+      await _channel.invokeMethod('requestPermissions', {
+        'permissions': permissions,
+      });
     } catch (e) {
-      appLog('CollectorManager: request permission failed: $e', level: 'warning');
+      appLog('CollectorManager: request permissions failed: $e',
+          level: 'warning');
     }
+  }
+
+  static const smsPermissions = <String>[
+    'android.permission.READ_SMS',
+    'android.permission.RECEIVE_SMS',
+  ];
+
+  Future<void> requestSmsPermissions() async {
+    await requestPermissions(smsPermissions);
+  }
+
+  Future<bool> hasSmsPermissions() async {
+    for (final permission in smsPermissions) {
+      if (!await checkPermission(permission)) return false;
+    }
+    return true;
   }
 
   Future<void> openPermissionSettings(String settingsType) async {
@@ -402,11 +435,33 @@ class CollectorManager {
           .toList();
       _recentEvents
         ..clear()
-        ..addAll(loaded.reversed.take(_maxRecentEvents));
+        ..addAll(
+          loaded.reversed
+              .where((event) => event.category != CollectorCategories.notification)
+              .take(_maxRecentEvents),
+        );
+      if (loaded.any((event) => event.category == CollectorCategories.notification)) {
+        await _rewriteHistoryFile();
+      }
       _eventsChangedController.add(_recentEvents);
     } catch (e) {
       appLog('CollectorManager: load history error: $e', level: 'warning');
     }
+  }
+
+  Future<void> _rewriteHistoryFile() async {
+    final file = _historyFile;
+    if (file == null) return;
+    final snapshot = List<CollectorEvent>.from(_recentEvents);
+    _storageWriteQueue = _storageWriteQueue.then((_) async {
+      final sink = file.openWrite(mode: FileMode.write);
+      for (final entry in snapshot.reversed) {
+        sink.writeln(jsonEncode(entry.toJson()));
+      }
+      await sink.flush();
+      await sink.close();
+    });
+    await _storageWriteQueue;
   }
 
   Future<void> _appendToHistoryFile(CollectorEvent event) async {

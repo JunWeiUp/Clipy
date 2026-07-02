@@ -5,6 +5,7 @@ import 'collector_manager.dart';
 import 'models.dart';
 import 'notification_health_banner.dart';
 import 'notification_health_monitor.dart';
+import 'notification_manager.dart';
 import 'sync_manager.dart';
 
 class CollectorStatusPage extends StatefulWidget {
@@ -100,16 +101,24 @@ class _CollectorStatusPageState extends State<CollectorStatusPage> {
               ),
               const SizedBox(height: 8),
               ...CollectorCategories.all.map((category) {
+                final isNotification =
+                    category == CollectorCategories.notification;
+                final enabled = isNotification
+                    ? NotificationManager.instance.isEnabled
+                    : (CollectorManager.instance.categoryEnabled[category] ??
+                        true);
                 return SwitchListTile(
                   title: Text(l10n.collectorCategoryLabel(category)),
-                  value:
-                      CollectorManager.instance.categoryEnabled[category] ??
-                          true,
+                  value: enabled,
                   onChanged: (value) async {
-                    await CollectorManager.instance.setCategoryEnabled(
-                      category,
-                      value,
-                    );
+                    if (isNotification) {
+                      await NotificationManager.instance.setEnabled(value);
+                    } else {
+                      await CollectorManager.instance.setCategoryEnabled(
+                        category,
+                        value,
+                      );
+                    }
                     if (mounted) setState(() {});
                   },
                 );

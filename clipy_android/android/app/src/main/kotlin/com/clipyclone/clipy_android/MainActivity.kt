@@ -26,7 +26,6 @@ class MainActivity: FlutterActivity() {
     private val COLLECTOR_CHANNEL = "com.clipyclone.clipy_android/collector"
     private val STORAGE_PERMISSION_REQUEST_CODE = 1001
     private val COLLECTOR_PERMISSION_REQUEST_CODE = 1002
-    private var pendingCollectorPermission: String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -206,12 +205,16 @@ class MainActivity: FlutterActivity() {
                         result.error("INVALID_ARGUMENT", "permission is required", null)
                         return@setMethodCallHandler
                     }
-                    pendingCollectorPermission = permission
-                    ActivityCompat.requestPermissions(
-                        this,
-                        arrayOf(permission),
-                        COLLECTOR_PERMISSION_REQUEST_CODE,
-                    )
+                    requestCollectorPermissions(arrayOf(permission))
+                    result.success(null)
+                }
+                "requestPermissions" -> {
+                    val permissions = call.argument<List<String>>("permissions")
+                    if (permissions.isNullOrEmpty()) {
+                        result.error("INVALID_ARGUMENT", "permissions is required", null)
+                        return@setMethodCallHandler
+                    }
+                    requestCollectorPermissions(permissions.toTypedArray())
                     result.success(null)
                 }
                 "openPermissionSettings" -> {
@@ -236,6 +239,12 @@ class MainActivity: FlutterActivity() {
             "notification_listener" -> isNotificationListenerEnabled()
             else -> ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
         }
+    }
+
+    private fun requestCollectorPermissions(permissions: Array<String>) {
+        val missing = permissions.filter { !hasPermission(it) }.toTypedArray()
+        if (missing.isEmpty()) return
+        ActivityCompat.requestPermissions(this, missing, COLLECTOR_PERMISSION_REQUEST_CODE)
     }
 
     private fun openPermissionSettings(type: String) {

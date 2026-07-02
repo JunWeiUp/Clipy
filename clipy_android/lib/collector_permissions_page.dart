@@ -13,19 +13,35 @@ class CollectorPermissionsPage extends StatefulWidget {
       _CollectorPermissionsPageState();
 }
 
-class _CollectorPermissionsPageState extends State<CollectorPermissionsPage> {
+class _CollectorPermissionsPageState extends State<CollectorPermissionsPage>
+    with WidgetsBindingObserver {
   final Map<String, bool> _permissionStates = {};
+  bool _awaitingSmsPermission = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _refreshPermissions();
     NotificationHealthMonitor.instance.onHealthChanged.listen((_) {
       if (mounted) _refreshPermissions();
     });
   }
 
-  Future<void> _refreshPermissions() async {
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshPermissions(showSmsDeniedHint: _awaitingSmsPermission);
+    }
+  }
+
+  Future<void> _refreshPermissions({bool showSmsDeniedHint = false}) async {
     final states = <String, bool>{
       'notification_listener':
           (await NotificationManager.instance.getListenerStatus())
@@ -44,7 +60,29 @@ class _CollectorPermissionsPageState extends State<CollectorPermissionsPage> {
           .checkPermission('android.permission.POST_NOTIFICATIONS'),
       'battery': await CollectorManager.instance.isBatteryOptimizationIgnored(),
     };
-    if (mounted) setState(() => _permissionStates.addAll(states));
+    if (!mounted) return;
+    setState(() => _permissionStates.addAll(states));
+
+    if (showSmsDeniedHint) {
+      _awaitingSmsPermission = false;
+      final smsGranted = (states['android.permission.READ_SMS'] ?? false) &&
+          (states['android.permission.RECEIVE_SMS'] ?? false);
+      if (smsGranted) {
+        await CollectorManager.instance.startForegroundService();
+      } else {
+        final l10n = context.l10n;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.smsPermissionDeniedHint),
+            action: SnackBarAction(
+              label: l10n.openAppSettings,
+              onPressed: () => CollectorManager.instance
+                  .openPermissionSettings('app_details'),
+            ),
+          ),
+        );
+      }
+    }
   }
 
   String? _notificationListenerSubtitle(AppStrings l10n) {
@@ -90,11 +128,8 @@ class _CollectorPermissionsPageState extends State<CollectorPermissionsPage> {
           granted: (_permissionStates['android.permission.READ_SMS'] ?? false) &&
               (_permissionStates['android.permission.RECEIVE_SMS'] ?? false),
           onRequest: () async {
-            await CollectorManager.instance
-                .requestPermission('android.permission.READ_SMS');
-            await CollectorManager.instance
-                .requestPermission('android.permission.RECEIVE_SMS');
-            await _refreshPermissions();
+            _awaitingSmsPermission = true;
+            await CollectorManager.instance.requestSmsPermissions();
           },
         ),
         _PermissionTile(
