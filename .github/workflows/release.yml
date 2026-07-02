@@ -49,18 +49,6 @@ jobs:
           BUILD_NUMBER="${{ github.run_number }}" \
           ./build_macos_app.sh
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Metal Toolchain
-        run: xcodebuild -downloadComponent MetalToolchain
-
-      - name: Build macOS app (Rust + GPUI)
-        run: |
-          APP_VERSION="${{ steps.version.outputs.version }}" \
-          BUILD_NUMBER="${{ github.run_number }}" \
-          ./build_rust_macos_app.sh
-
       - name: Package macOS app
         run: |
           mkdir -p dist
