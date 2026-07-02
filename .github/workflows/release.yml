@@ -44,6 +44,7 @@ jobs:
           echo "tag=v${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Build macOS app (Swift)
+        working-directory: clipy_macos
         run: |
           APP_VERSION="${{ steps.version.outputs.version }}" \
           BUILD_NUMBER="${{ github.run_number }}" \
@@ -52,7 +53,7 @@ jobs:
       - name: Package macOS app
         run: |
           mkdir -p dist
-          ditto -c -k --keepParent ClipyClone.app "dist/ClipyClone-macOS-v${{ steps.version.outputs.version }}.zip"
+          ditto -c -k --keepParent clipy_macos/ClipyClone.app "dist/ClipyClone-macOS-v${{ steps.version.outputs.version }}.zip"
 
       - name: Build Android APK
         working-directory: clipy_android

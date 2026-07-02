@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Flutter Android APK build script.
-# This is separate from build_macos_app.sh, which builds the macOS .app bundle.
+# This is separate from clipy_macos/build_macos_app.sh, which builds the macOS .app bundle.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ANDROID_DIR="${SCRIPT_DIR}/clipy_android"

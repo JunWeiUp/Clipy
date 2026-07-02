@@ -62,10 +62,11 @@ Clipy uses a LAN-first sync protocol for clipboard, snippet, and file data:
 Requirements: Xcode command line tools.
 
 ```bash
+cd clipy_macos
 ./build_macos_app.sh
 ```
 
-The generated app bundle is `ClipyClone.app`.
+The generated app bundle is `clipy_macos/ClipyClone.app`.
 
 ### Android
 
@@ -81,10 +82,10 @@ For release builds, the GitHub workflow builds split APKs for `armeabi-v7a` and 
 
 ## Project Structure
 
-- `Sources/`: macOS Swift/AppKit source code.
+- `clipy_macos/Sources/`: macOS Swift/AppKit source code.
+- `clipy_macos/build_macos_app.sh`: macOS app bundle build script.
 - `clipy_android/lib/`: Android Flutter/Dart source code.
 - `.github/workflows/release.yml`: GitHub Release automation.
-- `build_macos_app.sh`: macOS app bundle build script.
 - `res/`: README assets.
 
 ## GitHub Release
