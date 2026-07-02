@@ -13,6 +13,11 @@ final class NotificationViewModel: ObservableObject {
     @Published var selectedIDs = Set<String>()
 
     private let manager = NotificationManager.shared
+    private let pageSize = NotificationManager.pageSize
+    private var loadedEntries: [NotificationManager.NotificationEntry] = []
+    private var loadedOffset = 0
+    private var isLoadingMore = false
+
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
@@ -21,13 +26,29 @@ final class NotificationViewModel: ObservableObject {
     }()
 
     init() {
-        reload()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(notificationsDidChange),
             name: .phoneNotificationsDidChange,
             object: nil
         )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    func onAppear() {
+        reload()
+    }
+
+    func onDisappear() {
+        loadedEntries = []
+        loadedOffset = 0
+        isLoadingMore = false
+        groups = []
+        expandedPackages.removeAll()
+        selectedIDs.removeAll()
     }
 
     @objc private func notificationsDidChange() {
@@ -37,15 +58,41 @@ final class NotificationViewModel: ObservableObject {
     }
 
     var statusText: String {
-        let count = manager.notifications.count
+        let count = manager.notificationCount
         return count == 0 ? L10n.t(.noNotifications) : "\(L10n.t(.phoneNotifications)): \(count)"
     }
 
+    var canLoadMore: Bool {
+        loadedEntries.count < manager.notificationCount
+    }
+
     func reload() {
+        loadedEntries = []
+        loadedOffset = 0
+        isLoadingMore = false
+        loadNextPage()
+    }
+
+    func loadMoreIfNeeded() {
+        guard canLoadMore, !isLoadingMore else { return }
+        loadNextPage()
+    }
+
+    private func loadNextPage() {
+        guard !isLoadingMore else { return }
+        isLoadingMore = true
+        let page = manager.fetchPage(offset: loadedOffset, limit: pageSize)
+        loadedOffset += page.count
+        loadedEntries.append(contentsOf: page)
+        rebuildGroups()
+        isLoadingMore = false
+    }
+
+    private func rebuildGroups() {
         var grouped: [String: NotificationGroup] = [:]
         var order: [String] = []
 
-        for entry in manager.notifications {
+        for entry in loadedEntries {
             if grouped[entry.packageName] == nil {
                 order.append(entry.packageName)
                 grouped[entry.packageName] = NotificationGroup(
@@ -225,9 +272,28 @@ struct NotificationView: View {
                                 }
                             }
                         }
+
+                        if viewModel.canLoadMore {
+                            HStack {
+                                Spacer()
+                                ProgressView()
+                                    .controlSize(.small)
+                                Spacer()
+                            }
+                            .listRowSeparator(.hidden)
+                            .onAppear {
+                                viewModel.loadMoreIfNeeded()
+                            }
+                        }
                     }
                 }
             }
+        }
+        .onAppear {
+            viewModel.onAppear()
+        }
+        .onDisappear {
+            viewModel.onDisappear()
         }
         .frame(minWidth: AppWindowSize.notificationMin.width, minHeight: AppWindowSize.notificationMin.height)
     }

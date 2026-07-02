@@ -22,8 +22,13 @@ final class SearchViewModel: ObservableObject {
 
     private var debounceWorkItem: DispatchWorkItem?
     private var historyObserver: NSObjectProtocol?
+    private var browseLimit: Int
 
     private var isLoadingMore = false
+
+    init() {
+        browseLimit = PreferencesManager.shared.historyLoadCount
+    }
 
     func onResultRowAppear(_ result: HistorySearchResult) {
         guard result.id == results.last?.id else { return }
@@ -33,7 +38,8 @@ final class SearchViewModel: ObservableObject {
     private func loadMoreIfNeeded() {
         guard canAutoLoadMore, !isLoadingMore else { return }
         isLoadingMore = true
-        ClipboardManager.shared.loadMoreHistory()
+        let pageSize = PreferencesManager.shared.historyLoadCount
+        browseLimit = min(browseLimit + pageSize, ClipboardManager.shared.totalHistoryCount)
         performSearch(immediate: true)
         isLoadingMore = false
     }
@@ -46,10 +52,11 @@ final class SearchViewModel: ObservableObject {
             && dateFilter == .all
             && contentCategory == nil
             && !useRegex
-            && ClipboardManager.shared.hasMoreHistory
+            && browseLimit < ClipboardManager.shared.totalHistoryCount
     }
 
     func onAppear() {
+        browseLimit = PreferencesManager.shared.historyLoadCount
         let snapshot = HistorySearchStateStore.load()
         query = snapshot.query
         typeFilter = snapshot.typeFilter
@@ -105,13 +112,20 @@ final class SearchViewModel: ObservableObject {
             sourceAppFilter = ""
         }
         let selectedSourceApp = sourceAppFilter.isEmpty ? nil : sourceAppFilter
+        let isBrowseMode = trimmed.isEmpty
+            && typeFilter == .all
+            && sourceAppFilter.isEmpty
+            && dateFilter == .all
+            && contentCategory == nil
+            && !useRegex
         results = manager.searchHistory(options: SearchHistoryOptions(
             query: trimmed,
             typeFilter: typeFilter,
             sourceApp: selectedSourceApp,
             dateFilter: dateFilter,
             contentCategory: contentCategory,
-            useRegex: useRegex
+            useRegex: useRegex,
+            browseLimit: isBrowseMode ? browseLimit : nil
         ))
         let totalCount = manager.totalHistoryCount
 
@@ -446,7 +460,7 @@ struct SearchView: View {
             Image(nsImage: NSWorkspace.shared.icon(forFile: first.path))
                 .resizable()
                 .frame(width: 16, height: 16)
-        } else if case .image(let path) = entry.item, let image = NSImage(contentsOf: URL(fileURLWithPath: path)) {
+        } else if case .image(let path) = entry.item, let image = HistoryThumbnailCache.thumbnail(for: path, size: NSSize(width: 16, height: 16)) {
             Image(nsImage: image)
                 .resizable()
                 .frame(width: 16, height: 16)

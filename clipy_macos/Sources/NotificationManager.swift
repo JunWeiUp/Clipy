@@ -9,25 +9,25 @@ extension Notification.Name {
 class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
 
-    private let storageFile: String = "notifications.json"
-    private let maxNotifications = 1000
-    private let duplicateNotificationWindowMilliseconds: TimeInterval = 30_000
+    static let pageSize = 100
 
-    var notifications: [NotificationEntry] = []
+    private let repository = NotificationRepository.shared
+
     var allowedPackages: Set<String> = []
     var notificationSyncEnabled: Bool = false
     var notificationSound: Bool = true
 
-    var onNotificationsChanged: (([NotificationEntry]) -> Void)?
+    var notificationCount: Int { repository.count() }
+
+    var onNotificationsChanged: (() -> Void)?
 
     private func notifyNotificationsChanged() {
-        onNotificationsChanged?(notifications)
+        onNotificationsChanged?()
         NotificationCenter.default.post(name: .phoneNotificationsDidChange, object: nil)
     }
 
     private override init() {
         super.init()
-        loadFromDisk()
         loadPreferences()
         setupNotificationCenter()
     }
@@ -46,6 +46,32 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let groupKey: String?
         let isClearable: Bool
         let extras: [String: String]?
+
+        init(
+            id: String,
+            notificationKey: String?,
+            packageName: String,
+            appName: String,
+            title: String,
+            subtitle: String?,
+            body: String,
+            postTime: TimeInterval,
+            groupKey: String?,
+            isClearable: Bool,
+            extras: [String: String]?
+        ) {
+            self.id = id
+            self.notificationKey = notificationKey
+            self.packageName = packageName
+            self.appName = appName
+            self.title = title
+            self.subtitle = subtitle
+            self.body = body
+            self.postTime = postTime
+            self.groupKey = groupKey
+            self.isClearable = isClearable
+            self.extras = extras
+        }
 
         enum CodingKeys: String, CodingKey {
             case id, notificationKey, packageName, appName, title, subtitle, body, postTime, groupKey, isClearable, extras
@@ -71,6 +97,16 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let packageName: String
         let groupKey: String?
         let notificationKey: String?
+    }
+
+    // MARK: - Paged reads (UI only)
+
+    func fetchPage(offset: Int, limit: Int = pageSize) -> [NotificationEntry] {
+        repository.fetch(offset: offset, limit: limit)
+    }
+
+    func fetchById(_ id: String) -> NotificationEntry? {
+        repository.fetchById(id)
     }
 
     // MARK: - UNUserNotificationCenter Setup
@@ -102,7 +138,7 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         )
         center.setNotificationCategories([category])
 
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, error in
             if let error = error {
                 appLog("Notification permission error: \(error)", level: .warning)
             }
@@ -141,17 +177,12 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             return
         }
 
-        notifications.removeAll { entry in
-            entry.packageName == request.packageName &&
-            (request.notificationKey == nil || entry.notificationKey == request.notificationKey)
-        }
-        saveToDisk()
+        _ = repository.delete(matching: request)
         notifyNotificationsChanged()
     }
 
     func handleRemoteClearAll() {
-        notifications.removeAll()
-        saveToDisk()
+        _ = repository.deleteAll()
         notifyNotificationsChanged()
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
     }
@@ -162,29 +193,15 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     private func upsertNotification(_ entry: NotificationEntry) -> Bool {
         guard !isEmptyNotification(entry) else { return false }
 
-        if let index = notifications.firstIndex(where: { $0.id == entry.id }) {
-            notifications[index] = entry
-            let updated = notifications.remove(at: index)
-            notifications.insert(updated, at: 0)
-            saveToDisk()
+        switch repository.upsert(entry) {
+        case .inserted, .updated:
             notifyNotificationsChanged()
             return true
-        } else if let duplicateIndex = notifications.firstIndex(where: { isDuplicateNotification($0, entry) }) {
-            let duplicate = notifications.remove(at: duplicateIndex)
-            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [duplicate.id])
-            notifications.insert(entry, at: 0)
-            saveToDisk()
+        case .replacedDuplicate(let removedId):
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [removedId])
             notifyNotificationsChanged()
             return true
-        } else {
-            notifications.insert(entry, at: 0)
-            if notifications.count > maxNotifications {
-                notifications.removeLast()
-            }
         }
-        saveToDisk()
-        notifyNotificationsChanged()
-        return true
     }
 
     private func isEmptyNotification(_ entry: NotificationEntry) -> Bool {
@@ -192,22 +209,6 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         (entry.subtitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         entry.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         (entry.extras ?? [:]).values.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    }
-
-    private func isDuplicateNotification(_ existing: NotificationEntry, _ incoming: NotificationEntry) -> Bool {
-        guard existing.packageName == incoming.packageName else { return false }
-        guard abs(existing.postTime - incoming.postTime) <= duplicateNotificationWindowMilliseconds else { return false }
-
-        if let existingKey = existing.notificationKey,
-           let incomingKey = incoming.notificationKey,
-           existingKey == incomingKey {
-            return true
-        }
-
-        return existing.title.trimmingCharacters(in: .whitespacesAndNewlines) == incoming.title.trimmingCharacters(in: .whitespacesAndNewlines) &&
-        (existing.subtitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == (incoming.subtitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines) &&
-        existing.body.trimmingCharacters(in: .whitespacesAndNewlines) == incoming.body.trimmingCharacters(in: .whitespacesAndNewlines) &&
-        existing.groupKey == incoming.groupKey
     }
 
     func showSystemNotification(_ entry: NotificationEntry) {
@@ -255,15 +256,13 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func removeNotification(_ id: String) {
-        notifications.removeAll { $0.id == id }
-        saveToDisk()
+        _ = repository.delete(id: id)
         notifyNotificationsChanged()
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
     }
 
     func clearAllLocal() {
-        notifications.removeAll()
-        saveToDisk()
+        _ = repository.deleteAll()
         notifyNotificationsChanged()
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
     }
@@ -275,37 +274,6 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         guard let content = try? JSONSerialization.data(withJSONObject: config),
               let json = String(data: content, encoding: .utf8) else { return }
         SyncManager.shared.broadcastNotificationMessage(type: "notification/config", content: json, hash: "")
-    }
-
-    // MARK: - Persistence
-
-    func saveToDisk() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = appSupport.appendingPathComponent("ClipyClone")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let fileURL = dir.appendingPathComponent(storageFile)
-
-        do {
-            let data = try JSONEncoder().encode(notifications)
-            try data.write(to: fileURL, options: .atomic)
-        } catch {
-            appLog("NotificationManager: failed to save: \(error)", level: .error)
-        }
-    }
-
-    func loadFromDisk() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let fileURL = appSupport.appendingPathComponent("ClipyClone/\(storageFile)")
-
-        guard let data = try? Data(contentsOf: fileURL) else { return }
-        let loaded = (try? JSONDecoder().decode([NotificationEntry].self, from: data)) ?? []
-        notifications = []
-        for entry in loaded.reversed() {
-            upsertNotification(entry)
-        }
-        if notifications.count != loaded.count {
-            saveToDisk()
-        }
     }
 
     private func loadPreferences() {
@@ -334,16 +302,13 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
         switch response.actionIdentifier {
         case "DISMISS_ON_PHONE":
-            if let id = notificationId {
-                let entry = notifications.first { $0.id == id }
-                if let entry = entry {
-                    dismissOnRemote(entry)
-                }
+            if let id = notificationId, let entry = fetchById(id) {
+                dismissOnRemote(entry)
             }
         case "CLEAR_ALL_ON_PHONE":
             clearAllOnRemote()
         case "COPY_NOTIFICATION_CONTENT":
-            if let id = notificationId, let entry = notifications.first(where: { $0.id == id }) {
+            if let id = notificationId, let entry = fetchById(id) {
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()
                 pasteboard.setString(entry.body, forType: .string)

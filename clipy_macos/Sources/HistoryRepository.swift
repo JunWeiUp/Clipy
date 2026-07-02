@@ -15,19 +15,15 @@ enum HistoryItemKind: String {
 final class HistoryRepository {
     static let shared = HistoryRepository()
 
-    private let dbURL: URL
     private let legacyJSONURL: URL
-    private var db: OpaquePointer?
-    private let queue = DispatchQueue(label: "com.clipy.history-repository")
+    private var db: OpaquePointer? { AppDatabase.shared.db }
+    private var queue: DispatchQueue { AppDatabase.shared.queue }
 
     private init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ClipyClone", isDirectory: true)
-        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
-        dbURL = appSupport.appendingPathComponent("history_v3.db")
         legacyJSONURL = appSupport.appendingPathComponent("history_v2.json")
-        openDatabase()
-        createSchemaIfNeeded()
+        _ = AppDatabase.shared
     }
 
     // MARK: - Public API
@@ -66,15 +62,31 @@ final class HistoryRepository {
     func fetchFiltered(
         filters: SearchHistoryFilters,
         textQuery: String? = nil,
-        includeSearchIndex: Bool = false
+        includeSearchIndex: Bool = false,
+        limit: Int? = nil
     ) -> [HistoryEntry] {
         queue.sync {
             fetchLocked(
-                limit: Int.max,
+                limit: limit ?? Int.max,
                 includeSearchIndex: includeSearchIndex,
                 filters: filters,
                 textQuery: textQuery
             )
+        }
+    }
+
+    func findFileEntryMatchingPlainText(_ text: String, recentLimit: Int = 100) -> HistoryEntry? {
+        queue.sync {
+            let entries = fetchLocked(
+                limit: recentLimit,
+                includeSearchIndex: false,
+                filters: SearchHistoryFilters(typeFilter: .file),
+                textQuery: nil
+            )
+            return entries.first { entry in
+                guard case .files(let urls) = entry.item else { return false }
+                return urls.map(\.lastPathComponent).joined(separator: "\n") == text
+            }
         }
     }
 
@@ -225,41 +237,6 @@ final class HistoryRepository {
             }
             return paths
         }
-    }
-
-    // MARK: - Database setup
-
-    private func openDatabase() {
-        if sqlite3_open(dbURL.path, &db) != SQLITE_OK {
-            appLog("Failed to open history database", level: .error)
-            db = nil
-        }
-    }
-
-    private func createSchemaIfNeeded() {
-        guard let db else { return }
-        let sql = """
-        CREATE TABLE IF NOT EXISTS history_entries (
-            rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-            content_hash TEXT,
-            item_type TEXT NOT NULL,
-            text_path TEXT,
-            text_preview TEXT,
-            media_path TEXT,
-            files_json TEXT,
-            date REAL NOT NULL,
-            source_app TEXT,
-            source_bundle_id TEXT,
-            is_pinned INTEGER NOT NULL DEFAULT 0,
-            search_index TEXT,
-            last_used_at REAL,
-            use_count INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE INDEX IF NOT EXISTS idx_history_order ON history_entries(is_pinned DESC, date DESC);
-        CREATE INDEX IF NOT EXISTS idx_history_hash ON history_entries(content_hash);
-        CREATE INDEX IF NOT EXISTS idx_history_source_app ON history_entries(source_app);
-        """
-        sqlite3_exec(db, sql, nil, nil, nil)
     }
 
     // MARK: - Locked operations

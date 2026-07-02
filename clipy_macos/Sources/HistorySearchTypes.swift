@@ -52,6 +52,8 @@ struct SearchHistoryOptions {
     var useRegex: Bool = false
     var pathContains: String? = nil
     var urlOnly: Bool = false
+    /// 浏览模式下从数据库加载的历史条数上限，避免撑大内存中的菜单历史缓存。
+    var browseLimit: Int? = nil
 }
 
 struct HistorySearchResult: Identifiable {

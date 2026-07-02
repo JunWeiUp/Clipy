@@ -18,6 +18,8 @@ RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 SWIFT_SOURCES=(
     Sources/Localization.swift
     Sources/HistoryMediaStore.swift
+    Sources/HistoryThumbnailCache.swift
+    Sources/AppDatabase.swift
     Sources/HistoryRepository.swift
     Sources/ClipboardManager.swift
     Sources/HistorySearchRanker.swift
@@ -32,8 +34,10 @@ SWIFT_SOURCES=(
     Sources/SnippetManager.swift
     Sources/SyncManager.swift
     Sources/NotificationManager.swift
+    Sources/NotificationRepository.swift
     Sources/NotificationWindow.swift
     Sources/DeviceCollectorTypes.swift
+    Sources/DeviceCollectorRepository.swift
     Sources/DeviceCollectorManager.swift
     Sources/CollectorWindow.swift
     Sources/HotKeyManager.swift

@@ -261,8 +261,7 @@ class ClipboardManager {
     private var timer: Timer?
     private(set) var history: [HistoryEntry] = []
     private(set) var totalHistoryCount = 0
-    private var loadedCount = 100
-    var hasMoreHistory: Bool { history.count < totalHistoryCount }
+    private var menuHistoryLimit: Int { PreferencesManager.shared.historyLoadCount }
     var fileHistory: [FileHistoryItem] = []
     private var maxHistoryItems: Int { PreferencesManager.shared.historyLimit }
     private let repository = HistoryRepository.shared
@@ -387,25 +386,17 @@ class ClipboardManager {
     }
     
     private func loadHistory() {
-        loadedCount = PreferencesManager.shared.historyLoadCount
         if HistoryMediaStore.shared.consumeLegacyMigrationNeeded() {
             reimportHistoryForLegacyMediaMigration()
         }
         totalHistoryCount = repository.count()
-        history = repository.fetch(limit: loadedCount)
+        history = repository.fetch(limit: menuHistoryLimit)
         pruneUnreferencedMediaFiles()
     }
 
     private func reloadLoadedHistory() {
         totalHistoryCount = repository.count()
-        history = repository.fetch(limit: loadedCount)
-    }
-
-    func loadMoreHistory() {
-        guard hasMoreHistory else { return }
-        loadedCount = min(loadedCount + PreferencesManager.shared.historyLoadCount, totalHistoryCount)
-        history = repository.fetch(limit: loadedCount)
-        notifyHistoryChanged()
+        history = repository.fetch(limit: menuHistoryLimit)
     }
 
     private func reimportHistoryForLegacyMediaMigration() {
@@ -563,16 +554,31 @@ class ClipboardManager {
             return entry
         }
         if case .text(let text) = item {
-            let fileEntries = repository.fetchFiltered(
-                filters: SearchHistoryFilters(typeFilter: .file),
-                includeSearchIndex: false
-            )
-            return fileEntries.first { entry in
-                guard case .files = entry.item else { return false }
-                return plainText(for: entry.item) == text
-            }
+            return repository.findFileEntryMatchingPlainText(text)
         }
         return nil
+    }
+
+    private func patchLoadedHistoryEntry(_ entry: HistoryEntry) {
+        let hash = entry.contentHash ?? contentHash(for: entry.item)
+        guard let index = history.firstIndex(where: { isSameHistoryItem($0, as: entry.item, contentHash: hash) }) else {
+            return
+        }
+        history[index] = entry
+    }
+
+    private func moveLoadedHistoryEntryToFront(_ entry: HistoryEntry) {
+        let hash = entry.contentHash ?? contentHash(for: entry.item)
+        guard let index = history.firstIndex(where: { isSameHistoryItem($0, as: entry.item, contentHash: hash) }) else {
+            reloadLoadedHistory()
+            return
+        }
+        var updated = history.remove(at: index)
+        updated.date = entry.date
+        updated.lastUsedAt = entry.lastUsedAt
+        updated.useCount = entry.useCount
+        updated.isPinned = entry.isPinned
+        history.insert(updated, at: 0)
     }
 
     private func addToHistory(_ item: HistoryItem, sourceApp: String?, sourceBundleId: String? = nil) {
@@ -683,11 +689,12 @@ class ClipboardManager {
             urlOnly: effectiveURLOnly
         )
         let ordered = browseLoadedOnly
-            ? history
+            ? repository.fetch(limit: options.browseLimit ?? menuHistoryLimit)
             : repository.fetchFiltered(
                 filters: filters,
                 textQuery: trimmed.isEmpty ? nil : trimmed,
-                includeSearchIndex: false
+                includeSearchIndex: false,
+                limit: maxHistoryItems
             )
         let filtered = ordered.filter { entry in
             if let category = options.contentCategory, !category.matches(entry) {
@@ -758,11 +765,11 @@ class ClipboardManager {
 
     func recordHistoryUsage(_ entry: HistoryEntry) {
         let hash = entry.contentHash ?? contentHash(for: entry.item)
-        guard repository.update(contentHash: hash, item: entry.item, transform: { stored in
+        guard let updated = repository.update(contentHash: hash, item: entry.item, transform: { stored in
             stored.useCount += 1
             stored.lastUsedAt = Date()
-        }) != nil else { return }
-        reloadLoadedHistory()
+        }) else { return }
+        patchLoadedHistoryEntry(updated)
         notifyHistoryChanged()
     }
 
@@ -781,9 +788,9 @@ class ClipboardManager {
     }
 
     func clearHistory() {
-        loadedCount = PreferencesManager.shared.historyLoadCount
         _ = repository.deleteAll()
         HistoryMediaStore.shared.removeAllManagedFiles()
+        HistoryThumbnailCache.clear()
         reloadLoadedHistory()
         updateRecentContentHashes()
         notifyHistoryChanged()
@@ -801,10 +808,10 @@ class ClipboardManager {
 
     func moveHistoryEntryToFront(_ entry: HistoryEntry) {
         let hash = entry.contentHash ?? contentHash(for: entry.item)
-        guard repository.update(contentHash: hash, item: entry.item, transform: { stored in
+        guard let updated = repository.update(contentHash: hash, item: entry.item, transform: { stored in
             stored.date = Date()
-        }) != nil else { return }
-        reloadLoadedHistory()
+        }) else { return }
+        moveLoadedHistoryEntryToFront(updated)
         updateRecentContentHashes()
         notifyHistoryChanged()
     }

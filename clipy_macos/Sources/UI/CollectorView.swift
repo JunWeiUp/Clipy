@@ -1,11 +1,14 @@
 import SwiftUI
 
 final class CollectorViewModel: ObservableObject {
-    @Published var events: [CollectorEvent] = []
+    @Published private(set) var displayedEvents: [CollectorEvent] = []
     @Published var selectedCategory: CollectorCategory? = nil
     @Published var searchQuery: String = ""
 
     private let manager = DeviceCollectorManager.shared
+    private let pageSize = 200
+    private var loadedOffset = 0
+    private var isLoadingMore = false
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
@@ -14,7 +17,6 @@ final class CollectorViewModel: ObservableObject {
     }()
 
     init() {
-        reload()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(eventsDidChange),
@@ -23,23 +25,61 @@ final class CollectorViewModel: ObservableObject {
         )
     }
 
+    func onAppear() {
+        reload()
+    }
+
+    func onDisappear() {
+        displayedEvents = []
+        loadedOffset = 0
+        isLoadingMore = false
+    }
+
     @objc private func eventsDidChange() {
         DispatchQueue.main.async { [weak self] in
             self?.reload()
         }
     }
 
-    var filteredEvents: [CollectorEvent] {
-        manager.searchEvents(query: searchQuery, category: selectedCategory)
+    var statusText: String {
+        let total = manager.eventCount
+        if total == 0 {
+            return L10n.t(.noCollectorEvents)
+        }
+        if displayedEvents.count < total {
+            return L10n.format(.collectorEventCount, total) + " (\(displayedEvents.count))"
+        }
+        return L10n.format(.collectorEventCount, total)
     }
 
-    var statusText: String {
-        let count = filteredEvents.count
-        return count == 0 ? L10n.t(.noCollectorEvents) : L10n.format(.collectorEventCount, count)
+    var canLoadMore: Bool {
+        displayedEvents.count < manager.eventCount
     }
 
     func reload() {
-        events = manager.events
+        displayedEvents = []
+        loadedOffset = 0
+        isLoadingMore = false
+        loadNextPage()
+    }
+
+    func loadMoreIfNeeded() {
+        guard canLoadMore, !isLoadingMore else { return }
+        loadNextPage()
+    }
+
+    private func loadNextPage() {
+        guard !isLoadingMore else { return }
+        isLoadingMore = true
+        let page = manager.searchEvents(
+            query: searchQuery,
+            category: selectedCategory,
+            offset: loadedOffset,
+            limit: pageSize
+        )
+        loadedOffset += page.count
+        displayedEvents.append(contentsOf: page)
+        isLoadingMore = false
     }
 
     func formattedTime(for event: CollectorEvent) -> String {
@@ -162,14 +202,41 @@ struct CollectorView: View {
                 .padding(.bottom, AppSpacing.xs)
             }
         } content: {
-            if viewModel.filteredEvents.isEmpty {
+            if viewModel.displayedEvents.isEmpty {
                 EmptyStateView(message: L10n.t(.noCollectorEvents))
             } else {
-                List(viewModel.filteredEvents) { event in
-                    CollectorEventRow(event: event, viewModel: viewModel)
+                List {
+                    ForEach(viewModel.displayedEvents) { event in
+                        CollectorEventRow(event: event, viewModel: viewModel)
+                    }
+
+                    if viewModel.canLoadMore {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                                .controlSize(.small)
+                            Spacer()
+                        }
+                        .listRowSeparator(.hidden)
+                        .onAppear {
+                            viewModel.loadMoreIfNeeded()
+                        }
+                    }
                 }
                 .listStyle(.plain)
             }
+        }
+        .onAppear {
+            viewModel.onAppear()
+        }
+        .onDisappear {
+            viewModel.onDisappear()
+        }
+        .onChange(of: viewModel.searchQuery) { _ in
+            viewModel.reload()
+        }
+        .onChange(of: viewModel.selectedCategory) { _ in
+            viewModel.reload()
         }
     }
 }

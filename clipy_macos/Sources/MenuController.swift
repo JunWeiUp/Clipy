@@ -8,6 +8,7 @@ class MenuController: NSObject {
     private let snippetManager = SnippetManager.shared
     private lazy var notificationWindow = NotificationWindow()
     private lazy var collectorWindow = CollectorWindow()
+    private var menuUpdateWorkItem: DispatchWorkItem?
     
     override init() {
         super.init()
@@ -28,14 +29,14 @@ class MenuController: NSObject {
             name: .appLanguageDidChange,
             object: nil
         )
-        NotificationManager.shared.onNotificationsChanged = { [weak self] _ in
+        NotificationManager.shared.onNotificationsChanged = { [weak self] in
             DispatchQueue.main.async {
-                self?.updateMenu(with: self?.clipboardManager.history ?? [])
+                self?.scheduleMenuUpdate()
             }
         }
-        DeviceCollectorManager.shared.onEventsChanged = { [weak self] _ in
+        DeviceCollectorManager.shared.onEventsChanged = { [weak self] in
             DispatchQueue.main.async {
-                self?.updateMenu(with: self?.clipboardManager.history ?? [])
+                self?.scheduleMenuUpdate()
             }
         }
     }
@@ -87,7 +88,7 @@ class MenuController: NSObject {
 
     private func setupSnippetObserver() {
         snippetManager.onSnippetsChanged = { [weak self] _ in
-            self?.updateMenu(with: self?.clipboardManager.history ?? [])
+            self?.scheduleMenuUpdate()
         }
     }
     
@@ -102,22 +103,32 @@ class MenuController: NSObject {
         
         SyncManager.shared.onDevicesChanged = { [weak self] _ in
             DispatchQueue.main.async {
-                self?.updateMenu(with: self?.clipboardManager.history ?? [])
+                self?.scheduleMenuUpdate()
             }
         }
     }
     
     private func setupClipboardObserver() {
-        clipboardManager.onHistoryChanged = { [weak self] history in
+        clipboardManager.onHistoryChanged = { [weak self] _ in
             DispatchQueue.main.async {
-                self?.updateMenu(with: history)
+                self?.scheduleMenuUpdate()
             }
         }
         clipboardManager.onFileHistoryChanged = { [weak self] _ in
             DispatchQueue.main.async {
-                self?.updateMenu(with: self?.clipboardManager.history ?? [])
+                self?.scheduleMenuUpdate()
             }
         }
+    }
+
+    private func scheduleMenuUpdate() {
+        menuUpdateWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.updateMenu(with: self.clipboardManager.history)
+        }
+        menuUpdateWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
     
     private func updateMenu(with history: [HistoryEntry]) {
@@ -197,7 +208,7 @@ class MenuController: NSObject {
         menu.addItem(NSMenuItem.separator())
         
         // --- Phone Collector Section ---
-        let collectorCount = DeviceCollectorManager.shared.events.count
+        let collectorCount = DeviceCollectorManager.shared.eventCount
         let collectorTitle = "\(L10n.t(.phoneCollector)) (\(collectorCount))..."
         let collectorItem = NSMenuItem(title: collectorTitle, action: #selector(openCollector), keyEquivalent: "N")
         collectorItem.target = self
@@ -333,10 +344,8 @@ class MenuController: NSObject {
         menuItem.representedObject = entry
         menuItem.toolTip = historyToolTip(for: entry)
 
-        if case .image(let path) = entry.item, let image = NSImage(contentsOf: URL(fileURLWithPath: path)) {
-            let iconSize = NSSize(width: 24, height: 24)
-            image.size = iconSize
-            menuItem.image = image
+        if case .image(let path) = entry.item {
+            menuItem.image = HistoryThumbnailCache.thumbnail(for: path)
         }
 
         return menuItem
