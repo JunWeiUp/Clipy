@@ -2,7 +2,8 @@ import AppKit
 
 final class SettingsWindow {
     static let shared = SettingsWindow()
-    private var window: HostingWindow<SettingsView>?
+
+    private let session = WindowSession<SettingsView>()
 
     private init() {}
 
@@ -11,18 +12,22 @@ final class SettingsWindow {
     }
 
     func show() {
-        if window == nil {
-            window = HostingWindow(
-                title: L10n.t(.preferences),
-                size: AppWindowSize.settings,
-                minSize: AppWindowSize.settings,
-                resizable: false,
-                frameAutosaveName: "SettingsWindow"
-            ) {
-                SettingsView()
+        session.present(
+            create: {
+                HostingWindow(
+                    title: L10n.t(.preferences),
+                    size: AppWindowSize.settings,
+                    minSize: AppWindowSize.settings,
+                    resizable: false,
+                    frameAutosaveName: "SettingsWindow"
+                ) {
+                    SettingsView()
+                }
+            },
+            onPrepareForClose: {},
+            update: { window in
+                window.title = L10n.t(.preferences)
             }
-        }
-        window?.title = L10n.t(.preferences)
-        window?.show()
+        )
     }
 }

@@ -75,6 +75,30 @@ final class SearchViewModel: ObservableObject {
     }
 
     func onDisappear() {
+        prepareForClose()
+    }
+
+    func prepareForClose() {
+        saveSearchState()
+        clearLoadedData()
+    }
+
+    func clearLoadedData() {
+        debounceWorkItem?.cancel()
+        debounceWorkItem = nil
+        isLoadingMore = false
+        results = []
+        selectedIDs = []
+        statusText = ""
+        browseLimit = PreferencesManager.shared.historyLoadCount
+        availableSourceApps = []
+        if let observer = historyObserver {
+            NotificationCenter.default.removeObserver(observer)
+            historyObserver = nil
+        }
+    }
+
+    private func saveSearchState() {
         HistorySearchStateStore.save(HistorySearchStateStore.Snapshot(
             query: query,
             typeFilter: typeFilter,
@@ -263,7 +287,7 @@ final class SearchViewModel: ObservableObject {
 
 struct SearchView: View {
     @EnvironmentObject private var languageObserver: AppLanguageObserver
-    @StateObject private var viewModel = SearchViewModel()
+    @ObservedObject var viewModel: SearchViewModel
     @FocusState private var searchFocused: Bool
 
     var body: some View {

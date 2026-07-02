@@ -45,6 +45,7 @@ SWIFT_SOURCES=(
     Sources/SnippetEditorWindow.swift
     Sources/ShortcutRecorderView.swift
     Sources/SearchWindow.swift
+    Sources/WindowSession.swift
     Sources/LogManager.swift
     Sources/LogWindow.swift
     Sources/LaunchAtLoginManager.swift

@@ -1,24 +1,36 @@
 import AppKit
 
 final class NotificationWindow {
-    private var window: HostingWindow<NotificationView>?
+    private let session = WindowSession<NotificationView>()
+    private var viewModel: NotificationViewModel?
 
     func showWindow() {
-        if window == nil {
-            window = HostingWindow(
-                title: L10n.t(.notificationSync),
-                size: AppWindowSize.list,
-                minSize: AppWindowSize.notificationMin,
-                frameAutosaveName: "NotificationWindow"
-            ) {
-                NotificationView()
+        session.present(
+            create: { [self] in
+                let viewModel = NotificationViewModel()
+                self.viewModel = viewModel
+                return HostingWindow(
+                    title: L10n.t(.notificationSync),
+                    size: AppWindowSize.list,
+                    minSize: AppWindowSize.notificationMin,
+                    frameAutosaveName: "NotificationWindow"
+                ) {
+                    NotificationView(viewModel: viewModel)
+                }
+            },
+            onPrepareForClose: { [weak self] in
+                self?.viewModel?.prepareForClose()
+            },
+            onTeardown: { [weak self] in
+                self?.viewModel = nil
+            },
+            update: { window in
+                window.title = L10n.t(.notificationSync)
             }
-        }
-        window?.title = L10n.t(.notificationSync)
-        window?.show()
+        )
     }
 
     func closeWindow() {
-        window?.close()
+        session.close()
     }
 }

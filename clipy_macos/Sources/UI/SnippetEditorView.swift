@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SnippetEditorView: View {
     @EnvironmentObject private var languageObserver: AppLanguageObserver
-    @StateObject private var viewModel = SnippetEditorViewModel()
+    @ObservedObject var viewModel: SnippetEditorViewModel
 
     var body: some View {
         let _ = languageObserver.revision

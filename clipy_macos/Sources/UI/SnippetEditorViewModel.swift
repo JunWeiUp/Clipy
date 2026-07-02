@@ -15,9 +15,10 @@ final class SnippetEditorViewModel: ObservableObject {
     @Published var draftShortcut: ShortcutCombo?
 
     private var sidebarRefreshWorkItem: DispatchWorkItem?
+    private var selectSnippetObserver: NSObjectProtocol?
 
     init() {
-        NotificationCenter.default.addObserver(
+        selectSnippetObserver = NotificationCenter.default.addObserver(
             forName: .snippetEditorSelectSnippet,
             object: nil,
             queue: .main
@@ -26,6 +27,22 @@ final class SnippetEditorViewModel: ObservableObject {
             self?.selectSnippet(snippetID)
             self?.reloadSidebar()
         }
+    }
+
+    deinit {
+        if let selectSnippetObserver {
+            NotificationCenter.default.removeObserver(selectSnippetObserver)
+        }
+    }
+
+    func prepareForClose() {
+        sidebarRefreshWorkItem?.cancel()
+        sidebarRefreshWorkItem = nil
+        selectedFolderId = nil
+        selectedSnippetId = nil
+        draftTitle = ""
+        draftContent = ""
+        draftShortcut = nil
     }
 
     var currentSelection: SidebarSelection? {

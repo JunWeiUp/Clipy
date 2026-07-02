@@ -17,6 +17,7 @@ final class NotificationViewModel: ObservableObject {
     private var loadedEntries: [NotificationManager.NotificationEntry] = []
     private var loadedOffset = 0
     private var isLoadingMore = false
+    private var isActive = false
 
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -39,10 +40,16 @@ final class NotificationViewModel: ObservableObject {
     }
 
     func onAppear() {
+        isActive = true
         reload()
     }
 
     func onDisappear() {
+        prepareForClose()
+    }
+
+    func prepareForClose() {
+        isActive = false
         loadedEntries = []
         loadedOffset = 0
         isLoadingMore = false
@@ -53,7 +60,8 @@ final class NotificationViewModel: ObservableObject {
 
     @objc private func notificationsDidChange() {
         DispatchQueue.main.async { [weak self] in
-            self?.reload()
+            guard let self, self.isActive else { return }
+            self.reload()
         }
     }
 
@@ -214,7 +222,7 @@ final class NotificationViewModel: ObservableObject {
 
 struct NotificationView: View {
     @EnvironmentObject private var languageObserver: AppLanguageObserver
-    @StateObject private var viewModel = NotificationViewModel()
+    @ObservedObject var viewModel: NotificationViewModel
 
     var body: some View {
         let _ = languageObserver.revision

@@ -1,16 +1,24 @@
 import SwiftUI
 import AppKit
 
+final class LogViewModel: ObservableObject {
+    @Published var searchText = ""
+
+    func prepareForClose() {
+        searchText = ""
+    }
+}
+
 struct LogView: View {
     @EnvironmentObject private var languageObserver: AppLanguageObserver
+    @ObservedObject var viewModel: LogViewModel
     @ObservedObject var logManager = LogManager.shared
-    @State private var searchText = ""
 
     var filteredLogs: [LogManager.LogEntry] {
-        if searchText.isEmpty {
+        if viewModel.searchText.isEmpty {
             return logManager.logs
         }
-        return logManager.logs.filter { $0.message.localizedCaseInsensitiveContains(searchText) }
+        return logManager.logs.filter { $0.message.localizedCaseInsensitiveContains(viewModel.searchText) }
     }
 
     private var statusText: String {
@@ -23,7 +31,7 @@ struct LogView: View {
         AppListWindowLayout(statusText: statusText) {
             AppWindowHeader {
                 HStack(spacing: AppSpacing.sm) {
-                    TextField(L10n.t(.searchLogs), text: $searchText)
+                    TextField(L10n.t(.searchLogs), text: $viewModel.searchText)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: .infinity)
 
@@ -78,8 +86,10 @@ struct LogView: View {
 }
 
 final class LogWindow {
-    static var shared: LogWindow?
-    private var window: HostingWindow<LogView>?
+    private static var shared: LogWindow?
+
+    private let session = WindowSession<LogView>()
+    private var viewModel: LogViewModel?
 
     static func show() {
         if shared == nil {
@@ -89,17 +99,29 @@ final class LogWindow {
     }
 
     private func showWindow() {
-        if window == nil {
-            window = HostingWindow(
-                title: L10n.t(.clipyLogs),
-                size: AppWindowSize.log,
-                minSize: AppWindowSize.listMin,
-                frameAutosaveName: "LogWindow"
-            ) {
-                LogView()
+        session.present(
+            create: { [self] in
+                let viewModel = LogViewModel()
+                self.viewModel = viewModel
+                return HostingWindow(
+                    title: L10n.t(.clipyLogs),
+                    size: AppWindowSize.log,
+                    minSize: AppWindowSize.listMin,
+                    frameAutosaveName: "LogWindow"
+                ) {
+                    LogView(viewModel: viewModel)
+                }
+            },
+            onPrepareForClose: { [weak self] in
+                self?.viewModel?.prepareForClose()
+            },
+            onTeardown: { [weak self] in
+                self?.viewModel = nil
+                LogWindow.shared = nil
+            },
+            update: { window in
+                window.title = L10n.t(.clipyLogs)
             }
-        }
-        window?.title = L10n.t(.clipyLogs)
-        window?.show()
+        )
     }
 }

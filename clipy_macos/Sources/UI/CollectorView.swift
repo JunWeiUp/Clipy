@@ -9,6 +9,7 @@ final class CollectorViewModel: ObservableObject {
     private let pageSize = 200
     private var loadedOffset = 0
     private var isLoadingMore = false
+    private var isActive = false
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
@@ -26,10 +27,16 @@ final class CollectorViewModel: ObservableObject {
     }
 
     func onAppear() {
+        isActive = true
         reload()
     }
 
     func onDisappear() {
+        prepareForClose()
+    }
+
+    func prepareForClose() {
+        isActive = false
         displayedEvents = []
         loadedOffset = 0
         isLoadingMore = false
@@ -37,7 +44,8 @@ final class CollectorViewModel: ObservableObject {
 
     @objc private func eventsDidChange() {
         DispatchQueue.main.async { [weak self] in
-            self?.reload()
+            guard let self, self.isActive else { return }
+            self.reload()
         }
     }
 
@@ -168,7 +176,7 @@ final class CollectorViewModel: ObservableObject {
 
 struct CollectorView: View {
     @EnvironmentObject private var languageObserver: AppLanguageObserver
-    @StateObject private var viewModel = CollectorViewModel()
+    @ObservedObject var viewModel: CollectorViewModel
 
     var body: some View {
         let _ = languageObserver.revision

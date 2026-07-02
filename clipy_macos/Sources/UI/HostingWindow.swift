@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-final class HostingWindow<Content: View>: NSWindow {
+final class HostingWindow<Content: View>: NSWindow, NSWindowDelegate {
     init(
         title: String,
         size: CGSize,
@@ -58,6 +58,13 @@ final class HostingWindow<Content: View>: NSWindow {
         }
         contentViewController = hostingController
         setFrame(intendedFrame, display: false)
+        delegate = self
+    }
+
+    var onWillClose: (() -> Void)?
+
+    func windowWillClose(_ notification: Notification) {
+        onWillClose?()
     }
 
     func show() {

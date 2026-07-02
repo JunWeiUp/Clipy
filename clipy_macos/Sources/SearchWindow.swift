@@ -2,26 +2,39 @@ import AppKit
 
 final class SearchWindow {
     static let shared = SearchWindow()
-    private var window: HostingWindow<SearchView>?
+
+    private let session = WindowSession<SearchView>()
+    private var viewModel: SearchViewModel?
 
     private init() {}
 
     func showWindow() {
-        if window == nil {
-            window = HostingWindow(
-                title: L10n.t(.searchHistory),
-                size: AppWindowSize.search,
-                minSize: AppWindowSize.searchMin,
-                frameAutosaveName: "SearchWindow"
-            ) {
-                SearchView()
+        session.present(
+            create: { [self] in
+                let viewModel = SearchViewModel()
+                self.viewModel = viewModel
+                return HostingWindow(
+                    title: L10n.t(.searchHistory),
+                    size: AppWindowSize.search,
+                    minSize: AppWindowSize.searchMin,
+                    frameAutosaveName: "SearchWindow"
+                ) {
+                    SearchView(viewModel: viewModel)
+                }
+            },
+            onPrepareForClose: { [weak self] in
+                self?.viewModel?.prepareForClose()
+            },
+            onTeardown: { [weak self] in
+                self?.viewModel = nil
+            },
+            update: { window in
+                window.title = L10n.t(.searchHistory)
             }
-        }
-        window?.title = L10n.t(.searchHistory)
-        window?.show()
+        )
     }
 
     func closeWindow() {
-        window?.close()
+        session.close()
     }
 }
