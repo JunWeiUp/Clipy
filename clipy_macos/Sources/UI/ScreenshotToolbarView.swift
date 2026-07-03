@@ -36,6 +36,7 @@ struct ScreenshotToolbarView: View {
             TopRoundedRectangle(radius: 8)
                 .stroke(Color.white.opacity(0.1), lineWidth: 1)
         }
+        .contentShape(Rectangle())
     }
 
     private var toolGroup: some View {

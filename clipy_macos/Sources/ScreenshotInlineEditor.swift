@@ -1,12 +1,10 @@
 import AppKit
-import Combine
 import SwiftUI
 
 final class ScreenshotInlineEditor: NSResponder {
     static weak var current: ScreenshotInlineEditor?
 
     private let viewModel: ScreenshotEditorViewModel
-    private let canvasView: AnnotationCanvasView
     private let screenRect: NSRect
     private var panel: ScreenshotEditorPanel?
     private var keyMonitor: Any?
@@ -14,9 +12,7 @@ final class ScreenshotInlineEditor: NSResponder {
     init(image: NSImage, screenRect: NSRect) {
         self.screenRect = screenRect
         self.viewModel = ScreenshotEditorViewModel(image: image)
-        self.canvasView = AnnotationCanvasView(baseImage: image, model: viewModel.annotationModel, contentMode: .fill)
         super.init()
-        viewModel.canvasView = canvasView
     }
 
     @available(*, unavailable)
@@ -34,13 +30,11 @@ final class ScreenshotInlineEditor: NSResponder {
         Self.current = self
 
         let barHeight = ScreenshotChrome.barHeight
-        let panelWidth = screenRect.width
         let placement = toolbarPlacement(barHeight: barHeight)
-        let panelFrame = placement.panelFrame
 
         let panel = ScreenshotEditorPanel(
-            contentRect: panelFrame,
-            styleMask: [.borderless],
+            contentRect: placement.panelFrame,
+            styleMask: [.borderless, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -50,48 +44,30 @@ final class ScreenshotInlineEditor: NSResponder {
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isMovableByWindowBackground = false
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.hidesOnDeactivate = false
+        panel.isFloatingPanel = true
 
-        let container = NSView(frame: NSRect(origin: .zero, size: panelFrame.size))
-
-        let canvasFrame = placement.canvasFrame
-        canvasView.frame = canvasFrame
-        canvasView.autoresizingMask = [.width, .height]
-        container.addSubview(canvasView)
-
-        let toolbarView = ScreenshotToolbarView(
+        let chromeView = ScreenshotEditorChromeView(
             viewModel: viewModel,
-            barWidth: panelWidth,
+            toolbarOnTop: placement.toolbarOnTop,
             onDone: { [weak self] in self?.done() },
             onPin: { [weak self] in self?.pin() },
             onDismiss: { [weak self] in self?.dismiss() }
         )
         .environmentObject(AppLanguageObserver.shared)
 
-        let toolbarHosting = NSHostingView(rootView: toolbarView)
-        toolbarHosting.frame = placement.toolbarFrame
-        container.addSubview(toolbarHosting)
+        let hostingController = NSHostingController(rootView: chromeView)
+        if #available(macOS 13.0, *) {
+            hostingController.sizingOptions = []
+        }
+        panel.contentViewController = hostingController
+        panel.setFrame(placement.panelFrame, display: false)
 
-        let toastHosting = NSHostingView(rootView: ToastOverlay(viewModel: viewModel))
-        toastHosting.frame = NSRect(
-            x: panelWidth / 2 - 120,
-            y: placement.toolbarFrame.maxY + 8,
-            width: 240,
-            height: 36
-        )
-        toastHosting.isHidden = true
-        container.addSubview(toastHosting)
-
-        viewModel.$toastMessage
-            .receive(on: DispatchQueue.main)
-            .sink { [weak toastHosting] message in
-                toastHosting?.isHidden = message == nil
-            }
-            .store(in: &cancellables)
-
-        panel.contentView = container
         self.panel = panel
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        panel.makeFirstResponder(hostingController.view)
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
@@ -109,19 +85,16 @@ final class ScreenshotInlineEditor: NSResponder {
                 } else {
                     self.viewModel.annotationModel.undo()
                 }
-                self.canvasView.needsDisplay = true
+                self.viewModel.canvasView?.needsDisplay = true
                 return nil
             }
             return event
         }
     }
 
-    private var cancellables = Set<AnyCancellable>()
-
     private struct ToolbarPlacement {
         let panelFrame: NSRect
-        let canvasFrame: NSRect
-        let toolbarFrame: NSRect
+        let toolbarOnTop: Bool
     }
 
     private func toolbarPlacement(barHeight: CGFloat) -> ToolbarPlacement {
@@ -135,24 +108,19 @@ final class ScreenshotInlineEditor: NSResponder {
 
         let belowY = screenRect.origin.y - barHeight
         if belowY >= visible.minY {
-            let panelFrame = NSRect(x: originX, y: belowY, width: panelWidth, height: panelHeight)
             return ToolbarPlacement(
-                panelFrame: panelFrame,
-                canvasFrame: NSRect(x: 0, y: barHeight, width: panelWidth, height: screenRect.height),
-                toolbarFrame: NSRect(x: 0, y: 0, width: panelWidth, height: barHeight)
+                panelFrame: NSRect(x: originX, y: belowY, width: panelWidth, height: panelHeight),
+                toolbarOnTop: false
             )
         }
 
-        let panelFrame = NSRect(x: originX, y: screenRect.maxY, width: panelWidth, height: panelHeight)
         return ToolbarPlacement(
-            panelFrame: panelFrame,
-            canvasFrame: NSRect(x: 0, y: 0, width: panelWidth, height: screenRect.height),
-            toolbarFrame: NSRect(x: 0, y: screenRect.height, width: panelWidth, height: barHeight)
+            panelFrame: NSRect(x: originX, y: screenRect.maxY, width: panelWidth, height: panelHeight),
+            toolbarOnTop: true
         )
     }
 
     func dismiss() {
-        cancellables.removeAll()
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
             self.keyMonitor = nil
@@ -175,17 +143,64 @@ final class ScreenshotInlineEditor: NSResponder {
     }
 }
 
-private struct ToastOverlay: View {
+private struct ScreenshotEditorChromeView: View {
     @ObservedObject var viewModel: ScreenshotEditorViewModel
+    let toolbarOnTop: Bool
+    var onDone: () -> Void
+    var onPin: () -> Void
+    var onDismiss: () -> Void
+
+    @State private var canvasRef: AnnotationCanvasView?
 
     var body: some View {
-        if let message = viewModel.toastMessage {
-            Text(message)
-                .font(AppFont.caption)
-                .padding(.horizontal, AppSpacing.sm)
-                .padding(.vertical, AppSpacing.xs)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+        VStack(spacing: 0) {
+            if toolbarOnTop {
+                toolbar
+            }
+            canvas
+            if !toolbarOnTop {
+                toolbar
+            }
         }
+        .overlay(alignment: toolbarOnTop ? .top : .bottom) {
+            if let message = viewModel.toastMessage {
+                Text(message)
+                    .font(AppFont.caption)
+                    .padding(.horizontal, AppSpacing.sm)
+                    .padding(.vertical, AppSpacing.xs)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+                    .padding(toolbarOnTop ? .top : .bottom, ScreenshotChrome.barHeight + 8)
+            }
+        }
+        .onAppear {
+            viewModel.canvasView = canvasRef
+        }
+        .onChange(of: canvasRef) { newValue in
+            viewModel.canvasView = newValue
+        }
+    }
+
+    private var canvas: some View {
+        AnnotationCanvasRepresentable(
+            baseImage: viewModel.baseImage,
+            model: viewModel.annotationModel,
+            contentMode: .fill,
+            canvasRef: $canvasRef
+        )
+        .frame(
+            width: viewModel.baseImage.size.width,
+            height: viewModel.baseImage.size.height
+        )
+    }
+
+    private var toolbar: some View {
+        ScreenshotToolbarView(
+            viewModel: viewModel,
+            barWidth: viewModel.baseImage.size.width,
+            onDone: onDone,
+            onPin: onPin,
+            onDismiss: onDismiss
+        )
     }
 }
