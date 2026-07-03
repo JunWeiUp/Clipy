@@ -13,6 +13,12 @@ struct SettingsView: View {
     @State private var historyEncryptionEnabled: Bool
     @State private var searchGlobalShortcutEnabled: Bool
     @State private var searchHistoryShortcut: ShortcutCombo?
+    @State private var screenshotShortcutEnabled: Bool
+    @State private var screenshotShortcut: ShortcutCombo?
+    @State private var screenshotDefaultMode: ScreenshotCaptureMode
+    @State private var screenshotMagnifierEnabled: Bool
+    @State private var screenshotElementSnapEnabled: Bool
+    @State private var screenCaptureGranted: Bool
     @State private var syncEnabled: Bool
     @State private var syncPort: String
     @State private var availableDevices: [String] = []
@@ -43,6 +49,12 @@ struct SettingsView: View {
         _historyEncryptionEnabled = State(initialValue: prefs.isHistoryEncryptionEnabled)
         _searchGlobalShortcutEnabled = State(initialValue: prefs.isSearchGlobalShortcutEnabled)
         _searchHistoryShortcut = State(initialValue: prefs.searchHistoryShortcut)
+        _screenshotShortcutEnabled = State(initialValue: prefs.isScreenshotShortcutEnabled)
+        _screenshotShortcut = State(initialValue: prefs.screenshotShortcut)
+        _screenshotDefaultMode = State(initialValue: prefs.screenshotDefaultMode)
+        _screenshotMagnifierEnabled = State(initialValue: prefs.isScreenshotMagnifierEnabled)
+        _screenshotElementSnapEnabled = State(initialValue: prefs.isScreenshotElementSnapEnabled)
+        _screenCaptureGranted = State(initialValue: ScreenCapturePermissionManager.isAuthorized)
         _syncEnabled = State(initialValue: prefs.isSyncEnabled)
         _syncPort = State(initialValue: "\(prefs.syncPort)")
         _notificationSyncEnabled = State(initialValue: NotificationManager.shared.notificationSyncEnabled)
@@ -63,6 +75,7 @@ struct SettingsView: View {
         let _ = languageObserver.revision
 
         AppFormWindowLayout {
+            ScrollView {
             Form {
             Section {
                 Picker(L10n.t(.language), selection: $selectedLanguage) {
@@ -169,6 +182,63 @@ struct SettingsView: View {
                 Text(L10n.t(.searchGlobalShortcutDescription))
                     .font(AppFont.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section {
+                HStack {
+                    Text(L10n.t(.screenCapturePermission))
+                        .font(AppFont.caption)
+                    Spacer()
+                    Text(screenCaptureGranted ? L10n.t(.accessibilityGranted) : L10n.t(.accessibilityNotGranted))
+                        .font(AppFont.caption)
+                        .foregroundStyle(screenCaptureGranted ? .green : .orange)
+                }
+
+                Button(L10n.t(.openSystemSettings)) {
+                    ScreenCapturePermissionManager.requestAccess()
+                    ScreenCapturePermissionManager.openSettings()
+                }
+                .buttonStyle(.bordered)
+
+                Toggle(L10n.t(.screenshotShortcut), isOn: $screenshotShortcutEnabled)
+                    .onChange(of: screenshotShortcutEnabled) { newValue in
+                        PreferencesManager.shared.isScreenshotShortcutEnabled = newValue
+                        ScreenshotGlobalHotKeyManager.register()
+                    }
+                ShortcutRecorderRepresentable(combo: $screenshotShortcut) { combo in
+                    PreferencesManager.shared.screenshotShortcut = combo
+                    ScreenshotGlobalHotKeyManager.register()
+                }
+                .frame(height: 30)
+                Picker(L10n.t(.screenshotDefaultMode), selection: $screenshotDefaultMode) {
+                    Text(L10n.t(.screenshotRegion)).tag(ScreenshotCaptureMode.region)
+                    Text(L10n.t(.screenshotWindow)).tag(ScreenshotCaptureMode.window)
+                    Text(L10n.t(.screenshotFullscreen)).tag(ScreenshotCaptureMode.fullscreen)
+                }
+                .onChange(of: screenshotDefaultMode) { newValue in
+                    PreferencesManager.shared.screenshotDefaultMode = newValue
+                }
+
+                Toggle(L10n.t(.screenshotMagnifier), isOn: $screenshotMagnifierEnabled)
+                    .onChange(of: screenshotMagnifierEnabled) { newValue in
+                        PreferencesManager.shared.isScreenshotMagnifierEnabled = newValue
+                    }
+
+                Toggle(L10n.t(.screenshotElementSnap), isOn: $screenshotElementSnapEnabled)
+                    .onChange(of: screenshotElementSnapEnabled) { newValue in
+                        PreferencesManager.shared.isScreenshotElementSnapEnabled = newValue
+                    }
+
+                if screenshotElementSnapEnabled && !accessibilityGranted {
+                    Text(L10n.t(.screenshotElementSnapAccessibilityHint))
+                        .font(AppFont.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text(L10n.t(.screenshot))
+            } footer: {
+                Text(L10n.t(.screenshotShortcutDescription))
+                    .font(AppFont.caption)
             }
 
             Section {
@@ -290,8 +360,10 @@ struct SettingsView: View {
                 .buttonStyle(.bordered)
             }
             }
+            }
         }
-        .frame(width: AppWindowSize.settings.width, height: AppWindowSize.settings.height)
+        .frame(width: AppWindowSize.settings.width)
+        .frame(minHeight: AppWindowSize.settings.height, alignment: .top)
         .onReceive(NotificationCenter.default.publisher(for: .syncAvailableDevicesDidChange)) { notification in
             if let devices = notification.userInfo?["devices"] as? [String] {
                 availableDevices = devices
@@ -303,6 +375,7 @@ struct SettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             accessibilityGranted = AccessibilityManager.isTrusted
+            screenCaptureGranted = ScreenCapturePermissionManager.isAuthorized
             launchAtLogin = LaunchAtLoginManager.isEnabled
             currentHistoryCount = ClipboardManager.shared.totalHistoryCount
         }

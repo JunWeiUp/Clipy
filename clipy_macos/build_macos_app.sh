@@ -27,6 +27,19 @@ SWIFT_SOURCES=(
     Sources/HistorySearchIndexBuilder.swift
     Sources/HistorySearchStateStore.swift
     Sources/SearchGlobalHotKeyManager.swift
+    Sources/ScreenshotTypes.swift
+    Sources/ScreenCapturePermissionManager.swift
+    Sources/ScreenshotCaptureService.swift
+    Sources/ImageOCRService.swift
+    Sources/CaptureOverlayWindow.swift
+    Sources/UIElementDetector.swift
+    Sources/CaptureMagnifierView.swift
+    Sources/ScreenshotCoordinator.swift
+    Sources/ScreenshotEditorPanel.swift
+    Sources/ScreenshotEditorViewModel.swift
+    Sources/ScreenshotInlineEditor.swift
+    Sources/ScreenshotGlobalHotKeyManager.swift
+    Sources/PinPanelController.swift
     Sources/SecureStorageCrypto.swift
     Sources/HistoryKeychain.swift
     Sources/MenuController.swift
@@ -63,6 +76,8 @@ SWIFT_SOURCES=(
     Sources/UI/LeftAlignedTextInput.swift
     Sources/UI/SettingsView.swift
     Sources/UI/SearchView.swift
+    Sources/UI/ScreenshotToolbarView.swift
+    Sources/UI/AnnotationCanvasView.swift
     Sources/UI/HighlightedText.swift
     Sources/UI/HistoryPreviewView.swift
     Sources/UI/HistoryPreviewRepresentables.swift
@@ -114,6 +129,8 @@ swiftc \
     -framework ApplicationServices \
     -framework Security \
     -framework Vision \
+    -framework CoreImage \
+    -framework ScreenCaptureKit \
     -framework UniformTypeIdentifiers \
     -framework PDFKit \
     -framework WebKit
@@ -165,6 +182,8 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     </dict>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Clipy needs local network access to sync clipboard content with your other devices.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Clipy needs screen recording permission to capture screenshots.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_clipy-sync._tcp</string>
@@ -179,6 +198,16 @@ if [ ! -f "${MACOS_DIR}/${EXECUTABLE_NAME}" ]; then
     exit 1
 fi
 chmod +x "${MACOS_DIR}/${EXECUTABLE_NAME}"
+
+# 6. 代码签名（TCC 权限绑定 Bundle ID + 签名；未签名或每次重编译无签名会导致需重新授权）
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+if command -v codesign >/dev/null 2>&1; then
+    echo "🔏 正在签名 ${APP_BUNDLE} (identity: ${SIGN_IDENTITY})..."
+    codesign --force --deep --sign "${SIGN_IDENTITY}" --timestamp=none "${APP_BUNDLE}" 2>/dev/null || {
+        echo "⚠️ 签名失败，将尝试 ad-hoc 签名 (-)"
+        codesign --force --deep --sign - --timestamp=none "${APP_BUNDLE}" || true
+    }
+fi
 
 echo "✅ 构建完成: ${APP_BUNDLE}"
 echo "💡 你可以双击 ${APP_BUNDLE} 来运行程序，或者在终端输入: open ${APP_BUNDLE}"

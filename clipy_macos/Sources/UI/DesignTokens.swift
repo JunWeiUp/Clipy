@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum AppSpacing {
@@ -30,8 +31,17 @@ enum AppCornerRadius {
     static let badge: CGFloat = 10
 }
 
+enum ScreenshotChrome {
+    static let toolbarHeight: CGFloat = 44
+    static let barHeight: CGFloat = 40
+    static let floatingRadius: CGFloat = 12
+    static let magnifierSize: CGFloat = 120
+    static let snapThreshold: CGFloat = 8
+    static let presetColors: [NSColor] = [.systemRed, .systemOrange, .systemYellow, .systemGreen, .systemBlue]
+}
+
 enum AppWindowSize {
-    static let settings = CGSize(width: 420, height: 640)
+    static let settings = CGSize(width: 420, height: 720)
     static let list = CGSize(width: 720, height: 500)
     static let search = CGSize(width: 1200, height: 800)
     static let editor = CGSize(width: 800, height: 600)

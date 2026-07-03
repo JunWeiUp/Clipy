@@ -208,6 +208,45 @@ enum L10nKey: String {
     case saveAsSnippet
     case searchGlobalShortcut
     case searchGlobalShortcutDescription
+    case screenshot
+    case screenshotRegion
+    case screenshotWindow
+    case screenshotFullscreen
+    case screenshotShortcut
+    case screenshotShortcutDescription
+    case screenshotDefaultMode
+    case screenshotEditorTitle
+    case screenshotCopy
+    case screenshotPin
+    case screenshotOCR
+    case screenshotOCRResult
+    case screenshotOCRNoText
+    case screenshotCopyText
+    case screenshotTextPrompt
+    case screenshotTextPromptMessage
+    case screenshotToolRectangle
+    case screenshotToolArrow
+    case screenshotToolEllipse
+    case screenshotToolText
+    case screenshotToolMosaic
+    case screenshotLineWidth
+    case screenCaptureRequiredTitle
+    case screenCaptureRequiredMessage
+    case screenshotCaptureFailedTitle
+    case screenshotCaptureFailedMessage
+    case screenCapturePermission
+    case screenshotUndo
+    case screenshotRedo
+    case screenshotDone
+    case screenshotHint
+    case screenshotCopied
+    case screenshotMagnifier
+    case screenshotElementSnap
+    case screenshotToolPencil
+    case screenshotToolHighlighter
+    case screenshotToolEraser
+    case screenshotPinOpacity
+    case screenshotElementSnapAccessibilityHint
 }
 
 struct L10n {
@@ -408,6 +447,45 @@ struct L10n {
             .saveAsSnippet: "保存为片段",
             .searchGlobalShortcut: "全局搜索快捷键",
             .searchGlobalShortcutDescription: "在任何应用中按下此快捷键打开历史搜索窗口。",
+            .screenshot: "截图",
+            .screenshotRegion: "区域截图",
+            .screenshotWindow: "窗口截图",
+            .screenshotFullscreen: "全屏截图",
+            .screenshotShortcut: "全局截图快捷键",
+            .screenshotShortcutDescription: "按下此快捷键开始截图，默认使用偏好设置中的截图模式。",
+            .screenshotDefaultMode: "默认截图模式",
+            .screenshotEditorTitle: "截图标注",
+            .screenshotCopy: "复制",
+            .screenshotPin: "贴图",
+            .screenshotOCR: "OCR",
+            .screenshotOCRResult: "识别结果",
+            .screenshotOCRNoText: "未识别到文字",
+            .screenshotCopyText: "复制文字",
+            .screenshotTextPrompt: "添加文字",
+            .screenshotTextPromptMessage: "输入要添加的标注文字",
+            .screenshotToolRectangle: "矩形",
+            .screenshotToolArrow: "箭头",
+            .screenshotToolEllipse: "椭圆",
+            .screenshotToolText: "文字",
+            .screenshotToolMosaic: "马赛克",
+            .screenshotLineWidth: "线宽 %d",
+            .screenCaptureRequiredTitle: "需要屏幕录制权限",
+            .screenCaptureRequiredMessage: "Clipy 需要屏幕录制权限才能截图。请在系统设置中启用 ClipyClone 的屏幕录制权限。",
+            .screenshotCaptureFailedTitle: "截图失败",
+            .screenshotCaptureFailedMessage: "无法捕获屏幕内容。请确认已授予屏幕录制权限，然后重试。",
+            .screenCapturePermission: "屏幕录制权限（截图需要）：",
+            .screenshotUndo: "撤销",
+            .screenshotRedo: "重做",
+            .screenshotDone: "完成",
+            .screenshotHint: "移动鼠标吸附元素 · 拖拽画框 · Esc 取消",
+            .screenshotCopied: "已复制到剪贴板",
+            .screenshotMagnifier: "截图放大镜",
+            .screenshotElementSnap: "UI 元素吸附",
+            .screenshotToolPencil: "画笔",
+            .screenshotToolHighlighter: "荧光笔",
+            .screenshotToolEraser: "橡皮擦",
+            .screenshotPinOpacity: "贴图透明度",
+            .screenshotElementSnapAccessibilityHint: "精确吸附控件需要辅助功能权限，未授权时将降级为窗口吸附。",
         ],
         .en: [
             .recordShortcut: "Click to record shortcut",
@@ -597,6 +675,45 @@ struct L10n {
             .saveAsSnippet: "Save as Snippet",
             .searchGlobalShortcut: "Global Search Shortcut",
             .searchGlobalShortcutDescription: "Press this shortcut from any app to open history search.",
+            .screenshot: "Screenshot",
+            .screenshotRegion: "Capture Region",
+            .screenshotWindow: "Capture Window",
+            .screenshotFullscreen: "Capture Full Screen",
+            .screenshotShortcut: "Global Screenshot Shortcut",
+            .screenshotShortcutDescription: "Press this shortcut to start a screenshot using the default mode below.",
+            .screenshotDefaultMode: "Default Capture Mode",
+            .screenshotEditorTitle: "Screenshot Editor",
+            .screenshotCopy: "Copy",
+            .screenshotPin: "Pin to Screen",
+            .screenshotOCR: "OCR",
+            .screenshotOCRResult: "Recognized Text",
+            .screenshotOCRNoText: "No text recognized",
+            .screenshotCopyText: "Copy Text",
+            .screenshotTextPrompt: "Add Text",
+            .screenshotTextPromptMessage: "Enter annotation text",
+            .screenshotToolRectangle: "Rectangle",
+            .screenshotToolArrow: "Arrow",
+            .screenshotToolEllipse: "Ellipse",
+            .screenshotToolText: "Text",
+            .screenshotToolMosaic: "Mosaic",
+            .screenshotLineWidth: "Width %d",
+            .screenCaptureRequiredTitle: "Screen Recording Permission Required",
+            .screenCaptureRequiredMessage: "Clipy needs Screen Recording permission to capture screenshots. Enable ClipyClone in System Settings.",
+            .screenshotCaptureFailedTitle: "Screenshot Failed",
+            .screenshotCaptureFailedMessage: "Could not capture the screen. Check Screen Recording permission and try again.",
+            .screenCapturePermission: "Screen Recording Permission (required for screenshots):",
+            .screenshotUndo: "Undo",
+            .screenshotRedo: "Redo",
+            .screenshotDone: "Done",
+            .screenshotHint: "Hover to snap · Drag to select · Esc to cancel",
+            .screenshotCopied: "Copied to clipboard",
+            .screenshotMagnifier: "Capture Magnifier",
+            .screenshotElementSnap: "Snap to UI Elements",
+            .screenshotToolPencil: "Pencil",
+            .screenshotToolHighlighter: "Highlighter",
+            .screenshotToolEraser: "Eraser",
+            .screenshotPinOpacity: "Pin Opacity",
+            .screenshotElementSnapAccessibilityHint: "Precise element snap needs Accessibility permission. Without it, window-level snap is used.",
         ]
     ]
 }

@@ -242,6 +242,22 @@ class MenuController: NSObject {
         
         menu.addItem(NSMenuItem.separator())
 
+        menu.addItem(NSMenuItem.separator())
+
+        let screenshotItem = NSMenuItem(title: L10n.t(.screenshot), action: nil, keyEquivalent: "")
+        let screenshotSubmenu = NSMenu()
+        let regionItem = NSMenuItem(title: L10n.t(.screenshotRegion), action: #selector(startScreenshotRegion), keyEquivalent: "")
+        regionItem.target = self
+        screenshotSubmenu.addItem(regionItem)
+        let windowItem = NSMenuItem(title: L10n.t(.screenshotWindow), action: #selector(startScreenshotWindow), keyEquivalent: "")
+        windowItem.target = self
+        screenshotSubmenu.addItem(windowItem)
+        let fullscreenItem = NSMenuItem(title: L10n.t(.screenshotFullscreen), action: #selector(startScreenshotFullscreen), keyEquivalent: "")
+        fullscreenItem.target = self
+        screenshotSubmenu.addItem(fullscreenItem)
+        screenshotItem.submenu = screenshotSubmenu
+        menu.addItem(screenshotItem)
+
         let editSnippetsItem = NSMenuItem(title: L10n.t(.editSnippets), action: #selector(openSnippetEditor), keyEquivalent: "S")
         editSnippetsItem.target = self
         menu.addItem(editSnippetsItem)
@@ -483,6 +499,22 @@ class MenuController: NSObject {
 
     @objc private func registerGlobalHotKeys() {
         SearchGlobalHotKeyManager.register()
+        ScreenshotGlobalHotKeyManager.register()
+    }
+
+    @objc private func startScreenshotRegion() {
+        NSApp.activate(ignoringOtherApps: true)
+        ScreenshotCoordinator.shared.start(mode: .region)
+    }
+
+    @objc private func startScreenshotWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        ScreenshotCoordinator.shared.start(mode: .window)
+    }
+
+    @objc private func startScreenshotFullscreen() {
+        NSApp.activate(ignoringOtherApps: true)
+        ScreenshotCoordinator.shared.start(mode: .fullscreen)
     }
 
     @objc private func languageDidChange() {

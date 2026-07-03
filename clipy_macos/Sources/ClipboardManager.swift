@@ -617,6 +617,19 @@ class ClipboardManager {
         recentSummaries.insert(updated, at: 0)
     }
 
+    func ingestCapturedImage(_ pngData: Data, copyToPasteboard: Bool = true) {
+        let store = HistoryMediaStore.shared
+        let path = store.store(data: pngData, kind: .image)
+        let item = HistoryItem.image(path)
+        if let hash = contentHash(for: item) {
+            lastSyncHash = hash
+        }
+        addToHistory(item, sourceApp: "Clipy Screenshot", sourceBundleId: Bundle.main.bundleIdentifier)
+        if copyToPasteboard {
+            writeToPasteboard(item)
+        }
+    }
+
     private func addToHistory(_ item: HistoryItem, sourceApp: String?, sourceBundleId: String? = nil) {
         let hash = contentHash(for: item)
         appLog("Adding to history: \(item.title), Hash: \(hash?.prefix(8) ?? "N/A")")

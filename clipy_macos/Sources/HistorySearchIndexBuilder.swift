@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 import PDFKit
-import Vision
 
 enum HistorySearchIndexBuilder {
     private static let maxIndexLength = 500
@@ -36,7 +35,7 @@ enum HistorySearchIndexBuilder {
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
 
         indexQueue.async {
-            let text = recognizeText(in: cgImage)
+            let text = ImageOCRService.recognizeSync(cgImage: cgImage)
             guard let text, !text.isEmpty else { return }
             DispatchQueue.main.async {
                 updater(contentHash, truncate(text) ?? text)
@@ -69,20 +68,6 @@ enum HistorySearchIndexBuilder {
         html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private static func recognizeText(in cgImage: CGImage) -> String? {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .fast
-        request.usesLanguageCorrection = false
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        do {
-            try handler.perform([request])
-            let lines = request.results?.compactMap { $0.topCandidates(1).first?.string } ?? []
-            return lines.joined(separator: "\n")
-        } catch {
-            return nil
-        }
     }
 
     private static func truncate(_ text: String?) -> String? {

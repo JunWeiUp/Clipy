@@ -27,6 +27,11 @@ class PreferencesManager {
     private let collectorClipboardEnabledKey = "collectorClipboardEnabled"
     private let collectorLocationEnabledKey = "collectorLocationEnabled"
     private let collectorSystemEnabledKey = "collectorSystemEnabled"
+    private let screenshotShortcutEnabledKey = "screenshotShortcutEnabled"
+    private let screenshotShortcutKey = "screenshotShortcut"
+    private let screenshotDefaultModeKey = "screenshotDefaultMode"
+    private let screenshotMagnifierEnabledKey = "screenshotMagnifierEnabled"
+    private let screenshotElementSnapEnabledKey = "screenshotElementSnapEnabled"
     
     var deviceName: String {
         get { defaults.string(forKey: deviceNameKey) ?? Host.current().localizedName ?? "Mac" }
@@ -180,6 +185,58 @@ class PreferencesManager {
     var isCollectorSystemEnabled: Bool {
         get { defaults.object(forKey: collectorSystemEnabledKey) == nil ? true : defaults.bool(forKey: collectorSystemEnabledKey) }
         set { defaults.set(newValue, forKey: collectorSystemEnabledKey) }
+    }
+
+    var isScreenshotShortcutEnabled: Bool {
+        get {
+            if defaults.object(forKey: screenshotShortcutEnabledKey) == nil { return true }
+            return defaults.bool(forKey: screenshotShortcutEnabledKey)
+        }
+        set { defaults.set(newValue, forKey: screenshotShortcutEnabledKey) }
+    }
+
+    var screenshotShortcut: ShortcutCombo? {
+        get {
+            if let data = defaults.data(forKey: screenshotShortcutKey),
+               let combo = try? JSONDecoder().decode(ShortcutCombo.self, from: data) {
+                return combo
+            }
+            return ShortcutCombo(keyCode: 0x17, modifierFlags: NSEvent.ModifierFlags([.command, .shift]).rawValue)
+        }
+        set {
+            if let newValue, let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: screenshotShortcutKey)
+            } else {
+                defaults.removeObject(forKey: screenshotShortcutKey)
+            }
+        }
+    }
+
+    var screenshotDefaultMode: ScreenshotCaptureMode {
+        get {
+            guard let raw = defaults.string(forKey: screenshotDefaultModeKey),
+                  let mode = ScreenshotCaptureMode(rawValue: raw) else {
+                return .region
+            }
+            return mode
+        }
+        set { defaults.set(newValue.rawValue, forKey: screenshotDefaultModeKey) }
+    }
+
+    var isScreenshotMagnifierEnabled: Bool {
+        get {
+            if defaults.object(forKey: screenshotMagnifierEnabledKey) == nil { return true }
+            return defaults.bool(forKey: screenshotMagnifierEnabledKey)
+        }
+        set { defaults.set(newValue, forKey: screenshotMagnifierEnabledKey) }
+    }
+
+    var isScreenshotElementSnapEnabled: Bool {
+        get {
+            if defaults.object(forKey: screenshotElementSnapEnabledKey) == nil { return true }
+            return defaults.bool(forKey: screenshotElementSnapEnabledKey)
+        }
+        set { defaults.set(newValue, forKey: screenshotElementSnapEnabledKey) }
     }
     
     private init() {}
