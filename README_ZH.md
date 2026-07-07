@@ -83,7 +83,7 @@ Release 构建由 GitHub workflow 生成 `armeabi-v7a` 和 `arm64-v8a` 两个分
 ## 项目结构
 
 - `clipy_macos/Sources/`：macOS Swift/AppKit 源码。
-- `clipy_macos/build_macos_app.sh`：macOS 应用包构建脚本。
+- `build_macos_app.sh`：macOS 应用包构建脚本。
 - `clipy_android/lib/`：Android Flutter/Dart 源码。
 - `.github/workflows/release.yml`：GitHub Release 自动化流程。
 - `res/`：README 图片资源。

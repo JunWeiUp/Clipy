@@ -5,7 +5,7 @@ final class ScreenshotEditorViewModel: ObservableObject {
     @Published var toastMessage: String?
     @Published var isRecognizing = false
 
-    let baseImage: NSImage
+    private(set) var baseImage: NSImage
     let annotationModel = AnnotationCanvasModel()
     var canvasView: AnnotationCanvasView?
 
@@ -13,15 +13,19 @@ final class ScreenshotEditorViewModel: ObservableObject {
         self.baseImage = image
     }
 
+    func replaceBaseImage(_ image: NSImage) {
+        baseImage = image
+    }
+
     func flattenedImage() -> NSImage? {
-        canvasView?.renderFlattenedImage() ?? baseImage
+        guard baseImage.size.width > 0, baseImage.size.height > 0 else { return nil }
+        let image = canvasView?.renderFlattenedImage() ?? baseImage
+        return ScreenshotImageProcessor.preservePixels(image, logicalSize: baseImage.size)
     }
 
     func copyToClipboard() {
         guard let image = flattenedImage(),
-              let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff),
-              let pngData = bitmap.representation(using: .png, properties: [:]) else {
+              let pngData = ScreenshotImageProcessor.pngData(from: image, logicalSize: baseImage.size) else {
             return
         }
         ClipboardManager.shared.ingestCapturedImage(pngData, copyToPasteboard: true)
@@ -34,7 +38,7 @@ final class ScreenshotEditorViewModel: ObservableObject {
 
     func runOCR() {
         guard let image = flattenedImage(),
-              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+              let cgImage = ScreenshotImageProcessor.bestCGImage(from: image) else {
             return
         }
         isRecognizing = true

@@ -3,8 +3,10 @@ import AppKit
 final class CaptureMagnifierController {
     private var panel: NSPanel?
     private let contentView = MagnifierContentView()
-    private var snapshot: NSImage?
-    private var snapshotOrigin: NSPoint = .zero
+    private var captureWorkItem: DispatchWorkItem?
+    private var captureGeneration: UInt = 0
+    private let debounceInterval: TimeInterval = 0.04
+    private let zoomFactor: CGFloat = 10
 
     func show() {
         guard PreferencesManager.shared.isScreenshotMagnifierEnabled else { return }
@@ -31,14 +33,7 @@ final class CaptureMagnifierController {
         panel.orderFrontRegardless()
         self.panel = panel
 
-        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
-        guard let screen else { return }
-        snapshotOrigin = screen.frame.origin
-        ScreenshotCaptureService.capture(rect: screen.frame) { [weak self] image in
-            self?.snapshot = image
-            self?.contentView.snapshot = image
-            self?.contentView.snapshotOrigin = screen.frame.origin
-        }
+        update(at: NSEvent.mouseLocation)
     }
 
     func update(at screenPoint: NSPoint) {
@@ -48,20 +43,48 @@ final class CaptureMagnifierController {
 
         let offset: CGFloat = 16
         panel.setFrameOrigin(NSPoint(x: screenPoint.x + offset, y: screenPoint.y + offset))
+        scheduleLocalCapture(at: screenPoint)
     }
 
     func dismiss() {
+        captureWorkItem?.cancel()
+        captureWorkItem = nil
         panel?.close()
         panel = nil
-        snapshot = nil
+        contentView.cachedCrop = nil
+    }
+
+    private func scheduleLocalCapture(at screenPoint: NSPoint) {
+        captureWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.captureLocalSample(at: screenPoint)
+        }
+        captureWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + debounceInterval, execute: work)
+    }
+
+    private func captureLocalSample(at screenPoint: NSPoint) {
+        let sampleSize = ScreenshotChrome.magnifierSize / zoomFactor
+        let rect = NSRect(
+            x: screenPoint.x - sampleSize / 2,
+            y: screenPoint.y - sampleSize / 2,
+            width: sampleSize,
+            height: sampleSize
+        )
+
+        captureGeneration += 1
+        let generation = captureGeneration
+        ScreenshotCaptureService.capture(rect: rect, forMagnifier: true) { [weak self] image in
+            guard let self, generation == self.captureGeneration else { return }
+            self.contentView.cachedCrop = image
+            self.contentView.needsDisplay = true
+        }
     }
 }
 
 private final class MagnifierContentView: NSView {
     var screenPoint: NSPoint = .zero
-    var snapshot: NSImage?
-    var snapshotOrigin: NSPoint = .zero
-    private let zoomFactor: CGFloat = 10
+    var cachedCrop: NSImage?
 
     override var isFlipped: Bool { true }
 
@@ -72,8 +95,11 @@ private final class MagnifierContentView: NSView {
         NSColor.black.withAlphaComponent(0.75).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
 
-        if let cropped = magnifiedCrop() {
-            cropped.draw(in: imageRect)
+        if let cachedCrop {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current?.imageInterpolation = .high
+            cachedCrop.draw(in: imageRect)
+            NSGraphicsContext.restoreGraphicsState()
         }
 
         NSColor.white.withAlphaComponent(0.6).setStroke()
@@ -94,32 +120,6 @@ private final class MagnifierContentView: NSView {
         (coordText as NSString).draw(
             at: NSPoint(x: (bounds.width - textSize.width) / 2, y: 4),
             withAttributes: attributes
-        )
-    }
-
-    private func magnifiedCrop() -> NSImage? {
-        guard let snapshot else { return nil }
-        let sampleSize = ScreenshotChrome.magnifierSize / zoomFactor
-        let localX = screenPoint.x - snapshotOrigin.x
-        let localY = screenPoint.y - snapshotOrigin.y
-        let scaleX = snapshot.size.width / max((NSScreen.screens.first?.frame.width ?? snapshot.size.width), 1)
-        let scaleY = snapshot.size.height / max((NSScreen.screens.first?.frame.height ?? snapshot.size.height), 1)
-
-        let cropRect = NSRect(
-            x: (localX - sampleSize / 2) * scaleX,
-            y: (localY - sampleSize / 2) * scaleY,
-            width: sampleSize * scaleX,
-            height: sampleSize * scaleY
-        )
-
-        guard let cgImage = snapshot.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let cropped = cgImage.cropping(to: cropRect.integral) else {
-            return nil
-        }
-
-        return NSImage(
-            cgImage: cropped,
-            size: NSSize(width: ScreenshotChrome.magnifierSize, height: ScreenshotChrome.magnifierSize)
         )
     }
 }

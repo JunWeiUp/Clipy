@@ -44,7 +44,6 @@ jobs:
           echo "tag=v${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Build macOS app (Swift)
-        working-directory: clipy_macos
         run: |
           APP_VERSION="${{ steps.version.outputs.version }}" \
           BUILD_NUMBER="${{ github.run_number }}" \

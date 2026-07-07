@@ -83,7 +83,7 @@ For release builds, the GitHub workflow builds split APKs for `armeabi-v7a` and 
 ## Project Structure
 
 - `clipy_macos/Sources/`: macOS Swift/AppKit source code.
-- `clipy_macos/build_macos_app.sh`: macOS app bundle build script.
+- `build_macos_app.sh`: macOS app bundle build script.
 - `clipy_android/lib/`: Android Flutter/Dart source code.
 - `.github/workflows/release.yml`: GitHub Release automation.
 - `res/`: README assets.

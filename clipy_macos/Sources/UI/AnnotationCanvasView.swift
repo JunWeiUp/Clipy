@@ -20,7 +20,7 @@ struct AnnotationRecord: Equatable {
 }
 
 final class AnnotationCanvasModel: ObservableObject {
-    @Published var selectedTool: ScreenshotAnnotationTool = .rectangle
+    @Published var selectedTool: ScreenshotAnnotationTool = .selection
     @Published var strokeColor: NSColor = .systemRed
     @Published var lineWidth: CGFloat = 3
     @Published private(set) var annotations: [AnnotationRecord] = []
@@ -57,6 +57,12 @@ final class AnnotationCanvasModel: ObservableObject {
         guard !annotations.isEmpty else { return }
         pushState()
         annotations.removeAll()
+    }
+
+    func resetSession() {
+        annotations.removeAll()
+        undoStack.removeAll()
+        redoStack.removeAll()
     }
 
     func beginStroke() {
@@ -105,9 +111,12 @@ final class AnnotationCanvasView: NSView {
         case fill
     }
 
-    let baseImage: NSImage
     let model: AnnotationCanvasModel
     var contentMode: ContentMode
+    var composingMode = false
+    var onTextEditingChanged: ((Bool) -> Void)?
+
+    private var baseImage: NSImage
 
     private var dragStart: NSPoint?
     private var currentRect: NSRect = .zero
@@ -130,14 +139,41 @@ final class AnnotationCanvasView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    func replaceBaseImage(_ image: NSImage) {
+        baseImage = image
+        needsDisplay = true
+    }
+
+    var isTextEditing: Bool { inlineTextField != nil }
+
+    func handlePointer(event: NSEvent, at point: NSPoint) {
+        switch event.type {
+        case .leftMouseDown:
+            handleMouseDown(at: point)
+        case .leftMouseDragged:
+            handleMouseDragged(at: point)
+        case .leftMouseUp:
+            handleMouseUp(at: point)
+        default:
+            break
+        }
+    }
+
     override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard bounds.contains(point) else { return nil }
+        return bounds.contains(point) ? self : nil
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         let imageRect = imageRect(in: bounds)
-        baseImage.draw(in: imageRect)
+        if !composingMode {
+            baseImage.draw(in: imageRect)
+        }
 
-        let scaleX = imageRect.width / baseImage.size.width
-        let scaleY = imageRect.height / baseImage.size.height
+        let scaleX = imageRect.width / max(baseImage.size.width, 1)
+        let scaleY = imageRect.height / max(baseImage.size.height, 1)
 
         for annotation in model.annotations {
             draw(annotation: annotation, in: imageRect, scaleX: scaleX, scaleY: scaleY)
@@ -283,7 +319,12 @@ final class AnnotationCanvasView: NSView {
     }
 
     private func drawMosaic(in rect: NSRect) {
-        guard let cgImage = baseImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        if composingMode {
+            drawComposingMosaicPlaceholder(in: rect)
+            return
+        }
+
+        guard let cgImage = ScreenshotImageProcessor.bestCGImage(from: baseImage) else { return }
         let imageRect = imageRect(in: bounds)
         let scaleX = baseImage.size.width / imageRect.width
         let scaleY = baseImage.size.height / imageRect.height
@@ -302,14 +343,51 @@ final class AnnotationCanvasView: NSView {
         let scale = Float(max(8, min(sourceRect.width, sourceRect.height) / 12))
         guard let output = applyPixellate(to: ciImage, scale: scale) else { return }
 
-        let context = CIContext()
+        let context = ScreenshotImageProcessor.sharedCIContext
         guard let result = context.createCGImage(output, from: output.extent) else { return }
         let mosaicImage = NSImage(cgImage: result, size: rect.size)
         mosaicImage.draw(in: rect)
     }
 
+    private func drawComposingMosaicPlaceholder(in rect: NSRect) {
+        guard rect.width > 1, rect.height > 1 else { return }
+
+        NSColor.black.withAlphaComponent(0.12).setFill()
+        rect.fill()
+
+        let blockSize: CGFloat = 8
+        var y = rect.minY
+        while y < rect.maxY {
+            var x = rect.minX
+            var column = Int((y - rect.minY) / blockSize)
+            while x < rect.maxX {
+                let block = NSRect(
+                    x: x,
+                    y: y,
+                    width: min(blockSize, rect.maxX - x),
+                    height: min(blockSize, rect.maxY - y)
+                )
+                let row = Int((x - rect.minX) / blockSize)
+                let shaded = (row + column) % 2 == 0
+                (shaded ? NSColor.white.withAlphaComponent(0.35) : NSColor.black.withAlphaComponent(0.2)).setFill()
+                block.fill()
+                x += blockSize
+            }
+            y += blockSize
+            column += 1
+        }
+
+        NSColor.controlAccentColor.withAlphaComponent(0.55).setStroke()
+        let border = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5))
+        border.lineWidth = 1
+        border.stroke()
+    }
+
     override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
+        handleMouseDown(at: convert(event.locationInWindow, from: nil))
+    }
+
+    private func handleMouseDown(at point: NSPoint) {
         let imageRect = imageRect(in: bounds)
         guard imageRect.contains(point) else { return }
 
@@ -338,7 +416,10 @@ final class AnnotationCanvasView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
+        handleMouseDragged(at: convert(event.locationInWindow, from: nil))
+    }
+
+    private func handleMouseDragged(at point: NSPoint) {
         let imageRect = imageRect(in: bounds)
 
         if model.selectedTool == .eraser, eraserStrokeActive {
@@ -365,7 +446,10 @@ final class AnnotationCanvasView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
+        handleMouseUp(at: convert(event.locationInWindow, from: nil))
+    }
+
+    private func handleMouseUp(at point: NSPoint) {
         let imageRect = imageRect(in: bounds)
 
         if model.selectedTool == .eraser {
@@ -392,6 +476,8 @@ final class AnnotationCanvasView: NSView {
 
         let annotation: AnnotationRecord?
         switch model.selectedTool {
+        case .selection:
+            annotation = nil
         case .rectangle:
             let rect = normalizedImageRect(from: imageStart, to: imageEnd)
             annotation = rect.width > 2 && rect.height > 2
@@ -446,6 +532,8 @@ final class AnnotationCanvasView: NSView {
         let imageEnd = imagePoint(from: end, imageRect: imageRect)
 
         switch model.selectedTool {
+        case .selection:
+            return AnnotationRecord(kind: .rectangle(.zero), color: model.strokeColor, lineWidth: model.lineWidth)
         case .rectangle:
             return AnnotationRecord(kind: .rectangle(normalizedImageRect(from: imageStart, to: imageEnd)), color: model.strokeColor, lineWidth: model.lineWidth)
         case .ellipse:
@@ -482,6 +570,8 @@ final class AnnotationCanvasView: NSView {
         field.action = #selector(commitInlineText(_:))
         addSubview(field)
         inlineTextField = field
+        onTextEditingChanged?(true)
+        (window as? CaptureAnnotationPanel)?.activateForTextInput()
         window?.makeFirstResponder(field)
     }
 
@@ -502,62 +592,152 @@ final class AnnotationCanvasView: NSView {
         inlineTextField?.removeFromSuperview()
         inlineTextField = nil
         pendingTextPoint = nil
+        onTextEditingChanged?(false)
     }
 
-    func renderFlattenedImage() -> NSImage? {
+    static func flatten(
+        baseImage: NSImage,
+        model: AnnotationCanvasModel,
+        composeSize: NSSize? = nil
+    ) -> NSImage? {
+        let view = AnnotationCanvasView(baseImage: baseImage, model: model, contentMode: .fill)
+        let referenceSize = composeSize ?? baseImage.size
+        return view.renderFlattenedImage(composeSize: referenceSize)
+    }
+
+    func renderFlattenedImage(composeSize: NSSize? = nil) -> NSImage? {
         guard baseImage.size.width > 0, baseImage.size.height > 0 else { return nil }
+        guard let cgImage = ScreenshotImageProcessor.bestCGImage(from: baseImage) else { return nil }
 
-        let output = NSImage(size: baseImage.size)
-        output.lockFocus()
-
-        baseImage.draw(in: NSRect(origin: .zero, size: baseImage.size))
-
-        for annotation in model.annotations {
-            drawFlattened(annotation: annotation, imageHeight: baseImage.size.height)
+        let pixelW = cgImage.width
+        let pixelH = cgImage.height
+        guard pixelW > 0, pixelH > 0,
+              let context = CGContext(
+                  data: nil,
+                  width: pixelW,
+                  height: pixelH,
+                  bitsPerComponent: 8,
+                  bytesPerRow: 0,
+                  space: CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else {
+            return nil
         }
 
-        output.unlockFocus()
-        return output
+        context.interpolationQuality = .high
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: pixelW, height: pixelH))
+
+        let referenceSize = composeSize ?? baseImage.size
+        let scaleX = CGFloat(pixelW) / max(referenceSize.width, 1)
+        let scaleY = CGFloat(pixelH) / max(referenceSize.height, 1)
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        for annotation in model.annotations {
+            drawFlattened(
+                annotation: annotation,
+                imageHeight: CGFloat(pixelH),
+                scaleX: scaleX,
+                scaleY: scaleY
+            )
+        }
+        NSGraphicsContext.restoreGraphicsState()
+
+        guard let output = context.makeImage() else { return nil }
+        return NSImage(cgImage: output, size: baseImage.size)
     }
 
-    private func drawFlattened(annotation: AnnotationRecord, imageHeight: CGFloat) {
+    static func flatten(baseImage: NSImage, model: AnnotationCanvasModel) -> NSImage? {
+        flatten(baseImage: baseImage, model: model, composeSize: nil)
+    }
+
+    private func drawFlattened(
+        annotation: AnnotationRecord,
+        imageHeight: CGFloat,
+        scaleX: CGFloat = 1,
+        scaleY: CGFloat = 1
+    ) {
         annotation.color.setStroke()
         annotation.color.setFill()
 
         switch annotation.kind {
         case .rectangle(let rect):
-            let path = NSBezierPath(rect: flippedRect(rect, imageHeight: imageHeight))
-            path.lineWidth = annotation.lineWidth
+            let path = NSBezierPath(rect: flippedRect(scaledRect(rect, scaleX: scaleX, scaleY: scaleY), imageHeight: imageHeight))
+            path.lineWidth = annotation.lineWidth * max(scaleX, scaleY)
             path.stroke()
         case .ellipse(let rect):
-            let path = NSBezierPath(ovalIn: flippedRect(rect, imageHeight: imageHeight))
-            path.lineWidth = annotation.lineWidth
+            let path = NSBezierPath(ovalIn: flippedRect(scaledRect(rect, scaleX: scaleX, scaleY: scaleY), imageHeight: imageHeight))
+            path.lineWidth = annotation.lineWidth * max(scaleX, scaleY)
             path.stroke()
         case .arrow(let start, let end):
-            let flippedStart = flippedPoint(start, imageHeight: imageHeight)
-            let flippedEnd = flippedPoint(end, imageHeight: imageHeight)
-            drawArrow(from: flippedStart, to: flippedEnd, lineWidth: annotation.lineWidth, color: annotation.color)
+            let flippedStart = flippedPoint(scaledPoint(start, scaleX: scaleX, scaleY: scaleY), imageHeight: imageHeight)
+            let flippedEnd = flippedPoint(scaledPoint(end, scaleX: scaleX, scaleY: scaleY), imageHeight: imageHeight)
+            drawArrow(from: flippedStart, to: flippedEnd, lineWidth: annotation.lineWidth * max(scaleX, scaleY), color: annotation.color)
         case .text(let point, let text):
+            let lineScale = max(scaleX, scaleY)
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: max(14, annotation.lineWidth * 5)),
+                .font: NSFont.systemFont(ofSize: max(14, annotation.lineWidth * 5 * lineScale)),
                 .foregroundColor: annotation.color
             ]
-            (text as NSString).draw(at: flippedPoint(point, imageHeight: imageHeight), withAttributes: attributes)
+            (text as NSString).draw(
+                at: flippedPoint(scaledPoint(point, scaleX: scaleX, scaleY: scaleY), imageHeight: imageHeight),
+                withAttributes: attributes
+            )
         case .mosaic(let rect):
-            drawFlattenedMosaic(in: rect, imageHeight: imageHeight)
+            drawFlattenedMosaic(
+                in: scaledRect(rect, scaleX: scaleX, scaleY: scaleY),
+                imageHeight: imageHeight
+            )
         case .pencil(let points):
-            drawFlattenedFreehand(points, imageHeight: imageHeight, color: annotation.color, lineWidth: annotation.lineWidth, alpha: 1)
+            drawFlattenedFreehand(
+                points,
+                imageHeight: imageHeight,
+                scaleX: scaleX,
+                scaleY: scaleY,
+                color: annotation.color,
+                lineWidth: annotation.lineWidth * max(scaleX, scaleY),
+                alpha: 1
+            )
         case .highlighter(let points):
-            drawFlattenedFreehand(points, imageHeight: imageHeight, color: annotation.color, lineWidth: annotation.lineWidth, alpha: 0.35)
+            drawFlattenedFreehand(
+                points,
+                imageHeight: imageHeight,
+                scaleX: scaleX,
+                scaleY: scaleY,
+                color: annotation.color,
+                lineWidth: annotation.lineWidth * max(scaleX, scaleY),
+                alpha: 0.35
+            )
         }
     }
 
-    private func drawFlattenedFreehand(_ points: [NSPoint], imageHeight: CGFloat, color: NSColor, lineWidth: CGFloat, alpha: CGFloat) {
+    private func scaledRect(_ rect: NSRect, scaleX: CGFloat, scaleY: CGFloat) -> NSRect {
+        NSRect(
+            x: rect.origin.x * scaleX,
+            y: rect.origin.y * scaleY,
+            width: rect.width * scaleX,
+            height: rect.height * scaleY
+        )
+    }
+
+    private func scaledPoint(_ point: NSPoint, scaleX: CGFloat, scaleY: CGFloat) -> NSPoint {
+        NSPoint(x: point.x * scaleX, y: point.y * scaleY)
+    }
+
+    private func drawFlattenedFreehand(
+        _ points: [NSPoint],
+        imageHeight: CGFloat,
+        scaleX: CGFloat = 1,
+        scaleY: CGFloat = 1,
+        color: NSColor,
+        lineWidth: CGFloat,
+        alpha: CGFloat
+    ) {
         guard points.count >= 2 else { return }
         let path = NSBezierPath()
-        path.move(to: flippedPoint(points[0], imageHeight: imageHeight))
+        path.move(to: flippedPoint(scaledPoint(points[0], scaleX: scaleX, scaleY: scaleY), imageHeight: imageHeight))
         for point in points.dropFirst() {
-            path.line(to: flippedPoint(point, imageHeight: imageHeight))
+            path.line(to: flippedPoint(scaledPoint(point, scaleX: scaleX, scaleY: scaleY), imageHeight: imageHeight))
         }
         path.lineWidth = lineWidth
         color.withAlphaComponent(alpha).setStroke()
@@ -578,7 +758,7 @@ final class AnnotationCanvasView: NSView {
     }
 
     private func drawFlattenedMosaic(in rect: NSRect, imageHeight: CGFloat) {
-        guard let cgImage = baseImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        guard let cgImage = ScreenshotImageProcessor.bestCGImage(from: baseImage) else { return }
         let flipped = flippedRect(rect, imageHeight: imageHeight)
         let sourceRect = CGRect(
             x: flipped.origin.x,
@@ -594,7 +774,7 @@ final class AnnotationCanvasView: NSView {
         let scale = Float(max(8, min(sourceRect.width, sourceRect.height) / 12))
         guard let output = applyPixellate(to: ciImage, scale: scale) else { return }
 
-        let context = CIContext()
+        let context = ScreenshotImageProcessor.sharedCIContext
         guard let result = context.createCGImage(output, from: output.extent) else { return }
         let mosaicImage = NSImage(cgImage: result, size: flipped.size)
         mosaicImage.draw(in: flipped)
