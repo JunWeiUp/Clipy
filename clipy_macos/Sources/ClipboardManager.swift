@@ -285,6 +285,23 @@ struct HistoryEntry: Codable {
         useCount = try container.decodeIfPresent(Int.self, forKey: .useCount) ?? 0
         textPath = try container.decodeIfPresent(String.self, forKey: .textPath)
     }
+
+    var listDisplayTitle: String {
+        switch item {
+        case .image:
+            if isScreenshotCapture {
+                return L10n.t(.screenshot)
+            }
+            return L10n.t(.historyTypeImage)
+        default:
+            return item.title
+        }
+    }
+
+    private var isScreenshotCapture: Bool {
+        sourceBundleId == Bundle.main.bundleIdentifier
+            || sourceApp?.localizedCaseInsensitiveContains("screenshot") == true
+    }
 }
 
 struct FileHistoryItem: Codable {
@@ -526,6 +543,10 @@ class ClipboardManager {
         if let fileURLs = readFileURLsFromPasteboard(), !fileURLs.isEmpty {
             return .files(fileURLs)
         }
+        // Prefer plain text when the pasteboard also carries HTML/RTF (common for browsers and editors).
+        if let newString = pasteboard.string(forType: .string), !newString.isEmpty {
+            return .text(newString)
+        }
         if let rtfData = pasteboard.data(forType: .rtf) {
             return .rtf(store.store(data: rtfData, kind: .rtf))
         }
@@ -537,9 +558,6 @@ class ClipboardManager {
         }
         if let imageData = pasteboard.data(forType: .tiff) ?? pasteboard.data(forType: .png) {
             return .image(store.store(data: imageData, kind: .image))
-        }
-        if let newString = pasteboard.string(forType: .string), !newString.isEmpty {
-            return .text(newString)
         }
         return nil
     }
@@ -634,10 +652,8 @@ class ClipboardManager {
         let hash = contentHash(for: item)
         appLog("Adding to history: \(item.title), Hash: \(hash?.prefix(8) ?? "N/A")")
 
-        if let nh = hash, nh != lastSyncHash {
-            if case .text(let str) = item {
-                SyncManager.shared.broadcastSync(content: str, hash: nh)
-            }
+        if let sync = plainTextForLANSync(from: item), sync.hash != lastSyncHash {
+            SyncManager.shared.broadcastSync(content: sync.text, hash: sync.hash)
         }
 
         let searchIndex = HistorySearchIndexBuilder.buildIndex(for: item)
@@ -1090,6 +1106,43 @@ class ClipboardManager {
         default:
             return false
         }
+    }
+
+    /// Resolves LAN-syncable plain text even when history stores HTML/RTF rich content.
+    private func plainTextForLANSync(from item: HistoryItem) -> (text: String, hash: String)? {
+        if let pasted = pasteboard.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !pasted.isEmpty,
+           let hash = contentHash(for: .text(pasted)) {
+            return (pasted, hash)
+        }
+
+        if case .text(let str) = item, let hash = contentHash(for: item) {
+            return (str, hash)
+        }
+
+        let store = HistoryMediaStore.shared
+        switch item {
+        case .html(let path):
+            guard let data = store.data(at: path),
+                  let html = HistoryPreviewSupport.htmlString(from: data) else { return nil }
+            let plain = stripHTMLTags(html).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !plain.isEmpty, let hash = contentHash(for: .text(plain)) else { return nil }
+            return (plain, hash)
+        case .rtf(let path):
+            guard let data = store.data(at: path),
+                  let attributed = NSAttributedString(rtf: data, documentAttributes: nil) else { return nil }
+            let plain = attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !plain.isEmpty, let hash = contentHash(for: .text(plain)) else { return nil }
+            return (plain, hash)
+        default:
+            return nil
+        }
+    }
+
+    private func stripHTMLTags(_ html: String) -> String {
+        html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
     }
     
     private func contentHash(for item: HistoryItem) -> String? {

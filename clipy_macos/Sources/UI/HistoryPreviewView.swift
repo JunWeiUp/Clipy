@@ -178,8 +178,8 @@ struct HistoryPreviewView: View {
 
     @ViewBuilder
     private func imagePreview(path: String) -> some View {
-        let url = URL(fileURLWithPath: path)
-        if let image = NSImage(contentsOf: url) {
+        if let data = HistoryMediaStore.shared.data(at: path),
+           let image = NSImage(data: data) {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFit()

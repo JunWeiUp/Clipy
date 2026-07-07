@@ -24,8 +24,10 @@ class MainActivity: FlutterActivity() {
     private val STORAGE_CHANNEL = "com.clipyclone.clipy_android/storage"
     private val NOTIFICATIONS_CHANNEL = "com.clipyclone.clipy_android/notifications"
     private val COLLECTOR_CHANNEL = "com.clipyclone.clipy_android/collector"
+    private val CLIPBOARD_CHANNEL = "com.clipyclone.clipy_android/clipboard"
     private val STORAGE_PERMISSION_REQUEST_CODE = 1001
     private val COLLECTOR_PERMISSION_REQUEST_CODE = 1002
+    private var clipboardChangeListener: ClipboardChangeListener? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -173,10 +175,30 @@ class MainActivity: FlutterActivity() {
             }
         }
 
+        val clipboardChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CLIPBOARD_CHANNEL)
+        clipboardChangeListener = ClipboardChangeListener(this)
+        clipboardChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "startMonitoring" -> {
+                    clipboardChangeListener?.attach(clipboardChannel)
+                    result.success(null)
+                }
+                "stopMonitoring" -> {
+                    clipboardChangeListener?.detach()
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
         val collectorChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, COLLECTOR_CHANNEL)
         CollectorEventBridge.setMethodChannel(collectorChannel)
         collectorChannel.setMethodCallHandler { call, result ->
             when (call.method) {
+                "reloadCollectorConfig" -> {
+                    reloadCollectorService()
+                    result.success(null)
+                }
                 "startForegroundService" -> {
                     val intent = Intent(this, CollectorForegroundService::class.java).apply {
                         action = CollectorForegroundService.ACTION_START
@@ -247,10 +269,42 @@ class MainActivity: FlutterActivity() {
         ActivityCompat.requestPermissions(this, missing, COLLECTOR_PERMISSION_REQUEST_CODE)
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != COLLECTOR_PERMISSION_REQUEST_CODE) return
+        if (grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
+            reloadCollectorService()
+        }
+    }
+
+    private fun reloadCollectorService() {
+        val intent = Intent(this, CollectorForegroundService::class.java).apply {
+            action = CollectorForegroundService.ACTION_RELOAD
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                startForegroundService(intent)
+            } catch (_: Exception) {
+                startService(intent)
+            }
+        } else {
+            startService(intent)
+        }
+    }
+
+    override fun onDestroy() {
+        clipboardChangeListener?.detach()
+        clipboardChangeListener = null
+        super.onDestroy()
+    }
+
     private fun openPermissionSettings(type: String) {
         val intent = when (type) {
             "notification_listener" -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-            "location" -> Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
             "battery" -> Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
             "app_details" -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                 data = Uri.fromParts("package", packageName, null)

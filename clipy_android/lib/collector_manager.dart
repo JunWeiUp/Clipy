@@ -1,12 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'database/collector_repository.dart';
 import 'log_manager.dart';
 import 'models.dart';
-import 'storage_paths.dart';
 import 'sync_manager.dart';
 
 class CollectorManager {
@@ -14,56 +13,47 @@ class CollectorManager {
   CollectorManager._();
 
   static const _channel = MethodChannel('com.clipyclone.clipy_android/collector');
-  static const _historyFileName = 'collector_events.jsonl';
-  static const _maxRecentEvents = 100;
-  static const _maxBufferedEvents = 500;
-  static const _duplicateNotificationWindowMs = 30000;
   static const _duplicateSmsWindowMs = 5000;
-  static const _duplicateLocationWindowMs = 60000;
-  static const _duplicateLocationDistanceMeters = 50.0;
 
-  bool isEnabled = true;
+  bool isEnabled = false;
   final Map<String, bool> categoryEnabled = {
     for (final category in CollectorCategories.all) category: true,
   };
 
-  File? _historyFile;
-  final List<CollectorEvent> _recentEvents = [];
-  final List<CollectorEvent> _pendingEvents = [];
-  Future<void> _storageWriteQueue = Future.value();
+  final _eventsChangedController = StreamController<void>.broadcast();
+  Stream<void> get onEventsChanged => _eventsChangedController.stream;
 
-  final _eventsChangedController =
-      StreamController<List<CollectorEvent>>.broadcast();
-  Stream<List<CollectorEvent>> get onEventsChanged =>
-      _eventsChangedController.stream;
-  List<CollectorEvent> get recentEvents => List.unmodifiable(_recentEvents);
+  Future<List<CollectorEvent>> fetchPage({
+    required int offset,
+    required int limit,
+    String? category,
+  }) {
+    return CollectorRepository.instance.fetchPage(
+      offset: offset,
+      limit: limit,
+      category: category,
+    );
+  }
+
+  Future<int> count({String? category}) =>
+      CollectorRepository.instance.count(category: category);
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    isEnabled = prefs.getBool('collectorEnabled') ?? true;
+    isEnabled = prefs.getBool('collectorEnabled') ?? false;
     for (final category in CollectorCategories.all) {
       categoryEnabled[category] =
           prefs.getBool('collectorCategory_$category') ?? true;
     }
 
-    await _initStorage();
-    await _loadRecentFromDisk();
     _channel.setMethodCallHandler(_handleMethodCall);
 
     if (isEnabled) {
       await startForegroundService();
+      if (await hasSmsPermissions()) {
+        await reloadCollectorConfig();
+      }
     }
-    await _alignNotificationCategoryWithNotificationManager();
-  }
-
-  Future<void> _alignNotificationCategoryWithNotificationManager() async {
-    final prefs = await SharedPreferences.getInstance();
-    final enabled = prefs.getBool('notificationSyncEnabled') ?? true;
-    categoryEnabled[CollectorCategories.notification] = enabled;
-    await prefs.setBool(
-      'collectorCategory_${CollectorCategories.notification}',
-      enabled,
-    );
   }
 
   Future<dynamic> _handleMethodCall(MethodCall call) async {
@@ -96,6 +86,8 @@ class CollectorManager {
     String? id,
   }) async {
     if (!isEnabled) return;
+    // Clipboard uses text/plain via SyncManager — not collector/event.
+    if (category == CollectorCategories.clipboard) return;
     if (categoryEnabled[category] != true) return;
 
     final event = CollectorEvent(
@@ -106,33 +98,15 @@ class CollectorManager {
       payload: _normalizePayload(payload),
     );
 
-    if (_isDuplicate(event)) return;
+    if (await _isDuplicate(event)) return;
 
-    _rememberEvent(event);
-    await _appendToHistoryFile(event);
-    _eventsChangedController.add(_recentEvents);
+    await CollectorRepository.instance.insert(event);
+    _eventsChangedController.add(null);
 
     if (SyncManager.instance.isEnabled) {
       await _broadcastEvent(event);
       await _flushPendingEvents();
-    } else {
-      _enqueuePending(event);
     }
-  }
-
-  Future<void> emitClipboard({
-    required String text,
-    required String hash,
-    String mimeType = 'text/plain',
-  }) async {
-    await emit(
-      category: CollectorCategories.clipboard,
-      payload: {
-        'text': text,
-        'hash': hash,
-        'mimeType': mimeType,
-      },
-    );
   }
 
   Future<void> setEnabled(bool value) async {
@@ -150,25 +124,22 @@ class CollectorManager {
     categoryEnabled[category] = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('collectorCategory_$category', value);
+    if (Platform.isAndroid && isEnabled) {
+      await reloadCollectorConfig();
+    }
   }
 
-  Future<void> syncNotificationCategoryEnabled(bool value) async {
-    categoryEnabled[CollectorCategories.notification] = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(
-      'collectorCategory_${CollectorCategories.notification}',
-      value,
-    );
-  }
-
-  Future<void> broadcastNotificationToMac(CollectorEvent event) async {
-    if (!isEnabled) return;
-    if (categoryEnabled[CollectorCategories.notification] != true) return;
-    if (!SyncManager.instance.isEnabled) return;
-    await SyncManager.instance.broadcastCollectorEvent(
-      content: jsonEncode(event.toJson()),
-      hash: event.id,
-    );
+  Future<void> reloadCollectorConfig() async {
+    if (!Platform.isAndroid) return;
+    if (isEnabled) {
+      await startForegroundService();
+    }
+    try {
+      await _channel.invokeMethod('reloadCollectorConfig');
+    } catch (e) {
+      appLog('CollectorManager: reload collector config failed: $e',
+          level: 'warning');
+    }
   }
 
   Future<void> startForegroundService() async {
@@ -271,28 +242,24 @@ class CollectorManager {
       content: content,
       hash: event.id,
     );
+    await CollectorRepository.instance.markSynced(event.id, synced: true);
   }
 
   Future<void> _flushPendingEvents() async {
-    if (_pendingEvents.isEmpty || !SyncManager.instance.isEnabled) return;
-    final pending = List<CollectorEvent>.from(_pendingEvents);
-    _pendingEvents.clear();
+    if (!SyncManager.instance.isEnabled) return;
+    if (SyncManager.instance.authorizedPeerIds.isEmpty) return;
+    final reachable = SyncManager.instance.availablePeers.where(
+      (peer) => SyncManager.instance.authorizedPeerIds.contains(peer.peerId),
+    );
+    if (reachable.isEmpty) return;
+
+    final pending = await CollectorRepository.instance.fetchPending(limit: 500);
     for (final event in pending) {
+      if (event.category == CollectorCategories.clipboard) {
+        await CollectorRepository.instance.markSynced(event.id, synced: true);
+        continue;
+      }
       await _broadcastEvent(event);
-    }
-  }
-
-  void _enqueuePending(CollectorEvent event) {
-    _pendingEvents.add(event);
-    if (_pendingEvents.length > _maxBufferedEvents) {
-      _pendingEvents.removeRange(0, _pendingEvents.length - _maxBufferedEvents);
-    }
-  }
-
-  void _rememberEvent(CollectorEvent event) {
-    _recentEvents.insert(0, event);
-    if (_recentEvents.length > _maxRecentEvents) {
-      _recentEvents.removeRange(_maxRecentEvents, _recentEvents.length);
     }
   }
 
@@ -306,174 +273,51 @@ class CollectorManager {
     });
   }
 
-  bool _isDuplicate(CollectorEvent incoming) {
-    final candidates = [..._recentEvents, ..._pendingEvents];
+  Future<bool> _isDuplicate(CollectorEvent incoming) async {
     switch (incoming.category) {
-      case CollectorCategories.notification:
-        return candidates.any((existing) {
-          if (existing.category != incoming.category) return false;
-          if ((existing.timestamp - incoming.timestamp).abs() >
-              _duplicateNotificationWindowMs) {
-            return false;
-          }
-          final key = incoming.payload['notificationKey'];
-          if (key != null && key == existing.payload['notificationKey']) {
-            return true;
-          }
-          return existing.payload['title'] == incoming.payload['title'] &&
-              existing.payload['body'] == incoming.payload['body'] &&
-              existing.payload['packageName'] == incoming.payload['packageName'];
-        });
       case CollectorCategories.sms:
-        return candidates.any((existing) {
-          if (existing.category != incoming.category) return false;
-          if ((existing.timestamp - incoming.timestamp).abs() >
-              _duplicateSmsWindowMs) {
-            return false;
-          }
-          return existing.payload['address'] == incoming.payload['address'] &&
-              existing.payload['body'] == incoming.payload['body'];
-        });
+        return CollectorRepository.instance.hasRecentDuplicate(
+          category: incoming.category,
+          sinceMs: incoming.timestamp - _duplicateSmsWindowMs,
+          payloadMatch: {
+            'address': incoming.payload['address'],
+            'body': incoming.payload['body'],
+          },
+        );
       case CollectorCategories.call:
-        return candidates.any((existing) {
-          if (existing.category != incoming.category) return false;
-          return existing.payload['phoneNumber'] ==
-                  incoming.payload['phoneNumber'] &&
-              existing.payload['state'] == incoming.payload['state'] &&
-              (existing.timestamp - incoming.timestamp).abs() <= 2000;
-        });
+        return CollectorRepository.instance.hasRecentDuplicate(
+          category: incoming.category,
+          sinceMs: incoming.timestamp - 2000,
+          payloadMatch: {
+            'phoneNumber': incoming.payload['phoneNumber'],
+            'state': incoming.payload['state'],
+          },
+        );
       case CollectorCategories.callLog:
         final logId = incoming.payload['logId'];
         if (logId != null && logId.toString().isNotEmpty) {
-          return candidates.any((existing) =>
-              existing.category == incoming.category &&
-              existing.payload['logId'] == logId);
+          return CollectorRepository.instance.hasPayloadMatch(
+            category: incoming.category,
+            payloadMatch: {'logId': logId},
+          );
         }
-        return candidates.any((existing) {
-          if (existing.category != incoming.category) return false;
-          return existing.payload['phoneNumber'] ==
-                  incoming.payload['phoneNumber'] &&
-              existing.payload['type'] == incoming.payload['type'] &&
-              existing.payload['date'] == incoming.payload['date'];
-        });
+        return CollectorRepository.instance.hasPayloadMatch(
+          category: incoming.category,
+          payloadMatch: {
+            'phoneNumber': incoming.payload['phoneNumber'],
+            'type': incoming.payload['type'],
+            'date': incoming.payload['date'],
+          },
+        );
       case CollectorCategories.clipboard:
         final hash = incoming.payload['hash'];
         if (hash == null || hash.toString().isEmpty) return false;
-        return candidates.any((existing) =>
-            existing.category == incoming.category &&
-            existing.payload['hash'] == hash);
-      case CollectorCategories.location:
-        final lat = _asDouble(incoming.payload['latitude']);
-        final lon = _asDouble(incoming.payload['longitude']);
-        if (lat == null || lon == null) return false;
-        return candidates.any((existing) {
-          if (existing.category != incoming.category) return false;
-          if ((existing.timestamp - incoming.timestamp).abs() >
-              _duplicateLocationWindowMs) {
-            return false;
-          }
-          final existingLat = _asDouble(existing.payload['latitude']);
-          final existingLon = _asDouble(existing.payload['longitude']);
-          if (existingLat == null || existingLon == null) return false;
-          return _distanceMeters(lat, lon, existingLat, existingLon) <
-              _duplicateLocationDistanceMeters;
-        });
-      case CollectorCategories.system:
-        return candidates.any((existing) {
-          if (existing.category != incoming.category) return false;
-          return existing.payload['batteryLevel'] ==
-                  incoming.payload['batteryLevel'] &&
-              existing.payload['isCharging'] == incoming.payload['isCharging'] &&
-              existing.payload['networkType'] ==
-                  incoming.payload['networkType'] &&
-              existing.payload['ssid'] == incoming.payload['ssid'];
-        });
+        return CollectorRepository.instance.hasPayloadMatch(
+          category: incoming.category,
+          payloadMatch: {'hash': hash},
+        );
       default:
         return false;
     }
-  }
-
-  double? _asDouble(dynamic value) {
-    if (value == null) return null;
-    if (value is num) return value.toDouble();
-    return double.tryParse(value.toString());
-  }
-
-  double _distanceMeters(
-    double lat1,
-    double lon1,
-    double lat2,
-    double lon2,
-  ) {
-    const earthRadius = 6371000.0;
-    final dLat = _toRadians(lat2 - lat1);
-    final dLon = _toRadians(lon2 - lon1);
-    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(_toRadians(lat1)) *
-            math.cos(_toRadians(lat2)) *
-            math.sin(dLon / 2) *
-            math.sin(dLon / 2);
-    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
-    return earthRadius * c;
-  }
-
-  double _toRadians(double degrees) => degrees * math.pi / 180.0;
-
-  Future<void> _initStorage() async {
-    final dir = await StoragePaths.appStorageDirectory();
-    _historyFile = File('${dir.path}/$_historyFileName');
-  }
-
-  Future<void> _loadRecentFromDisk() async {
-    final file = _historyFile;
-    if (file == null || !await file.exists()) return;
-    try {
-      final lines = await file.readAsLines();
-      final loaded = lines
-          .where((line) => line.trim().isNotEmpty)
-          .map((line) => CollectorEvent.fromJson(jsonDecode(line)))
-          .toList();
-      _recentEvents
-        ..clear()
-        ..addAll(
-          loaded.reversed
-              .where((event) => event.category != CollectorCategories.notification)
-              .take(_maxRecentEvents),
-        );
-      if (loaded.any((event) => event.category == CollectorCategories.notification)) {
-        await _rewriteHistoryFile();
-      }
-      _eventsChangedController.add(_recentEvents);
-    } catch (e) {
-      appLog('CollectorManager: load history error: $e', level: 'warning');
-    }
-  }
-
-  Future<void> _rewriteHistoryFile() async {
-    final file = _historyFile;
-    if (file == null) return;
-    final snapshot = List<CollectorEvent>.from(_recentEvents);
-    _storageWriteQueue = _storageWriteQueue.then((_) async {
-      final sink = file.openWrite(mode: FileMode.write);
-      for (final entry in snapshot.reversed) {
-        sink.writeln(jsonEncode(entry.toJson()));
-      }
-      await sink.flush();
-      await sink.close();
-    });
-    await _storageWriteQueue;
-  }
-
-  Future<void> _appendToHistoryFile(CollectorEvent event) async {
-    final file = _historyFile;
-    if (file == null) return;
-    _storageWriteQueue = _storageWriteQueue.then((_) async {
-      await file.writeAsString(
-        '${jsonEncode(event.toJson())}\n',
-        mode: FileMode.append,
-        flush: true,
-      );
-    });
-    await _storageWriteQueue;
   }
 }

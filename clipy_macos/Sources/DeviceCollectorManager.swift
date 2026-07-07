@@ -16,12 +16,18 @@ final class DeviceCollectorManager {
     }
 
     func handleRemoteEvent(_ json: String, from deviceId: String) {
-        guard PreferencesManager.shared.isCollectorSyncEnabled else { return }
         guard let data = json.data(using: .utf8),
               var event = try? JSONDecoder().decode(CollectorEvent.self, from: data) else {
             appLog("DeviceCollectorManager: failed to decode collector event", level: .error)
             return
         }
+
+        // Clipboard sync uses text/plain only; ignore legacy collector clipboard events.
+        if event.category == CollectorCategory.clipboard.rawValue {
+            return
+        }
+
+        guard PreferencesManager.shared.isCollectorSyncEnabled else { return }
 
         if !isCategoryEnabled(event.category) { return }
         if repository.isDuplicate(event) { return }
@@ -81,28 +87,28 @@ final class DeviceCollectorManager {
     }
 
     private func bridgeToSpecializedManagers(_ event: CollectorEvent) {
-        guard event.category == CollectorCategory.notification.rawValue else {
-            maybeShowAlert(for: event)
+        if event.category == CollectorCategory.notification.rawValue {
+            let notificationJSON: [String: Any] = [
+                "id": event.id,
+                "notificationKey": event.payload["notificationKey"] as Any,
+                "packageName": event.payload["packageName"] ?? "",
+                "appName": event.payload["appName"] ?? "",
+                "title": event.payload["title"] ?? "",
+                "subtitle": event.payload["subtitle"] as Any,
+                "body": event.payload["body"] ?? "",
+                "postTime": event.timestamp,
+                "groupKey": event.payload["groupKey"] as Any,
+                "isClearable": (event.payload["isClearable"] ?? "true") == "true",
+            ]
+
+            if let data = try? JSONSerialization.data(withJSONObject: notificationJSON),
+               let json = String(data: data, encoding: .utf8) {
+                NotificationManager.shared.handleRemoteNotification(json, from: event.deviceId)
+            }
             return
         }
 
-        let notificationJSON: [String: Any] = [
-            "id": event.id,
-            "notificationKey": event.payload["notificationKey"] as Any,
-            "packageName": event.payload["packageName"] ?? "",
-            "appName": event.payload["appName"] ?? "",
-            "title": event.payload["title"] ?? "",
-            "subtitle": event.payload["subtitle"] as Any,
-            "body": event.payload["body"] ?? "",
-            "postTime": event.timestamp,
-            "groupKey": event.payload["groupKey"] as Any,
-            "isClearable": (event.payload["isClearable"] ?? "true") == "true",
-        ]
-
-        if let data = try? JSONSerialization.data(withJSONObject: notificationJSON),
-           let json = String(data: data, encoding: .utf8) {
-            NotificationManager.shared.handleRemoteNotification(json, from: event.deviceId)
-        }
+        maybeShowAlert(for: event)
     }
 
     private func maybeShowAlert(for event: CollectorEvent) {

@@ -31,7 +31,8 @@ enum HistorySearchIndexBuilder {
 
     static func scheduleOCR(for entry: HistoryEntry, contentHash: String, updater: @escaping (String, String) -> Void) {
         guard case .image(let path) = entry.item,
-              let image = NSImage(contentsOf: URL(fileURLWithPath: path)),
+              let data = HistoryMediaStore.shared.data(at: path),
+              let image = NSImage(data: data),
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
 
         indexQueue.async {

@@ -3,8 +3,6 @@ import 'package:flutter/material.dart';
 import 'app_localizations.dart';
 import 'collector_manager.dart';
 import 'models.dart';
-import 'notification_manager.dart';
-import 'sync_manager.dart';
 
 class CollectorEventsPage extends StatefulWidget {
   const CollectorEventsPage({super.key});
@@ -14,51 +12,67 @@ class CollectorEventsPage extends StatefulWidget {
 }
 
 class _CollectorEventsPageState extends State<CollectorEventsPage> {
+  static const _pageSize = 50;
+
+  final ScrollController _scrollController = ScrollController();
+  final List<CollectorEvent> _events = [];
   StreamSubscription? _eventsSubscription;
-  StreamSubscription? _notificationsSubscription;
+  bool _loading = false;
+  bool _hasMore = true;
 
   @override
   void initState() {
     super.initState();
+    _loadMore();
+    _scrollController.addListener(_onScroll);
     _eventsSubscription =
-        CollectorManager.instance.onEventsChanged.listen((_) {
-      if (mounted) setState(() {});
-    });
-    _notificationsSubscription =
-        NotificationManager.instance.onNotificationsChanged.listen((_) {
-      if (mounted) setState(() {});
-    });
+        CollectorManager.instance.onEventsChanged.listen((_) => _reload());
   }
 
   @override
   void dispose() {
     _eventsSubscription?.cancel();
-    _notificationsSubscription?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  List<CollectorEvent> _mergedEvents() {
-    final deviceId = SyncManager.instance.deviceId;
-    final events = CollectorManager.instance.recentEvents
-        .where((event) => event.category != CollectorCategories.notification)
-        .toList();
-    final notifications = NotificationManager.instance.activeNotifications
-        .map(
-          (entry) => CollectorEvent.fromNotificationEntry(entry, deviceId),
-        )
-        .toList();
+  void _reload() {
+    if (!mounted) return;
+    _events.clear();
+    _hasMore = true;
+    _loadMore(reset: true);
+  }
 
-    final merged = [...events, ...notifications]
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    return merged.take(100).toList();
+  void _onScroll() {
+    if (!_hasMore || _loading) return;
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _loadMore();
+    }
+  }
+
+  Future<void> _loadMore({bool reset = false}) async {
+    if (_loading) return;
+    _loading = true;
+    final offset = reset ? 0 : _events.length;
+    final page = await CollectorManager.instance.fetchPage(
+      offset: offset,
+      limit: _pageSize,
+    );
+    if (!mounted) return;
+    setState(() {
+      if (reset) _events.clear();
+      _events.addAll(page);
+      _hasMore = page.length == _pageSize;
+      _loading = false;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final events = _mergedEvents();
 
-    if (events.isEmpty) {
+    if (_events.isEmpty && !_loading) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -72,10 +86,17 @@ class _CollectorEventsPageState extends State<CollectorEventsPage> {
     }
 
     return ListView.builder(
+      controller: _scrollController,
       padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: events.length,
+      itemCount: _events.length + (_hasMore ? 1 : 0),
       itemBuilder: (context, index) {
-        return _EventTile(event: events[index], l10n: l10n);
+        if (index >= _events.length) {
+          return const Padding(
+            padding: EdgeInsets.all(16),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        return _EventTile(event: _events[index], l10n: l10n);
       },
     );
   }
@@ -110,8 +131,6 @@ class _EventTile extends StatelessWidget {
 
 IconData _iconForCategory(String category) {
   switch (category) {
-    case CollectorCategories.notification:
-      return Icons.notifications_outlined;
     case CollectorCategories.sms:
       return Icons.sms_outlined;
     case CollectorCategories.call:
@@ -120,10 +139,6 @@ IconData _iconForCategory(String category) {
       return Icons.history;
     case CollectorCategories.clipboard:
       return Icons.content_paste;
-    case CollectorCategories.location:
-      return Icons.location_on_outlined;
-    case CollectorCategories.system:
-      return Icons.battery_charging_full_outlined;
     default:
       return Icons.sensors;
   }
@@ -132,8 +147,6 @@ IconData _iconForCategory(String category) {
 String _subtitleForEvent(CollectorEvent event) {
   final payload = event.payload;
   switch (event.category) {
-    case CollectorCategories.notification:
-      return _notificationSubtitle(payload);
     case CollectorCategories.sms:
       return '${payload['address'] ?? ''}: ${payload['body'] ?? ''}';
     case CollectorCategories.call:
@@ -141,29 +154,7 @@ String _subtitleForEvent(CollectorEvent event) {
       return '${payload['phoneNumber'] ?? ''} ${payload['state'] ?? payload['type'] ?? ''}';
     case CollectorCategories.clipboard:
       return (payload['text'] ?? '').toString();
-    case CollectorCategories.location:
-      return '${payload['latitude']}, ${payload['longitude']}';
-    case CollectorCategories.system:
-      return '${payload['batteryLevel']}% ${payload['networkType']}';
     default:
       return payload.values.join(' · ');
   }
-}
-
-String _notificationSubtitle(Map<String, dynamic> payload) {
-  final appName = (payload['appName'] ?? '').toString();
-  final title = (payload['title'] ?? '').toString().trim();
-  final subtitle = (payload['subtitle'] ?? '').toString().trim();
-  final body = (payload['body'] ?? '').toString().trim();
-  final headline = title.isNotEmpty
-      ? title
-      : (body.isNotEmpty ? body : appName);
-  final lines = <String>['$appName: $headline'];
-  if (subtitle.isNotEmpty && subtitle != headline) {
-    lines.add(subtitle);
-  }
-  if (body.isNotEmpty && body != headline && body != subtitle) {
-    lines.add(body);
-  }
-  return lines.join('\n');
 }

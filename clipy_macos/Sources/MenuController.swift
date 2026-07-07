@@ -262,8 +262,15 @@ class MenuController: NSObject {
         editSnippetsItem.target = self
         menu.addItem(editSnippetsItem)
         
-        let preferencesItem = NSMenuItem(title: L10n.t(.preferences) + "...", action: #selector(openPreferences), keyEquivalent: ",")
-        preferencesItem.target = self
+        let preferencesItem = NSMenuItem(title: L10n.t(.preferences), action: nil, keyEquivalent: "")
+        let preferencesSubmenu = NSMenu()
+        let generalPreferencesItem = NSMenuItem(title: L10n.t(.preferences) + "...", action: #selector(openPreferences), keyEquivalent: ",")
+        generalPreferencesItem.target = self
+        preferencesSubmenu.addItem(generalPreferencesItem)
+        let screenshotPreferencesItem = NSMenuItem(title: L10n.t(.screenshotPreferences) + "...", action: #selector(openScreenshotPreferences), keyEquivalent: "")
+        screenshotPreferencesItem.target = self
+        preferencesSubmenu.addItem(screenshotPreferencesItem)
+        preferencesItem.submenu = preferencesSubmenu
         menu.addItem(preferencesItem)
         
         menu.addItem(NSMenuItem.separator())
@@ -301,8 +308,8 @@ class MenuController: NSObject {
     }
     
     private func makeHistoryMenuItem(summary: HistorySummary, indexInGroup: Int, startIndex: Int) -> NSMenuItem {
-        let title = summary.item.title
-        let displayTitle = title.count > 50 ? String(title.prefix(50)) + "..." : title
+        let rawTitle = summaryDisplayTitle(for: summary)
+        let displayTitle = rawTitle.count > 50 ? String(rawTitle.prefix(50)) + "..." : rawTitle
 
         let menuIndex = (indexInGroup + 1) % 10
         let prefix = "\(menuIndex). "
@@ -334,7 +341,7 @@ class MenuController: NSObject {
         }
 
         if case .html = summary.item {
-            let plainTitle = clipboardManager.plainText(for: summary.asEntry()) ?? title
+            let plainTitle = clipboardManager.plainText(for: summary.asEntry()) ?? rawTitle
             let htmlDisplayTitle = plainTitle.count > 50 ? String(plainTitle.prefix(50)) + "..." : plainTitle
             let htmlItem = NSMenuItem(title: prefix + htmlDisplayTitle, action: nil, keyEquivalent: keyEquivalent)
             let htmlSubmenu = NSMenu()
@@ -361,10 +368,14 @@ class MenuController: NSObject {
         menuItem.toolTip = historyToolTip(for: summary)
 
         if case .image(let path) = summary.item {
-            menuItem.image = HistoryThumbnailCache.thumbnail(for: path)
+            menuItem.image = HistoryThumbnailCache.thumbnail(for: path, size: NSSize(width: 32, height: 32))
         }
 
         return menuItem
+    }
+
+    private func summaryDisplayTitle(for summary: HistorySummary) -> String {
+        summary.asEntry().listDisplayTitle
     }
 
     private func historyToolTip(for summary: HistorySummary) -> String? {
@@ -481,6 +492,11 @@ class MenuController: NSObject {
     @objc private func openPreferences() {
         NSApp.activate(ignoringOtherApps: true)
         SettingsWindow.shared.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func openScreenshotPreferences() {
+        NSApp.activate(ignoringOtherApps: true)
+        ScreenshotSettingsWindow.shared.makeKeyAndOrderFront(nil)
     }
     
     @objc private func openSnippetEditor() {

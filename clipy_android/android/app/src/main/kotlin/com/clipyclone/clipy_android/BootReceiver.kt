@@ -13,6 +13,10 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
+        if (!FlutterPrefs.getBool(context, "collectorEnabled", false)) {
+            return
+        }
+
         val serviceIntent = Intent(context, CollectorForegroundService::class.java).apply {
             action = CollectorForegroundService.ACTION_START
         }

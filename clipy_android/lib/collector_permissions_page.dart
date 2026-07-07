@@ -17,6 +17,7 @@ class _CollectorPermissionsPageState extends State<CollectorPermissionsPage>
     with WidgetsBindingObserver {
   final Map<String, bool> _permissionStates = {};
   bool _awaitingSmsPermission = false;
+  bool _previousSmsGranted = false;
 
   @override
   void initState() {
@@ -41,6 +42,17 @@ class _CollectorPermissionsPageState extends State<CollectorPermissionsPage>
     }
   }
 
+  bool _isSmsGranted(Map<String, bool> states) {
+    return (states['android.permission.READ_SMS'] ?? false) &&
+        (states['android.permission.RECEIVE_SMS'] ?? false);
+  }
+
+  Future<void> _reloadCollectorIfNeeded({required bool smsGranted}) async {
+    if (!CollectorManager.instance.isEnabled) return;
+    if (!smsGranted) return;
+    await CollectorManager.instance.reloadCollectorConfig();
+  }
+
   Future<void> _refreshPermissions({bool showSmsDeniedHint = false}) async {
     final states = <String, bool>{
       'notification_listener':
@@ -54,21 +66,27 @@ class _CollectorPermissionsPageState extends State<CollectorPermissionsPage>
           .checkPermission('android.permission.READ_PHONE_STATE'),
       'android.permission.READ_CALL_LOG': await CollectorManager.instance
           .checkPermission('android.permission.READ_CALL_LOG'),
-      'android.permission.ACCESS_FINE_LOCATION': await CollectorManager.instance
-          .checkPermission('android.permission.ACCESS_FINE_LOCATION'),
       'android.permission.POST_NOTIFICATIONS': await CollectorManager.instance
           .checkPermission('android.permission.POST_NOTIFICATIONS'),
       'battery': await CollectorManager.instance.isBatteryOptimizationIgnored(),
     };
+    final smsGranted = _isSmsGranted(states);
+    final smsNewlyGranted = smsGranted && !_previousSmsGranted;
+
+    if (smsNewlyGranted) {
+      await _reloadCollectorIfNeeded(smsGranted: true);
+    }
+
     if (!mounted) return;
-    setState(() => _permissionStates.addAll(states));
+    setState(() {
+      _permissionStates.addAll(states);
+      _previousSmsGranted = smsGranted;
+    });
 
     if (showSmsDeniedHint) {
       _awaitingSmsPermission = false;
-      final smsGranted = (states['android.permission.READ_SMS'] ?? false) &&
-          (states['android.permission.RECEIVE_SMS'] ?? false);
       if (smsGranted) {
-        await CollectorManager.instance.startForegroundService();
+        await _reloadCollectorIfNeeded(smsGranted: true);
       } else {
         final l10n = context.l10n;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -153,17 +171,6 @@ class _CollectorPermissionsPageState extends State<CollectorPermissionsPage>
           },
         ),
         _PermissionTile(
-          title: l10n.permissionLocation,
-          granted: _permissionStates['android.permission.ACCESS_FINE_LOCATION'] ??
-              false,
-          onRequest: () async {
-            await CollectorManager.instance
-                .requestPermission('android.permission.ACCESS_FINE_LOCATION');
-            await CollectorManager.instance.openPermissionSettings('location');
-            await _refreshPermissions();
-          },
-        ),
-        _PermissionTile(
           title: l10n.permissionPostNotifications,
           granted:
               _permissionStates['android.permission.POST_NOTIFICATIONS'] ?? true,
@@ -184,7 +191,7 @@ class _CollectorPermissionsPageState extends State<CollectorPermissionsPage>
         const SizedBox(height: 16),
         FilledButton.icon(
           onPressed: () async {
-            await CollectorManager.instance.startForegroundService();
+            await CollectorManager.instance.reloadCollectorConfig();
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text(l10n.collectorServiceStarted)),

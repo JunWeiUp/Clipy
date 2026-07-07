@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.LruCache
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.ConcurrentLinkedQueue
 
@@ -14,6 +15,7 @@ class ClipyNotificationListenerService : NotificationListenerService() {
         var instance: ClipyNotificationListenerService? = null
         private var methodChannel: MethodChannel? = null
         private val pendingPostedNotifications = ConcurrentLinkedQueue<Map<String, Any?>>()
+        private val appNameCache = LruCache<String, String>(128)
 
         fun setMethodChannel(channel: MethodChannel) {
             methodChannel = channel
@@ -128,13 +130,16 @@ class ClipyNotificationListenerService : NotificationListenerService() {
     }
 
     private fun getAppName(packageName: String): String {
-        return try {
+        appNameCache.get(packageName)?.let { return it }
+        val appName = try {
             val pm = applicationContext.packageManager
             val appInfo = pm.getApplicationInfo(packageName, 0)
             pm.getApplicationLabel(appInfo).toString()
         } catch (e: Exception) {
             packageName
         }
+        appNameCache.put(packageName, appName)
+        return appName
     }
 
     private fun extrasToMap(extras: Bundle): Map<String, String> {

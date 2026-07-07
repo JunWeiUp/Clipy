@@ -5,7 +5,6 @@ import 'collector_manager.dart';
 import 'models.dart';
 import 'notification_health_banner.dart';
 import 'notification_health_monitor.dart';
-import 'notification_manager.dart';
 import 'sync_manager.dart';
 
 class CollectorStatusPage extends StatefulWidget {
@@ -15,34 +14,56 @@ class CollectorStatusPage extends StatefulWidget {
   State<CollectorStatusPage> createState() => _CollectorStatusPageState();
 }
 
-class _CollectorStatusPageState extends State<CollectorStatusPage> {
+class _CollectorStatusPageState extends State<CollectorStatusPage>
+    with WidgetsBindingObserver {
   StreamSubscription? _devicesSubscription;
-  List<String> _devices = [];
+  List<DiscoveredPeer> _peers = [];
+  bool _smsPermissionsGranted = false;
 
   @override
   void initState() {
     super.initState();
-    _devices = SyncManager.instance.availableDeviceNames;
+    WidgetsBinding.instance.addObserver(this);
+    _peers = SyncManager.instance.availablePeers;
     _devicesSubscription =
-        SyncManager.instance.onDevicesChanged.listen((devices) {
-      if (mounted) setState(() => _devices = devices);
+        SyncManager.instance.onPeersChanged.listen((peers) {
+      if (mounted) setState(() => _peers = peers);
     });
+    _loadSmsPermission();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _devicesSubscription?.cancel();
     super.dispose();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadSmsPermission();
+    }
+  }
+
+  Future<void> _loadSmsPermission() async {
+    final granted = await CollectorManager.instance.hasSmsPermissions();
+    if (mounted) setState(() => _smsPermissionsGranted = granted);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final authorized = SyncManager.instance.authorizedDevices;
-    final connectedMacs =
-        _devices.where((name) => authorized.contains(name)).toList();
+    final authorized = SyncManager.instance.authorizedPeerIds;
+    final connectedMacs = _peers
+        .where((peer) => authorized.contains(peer.peerId))
+        .map((peer) => peer.displayName)
+        .toList();
     final notificationHealth =
         NotificationHealthMonitor.instance.latestStatus;
+    final smsCategoryEnabled =
+        CollectorManager.instance.categoryEnabled[CollectorCategories.sms] ??
+            true;
 
     return Column(
       children: [
@@ -90,6 +111,14 @@ class _CollectorStatusPageState extends State<CollectorStatusPage> {
                           value: l10n.notGranted,
                           ok: false,
                         ),
+                      if (CollectorManager.instance.isEnabled &&
+                          smsCategoryEnabled &&
+                          !_smsPermissionsGranted)
+                        _StatusRow(
+                          label: l10n.permissionSms,
+                          value: l10n.notGranted,
+                          ok: false,
+                        ),
                     ],
                   ),
                 ),
@@ -101,24 +130,16 @@ class _CollectorStatusPageState extends State<CollectorStatusPage> {
               ),
               const SizedBox(height: 8),
               ...CollectorCategories.all.map((category) {
-                final isNotification =
-                    category == CollectorCategories.notification;
-                final enabled = isNotification
-                    ? NotificationManager.instance.isEnabled
-                    : (CollectorManager.instance.categoryEnabled[category] ??
-                        true);
+                final enabled =
+                    CollectorManager.instance.categoryEnabled[category] ?? true;
                 return SwitchListTile(
                   title: Text(l10n.collectorCategoryLabel(category)),
                   value: enabled,
                   onChanged: (value) async {
-                    if (isNotification) {
-                      await NotificationManager.instance.setEnabled(value);
-                    } else {
-                      await CollectorManager.instance.setCategoryEnabled(
-                        category,
-                        value,
-                      );
-                    }
+                    await CollectorManager.instance.setCategoryEnabled(
+                      category,
+                      value,
+                    );
                     if (mounted) setState(() {});
                   },
                 );

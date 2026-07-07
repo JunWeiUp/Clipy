@@ -17,6 +17,8 @@ dependencies:
   encrypt: ^5.0.3
   file_picker: ^11.0.2
   open_filex: ^4.7.0
+  sqflite: ^2.4.2+1
+  path: ^1.9.1
 
 dev_dependencies:
   flutter_test:

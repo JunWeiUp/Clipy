@@ -14,6 +14,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -24,20 +25,20 @@ class CollectorForegroundService : Service() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_START = "com.clipyclone.clipy_android.START_COLLECTOR"
         const val ACTION_STOP = "com.clipyclone.clipy_android.STOP_COLLECTOR"
+        const val ACTION_RELOAD = "com.clipyclone.clipy_android.RELOAD_COLLECTOR"
+        private const val TAG = "ClipyCollectorService"
     }
 
     private var smsReceiver: SmsReceiver? = null
+    private var smsContentObserver: SmsContentObserver? = null
     private var callStateReceiver: CallStateReceiver? = null
-    private var systemStatusReceiver: SystemStatusReceiver? = null
     private var callLogObserver: CallLogObserver? = null
-    private var locationCollector: LocationCollector? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        registerCollectors()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -45,6 +46,11 @@ class CollectorForegroundService : Service() {
             ACTION_STOP -> {
                 stopSelf()
                 return START_NOT_STICKY
+            }
+            ACTION_RELOAD -> {
+                unregisterCollectors()
+                registerCollectors()
+                return START_STICKY
             }
         }
 
@@ -54,30 +60,12 @@ class CollectorForegroundService : Service() {
             buildNotification(),
             foregroundServiceType(),
         )
-        ensureSmsReceiverRegistered()
-        systemStatusReceiver?.emitCurrentStatus(this)
-        locationCollector?.requestUpdate()
+        registerCollectors()
         return START_STICKY
     }
 
     private fun foregroundServiceType(): Int {
-        var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-        if (hasLocationPermission()) {
-            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-        }
-        return type
-    }
-
-    private fun hasLocationPermission(): Boolean {
-        val fine = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-        ) == PackageManager.PERMISSION_GRANTED
-        val coarse = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-        ) == PackageManager.PERMISSION_GRANTED
-        return fine || coarse
+        return ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
     }
 
     override fun onDestroy() {
@@ -86,7 +74,20 @@ class CollectorForegroundService : Service() {
     }
 
     private fun registerCollectors() {
-        ensureSmsReceiverRegistered()
+        if (FlutterPrefs.isCategoryEnabled(this, "sms")) {
+            registerSmsContentObserver()
+            ensureSmsReceiverRegistered()
+        }
+        if (FlutterPrefs.isCategoryEnabled(this, "call")) {
+            registerCallStateReceiver()
+        }
+        if (FlutterPrefs.isCategoryEnabled(this, "call_log")) {
+            registerCallLogObserver()
+        }
+    }
+
+    private fun registerCallStateReceiver() {
+        if (callStateReceiver != null) return
         try {
             callStateReceiver = CallStateReceiver().also {
                 val filter = IntentFilter().apply {
@@ -94,28 +95,42 @@ class CollectorForegroundService : Service() {
                 }
                 registerReceiver(it, filter)
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "CallStateReceiver registration failed", e)
             callStateReceiver = null
         }
+    }
 
-        try {
-            systemStatusReceiver = SystemStatusReceiver().also {
-                val filter = IntentFilter().apply {
-                    addAction(Intent.ACTION_BATTERY_CHANGED)
-                    addAction("android.net.conn.CONNECTIVITY_CHANGE")
-                }
-                registerReceiver(it, filter)
-            }
-        } catch (_: Exception) {
-            systemStatusReceiver = null
-        }
-
+    private fun registerCallLogObserver() {
+        if (callLogObserver != null) return
         callLogObserver = CallLogObserver(this).also { it.start() }
-        locationCollector = LocationCollector(this).also { it.start() }
+    }
+
+    private fun registerSmsContentObserver() {
+        if (smsContentObserver != null) return
+        if (!hasReadSmsPermission()) {
+            Log.w(TAG, "SmsContentObserver skipped: READ_SMS not granted")
+            return
+        }
+        val observer = SmsContentObserver(this)
+        if (observer.start()) {
+            smsContentObserver = observer
+            Log.i(TAG, "SmsContentObserver registered")
+        } else {
+            Log.w(TAG, "SmsContentObserver registration failed")
+        }
     }
 
     private fun ensureSmsReceiverRegistered() {
-        if (smsReceiver != null || !hasSmsPermission()) return
+        if (smsReceiver != null) return
+        if (!hasReceiveSmsPermission()) {
+            Log.d(TAG, "SmsReceiver skipped: RECEIVE_SMS not granted")
+            return
+        }
+        if (!hasReadSmsPermission()) {
+            Log.d(TAG, "SmsReceiver skipped: READ_SMS not granted")
+            return
+        }
         try {
             smsReceiver = SmsReceiver().also { receiver ->
                 val filter = IntentFilter(Telephony.Sms.Intents.SMS_RECEIVED_ACTION)
@@ -131,34 +146,36 @@ class CollectorForegroundService : Service() {
                     registerReceiver(receiver, filter)
                 }
             }
-        } catch (_: Exception) {
+            Log.i(TAG, "SmsReceiver registered")
+        } catch (e: Exception) {
+            Log.w(TAG, "SmsReceiver registration failed", e)
             smsReceiver = null
         }
     }
 
-    private fun hasSmsPermission(): Boolean {
-        val receive = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.RECEIVE_SMS,
-        ) == PackageManager.PERMISSION_GRANTED
-        val read = ContextCompat.checkSelfPermission(
+    private fun hasReadSmsPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.READ_SMS,
         ) == PackageManager.PERMISSION_GRANTED
-        return receive && read
+    }
+
+    private fun hasReceiveSmsPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECEIVE_SMS,
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun unregisterCollectors() {
         smsReceiver?.let { unregisterReceiver(it) }
         callStateReceiver?.let { unregisterReceiver(it) }
-        systemStatusReceiver?.let { unregisterReceiver(it) }
+        smsContentObserver?.stop()
         callLogObserver?.stop()
-        locationCollector?.stop()
         smsReceiver = null
+        smsContentObserver = null
         callStateReceiver = null
-        systemStatusReceiver = null
         callLogObserver = null
-        locationCollector = null
     }
 
     private fun createNotificationChannel() {

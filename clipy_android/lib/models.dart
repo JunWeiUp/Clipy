@@ -178,17 +178,12 @@ class CollectorCategories {
   static const call = 'call';
   static const callLog = 'call_log';
   static const clipboard = 'clipboard';
-  static const location = 'location';
-  static const system = 'system';
 
   static const all = [
-    notification,
     sms,
     call,
     callLog,
     clipboard,
-    location,
-    system,
   ];
 }
 

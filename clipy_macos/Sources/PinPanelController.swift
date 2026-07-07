@@ -1,5 +1,10 @@
 import AppKit
 
+class PinFloatingPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 final class PinImageView: NSView {
     var image: NSImage? {
         didSet { needsDisplay = true }
@@ -51,24 +56,30 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
     private var rotationDegrees: CGFloat = 0
     private var trackingArea: NSTrackingArea?
 
-    init(image: NSImage, id: UUID, onClose: @escaping (UUID) -> Void) {
+    init(image: NSImage, screenRect: NSRect? = nil, id: UUID, onClose: @escaping (UUID) -> Void) {
         self.panelID = id
         self.onClose = onClose
 
-        let visible = NSScreen.main?.visibleFrame ?? .zero
-        let maxWidth = visible.width * 0.8
-        let maxHeight = visible.height * 0.8
-        let aspect = image.size.width / max(image.size.height, 1)
-        var width = min(image.size.width, maxWidth)
-        var height = width / aspect
-        if height > maxHeight {
-            height = maxHeight
-            width = height * aspect
+        let panelFrame: NSRect
+        if let screenRect, screenRect.width > 1, screenRect.height > 1 {
+            panelFrame = screenRect
+        } else {
+            let visible = NSScreen.main?.visibleFrame ?? .zero
+            let maxWidth = visible.width * 0.8
+            let maxHeight = visible.height * 0.8
+            let aspect = image.size.width / max(image.size.height, 1)
+            var width = min(image.size.width, maxWidth)
+            var height = width / aspect
+            if height > maxHeight {
+                height = maxHeight
+                width = height * aspect
+            }
+            let size = NSSize(width: max(120, width), height: max(80, height))
+            panelFrame = NSRect(origin: Self.defaultOrigin(for: size), size: size)
         }
-        let size = NSSize(width: max(120, width), height: max(80, height))
 
         super.init(
-            contentRect: NSRect(origin: .zero, size: size),
+            contentRect: NSRect(origin: .zero, size: panelFrame.size),
             styleMask: [.borderless, .resizable],
             backing: .buffered,
             defer: false
@@ -82,7 +93,7 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isMovableByWindowBackground = true
 
-        let container = PinContainerView(frame: NSRect(origin: .zero, size: size))
+        let container = PinContainerView(frame: NSRect(origin: .zero, size: panelFrame.size))
         container.wantsLayer = true
         container.layer?.cornerRadius = 8
         container.layer?.masksToBounds = true
@@ -115,11 +126,11 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
             closeButton.heightAnchor.constraint(equalToConstant: 20)
         ])
 
-        setFrame(NSRect(origin: defaultOrigin(for: size), size: size), display: false)
+        setFrame(panelFrame, display: false)
         updatePinViewTransform()
     }
 
-    private func defaultOrigin(for size: NSSize) -> NSPoint {
+    private static func defaultOrigin(for size: NSSize) -> NSPoint {
         let mouse = NSEvent.mouseLocation
         return NSPoint(x: mouse.x - size.width / 2, y: mouse.y - size.height / 2)
     }
@@ -219,15 +230,16 @@ final class PinPanelController {
 
     private init() {}
 
-    func pin(image: NSImage) {
-        if let tiff = image.tiffRepresentation,
+    func pin(image: NSImage, at screenRect: NSRect? = nil, skipIngest: Bool = false) {
+        if !skipIngest,
+           let tiff = image.tiffRepresentation,
            let bitmap = NSBitmapImageRep(data: tiff),
            let pngData = bitmap.representation(using: .png, properties: [:]) {
             ClipboardManager.shared.ingestCapturedImage(pngData, copyToPasteboard: true)
         }
 
         let id = UUID()
-        let panel = PinPanel(image: image, id: id) { [weak self] panelID in
+        let panel = PinPanel(image: image, screenRect: screenRect, id: id) { [weak self] panelID in
             self?.panels.removeValue(forKey: panelID)
         }
         panels[id] = panel

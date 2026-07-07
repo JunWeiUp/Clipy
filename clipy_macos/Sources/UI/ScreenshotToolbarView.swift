@@ -162,6 +162,7 @@ struct ScreenshotToolbarView: View {
 
     private func toolLabel(_ tool: ScreenshotAnnotationTool) -> String {
         switch tool {
+        case .selection: return L10n.t(.screenshotToolSelection)
         case .rectangle: return L10n.t(.screenshotToolRectangle)
         case .arrow: return L10n.t(.screenshotToolArrow)
         case .ellipse: return L10n.t(.screenshotToolEllipse)

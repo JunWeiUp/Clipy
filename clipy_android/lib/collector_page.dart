@@ -3,6 +3,7 @@ import 'app_localizations.dart';
 import 'collector_events_page.dart';
 import 'collector_permissions_page.dart';
 import 'collector_status_page.dart';
+import 'notification_sync_page.dart';
 
 class CollectorPage extends StatefulWidget {
   const CollectorPage({super.key});
@@ -18,7 +19,7 @@ class _CollectorPageState extends State<CollectorPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -40,6 +41,7 @@ class _CollectorPageState extends State<CollectorPage>
             tabAlignment: TabAlignment.start,
             tabs: [
               Tab(text: l10n.status),
+              Tab(text: l10n.notificationSync),
               Tab(text: l10n.recentCollectorEvents),
               Tab(text: l10n.permissions),
             ],
@@ -50,6 +52,7 @@ class _CollectorPageState extends State<CollectorPage>
             controller: _tabController,
             children: const [
               CollectorStatusPage(),
+              NotificationSyncPage(embedded: true),
               CollectorEventsPage(),
               CollectorPermissionsPage(),
             ],

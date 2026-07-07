@@ -38,13 +38,15 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
   NotificationHealthMonitor._();
   static final NotificationHealthMonitor instance = NotificationHealthMonitor._();
 
-  static const _checkInterval = Duration(seconds: 45);
+  static const _foregroundInterval = Duration(seconds: 45);
+  static const _backgroundInterval = Duration(minutes: 5);
   static const _notReceivingGracePeriod = Duration(minutes: 3);
   static const _notReceivingStalePeriod = Duration(minutes: 15);
 
   Timer? _timer;
   NotificationHealthStatus? _latestStatus;
   bool _observingLifecycle = false;
+  bool _inBackground = false;
 
   final _healthChangedController =
       StreamController<NotificationHealthStatus>.broadcast();
@@ -52,15 +54,31 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
       _healthChangedController.stream;
   NotificationHealthStatus? get latestStatus => _latestStatus;
 
+  Future<void> startIfNeeded() async {
+    if (!Platform.isAndroid) return;
+
+    final notificationManager = NotificationManager.instance;
+    if (!notificationManager.isEnabled) {
+      stop();
+      return;
+    }
+
+    final status = await notificationManager.getListenerStatus();
+    if (!status.permissionGranted) {
+      stop();
+      return;
+    }
+
+    start();
+  }
+
   void start() {
     if (!Platform.isAndroid) return;
     if (!_observingLifecycle) {
       WidgetsBinding.instance.addObserver(this);
       _observingLifecycle = true;
     }
-    _timer ??= Timer.periodic(_checkInterval, (_) {
-      unawaited(checkHealth());
-    });
+    _restartTimer();
     unawaited(checkHealth());
   }
 
@@ -73,10 +91,27 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
     }
   }
 
+  void _restartTimer() {
+    _timer?.cancel();
+    final interval =
+        _inBackground ? _backgroundInterval : _foregroundInterval;
+    _timer = Timer.periodic(interval, (_) {
+      unawaited(checkHealth());
+    });
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _inBackground = state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.inactive;
+
     if (state == AppLifecycleState.resumed) {
       unawaited(checkHealth());
+    }
+
+    if (_timer != null) {
+      _restartTimer();
     }
   }
 

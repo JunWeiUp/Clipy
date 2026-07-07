@@ -12,6 +12,9 @@ class PreferencesManager {
     private let syncPortKey = "syncPort"
     private let syncSecretKey = "syncSecret"
     private let authorizedDevicesKey = "authorizedDevices"
+    private let authorizedPeerIdsKey = "authorizedPeerIds"
+    private let syncPeerIdKey = "syncPeerId"
+    private let authorizedPeerIdsMigratedKey = "authorizedPeerIdsMigrated"
     private let deviceNameKey = "deviceName"
     private let appLanguageKey = "appLanguage"
     private let launchAtLoginKey = "launchAtLogin"
@@ -32,6 +35,9 @@ class PreferencesManager {
     private let screenshotDefaultModeKey = "screenshotDefaultMode"
     private let screenshotMagnifierEnabledKey = "screenshotMagnifierEnabled"
     private let screenshotElementSnapEnabledKey = "screenshotElementSnapEnabled"
+    private let screenshotAutoSaveEnabledKey = "screenshotAutoSaveEnabled"
+    private let screenshotSaveDirectoryKey = "screenshotSaveDirectory"
+    private let screenshotResolutionKey = "screenshotResolution"
     
     var deviceName: String {
         get { defaults.string(forKey: deviceNameKey) ?? Host.current().localizedName ?? "Mac" }
@@ -97,9 +103,42 @@ class PreferencesManager {
         set { defaults.set(newValue, forKey: syncSecretKey) }
     }
 
+    var syncPeerId: String {
+        get {
+            if let id = defaults.string(forKey: syncPeerIdKey), !id.isEmpty {
+                return id
+            }
+            let id = UUID().uuidString
+            defaults.set(id, forKey: syncPeerIdKey)
+            return id
+        }
+    }
+
+    var authorizedPeerIds: [String] {
+        get { defaults.stringArray(forKey: authorizedPeerIdsKey) ?? [] }
+        set { defaults.set(newValue, forKey: authorizedPeerIdsKey) }
+    }
+
     var authorizedDevices: [String] {
         get { defaults.stringArray(forKey: authorizedDevicesKey) ?? [] }
         set { defaults.set(newValue, forKey: authorizedDevicesKey) }
+    }
+
+    /// Maps legacy display-name authorizations to stable peer IDs when peers are discovered.
+    func migrateAuthorizedPeerIds(from peers: [DiscoveredPeer]) {
+        guard !defaults.bool(forKey: authorizedPeerIdsMigratedKey) else { return }
+
+        var peerIds = Set(authorizedPeerIds)
+        for legacyName in authorizedDevices {
+            if let match = peers.first(where: { $0.displayName == legacyName }) {
+                peerIds.insert(match.peerId)
+            } else {
+                // Pre-peerId builds used the mDNS service name as SyncMessage.deviceId.
+                peerIds.insert(legacyName)
+            }
+        }
+        authorizedPeerIds = peerIds.sorted()
+        defaults.set(true, forKey: authorizedPeerIdsMigratedKey)
     }
 
     var launchAtLogin: Bool {
@@ -237,6 +276,45 @@ class PreferencesManager {
             return defaults.bool(forKey: screenshotElementSnapEnabledKey)
         }
         set { defaults.set(newValue, forKey: screenshotElementSnapEnabledKey) }
+    }
+
+    var isScreenshotAutoSaveEnabled: Bool {
+        get { defaults.bool(forKey: screenshotAutoSaveEnabledKey) }
+        set { defaults.set(newValue, forKey: screenshotAutoSaveEnabledKey) }
+    }
+
+    var screenshotSaveDirectoryPath: String {
+        get {
+            if let path = defaults.string(forKey: screenshotSaveDirectoryKey), !path.isEmpty {
+                return path
+            }
+            return Self.defaultScreenshotSaveDirectoryPath
+        }
+        set { defaults.set(newValue, forKey: screenshotSaveDirectoryKey) }
+    }
+
+    var screenshotSaveDirectory: URL {
+        URL(fileURLWithPath: screenshotSaveDirectoryPath, isDirectory: true)
+    }
+
+    var screenshotResolution: ScreenshotResolution {
+        get {
+            if let raw = defaults.string(forKey: screenshotResolutionKey),
+               let resolution = ScreenshotResolution(rawValue: raw) {
+                return resolution
+            }
+            if defaults.object(forKey: screenshotResolutionKey) != nil {
+                return ScreenshotResolution.fromLegacyDPI(defaults.integer(forKey: screenshotResolutionKey)) ?? .default
+            }
+            return .default
+        }
+        set { defaults.set(newValue.rawValue, forKey: screenshotResolutionKey) }
+    }
+
+    static var defaultScreenshotSaveDirectoryPath: String {
+        let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        return pictures.appendingPathComponent("ClipyScreenshots", isDirectory: true).path
     }
     
     private init() {}

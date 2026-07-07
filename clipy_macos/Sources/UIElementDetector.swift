@@ -13,19 +13,20 @@ struct UIElementDetectResult {
 }
 
 enum UIElementDetector {
-    static func detect(at screenPoint: NSPoint, elementSnapEnabled: Bool) -> UIElementDetectResult? {
+    static func detect(
+        at screenPoint: NSPoint,
+        elementSnapEnabled: Bool,
+        preferWindow: Bool = false
+    ) -> UIElementDetectResult? {
         guard elementSnapEnabled else { return nil }
 
-        if AccessibilityManager.isTrusted, let rect = accessibilityBounds(at: screenPoint) {
-            return UIElementDetectResult(rect: rect, source: .element, windowID: nil)
-        }
+        let windowResult = windowSnap(at: screenPoint)
+        let elementResult = accessibilitySnap(at: screenPoint)
 
-        if let windowID = ScreenshotCaptureService.windowUnderMouse(at: screenPoint),
-           let bounds = ScreenshotCaptureService.windowBounds(for: windowID) {
-            return UIElementDetectResult(rect: bounds, source: .window, windowID: windowID)
+        if preferWindow {
+            return windowResult ?? elementResult
         }
-
-        return nil
+        return elementResult ?? windowResult
     }
 
     static func snapRect(_ rect: NSRect, to target: NSRect, threshold: CGFloat = ScreenshotChrome.snapThreshold) -> NSRect {
@@ -45,20 +46,37 @@ enum UIElementDetector {
         return result
     }
 
+    private static func windowSnap(at screenPoint: NSPoint) -> UIElementDetectResult? {
+        guard let windowID = ScreenshotCaptureService.windowUnderMouse(at: screenPoint),
+              let bounds = ScreenshotCaptureService.windowBounds(for: windowID) else {
+            return nil
+        }
+        return UIElementDetectResult(rect: bounds, source: .window, windowID: windowID)
+    }
+
+    private static func accessibilitySnap(at screenPoint: NSPoint) -> UIElementDetectResult? {
+        guard AccessibilityManager.isTrusted,
+              let rect = accessibilityBounds(at: screenPoint) else {
+            return nil
+        }
+        return UIElementDetectResult(rect: rect, source: .element, windowID: nil)
+    }
+
     private static func accessibilityBounds(at screenPoint: NSPoint) -> NSRect? {
         let systemWide = AXUIElementCreateSystemWide()
+        let cgPoint = ScreenshotCoordinateConverter.cgPoint(from: screenPoint)
         var elementRef: AXUIElement?
         let error = AXUIElementCopyElementAtPosition(
             systemWide,
-            Float(screenPoint.x),
-            Float(screenPoint.y),
+            Float(cgPoint.x),
+            Float(cgPoint.y),
             &elementRef
         )
         guard error == .success, let element = elementRef else { return nil }
-        return frame(of: element)
+        return frame(of: element, near: screenPoint)
     }
 
-    private static func frame(of element: AXUIElement) -> NSRect? {
+    private static func frame(of element: AXUIElement, near screenPoint: NSPoint) -> NSRect? {
         var positionRef: CFTypeRef?
         var sizeRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionRef) == .success,
@@ -75,6 +93,55 @@ enum UIElementDetector {
             return nil
         }
 
-        return NSRect(origin: position, size: size)
+        let fromQuartz = ScreenshotCoordinateConverter.nsRect(
+            from: CGRect(origin: position, size: size)
+        )
+        let fromCocoa = NSRect(
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height
+        )
+
+        return bestMatchingRect(
+            candidates: [fromQuartz, fromCocoa],
+            near: screenPoint
+        )
+    }
+
+    private static func bestMatchingRect(candidates: [NSRect], near screenPoint: NSPoint) -> NSRect? {
+        let tolerance: CGFloat = 16
+        let valid = candidates.filter { $0.width > 2 && $0.height > 2 }
+        guard !valid.isEmpty else { return nil }
+
+        if let containing = valid.first(where: { $0.insetBy(dx: -tolerance, dy: -tolerance).contains(screenPoint) }) {
+            return containing
+        }
+
+        return valid.min { lhs, rhs in
+            distance(from: screenPoint, to: lhs) < distance(from: screenPoint, to: rhs)
+        }
+    }
+
+    private static func distance(from point: NSPoint, to rect: NSRect) -> CGFloat {
+        let dx: CGFloat
+        if point.x < rect.minX {
+            dx = rect.minX - point.x
+        } else if point.x > rect.maxX {
+            dx = point.x - rect.maxX
+        } else {
+            dx = 0
+        }
+
+        let dy: CGFloat
+        if point.y < rect.minY {
+            dy = rect.minY - point.y
+        } else if point.y > rect.maxY {
+            dy = point.y - rect.maxY
+        } else {
+            dy = 0
+        }
+
+        return hypot(dx, dy)
     }
 }

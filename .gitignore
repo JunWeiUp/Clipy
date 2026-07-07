@@ -3,3 +3,14 @@ AGENTS.md
 *.app/
 build/
 Kim_AGENTS.md
+
+# Flutter generated (machine-specific paths)
+clipy_android/.flutter-plugins
+clipy_android/.flutter-plugins-dependencies
+
+# Android signing keys
+*.keystore
+*.jks
+
+# Android local SDK paths
+clipy_android/android/local.properties

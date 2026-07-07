@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,13 +8,15 @@ import 'package:file_picker/file_picker.dart';
 import 'clipboard_manager.dart';
 import 'sync_manager.dart';
 import 'notification_manager.dart';
-import 'notification_sync_page.dart';
 import 'collector_manager.dart';
 import 'collector_page.dart';
 import 'notification_health_monitor.dart';
 import 'log_manager.dart';
 import 'models.dart';
 import 'app_localizations.dart';
+import 'database/app_database.dart';
+import 'database/file_transfer_repository.dart';
+import 'ui/clipboard_history_list.dart';
 
 Future<void> pickAndSendFileToDevice(BuildContext context, String deviceName) async {
   final l10n = context.l10n;
@@ -42,15 +43,15 @@ class SyncTargetDeviceList extends StatefulWidget {
 
 class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
   StreamSubscription? _subscription;
-  List<String> _availableDevices = [];
+  List<DiscoveredPeer> _availablePeers = [];
 
   @override
   void initState() {
     super.initState();
-    _availableDevices = SyncManager.instance.availableDeviceNames;
-    _subscription = SyncManager.instance.onDevicesChanged.listen((devices) {
+    _availablePeers = SyncManager.instance.availablePeers;
+    _subscription = SyncManager.instance.onPeersChanged.listen((peers) {
       if (mounted) {
-        setState(() => _availableDevices = devices);
+        setState(() => _availablePeers = peers);
       }
     });
   }
@@ -85,22 +86,23 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
             style: TextStyle(fontSize: 12, color: Colors.grey[600]),
           ),
         ),
-        if (_availableDevices.isEmpty)
+        if (_availablePeers.isEmpty)
           ListTile(
             title: Text(l10n.noDevicesFound),
             subtitle: Text(l10n.sameWifiHint),
           )
         else
-          ..._availableDevices.map((deviceName) {
+          ..._availablePeers.map((peer) {
             final checked =
-                SyncManager.instance.authorizedDevices.contains(deviceName);
+                SyncManager.instance.authorizedPeerIds.contains(peer.peerId);
             return CheckboxListTile(
-              title: Text(deviceName),
+              title: Text(peer.displayName),
+              subtitle: Text(peer.peerId, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
               value: checked,
               controlAffinity: ListTileControlAffinity.leading,
               onChanged: (value) async {
                 await SyncManager.instance.setSyncTarget(
-                  deviceName,
+                  peer.peerId,
                   enabled: value ?? false,
                 );
                 if (mounted) setState(() {});
@@ -114,6 +116,12 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  try {
+    await AppDatabase.instance.database;
+  } catch (e) {
+    debugPrint('AppDatabase init error: $e');
+  }
   
   try {
     await ClipboardManager.instance.init();
@@ -140,7 +148,7 @@ void main() async {
   }
 
   try {
-    NotificationHealthMonitor.instance.start();
+    await NotificationHealthMonitor.instance.startIfNeeded();
   } catch (e) {
     debugPrint('NotificationHealthMonitor init error: $e');
   }
@@ -196,20 +204,12 @@ class _MacHomePageState extends State<MacHomePage> with SingleTickerProviderStat
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    ClipboardManager.instance.onHistoryChanged = _handleDataChanged;
   }
 
   @override
   void dispose() {
-    ClipboardManager.instance.onHistoryChanged = null;
     _tabController.dispose();
     super.dispose();
-  }
-
-  void _handleDataChanged() {
-    if (mounted) {
-      setState(() {});
-    }
   }
 
   @override
@@ -226,7 +226,9 @@ class _MacHomePageState extends State<MacHomePage> with SingleTickerProviderStat
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
-            onPressed: () => ClipboardManager.instance.clearHistory(),
+            onPressed: () async {
+              await ClipboardManager.instance.clearHistory();
+            },
             tooltip: l10n.clearHistory,
           ),
         ],
@@ -255,8 +257,67 @@ class _MacHomePageState extends State<MacHomePage> with SingleTickerProviderStat
   }
 }
 
-class LogPage extends StatelessWidget {
+class LogPage extends StatefulWidget {
   const LogPage({super.key});
+
+  @override
+  State<LogPage> createState() => _LogPageState();
+}
+
+class _LogPageState extends State<LogPage> {
+  static const _pageSize = 100;
+
+  final ScrollController _scrollController = ScrollController();
+  final List<String> _logs = [];
+  bool _loading = false;
+  bool _hasMore = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMore();
+    _scrollController.addListener(_onScroll);
+    LogManager.instance.addListener(_onLogsChanged);
+  }
+
+  @override
+  void dispose() {
+    LogManager.instance.removeListener(_onLogsChanged);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onLogsChanged() {
+    if (!mounted) return;
+    _logs.clear();
+    _hasMore = true;
+    _loadMore(reset: true);
+  }
+
+  void _onScroll() {
+    if (!_hasMore || _loading) return;
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _loadMore();
+    }
+  }
+
+  Future<void> _loadMore({bool reset = false}) async {
+    if (_loading) return;
+    _loading = true;
+    final offset = reset ? 0 : _logs.length;
+    final page = await LogManager.instance.fetchPage(
+      offset: offset,
+      limit: _pageSize,
+    );
+    if (!mounted) return;
+    setState(() {
+      if (reset) _logs.clear();
+      _logs.addAll(page.map((r) => r.formatted));
+      _hasMore = page.length == _pageSize;
+      _loading = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -267,114 +328,67 @@ class LogPage extends StatelessWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_sweep),
-            onPressed: () => LogManager.instance.clear(),
+            onPressed: () async {
+              await LogManager.instance.clear();
+            },
             tooltip: l10n.clearLogs,
           ),
           IconButton(
             icon: const Icon(Icons.copy),
-            onPressed: () {
-              final allLogs = LogManager.instance.logs.join('\n');
-              Clipboard.setData(ClipboardData(text: allLogs));
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(l10n.logsCopied)),
-              );
+            onPressed: () async {
+              final count = await LogManager.instance.count();
+              final buffer = StringBuffer();
+              var offset = 0;
+              while (offset < count) {
+                final page = await LogManager.instance.fetchPage(
+                  offset: offset,
+                  limit: 200,
+                );
+                for (final record in page) {
+                  buffer.writeln(record.formatted);
+                }
+                offset += page.length;
+                if (page.isEmpty) break;
+              }
+              await Clipboard.setData(ClipboardData(text: buffer.toString()));
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(l10n.logsCopied)),
+                );
+              }
             },
             tooltip: l10n.copyAll,
           ),
         ],
       ),
-      body: ListenableBuilder(
-        listenable: LogManager.instance,
-        builder: (context, _) {
-          final logs = LogManager.instance.logs;
-          if (logs.isEmpty) {
-            return Center(child: Text(l10n.noLogs));
-          }
-          return ListView.builder(
-            reverse: true,
-            itemCount: logs.length,
-            itemBuilder: (context, index) {
-              // Show newest logs first
-              final log = logs[logs.length - 1 - index];
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
-                child: Text(
-                  log,
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12,
+      body: _logs.isEmpty && !_loading
+          ? Center(child: Text(l10n.noLogs))
+          : ListView.builder(
+              controller: _scrollController,
+              reverse: true,
+              itemCount: _logs.length + (_hasMore ? 1 : 0),
+              itemBuilder: (context, index) {
+                if (index >= _logs.length) {
+                  return const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                final log = _logs[index];
+                return Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+                  child: Text(
+                    log,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
                   ),
-                ),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-class MacHistoryTab extends StatelessWidget {
-  const MacHistoryTab({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    final history = ClipboardManager.instance.history;
-    if (history.isEmpty) {
-      return Center(child: Text(l10n.noClipboardHistory));
-    }
-
-    final sections = <Widget>[];
-    for (var i = 0; i < history.length; i += 10) {
-      final end = (i + 10) > history.length ? history.length : (i + 10);
-      final group = history.sublist(i, end);
-      sections.add(
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Text(
-            l10n.historyRange(i + 1, end),
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-          ),
-        ),
-      );
-      for (final entry in group) {
-        sections.add(
-          ListTile(
-            leading: _iconForItem(entry.item),
-            title: Text(
-              entry.item.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+                );
+              },
             ),
-            subtitle: Text(l10n.sourceAndDate(entry.sourceApp, entry.date.toString().split('.')[0])),
-            onTap: () {
-              ClipboardManager.instance.copyToClipboard(entry.item);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(l10n.copiedToClipboard)),
-              );
-            },
-          ),
-        );
-      }
-    }
-
-    return ListView(children: sections);
-  }
-
-  Widget _iconForItem(HistoryItem item) {
-    switch (item.type) {
-      case 'image':
-        return const Icon(Icons.image_outlined);
-      case 'rtf':
-        return const Icon(Icons.description_outlined);
-      case 'pdf':
-        return const Icon(Icons.picture_as_pdf_outlined);
-      case 'fileURL':
-        return const Icon(Icons.insert_drive_file_outlined);
-      default:
-        return const Icon(Icons.short_text);
-    }
+    );
   }
 }
 
@@ -581,8 +595,6 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    ClipboardManager.instance.onHistoryChanged = _handleDataChanged;
-    
     _progressSubscription = SyncManager.instance.onFileProgress.listen((progress) {
       if (mounted) {
         setState(() {
@@ -615,14 +627,9 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
-    ClipboardManager.instance.onHistoryChanged = null;
     _fileSubscription?.cancel();
     _progressSubscription?.cancel();
     super.dispose();
-  }
-
-  void _handleDataChanged() {
-    if (mounted) setState(() {});
   }
 
   static const _channel = MethodChannel('com.clipyclone.clipy_android/open_folder');
@@ -640,8 +647,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildHistoryTab() {
-    final l10n = context.l10n;
-    final history = ClipboardManager.instance.history;
     return Column(
       children: [
         if (_activeTransfers.isNotEmpty)
@@ -660,7 +665,7 @@ class _HomePageState extends State<HomePage> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              l10n.receiving(progress.fileName),
+                              context.l10n.receiving(progress.fileName),
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -680,37 +685,10 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
         Expanded(
-          child: history.isEmpty
-              ? Center(child: Text(l10n.noClipboardHistory, style: TextStyle(color: Colors.grey[500], fontSize: 16)))
-              : ListView.builder(
-                  itemCount: history.length,
-                  itemBuilder: (context, index) {
-                    final entry = history[index];
-                    final isFile = entry.item.type == 'fileURL';
-                    return ListTile(
-                      leading: Icon(
-                        isFile ? Icons.insert_drive_file_outlined : Icons.short_text,
-                        color: isFile ? Colors.blue : null,
-                      ),
-                      title: Text(
-                        entry.item.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(l10n.sourceAndDate(entry.sourceApp, entry.date.toString().split('.')[0])),
-                      onTap: () {
-                        if (isFile) {
-                          _openFolder(entry.item.value.toString());
-                        } else {
-                          ClipboardManager.instance.copyToClipboard(entry.item);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(l10n.copiedToClipboard)),
-                          );
-                        }
-                      },
-                    );
-                  },
-                ),
+          child: PaginatedClipboardHistoryList(
+            onFileTap: (HistoryEntry entry) =>
+                _openFolder(entry.item.value.toString()),
+          ),
         ),
       ],
     );
@@ -722,7 +700,6 @@ class _HomePageState extends State<HomePage> {
         _MobileSettingsContent(
           onOpenLogs: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const LogPage())),
           onOpenReceivedFiles: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ReceivedFilesPage())),
-          onOpenNotificationSync: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const NotificationSyncPage())),
         ),
         const Divider(),
         SwitchListTile(
@@ -766,10 +743,7 @@ class _HomePageState extends State<HomePage> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.notifications_outlined),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const NotificationSyncPage()),
-                  ),
+                  onPressed: () => setState(() => _selectedIndex = 1),
                   tooltip: l10n.notificationSync,
                 ),
                 IconButton(
@@ -782,7 +756,9 @@ class _HomePageState extends State<HomePage> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.delete_outline),
-                  onPressed: () => ClipboardManager.instance.clearHistory(),
+                  onPressed: () async {
+                    await ClipboardManager.instance.clearHistory();
+                  },
                   tooltip: l10n.clearHistory,
                 ),
                 IconButton(
@@ -814,12 +790,10 @@ class _HomePageState extends State<HomePage> {
 class _MobileSettingsContent extends StatefulWidget {
   final VoidCallback onOpenLogs;
   final VoidCallback onOpenReceivedFiles;
-  final VoidCallback onOpenNotificationSync;
 
   const _MobileSettingsContent({
     required this.onOpenLogs,
     required this.onOpenReceivedFiles,
-    required this.onOpenNotificationSync,
   });
 
   @override
@@ -839,7 +813,7 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
       text: SyncManager.instance.port.toString(),
     );
     _nameController = TextEditingController(
-      text: SyncManager.instance.deviceId,
+      text: SyncManager.instance.displayName,
     );
     _availableDevices = SyncManager.instance.availableDeviceNames;
     _devicesSubscription = SyncManager.instance.onDevicesChanged.listen((devices) {
@@ -916,6 +890,18 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
             ],
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(
+            l10n.syncLocalNameHintFor(
+              SyncManager.instance.displayName,
+              SyncManager.instance.peerId.length > 8
+                  ? SyncManager.instance.peerId.substring(0, 8)
+                  : SyncManager.instance.peerId,
+            ),
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+        ),
         const Divider(),
         SwitchListTile(
           title: Text(l10n.enableLanSync),
@@ -976,14 +962,6 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
           }),
         const Divider(),
         ListTile(
-          leading: const Icon(Icons.notifications_active, color: Colors.blue),
-          title: Text(l10n.notificationSync),
-          subtitle: Text(l10n.enableNotificationSync),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: widget.onOpenNotificationSync,
-        ),
-        const Divider(),
-        ListTile(
           leading: const Icon(Icons.folder_open),
           title: Text(l10n.receivedFiles),
           onTap: widget.onOpenReceivedFiles,
@@ -1024,7 +1002,7 @@ class _SettingsPageState extends State<SettingsPage> {
       text: SyncManager.instance.port.toString(),
     );
     _nameController = TextEditingController(
-      text: SyncManager.instance.deviceId,
+      text: SyncManager.instance.displayName,
     );
     _availableDevices = SyncManager.instance.availableDeviceNames;
     _devicesSubscription = SyncManager.instance.onDevicesChanged.listen((devices) {
@@ -1161,17 +1139,6 @@ class _SettingsPageState extends State<SettingsPage> {
             }),
           const Divider(),
           ListTile(
-            leading: const Icon(Icons.notifications_active, color: Colors.blue),
-            title: Text(l10n.notificationSync),
-            subtitle: Text(l10n.enableNotificationSync),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const NotificationSyncPage()),
-            ),
-          ),
-          const Divider(),
-          ListTile(
             leading: const Icon(Icons.list_alt),
             title: Text(l10n.viewLogs),
             subtitle: Text(l10n.appRuntimeLogs),
@@ -1201,35 +1168,60 @@ class ReceivedFilesPage extends StatefulWidget {
 }
 
 class _ReceivedFilesPageState extends State<ReceivedFilesPage> {
-  List<dynamic> _files = [];
+  static const _pageSize = 20;
+
+  final ScrollController _scrollController = ScrollController();
+  final List<FileTransferRecord> _files = [];
+  bool _loading = false;
+  bool _hasMore = true;
 
   @override
   void initState() {
     super.initState();
-    _loadFiles();
+    _loadMore();
+    _scrollController.addListener(_onScroll);
   }
 
-  Future<void> _loadFiles() async {
-    final prefs = await SharedPreferences.getInstance();
-    final historyJson = prefs.getString('fileHistory') ?? '[]';
-    if (mounted) {
-      setState(() {
-        _files = jsonDecode(historyJson);
-      });
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_hasMore || _loading) return;
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _loadMore();
     }
   }
 
-  Future<void> _deleteFile(int index) async {
-    final file = _files[index];
-    final ioFile = File(file['filePath']);
+  Future<void> _loadMore({bool reset = false}) async {
+    if (_loading) return;
+    _loading = true;
+    final offset = reset ? 0 : _files.length;
+    final page = await FileTransferRepository.instance.fetchPage(
+      offset: offset,
+      limit: _pageSize,
+    );
+    if (!mounted) return;
+    setState(() {
+      if (reset) _files.clear();
+      _files.addAll(page);
+      _hasMore = page.length == _pageSize;
+      _loading = false;
+    });
+  }
+
+  Future<void> _deleteFile(FileTransferRecord file) async {
+    final ioFile = File(file.filePath);
     if (await ioFile.exists()) {
       await ioFile.delete();
     }
-
-    _files.removeAt(index);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('fileHistory', jsonEncode(_files));
-    setState(() {});
+    await FileTransferRepository.instance.deleteById(file.id);
+    setState(() {
+      _files.removeWhere((f) => f.id == file.id);
+    });
   }
 
   String _formatSize(int bytes) {
@@ -1257,24 +1249,32 @@ class _ReceivedFilesPageState extends State<ReceivedFilesPage> {
     final l10n = context.l10n;
     return Scaffold(
       appBar: AppBar(title: Text(l10n.receivedFiles)),
-      body: _files.isEmpty
+      body: _files.isEmpty && !_loading
           ? Center(child: Text(l10n.noFilesReceived))
           : ListView.builder(
-              itemCount: _files.length,
+              controller: _scrollController,
+              itemCount: _files.length + (_hasMore ? 1 : 0),
               itemBuilder: (context, index) {
+                if (index >= _files.length) {
+                  return const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
                 final file = _files[index];
-                final date = DateTime.parse(file['timestamp']);
+                final date =
+                    DateTime.fromMillisecondsSinceEpoch(file.createdAt);
                 return ListTile(
                   leading: const Icon(Icons.insert_drive_file),
-                  title: Text(file['fileName']),
+                  title: Text(file.fileName),
                   subtitle: Text(
-                    '${_formatSize(file['fileSize'])} • ${l10n.fromSender(file['senderName'])}\n${date.toString().split('.')[0]}',
+                    '${_formatSize(file.fileSize)} • ${l10n.fromSender(file.senderName)}\n${date.toString().split('.')[0]}',
                   ),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline),
-                    onPressed: () => _deleteFile(index),
+                    onPressed: () => _deleteFile(file),
                   ),
-                  onTap: () => _openFolder(file['filePath']),
+                  onTap: () => _openFolder(file.filePath),
                 );
               },
             ),

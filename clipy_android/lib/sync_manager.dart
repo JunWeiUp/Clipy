@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:nsd/nsd.dart';
@@ -12,6 +13,8 @@ import 'clipboard_manager.dart';
 import 'notification_manager.dart';
 import 'compression_utils.dart';
 import 'storage_paths.dart';
+import 'database/file_transfer_repository.dart';
+import 'database/collector_repository.dart';
 
 class SyncMessage {
   final String deviceId;
@@ -116,6 +119,18 @@ class _PendingFile {
   _PendingFile({required this.header, required this.senderName, required this.file, required this.sink});
 }
 
+class DiscoveredPeer {
+  final String peerId;
+  final String displayName;
+  final Service service;
+
+  const DiscoveredPeer({
+    required this.peerId,
+    required this.displayName,
+    required this.service,
+  });
+}
+
 class SyncManager {
   static final SyncManager instance = SyncManager._();
   SyncManager._();
@@ -123,10 +138,13 @@ class SyncManager {
   Registration? _registration;
   Discovery? _discovery;
   ServerSocket? _server;
-  final List<Service> _discoveredServices = [];
+  final Map<String, DiscoveredPeer> _discoveredPeers = {};
   
   final _devicesChangedController = StreamController<List<String>>.broadcast();
   Stream<List<String>> get onDevicesChanged => _devicesChangedController.stream;
+
+  final _peersChangedController = StreamController<List<DiscoveredPeer>>.broadcast();
+  Stream<List<DiscoveredPeer>> get onPeersChanged => _peersChangedController.stream;
   
   final _fileReceivedController = StreamController<String>.broadcast();
   Stream<String> get onFileReceived => _fileReceivedController.stream;
@@ -137,37 +155,66 @@ class SyncManager {
   final Map<String, _PendingFile> _pendingFiles = {};
   final Map<String, DateTime> _lastProgressUpdate = {};
   
-  List<String> get availableDeviceNames {
-    final names = _discoveredServices
-        .map((s) => s.name)
-        .whereType<String>()
-        .where((name) => name.isNotEmpty && name != deviceId)
-        .toSet()
-        .toList()
-      ..sort();
-    return names;
+  List<DiscoveredPeer> get availablePeers {
+    final peers = _discoveredPeers.values.toList()
+      ..sort((a, b) => a.displayName.compareTo(b.displayName));
+    return peers;
   }
+
+  List<String> get availableDeviceNames => availablePeers.map((p) => p.displayName).toList();
 
   bool isEnabled = false;
   int port = 5566;
-  List<String> authorizedDevices = [];
-  
+  List<String> authorizedPeerIds = [];
+
   String _deviceName = '';
-  String _fallbackDeviceId = '';
-  String get deviceId => _deviceName.isEmpty ? _fallbackDeviceId : _deviceName;
+  String _peerId = '';
+
+  String get peerId => _peerId;
+  String get displayName => _deviceName.isEmpty ? _peerId : _deviceName;
+  /// SyncMessage.deviceId and legacy call sites.
+  String get deviceId => peerId;
 
   final String _serviceType = '_clipy-sync._tcp';
+
+  static String _peerIdFromService(Service service, String displayName) {
+    final txt = service.txt;
+    if (txt != null && txt['peerId'] != null) {
+      return utf8.decode(txt['peerId']!);
+    }
+    return displayName;
+  }
+
+  Future<void> _migrateAuthorizedPeerIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('authorizedPeerIdsMigrated') ?? false) return;
+
+    final legacyNames = prefs.getStringList('authorizedDevices') ?? [];
+    final peerIds = {...authorizedPeerIds};
+    for (final legacyName in legacyNames) {
+      final match = availablePeers.where((p) => p.displayName == legacyName);
+      if (match.isNotEmpty) {
+        peerIds.add(match.first.peerId);
+      } else {
+        peerIds.add(legacyName);
+      }
+    }
+    authorizedPeerIds = peerIds.toList()..sort();
+    await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
+    await prefs.setBool('authorizedPeerIdsMigrated', true);
+  }
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     isEnabled = prefs.getBool('syncEnabled') ?? false;
     port = prefs.getInt('syncPort') ?? 5566;
-    authorizedDevices = prefs.getStringList('authorizedDevices') ?? [];
+    authorizedPeerIds = prefs.getStringList('authorizedPeerIds') ?? [];
     _deviceName = (prefs.getString('deviceName') ?? '').trim();
-    _fallbackDeviceId = (prefs.getString('deviceId') ?? '').trim();
-    if (_fallbackDeviceId.isEmpty) {
-      _fallbackDeviceId = '${Platform.isIOS ? 'iOS' : 'Android'}-${const Uuid().v4().substring(0, 8)}';
-      await prefs.setString('deviceId', _fallbackDeviceId);
+    _peerId = (prefs.getString('peerId') ?? prefs.getString('deviceId') ?? '').trim();
+    if (_peerId.isEmpty) {
+      _peerId = '${Platform.isIOS ? 'iOS' : 'Android'}-${const Uuid().v4().substring(0, 8)}';
+      await prefs.setString('peerId', _peerId);
+      await prefs.setString('deviceId', _peerId);
     }
 
     if (isEnabled) {
@@ -175,24 +222,25 @@ class SyncManager {
     }
   }
 
-  Future<void> setSyncTarget(String deviceName, {required bool enabled}) async {
-    final updated = List<String>.from(authorizedDevices);
+  Future<void> setSyncTarget(String peerId, {required bool enabled}) async {
+    final updated = List<String>.from(authorizedPeerIds);
     if (enabled) {
-      if (!updated.contains(deviceName)) {
-        updated.add(deviceName);
+      if (!updated.contains(peerId)) {
+        updated.add(peerId);
       }
     } else {
-      updated.remove(deviceName);
+      updated.remove(peerId);
     }
     updated.sort();
-    authorizedDevices = updated;
+    authorizedPeerIds = updated;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('authorizedDevices', authorizedDevices);
+    await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
+    await refreshBrowsing();
   }
 
   Future<void> updateDeviceName(String name) async {
     final newName = name.trim();
-    if (newName.isEmpty || newName == deviceId) return;
+    if (newName.isEmpty || newName == displayName) return;
 
     _deviceName = newName;
     final prefs = await SharedPreferences.getInstance();
@@ -209,6 +257,7 @@ class SyncManager {
     // Start server first to ensure the port is available
     final serverStarted = await startServer();
     if (serverStarted) {
+      await CollectorRepository.instance.markAllClipboardSynced();
       await startPublishing();
       await startBrowsing();
     } else {
@@ -236,15 +285,21 @@ class SyncManager {
     }
     await _server?.close();
     _server = null;
-    _discoveredServices.clear();
+    _discoveredPeers.clear();
     _devicesChangedController.add(availableDeviceNames);
+    _peersChangedController.add(availablePeers);
   }
 
   // MARK: - mDNS Publishing
   Future<void> startPublishing() async {
-    appLog('Publishing mDNS service: $deviceId on port $port');
+    appLog('Publishing mDNS service: $displayName (peerId=$peerId) on port $port');
     try {
-      _registration = await register(Service(name: deviceId, type: _serviceType, port: port));
+      _registration = await register(Service(
+        name: displayName,
+        type: _serviceType,
+        port: port,
+        txt: {'peerId': Uint8List.fromList(utf8.encode(peerId))},
+      ));
       appLog('mDNS service published successfully');
     } catch (e) {
       appLog('Failed to publish mDNS service: $e', level: 'error');
@@ -253,26 +308,42 @@ class SyncManager {
 
   // MARK: - mDNS Browsing
   Future<void> startBrowsing() async {
+    if (_discovery != null) return;
     appLog('Starting mDNS browsing for $_serviceType');
     try {
-      _discovery = await startDiscovery(_serviceType);
-      _discovery!.addListener(() {
-        _discoveredServices.clear();
-        final seenNames = <String>{};
-        final newServices = _discovery!.services.where((service) {
+      _discovery = await startDiscovery(
+        _serviceType,
+        ipLookupType: IpLookupType.v4,
+      );
+      _discovery!.addListener(() async {
+        _discoveredPeers.clear();
+        final seenPeerIds = <String>{};
+        for (final service in _discovery!.services) {
           final name = service.name;
-          if (name == null || name.isEmpty || name == deviceId || seenNames.contains(name)) {
-            return false;
-          }
-          seenNames.add(name);
-          return true;
-        }).toList();
-        _discoveredServices.addAll(newServices);
+          if (name == null || name.isEmpty || name == displayName) continue;
+          final remotePeerId = _peerIdFromService(service, name);
+          if (remotePeerId == peerId || seenPeerIds.contains(remotePeerId)) continue;
+          seenPeerIds.add(remotePeerId);
+          _discoveredPeers[remotePeerId] = DiscoveredPeer(
+            peerId: remotePeerId,
+            displayName: name,
+            service: service,
+          );
+        }
+        await _migrateAuthorizedPeerIds();
         _devicesChangedController.add(availableDeviceNames);
-        appLog('Discovered devices updated (${newServices.length}): ${availableDeviceNames.join(', ')}');
+        _peersChangedController.add(availablePeers);
+        appLog('Discovered peers updated (${availablePeers.length}): ${availablePeers.map((p) => "${p.displayName}:${p.peerId}").join(", ")}');
       });
     } catch (e) {
       appLog('Failed to start mDNS browsing: $e', level: 'error');
+    }
+  }
+
+  Future<void> refreshBrowsing() async {
+    if (!isEnabled) return;
+    if (_discovery == null) {
+      await startBrowsing();
     }
   }
 
@@ -290,16 +361,21 @@ class SyncManager {
       try {
         final v6Server = await ServerSocket.bind(InternetAddress.anyIPv6, port, v6Only: true, shared: true);
         v6Server.listen(_handleConnection);
-        appLog('SUCCESS: Sync TCP server also listening on IPv6: ${v6Server.address.address}:${v6Server.port}');
+        if (kDebugMode) {
+          appLog('SUCCESS: Sync TCP server also listening on IPv6: ${v6Server.address.address}:${v6Server.port}');
+        }
       } catch (e) {
-        appLog('Note: IPv6 bind skipped (already handled or port busy): $e');
+        if (kDebugMode) {
+          appLog('Note: IPv6 bind skipped (already handled or port busy): $e');
+        }
       }
       
-      // Log all local addresses for debugging
-      final interfaces = await NetworkInterface.list();
-      for (var interface in interfaces) {
-        for (var addr in interface.addresses) {
-          appLog('Local Network Interface: ${interface.name} (${addr.type.name}) - ${addr.address}');
+      if (kDebugMode) {
+        final interfaces = await NetworkInterface.list();
+        for (var interface in interfaces) {
+          for (var addr in interface.addresses) {
+            appLog('Local Network Interface: ${interface.name} (${addr.type.name}) - ${addr.address}');
+          }
         }
       }
       return true;
@@ -311,20 +387,15 @@ class SyncManager {
 
   Future<void> _handleConnection(Socket socket) async {
     appLog('New incoming connection from ${socket.remoteAddress.address}:${socket.remotePort}');
-    
-    List<int> buffer = [];
+
+    final buffer = <int>[];
     int? expectedLength;
 
     try {
       await for (var data in socket) {
-        // Optional: Log hex for the first few bytes to debug protocol issues
-        final hexData = data.take(16).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
-        appLog('Socket received ${data.length} bytes raw data. Hex(16): $hexData');
-        
         buffer.addAll(data);
-        
+
         while (true) {
-          // Detect and filter out HTTP requests (GET, POST, etc.)
           if (buffer.length >= 4 && expectedLength == null) {
             final firstFour = String.fromCharCodes(buffer.sublist(0, 4));
             if (firstFour == 'GET ' || firstFour == 'POST' || firstFour == 'HEAD') {
@@ -336,31 +407,27 @@ class SyncManager {
 
           if (expectedLength == null) {
             if (buffer.length >= 4) {
-              // Read 4-byte length prefix (big-endian)
               final lengthData = buffer.sublist(0, 4);
               final length = ByteData.sublistView(Uint8List.fromList(lengthData)).getUint32(0, Endian.big);
-              
-              // Sanity check for length (e.g., max 1MB for clipboard sync)
+
               if (length > 1024 * 1024) {
                 appLog('Invalid packet length: $length (too large). Potential protocol mismatch.', level: 'error');
                 socket.destroy();
                 return;
               }
-              
+
               expectedLength = length;
               buffer.removeRange(0, 4);
-              appLog('Read 4-byte length prefix: $expectedLength. Remaining buffer: ${buffer.length}');
             } else {
-              break; // Wait for more data
+              break;
             }
           }
 
           final messageLength = expectedLength;
           if (buffer.length >= messageLength) {
-            appLog('Buffer has enough data for message ($messageLength bytes)');
             final messageData = buffer.sublist(0, messageLength);
             buffer.removeRange(0, messageLength);
-            
+
             try {
               final jsonString = utf8.decode(messageData);
               final json = jsonDecode(jsonString);
@@ -370,17 +437,16 @@ class SyncManager {
             } catch (e) {
               appLog('Error parsing sync message: $e', level: 'error');
             }
-            
-            expectedLength = null; // Reset for next message if any
+
+            expectedLength = null;
           } else {
-            break; // Wait for more data
+            break;
           }
         }
       }
     } catch (e) {
-      appLog('Socket error: $e');
+      appLog('Socket error: $e', level: 'error');
     } finally {
-      appLog('Socket connection closed');
       socket.destroy();
     }
   }
@@ -389,10 +455,12 @@ class SyncManager {
     final isFileMessage =
         message.type == 'file/header' || message.type == 'file/chunk';
     final isClipboardMessage = message.type == 'text/plain';
+    final isCollectorMessage = message.type == 'collector/event';
     if (!isFileMessage &&
         !isClipboardMessage &&
-        !authorizedDevices.contains(message.deviceId)) {
-      appLog('Rejecting message from unauthorized device: ${message.deviceId}', level: 'warning');
+        !isCollectorMessage &&
+        !authorizedPeerIds.contains(message.deviceId)) {
+      appLog('Rejecting message from unauthorized peer: ${message.deviceId}', level: 'warning');
       return;
     }
 
@@ -404,7 +472,10 @@ class SyncManager {
       decrypted = _decrypt(message.content);
     }
     
-    if (decrypted == null) return;
+    if (decrypted == null) {
+      appLog('Failed to decrypt message from ${message.deviceId}, type: ${message.type}', level: 'error');
+      return;
+    }
 
     if (message.type == 'text/plain') {
       appLog('Received sync from ${message.deviceId}: ${decrypted.length > 20 ? '${decrypted.substring(0, 20)}...' : decrypted}');
@@ -422,7 +493,7 @@ class SyncManager {
     } else if (message.type == 'notification/config') {
       _handleNotificationConfig(decrypted);
     } else if (message.type == 'collector/event') {
-      // Mac may send collector events in the future; currently Android is sender-only.
+      // Non-clipboard collector events are not handled on Android.
     }
   }
 
@@ -457,10 +528,10 @@ class SyncManager {
 
     final jsonData = jsonEncode(message.toJson());
 
-    for (var service in _discoveredServices) {
-      if (authorizedDevices.contains(service.name)) {
-        appLog('Sending notification message to ${service.name}...');
-        await _sendSync(jsonData, service);
+    for (var peer in availablePeers) {
+      if (authorizedPeerIds.contains(peer.peerId)) {
+        appLog('Sending notification message to ${peer.displayName}...');
+        await _sendSync(jsonData, peer.service);
       }
     }
   }
@@ -471,7 +542,6 @@ class SyncManager {
   }) async {
     if (!isEnabled) return;
 
-    appLog('Broadcasting collector event');
     final encrypted = _encrypt(content);
     if (encrypted == null) return;
 
@@ -484,11 +554,18 @@ class SyncManager {
     );
 
     final jsonData = jsonEncode(message.toJson());
-    for (var service in _discoveredServices) {
-      if (authorizedDevices.contains(service.name)) {
-        appLog('Sending collector event to ${service.name}...');
-        await _sendSync(jsonData, service);
+    var sentCount = 0;
+    for (var peer in availablePeers) {
+      if (authorizedPeerIds.contains(peer.peerId)) {
+        appLog('Sending collector event to ${peer.displayName}...');
+        await _sendSync(jsonData, peer.service);
+        sentCount++;
       }
+    }
+    if (sentCount == 0 && kDebugMode) {
+      appLog(
+        'Collector event not sent: authorizedPeerIds=[${authorizedPeerIds.join(", ")}], discovered=[${availablePeers.map((p) => p.displayName).join(", ")}]',
+      );
     }
   }
 
@@ -617,25 +694,12 @@ class SyncManager {
     required int fileSize,
     required String senderName,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    final historyJson = prefs.getString('fileHistory') ?? '[]';
-    final List<dynamic> history = jsonDecode(historyJson);
-    
-    final newItem = {
-      'id': const Uuid().v4(),
-      'fileName': fileName,
-      'filePath': filePath,
-      'fileSize': fileSize,
-      'timestamp': DateTime.now().toIso8601String(),
-      'senderName': senderName,
-    };
-    
-    history.insert(0, newItem);
-    if (history.length > 20) {
-      history.removeLast();
-    }
-    
-    await prefs.setString('fileHistory', jsonEncode(history));
+    await FileTransferRepository.instance.insert(
+      fileName: fileName,
+      filePath: filePath,
+      fileSize: fileSize,
+      senderName: senderName,
+    );
   }
 
   // MARK: - Encryption
@@ -716,24 +780,32 @@ class SyncManager {
 
     final jsonData = jsonEncode(message.toJson());
 
-    for (var service in _discoveredServices) {
-      if (authorizedDevices.contains(service.name)) {
-        appLog('Sending sync to ${service.name}...');
-        await _sendSync(jsonData, service);
+    var sentCount = 0;
+    for (var peer in availablePeers) {
+      if (authorizedPeerIds.contains(peer.peerId)) {
+        appLog('Sending sync to ${peer.displayName} (peerId=${peer.peerId})...');
+        await _sendSync(jsonData, peer.service);
+        sentCount++;
       }
+    }
+    if (sentCount == 0) {
+      appLog(
+        'Sync not sent: authorizedPeerIds=[${authorizedPeerIds.join(", ")}], discovered=[${availablePeers.map((p) => "${p.displayName}:${p.peerId}").join(", ")}]',
+        level: 'warning',
+      );
     }
   }
 
   Future<void> sendFile(File file, {required String targetDevice}) async {
     if (!isEnabled) return;
-    final targets = _discoveredServices.where((s) => s.name == targetDevice).toList();
+    final targets = availablePeers.where((p) => p.displayName == targetDevice).toList();
     if (targets.isEmpty) {
       appLog('Could not find endpoint for device: $targetDevice', level: 'error');
       return;
     }
     await _sendFile(
       file,
-      service: targets.first,
+      service: targets.first.service,
       headerType: 'file/header',
       chunkType: 'file/chunk',
       addToFileHistory: true,
@@ -839,27 +911,54 @@ class SyncManager {
 
   Future<void> _sendSync(String jsonData, Service service) async {
     try {
-      final host = service.host ?? 'localhost';
-      final port = service.port ?? 5566;
-      appLog('Attempting TCP connection to $host:$port');
-      
-      final socket = await Socket.connect(host, port, timeout: const Duration(seconds: 5));
-      
+      var target = service;
+      final needsResolve = (target.host == null || target.host!.isEmpty) &&
+          (target.addresses == null || target.addresses!.isEmpty);
+      if (needsResolve) {
+        appLog('Resolving service ${service.name} before connect...');
+        target = await resolve(service);
+      }
+
+      final port = target.port ?? this.port;
+      Socket socket;
+
+      if (target.addresses != null && target.addresses!.isNotEmpty) {
+        final v4 = target.addresses!
+            .where((a) => a.type == InternetAddressType.IPv4)
+            .toList();
+        final address = v4.isNotEmpty ? v4.first : target.addresses!.first;
+        appLog('Connecting to ${service.name} at ${address.address}:$port');
+        socket = await Socket.connect(
+          address,
+          port,
+          timeout: const Duration(seconds: 5),
+        );
+      } else {
+        final host = target.host;
+        if (host == null || host.isEmpty) {
+          appLog('No host/address for ${service.name}', level: 'error');
+          return;
+        }
+        appLog('Connecting to ${service.name} at $host:$port');
+        socket = await Socket.connect(
+          host,
+          port,
+          timeout: const Duration(seconds: 5),
+        );
+      }
+
       final messageBytes = utf8.encode(jsonData);
       final length = messageBytes.length;
-      
-      // Send 4-byte length prefix (big-endian)
+
       final lengthHeader = ByteData(4)..setUint32(0, length, Endian.big);
       socket.add(lengthHeader.buffer.asUint8List());
-      
-      // Send message data
       socket.add(messageBytes);
-      
+
       await socket.flush();
       await socket.close();
       appLog('Sync sent successfully to ${service.name}');
     } catch (e) {
-      appLog('Failed to send sync to ${service.name}: $e');
+      appLog('Failed to send sync to ${service.name}: $e', level: 'error');
     }
   }
 }

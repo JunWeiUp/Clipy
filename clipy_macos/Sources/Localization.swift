@@ -24,6 +24,7 @@ enum L10nKey: String {
     case recordShortcut
     case recordingShortcut
     case preferences
+    case screenshotPreferences
     case language
     case deviceNameForSync
     case enterDeviceName
@@ -51,6 +52,8 @@ enum L10nKey: String {
     case lanDevices
     case authorizedDevices
     case noDevicesFound
+    case staleAuthorizedDevicesWarning
+    case syncLocalNameHint
     case authorized
     case sendFile
     case editSnippets
@@ -224,6 +227,7 @@ enum L10nKey: String {
     case screenshotCopyText
     case screenshotTextPrompt
     case screenshotTextPromptMessage
+    case screenshotToolSelection
     case screenshotToolRectangle
     case screenshotToolArrow
     case screenshotToolEllipse
@@ -235,10 +239,13 @@ enum L10nKey: String {
     case screenshotCaptureFailedTitle
     case screenshotCaptureFailedMessage
     case screenCapturePermission
+    case requestScreenCaptureAccess
+    case screenCapturePermissionHint
     case screenshotUndo
     case screenshotRedo
     case screenshotDone
     case screenshotHint
+    case screenshotSelectionHint
     case screenshotCopied
     case screenshotMagnifier
     case screenshotElementSnap
@@ -247,6 +254,14 @@ enum L10nKey: String {
     case screenshotToolEraser
     case screenshotPinOpacity
     case screenshotElementSnapAccessibilityHint
+    case screenshotAutoSave
+    case screenshotSavePath
+    case screenshotChooseSavePath
+    case screenshotSavedTo
+    case screenshotResolution
+    case screenshotResolutionAuto
+    case screenshotResolutionOption
+    case screenshotResolutionHint
 }
 
 struct L10n {
@@ -263,6 +278,7 @@ struct L10n {
             .recordShortcut: "点击录制快捷键",
             .recordingShortcut: "录制中...",
             .preferences: "偏好设置",
+            .screenshotPreferences: "截图偏好设置",
             .language: "语言",
             .deviceNameForSync: "设备名称（用于同步）：",
             .enterDeviceName: "输入设备名称",
@@ -290,6 +306,8 @@ struct L10n {
             .authorizedDevices: "授权设备",
             .lanDevices: "局域网设备",
             .noDevicesFound: "  未发现设备",
+            .staleAuthorizedDevicesWarning: "已授权但未在线：%@。请在下方列表勾选当前显示的设备名称（如 Android-redmi）。",
+            .syncLocalNameHint: "本机名称：%@，设备 ID：%@…。对方勾选本机即可向本机发送剪贴板，本机无需勾选对方即可接收。",
             .authorized: "已授权",
             .sendFile: "发送文件...",
             .editSnippets: "编辑片段...",
@@ -431,7 +449,7 @@ struct L10n {
             .historyFilterSource: "来源",
             .historyFilterAllSources: "全部来源",
             .encryptHistoryAtRest: "加密本地历史",
-            .encryptHistoryAtRestDescription: "使用 Keychain 密钥 AES-GCM 加密外置的历史文本与媒体文件，密钥仅保存在本机。",
+            .encryptHistoryAtRestDescription: "使用本机专用密钥 AES-GCM 加密外置的历史文本与媒体文件，密钥仅保存在本机。",
             .historyEncryptionFailed: "无法更新历史加密设置，请重试。",
             .historyRegexSearch: "正则",
             .historyDateFilter: "时间",
@@ -474,23 +492,36 @@ struct L10n {
             .screenshotCaptureFailedTitle: "截图失败",
             .screenshotCaptureFailedMessage: "无法捕获屏幕内容。请确认已授予屏幕录制权限，然后重试。",
             .screenCapturePermission: "屏幕录制权限（截图需要）：",
+            .requestScreenCaptureAccess: "请求系统授权",
+            .screenCapturePermissionHint: "若重编译后截图失效，请在系统设置 > 隐私与安全性 > 屏幕录制中重新启用 ClipyClone。",
             .screenshotUndo: "撤销",
             .screenshotRedo: "重做",
             .screenshotDone: "完成",
             .screenshotHint: "移动鼠标吸附元素 · 拖拽画框 · Esc 取消",
+            .screenshotSelectionHint: "拖拽/缩放选框 · 标注后点完成截图 · Esc 取消",
             .screenshotCopied: "已复制到剪贴板",
             .screenshotMagnifier: "截图放大镜",
             .screenshotElementSnap: "UI 元素吸附",
+            .screenshotToolSelection: "调整选区",
             .screenshotToolPencil: "画笔",
             .screenshotToolHighlighter: "荧光笔",
             .screenshotToolEraser: "橡皮擦",
             .screenshotPinOpacity: "贴图透明度",
             .screenshotElementSnapAccessibilityHint: "精确吸附控件需要辅助功能权限，未授权时将降级为窗口吸附。",
+            .screenshotAutoSave: "自动保存截图",
+            .screenshotSavePath: "保存路径",
+            .screenshotChooseSavePath: "选择文件夹",
+            .screenshotSavedTo: "已保存：%@",
+            .screenshotResolution: "截图分辨率",
+            .screenshotResolutionAuto: "自动（跟随屏幕）",
+            .screenshotResolutionOption: "%d DPI",
+            .screenshotResolutionHint: "自动跟随当前屏幕 Retina 倍率；72 DPI 文件更小；更高 DPI 适合打印。",
         ],
         .en: [
             .recordShortcut: "Click to record shortcut",
             .recordingShortcut: "Recording...",
             .preferences: "Preferences",
+            .screenshotPreferences: "Screenshot Preferences",
             .language: "Language",
             .deviceNameForSync: "Device Name (for Sync):",
             .enterDeviceName: "Enter device name",
@@ -518,6 +549,8 @@ struct L10n {
             .authorizedDevices: "Authorized Devices",
             .lanDevices: "Devices on Network",
             .noDevicesFound: "  No Devices Found",
+            .staleAuthorizedDevicesWarning: "Authorized but offline: %@. Select the name shown in the list below (e.g. Android-redmi).",
+            .syncLocalNameHint: "This device: %@ (ID: %@…). Others must check this device to send clipboard here; you can receive without checking them.",
             .authorized: "Authorized",
             .sendFile: "Send File...",
             .editSnippets: "Edit Snippets...",
@@ -659,7 +692,7 @@ struct L10n {
             .historyFilterSource: "Source",
             .historyFilterAllSources: "All Sources",
             .encryptHistoryAtRest: "Encrypt Local History",
-            .encryptHistoryAtRestDescription: "Encrypt externalized history text and media files with a Keychain-derived AES-GCM key stored on this device only.",
+            .encryptHistoryAtRestDescription: "Encrypt externalized history text and media files with a device-local AES-GCM key stored on this device only.",
             .historyEncryptionFailed: "Could not update history encryption. Please try again.",
             .historyRegexSearch: "Regex",
             .historyDateFilter: "Time",
@@ -702,18 +735,30 @@ struct L10n {
             .screenshotCaptureFailedTitle: "Screenshot Failed",
             .screenshotCaptureFailedMessage: "Could not capture the screen. Check Screen Recording permission and try again.",
             .screenCapturePermission: "Screen Recording Permission (required for screenshots):",
+            .requestScreenCaptureAccess: "Request System Permission",
+            .screenCapturePermissionHint: "If screenshots stop working after a rebuild, re-enable ClipyClone under System Settings > Privacy & Security > Screen Recording.",
             .screenshotUndo: "Undo",
             .screenshotRedo: "Redo",
             .screenshotDone: "Done",
             .screenshotHint: "Hover to snap · Drag to select · Esc to cancel",
+            .screenshotSelectionHint: "Drag/resize selection · Annotate then Done to capture · Esc to cancel",
             .screenshotCopied: "Copied to clipboard",
             .screenshotMagnifier: "Capture Magnifier",
             .screenshotElementSnap: "Snap to UI Elements",
+            .screenshotToolSelection: "Adjust Selection",
             .screenshotToolPencil: "Pencil",
             .screenshotToolHighlighter: "Highlighter",
             .screenshotToolEraser: "Eraser",
             .screenshotPinOpacity: "Pin Opacity",
             .screenshotElementSnapAccessibilityHint: "Precise element snap needs Accessibility permission. Without it, window-level snap is used.",
+            .screenshotAutoSave: "Auto-save Screenshots",
+            .screenshotSavePath: "Save Location",
+            .screenshotChooseSavePath: "Choose Folder",
+            .screenshotSavedTo: "Saved: %@",
+            .screenshotResolution: "Screenshot Resolution",
+            .screenshotResolutionAuto: "Auto (Match Screen)",
+            .screenshotResolutionOption: "%d DPI",
+            .screenshotResolutionHint: "Auto follows the current screen Retina scale. 72 DPI keeps files smaller. Higher DPI is for print.",
         ]
     ]
 }

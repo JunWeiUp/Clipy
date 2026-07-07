@@ -2,29 +2,41 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'database/clipboard_repository.dart';
 import 'log_manager.dart';
 import 'models.dart';
-import 'storage_paths.dart';
 import 'sync_manager.dart';
 import 'collector_manager.dart';
 
-class ClipboardManager {
+class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   static final ClipboardManager instance = ClipboardManager._();
   ClipboardManager._();
 
-  List<HistoryEntry> history = [];
+  static const _clipboardChannel =
+      MethodChannel('com.clipyclone.clipy_android/clipboard');
+
   String? _lastText;
   String? _lastSyncHash;
-  late File _storageFile;
   int _historyLimit = 1000;
   List<String> _excludedApps = [];
   bool _collectorClipboardOnly = false;
+  Timer? _pollTimer;
+  bool _monitoring = false;
+  bool _inBackground = false;
+  bool _lifecycleObserverRegistered = false;
 
   int get historyLimit => _historyLimit;
   List<String> get excludedApps => List.unmodifiable(_excludedApps);
   bool get collectorClipboardOnly => _collectorClipboardOnly;
+
+  Future<List<HistoryEntry>> fetchPage({required int offset, required int limit}) {
+    return ClipboardRepository.instance.fetchPage(offset: offset, limit: limit);
+  }
+
+  Future<int> count() => ClipboardRepository.instance.count();
 
   Future<void> reloadPreferences() async {
     await _loadPreferences();
@@ -32,24 +44,120 @@ class ClipboardManager {
 
   Future<void> init() async {
     appLog('Initializing ClipboardManager...');
-    final dir = await StoragePaths.appStorageDirectory();
-    _storageFile = File('${dir.path}/history.json');
     await _loadPreferences();
-    await _loadHistory();
-    _startMonitoring();
+
+    if (Platform.isAndroid) {
+      _clipboardChannel.setMethodCallHandler(_handleClipboardMethodCall);
+      if (!_lifecycleObserverRegistered) {
+        WidgetsBinding.instance.addObserver(this);
+        _lifecycleObserverRegistered = true;
+      }
+      await startMonitoring();
+    } else {
+      _startPolling(const Duration(seconds: 1));
+    }
   }
 
-  Future<void> _loadHistory() async {
-    if (await _storageFile.exists()) {
-      try {
-        final content = await _storageFile.readAsString();
-        final List jsonList = jsonDecode(content);
-        history = jsonList.map((j) => HistoryEntry.fromJson(j)).toList();
-        appLog('Loaded ${history.length} history entries');
-      } catch (e) {
-        appLog('Load history error: $e');
+  Future<dynamic> _handleClipboardMethodCall(MethodCall call) async {
+    if (call.method == 'onClipboardChanged') {
+      final args = Map<String, dynamic>.from(call.arguments as Map);
+      final text = args['text'] as String?;
+      final isBaseline = args['isBaseline'] as bool? ?? false;
+      if (text != null && text.isNotEmpty) {
+        await _processClipboardText(text, recordHistory: !isBaseline && _lastText != null);
       }
     }
+    return null;
+  }
+
+  Future<void> startMonitoring() async {
+    if (!Platform.isAndroid || _monitoring) return;
+    _monitoring = true;
+    try {
+      await _clipboardChannel.invokeMethod('startMonitoring');
+    } catch (e) {
+      appLog('ClipboardManager: failed to start native monitoring: $e',
+          level: 'warning');
+    }
+    _updateBackgroundPoll();
+  }
+
+  Future<void> stopMonitoring() async {
+    if (!Platform.isAndroid || !_monitoring) return;
+    _monitoring = false;
+    _stopPolling();
+    try {
+      await _clipboardChannel.invokeMethod('stopMonitoring');
+    } catch (e) {
+      appLog('ClipboardManager: failed to stop native monitoring: $e',
+          level: 'warning');
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _inBackground = state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.inactive;
+
+    if (state == AppLifecycleState.detached) {
+      unawaited(stopMonitoring());
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed) {
+      _stopPolling();
+      if (Platform.isAndroid && !_monitoring) {
+        unawaited(startMonitoring());
+      }
+    }
+
+    _updateBackgroundPoll();
+  }
+
+  void _updateBackgroundPoll() {
+    if (!Platform.isAndroid || !_monitoring) return;
+    final needsFallback = _inBackground &&
+        (SyncManager.instance.isEnabled || CollectorManager.instance.isEnabled);
+    if (needsFallback) {
+      _startPolling(const Duration(seconds: 30));
+    } else {
+      _stopPolling();
+    }
+  }
+
+  void _startPolling(Duration interval) {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(interval, (_) => unawaited(_pollClipboardOnce()));
+  }
+
+  void _stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+  }
+
+  Future<void> _pollClipboardOnce() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (data?.text != null && data!.text!.isNotEmpty) {
+      await _processClipboardText(data.text!, recordHistory: _lastText != null);
+    }
+  }
+
+  Future<void> _processClipboardText(String text, {required bool recordHistory}) async {
+    if (text == _lastText) return;
+    if (recordHistory) {
+      final item = HistoryItem(type: 'text', value: text);
+      final entry = HistoryEntry(
+        item: item,
+        date: DateTime.now(),
+        sourceApp: Platform.isMacOS
+            ? 'macOS'
+            : (Platform.isIOS ? 'iOS' : 'Android'),
+        contentHash: _contentHashForItem(item),
+      );
+      await _addToHistory(entry);
+    }
+    _lastText = text;
   }
 
   Future<void> _loadPreferences() async {
@@ -57,40 +165,13 @@ class ClipboardManager {
     _historyLimit = prefs.getInt('historyLimit') ?? 1000;
     _excludedApps = prefs.getStringList('excludedApps') ?? [];
     _collectorClipboardOnly = prefs.getBool('collectorClipboardOnly') ?? false;
-    appLog('Preferences loaded: limit=$_historyLimit, excludedCount=${_excludedApps.length}, collectorClipboardOnly=$_collectorClipboardOnly');
   }
 
-  Future<void> _saveHistory() async {
-    final jsonList = history.map((e) => e.toJson()).toList();
-    await _storageFile.writeAsString(jsonEncode(jsonList));
-  }
-
-  void _startMonitoring() {
-    Timer.periodic(const Duration(seconds: 1), (timer) async {
-      final data = await Clipboard.getData(Clipboard.kTextPlain);
-      if (data?.text != null && data!.text!.isNotEmpty && data.text != _lastText) {
-        // If this is the first time monitoring, or if we are not the source of this change
-        if (_lastText != null) {
-          final item = HistoryItem(type: 'text', value: data.text!);
-          final entry = HistoryEntry(
-            item: item,
-            date: DateTime.now(),
-            sourceApp: Platform.isMacOS ? 'macOS' : (Platform.isIOS ? 'iOS' : 'Android'),
-            contentHash: _contentHashForItem(item),
-          );
-          _addToHistory(entry);
-        }
-        _lastText = data.text;
-      }
-    });
-  }
-
-  void _addToHistory(HistoryEntry entry, {bool broadcast = true}) {
+  Future<void> _addToHistory(HistoryEntry entry, {bool broadcast = true}) async {
     if (entry.sourceApp != null && _excludedApps.contains(entry.sourceApp)) {
-      appLog('Entry excluded by app name: ${entry.sourceApp}');
       return;
     }
-    
+
     final normalizedEntry = entry.contentHash != null
         ? entry
         : HistoryEntry(
@@ -100,44 +181,20 @@ class ClipboardManager {
             contentHash: _contentHashForItem(entry.item),
           );
 
-    // Check for duplicates
-
-    appLog('New history entry: ${normalizedEntry.item.title}');
-
-    // Broadcast if it's a new text item and not from sync
     if (broadcast && normalizedEntry.contentHash != _lastSyncHash) {
       if (normalizedEntry.item.type == 'text') {
-        appLog('Broadcasting new local copy...');
-        CollectorManager.instance.emitClipboard(
-          text: normalizedEntry.item.value as String,
-          hash: normalizedEntry.contentHash!,
-        );
-        if (!_collectorClipboardOnly) {
-          SyncManager.instance.broadcastSync(
-            normalizedEntry.item.value as String,
-            normalizedEntry.contentHash!,
-          );
-        }
+        // Primary LAN clipboard sync — always text/plain, independent of Collector.
+        unawaited(SyncManager.instance.broadcastSync(
+          normalizedEntry.item.value as String,
+          normalizedEntry.contentHash!,
+        ));
       }
     }
 
-    history.removeWhere((existing) {
-      if (existing.contentHash != null && normalizedEntry.contentHash != null) {
-        return existing.contentHash == normalizedEntry.contentHash;
-      }
-      if (existing.item.type == normalizedEntry.item.type && existing.item.type == 'text') {
-        return existing.item.value == normalizedEntry.item.value;
-      }
-      return false;
-    });
-
-    history.insert(0, normalizedEntry);
-    if (history.length > _historyLimit) {
-      history.removeLast();
-    }
-
-    _saveHistory();
+    await ClipboardRepository.instance.insert(normalizedEntry);
+    await ClipboardRepository.instance.trimToLimit(_historyLimit);
     onHistoryChanged?.call();
+    notifyListeners();
   }
 
   void copyToClipboard(HistoryItem item) {
@@ -148,43 +205,36 @@ class ClipboardManager {
   }
 
   Future<void> handleRemoteSync(String text, String hash) async {
-    if (hash == _lastSyncHash) {
-      appLog('Ignoring duplicate sync or loop');
-      return;
-    }
-
-    appLog('Processing remote sync: ${text.substring(0, text.length > 20 ? 20 : text.length)}...');
-    _lastSyncHash = hash;
+    // Always refresh history (delete + re-insert) even when hash repeats,
+    // so Mac re-copies move the item to the top on Android.
+    _lastSyncHash = hash.isNotEmpty ? hash : _contentHashForItem(HistoryItem(type: 'text', value: text));
     _lastText = text;
-    
+
     final item = HistoryItem(type: 'text', value: text);
     final entry = HistoryEntry(
       item: item,
       date: DateTime.now(),
       sourceApp: 'Remote Sync',
-      contentHash: hash,
+      contentHash: _lastSyncHash,
     );
-    
-    _addToHistory(entry, broadcast: false);
+
+    await _addToHistory(entry, broadcast: false);
     await Clipboard.setData(ClipboardData(text: text));
-    appLog('Clipboard updated from remote sync');
   }
 
-  void clearHistory() {
-    history.clear();
-    _saveHistory();
+  Future<void> clearHistory() async {
+    await ClipboardRepository.instance.clearAll();
     onHistoryChanged?.call();
+    notifyListeners();
   }
 
   Future<void> updateHistoryLimit(int limit) async {
     _historyLimit = limit;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('historyLimit', limit);
-    if (history.length > _historyLimit) {
-      history = history.take(_historyLimit).toList();
-      await _saveHistory();
-      onHistoryChanged?.call();
-    }
+    await ClipboardRepository.instance.trimToLimit(_historyLimit);
+    onHistoryChanged?.call();
+    notifyListeners();
   }
 
   Future<void> updateExcludedApps(List<String> apps) async {
@@ -199,7 +249,8 @@ class ClipboardManager {
     switch (item.type) {
       case 'text':
         final text = (item.value as String).trim();
-        final normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+        final normalized =
+            text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
         final bytes = utf8.encode(normalized);
         return sha256.convert(bytes).toString();
       default:

@@ -17,6 +17,13 @@ struct FileHeader: Codable {
     let fileSize: Int64
 }
 
+struct DiscoveredPeer {
+    let peerId: String
+    let displayName: String
+    let endpoint: NWEndpoint
+    let browseResult: NWBrowser.Result
+}
+
 struct FileChunk: Codable {
     let fileId: String
     let chunkIndex: Int
@@ -63,17 +70,19 @@ class SyncManager: NSObject, NetServiceDelegate {
     static let shared = SyncManager()
     
     var onDevicesChanged: (([String]) -> Void)?
+    var onPeersChanged: (([DiscoveredPeer]) -> Void)?
     
     private var browser: NWBrowser? 
     private var listener: NWListener? 
     private var netService: NetService?
-    private var discoveredEndpoints: [NWEndpoint: NWBrowser.Result] = [:] 
+    private var discoveredPeers: [String: DiscoveredPeer] = [:]
     private var activeConnections: [NWConnection] = [] 
     private let syncQueue = DispatchQueue(label: "com.clipy.sync")
     private var pendingFiles: [String: (header: FileHeader, senderName: String, localURL: URL)] = [:]
      
     private let serviceType = "_clipy-sync._tcp" 
-    private var deviceId: String { PreferencesManager.shared.deviceName } 
+    private var displayName: String { PreferencesManager.shared.deviceName }
+    private var peerId: String { PreferencesManager.shared.syncPeerId }
      
     private let hardcodedSecret = "ClipySyncSecret2026"
 
@@ -309,12 +318,12 @@ class SyncManager: NSObject, NetServiceDelegate {
         }
         activeConnections.removeAll()
         
-        discoveredEndpoints.removeAll()
+        discoveredPeers.removeAll()
         appLog("SyncManager stopped.")
     }
     
     func restartService() {
-        appLog("Restarting Sync services with new device name: \(deviceId)")
+        appLog("Restarting Sync services with new device name: \(displayName)")
         stop()
         
         // Use syncQueue for restarting to ensure serial execution
@@ -324,6 +333,15 @@ class SyncManager: NSObject, NetServiceDelegate {
     }
     
     // MARK: - Network Framework Discovery (NWBrowser)
+    private func peerId(from result: NWBrowser.Result, serviceName: String) -> String {
+        if case let .bonjour(txtRecord) = result.metadata,
+           let id = txtRecord["peerId"],
+           !id.isEmpty {
+            return id
+        }
+        return serviceName
+    }
+
     private func startBrowsing() {
         appLog("Starting mDNS browsing for \(serviceType)...")
         let parameters = NWParameters()
@@ -341,32 +359,38 @@ class SyncManager: NSObject, NetServiceDelegate {
             
             appLog("mDNS browse results changed: \(results.count) devices found")
             
-            // Update our discovered endpoints
-            self.discoveredEndpoints.removeAll()
+            self.discoveredPeers.removeAll()
             for result in results {
                 if case let .service(name, type, domain, interface) = result.endpoint {
                     let interfaceName = interface?.name ?? "any"
+                    let remotePeerId = self.peerId(from: result, serviceName: name)
+                    appLog("Discovered service: \(name) peerId=\(remotePeerId) (\(type).\(domain)) on interface \(interfaceName)")
                     
-                    // Get addresses if possible from metadata or other sources
-                    // NWBrowser.Result doesn't directly give IPs until we connect, 
-                    // but we can see the interface.
-                    appLog("Discovered service: \(name) (\(type).\(domain)) on interface \(interfaceName)")
-                    
-                    if name != self.deviceId {
-                        self.discoveredEndpoints[result.endpoint] = result
-                    } else {
+                    if name == self.displayName || remotePeerId == self.peerId {
                         appLog("Skipping local service: \(name)")
+                        continue
                     }
+                    let peer = DiscoveredPeer(
+                        peerId: remotePeerId,
+                        displayName: name,
+                        endpoint: result.endpoint,
+                        browseResult: result
+                    )
+                    self.discoveredPeers[remotePeerId] = peer
                 }
             }
+
+            PreferencesManager.shared.migrateAuthorizedPeerIds(from: self.availablePeers)
             
             DispatchQueue.main.async {
                 let names = self.availableDeviceNames
+                let peers = self.availablePeers
                 self.onDevicesChanged?(names)
+                self.onPeersChanged?(peers)
                 NotificationCenter.default.post(
                     name: .syncAvailableDevicesDidChange,
                     object: self,
-                    userInfo: ["devices": names]
+                    userInfo: ["devices": names, "peers": peers]
                 )
             }
         }
@@ -375,36 +399,35 @@ class SyncManager: NSObject, NetServiceDelegate {
         appLog("Network Framework browser started for \(serviceType)")
     }
     
+    var availablePeers: [DiscoveredPeer] {
+        discoveredPeers.values.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
     var availableDeviceNames: [String] {
-        return discoveredEndpoints.compactMap { (endpoint, _) -> String? in
-            if case let .service(name, _, _, _) = endpoint {
-                return name
-            }
-            return nil
-        }.sorted()
+        return availablePeers.map(\.displayName)
     }
     
     // MARK: - Network Framework Listener (NWListener)
     private func startListening() {
-        let currentDeviceId = deviceId
+        let currentDisplayName = displayName
+        let currentPeerId = peerId
         let port = Int32(PreferencesManager.shared.syncPort)
-        appLog("Starting listener on port \(port) as '\(currentDeviceId)'...")
+        appLog("Starting listener on port \(port) as '\(currentDisplayName)' (peerId=\(currentPeerId))...")
         
         do {
             let parameters = NWParameters.tcp
             let nwPort = NWEndpoint.Port(rawValue: UInt16(port))!
             let listener = try NWListener(using: parameters, on: nwPort)
             
-            // NetService must be published on a thread with a RunLoop (usually Main)
             DispatchQueue.main.async {
-                // NetService type should NOT have a trailing dot here, 
-                // it is usually like "_clipy-sync._tcp"
-                let ns = NetService(domain: "local.", type: self.serviceType, name: currentDeviceId, port: port)
+                let ns = NetService(domain: "local.", type: self.serviceType, name: currentDisplayName, port: port)
+                let txtData = NetService.data(fromTXTRecord: ["peerId": Data(currentPeerId.utf8)])
+                ns.setTXTRecord(txtData)
                 ns.delegate = self
                 ns.schedule(in: .main, forMode: .common)
                 ns.publish()
                 self.netService = ns
-                appLog("NetService (Main Thread) publishing as: \(currentDeviceId) on port \(port) with type \(self.serviceType)")
+                appLog("NetService publishing as: \(currentDisplayName) peerId=\(currentPeerId) on port \(port)")
             }
             
             listener.stateUpdateHandler = { [weak self] state in
@@ -510,30 +533,34 @@ class SyncManager: NSObject, NetServiceDelegate {
         
         let isFileMessage = message.type == "file/header" || message.type == "file/chunk"
         let isClipboardMessage = message.type == "text/plain"
-        if !isFileMessage && !isClipboardMessage && !PreferencesManager.shared.authorizedDevices.contains(message.deviceId) {
-            appLog("Rejecting sync from unauthorized device: \(message.deviceId)", level: .warning)
+        let isCollectorMessage = message.type == "collector/event"
+        if !isFileMessage && !isClipboardMessage && !isCollectorMessage && !PreferencesManager.shared.authorizedPeerIds.contains(message.deviceId) {
+            appLog("Rejecting sync from unauthorized peer: \(message.deviceId)", level: .warning)
             return
         }
         
-        if let decrypted = decrypt(message.content) {
-            if message.type == "text/plain" {
-                appLog("Received sync from \(message.deviceId): \(decrypted.prefix(20))...")
-                ClipboardManager.shared.handleRemoteSync(content: decrypted, hash: message.hash)
-            } else if message.type == "file/header" {
-                handleFileHeader(decrypted, from: message.deviceId)
-            } else if message.type == "file/chunk" {
-                handleFileChunk(decrypted, from: message.deviceId)
-            } else if message.type == "notification/post" {
-                NotificationManager.shared.handleRemoteNotification(decrypted, from: message.deviceId)
-            } else if message.type == "notification/dismiss" {
-                NotificationManager.shared.handleRemoteDismiss(decrypted)
-            } else if message.type == "notification/clear_all" {
-                NotificationManager.shared.handleRemoteClearAll()
-            } else if message.type == "notification/config" {
-                handleNotificationConfig(decrypted)
-            } else if message.type == "collector/event" {
-                DeviceCollectorManager.shared.handleRemoteEvent(decrypted, from: message.deviceId)
-            }
+        guard let decrypted = decrypt(message.content) else {
+            appLog("Failed to decrypt message from \(message.deviceId), type: \(message.type)", level: .error)
+            return
+        }
+        
+        if message.type == "text/plain" {
+            appLog("Received sync from \(message.deviceId): \(decrypted.prefix(20))...")
+            ClipboardManager.shared.handleRemoteSync(content: decrypted, hash: message.hash)
+        } else if message.type == "file/header" {
+            handleFileHeader(decrypted, from: message.deviceId)
+        } else if message.type == "file/chunk" {
+            handleFileChunk(decrypted, from: message.deviceId)
+        } else if message.type == "notification/post" {
+            NotificationManager.shared.handleRemoteNotification(decrypted, from: message.deviceId)
+        } else if message.type == "notification/dismiss" {
+            NotificationManager.shared.handleRemoteDismiss(decrypted)
+        } else if message.type == "notification/clear_all" {
+            NotificationManager.shared.handleRemoteClearAll()
+        } else if message.type == "notification/config" {
+            handleNotificationConfig(decrypted)
+        } else if message.type == "collector/event" {
+            DeviceCollectorManager.shared.handleRemoteEvent(decrypted, from: message.deviceId)
         }
     }
 
@@ -634,7 +661,7 @@ class SyncManager: NSObject, NetServiceDelegate {
         guard let encryptedContent = encrypt(content) else { return }
 
         let message = SyncMessage(
-            deviceId: deviceId,
+            deviceId: peerId,
             timestamp: Date().timeIntervalSince1970,
             type: type,
             content: encryptedContent,
@@ -643,19 +670,12 @@ class SyncManager: NSObject, NetServiceDelegate {
 
         guard let jsonData = try? JSONEncoder().encode(message) else { return }
 
-        let authorizedDevices = PreferencesManager.shared.authorizedDevices
-        let targetResults = discoveredEndpoints.values.filter { result in
-            if case let .service(name, _, _, _) = result.endpoint {
-                return authorizedDevices.contains(name)
-            }
-            return false
-        }
+        let authorizedPeerIds = PreferencesManager.shared.authorizedPeerIds
+        let targets = availablePeers.filter { authorizedPeerIds.contains($0.peerId) }
 
-        for result in targetResults {
-            if case let .service(name, _, _, _) = result.endpoint {
-                appLog("Sending notification message to: \(name)")
-            }
-            sendSync(jsonData, to: result.endpoint)
+        for peer in targets {
+            appLog("Sending notification message to: \(peer.displayName) (peerId=\(peer.peerId))")
+            sendSync(jsonData, to: peer.endpoint)
         }
     }
 
@@ -667,7 +687,7 @@ class SyncManager: NSObject, NetServiceDelegate {
         guard let encryptedContent = encrypt(content) else { return }
         
         let message = SyncMessage(
-            deviceId: deviceId,
+            deviceId: peerId,
             timestamp: Date().timeIntervalSince1970,
             type: "text/plain",
             content: encryptedContent,
@@ -676,21 +696,22 @@ class SyncManager: NSObject, NetServiceDelegate {
         
         guard let jsonData = try? JSONEncoder().encode(message) else { return }
         
-        let authorizedDevices = PreferencesManager.shared.authorizedDevices
+        let authorizedPeerIds = PreferencesManager.shared.authorizedPeerIds
+        let targets = availablePeers.filter { authorizedPeerIds.contains($0.peerId) }
         
-        // Target endpoints that are authorized
-        let targetResults = discoveredEndpoints.values.filter { result in
-            if case let .service(name, _, _, _) = result.endpoint {
-                return authorizedDevices.contains(name)
-            }
-            return false
+        if targets.isEmpty {
+            let discovered = availablePeers.map { "\($0.displayName):\($0.peerId)" }.joined(separator: ", ")
+            let authorized = authorizedPeerIds.joined(separator: ", ")
+            appLog(
+                "Sync not sent: authorizedPeerIds=[\(authorized)], discovered=[\(discovered)]. Enable a device in Settings → LAN Sync.",
+                level: .warning
+            )
+            return
         }
-        
-        for result in targetResults {
-            if case let .service(name, _, _, _) = result.endpoint {
-                appLog("Sending sync to authorized device: \(name)")
-            }
-            sendSync(jsonData, to: result.endpoint)
+
+        for peer in targets {
+            appLog("Sending sync to \(peer.displayName) (peerId=\(peer.peerId))")
+            sendSync(jsonData, to: peer.endpoint)
         }
     }
     
@@ -707,17 +728,12 @@ class SyncManager: NSObject, NetServiceDelegate {
     ) {
         appLog("Preparing to send file \(url.lastPathComponent) to \(targetName)")
 
-        guard let result = discoveredEndpoints.values.first(where: { result in
-            if case let .service(name, _, _, _) = result.endpoint {
-                return name == targetName
-            }
-            return false
-        }) else {
+        guard let peer = availablePeers.first(where: { $0.displayName == targetName }) else {
             appLog("Could not find endpoint for device: \(targetName)", level: .error)
             return
         }
 
-        let endpoint = result.endpoint
+        let endpoint = peer.endpoint
         let fileId = UUID().uuidString
         let fileName = url.lastPathComponent
         let fileSize: Int64
@@ -734,7 +750,7 @@ class SyncManager: NSObject, NetServiceDelegate {
               let encryptedHeader = encrypt(String(data: headerData, encoding: .utf8) ?? "") else { return }
 
         let headerMessage = SyncMessage(
-            deviceId: deviceId,
+            deviceId: peerId,
             timestamp: Date().timeIntervalSince1970,
             type: headerType,
             content: encryptedHeader,
@@ -790,7 +806,7 @@ class SyncManager: NSObject, NetServiceDelegate {
                           let encryptedChunk = self.encrypt(String(data: chunkData, encoding: .utf8) ?? "") else { break }
 
                     let chunkMessage = SyncMessage(
-                        deviceId: self.deviceId,
+                        deviceId: self.peerId,
                         timestamp: Date().timeIntervalSince1970,
                         type: chunkType,
                         content: encryptedChunk,

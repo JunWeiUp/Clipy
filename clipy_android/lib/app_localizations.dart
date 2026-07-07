@@ -137,10 +137,6 @@ class AppStrings {
         return _t('通话记录', 'Call Log');
       case 'clipboard':
         return _t('剪贴板', 'Clipboard');
-      case 'location':
-        return _t('位置', 'Location');
-      case 'system':
-        return _t('系统状态', 'System');
       default:
         return category;
     }
@@ -182,6 +178,12 @@ class AppStrings {
         '勾选需要同步剪贴板的设备。仅需在本机授权，对方无需勾选即可接收。',
         'Select devices to sync clipboard to. Only this device needs to authorize; the other side can receive without checking you.',
       );
+  String get syncLocalNameHint => _t(
+        '本机名称：%s，设备 ID：%s…。勾选设备后复制即同步，对方无需勾选即可接收。',
+        'Device: %s (ID: %s…). Check devices to sync on copy; they can receive without checking you.',
+      );
+  String syncLocalNameHintFor(String displayName, String peerIdShort) =>
+      syncLocalNameHint.replaceFirst('%s', displayName).replaceFirst('%s', peerIdShort);
   String get lanDevices => _t('局域网设备', 'Devices on Network');
   String get sendFile => _t('发送文件…', 'Send File…');
   String fileSentTo(String deviceName) =>

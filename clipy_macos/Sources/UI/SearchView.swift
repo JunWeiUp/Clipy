@@ -395,20 +395,9 @@ struct SearchView: View {
     private var historyTable: some View {
         Table(viewModel.results, selection: $viewModel.selectedIDs) {
             TableColumn(L10n.t(.content)) { result in
-                HStack(spacing: 6) {
-                    historyTypeIcon(for: result.entry)
-                    if viewModel.isPinned(result.entry) {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.orange)
-                    }
-                    HighlightedText(
-                        text: contentPreview(for: result.entry),
-                        highlightRanges: viewModel.highlightRanges(for: result)
-                    )
-                }
-                .onDrag { dragItemProvider(for: result.entry) }
-                .onAppear { viewModel.onResultRowAppear(result) }
+                historyContentRow(for: result)
+                    .onDrag { dragItemProvider(for: result.entry) }
+                    .onAppear { viewModel.onResultRowAppear(result) }
             }
             TableColumn(L10n.t(.location)) { result in
                 Text(locationPreview(for: result.entry))
@@ -475,6 +464,57 @@ struct SearchView: View {
         Button(L10n.t(.delete), role: .destructive) {
             viewModel.selectedIDs = [entry.id]
             viewModel.deleteSelected()
+        }
+    }
+
+    @ViewBuilder
+    private func historyContentRow(for result: HistorySearchResult) -> some View {
+        if case .image(let path) = result.entry.item {
+            HStack(spacing: 8) {
+                if viewModel.isPinned(result.entry) {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                }
+                if let thumbnail = HistoryThumbnailCache.thumbnail(
+                    for: path,
+                    size: NSSize(width: 72, height: 54)
+                ) {
+                    Image(nsImage: thumbnail)
+                        .resizable()
+                        .frame(width: 72, height: 54)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                } else {
+                    Image(systemName: "photo")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 72, height: 54)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(result.entry.listDisplayTitle)
+                        .font(AppFont.body)
+                        .lineLimit(1)
+                    if let location = result.entry.item.locationSummary {
+                        Text(location)
+                            .font(AppFont.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        } else {
+            HStack(spacing: 6) {
+                historyTypeIcon(for: result.entry)
+                if viewModel.isPinned(result.entry) {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                }
+                HighlightedText(
+                    text: contentPreview(for: result.entry),
+                    highlightRanges: viewModel.highlightRanges(for: result)
+                )
+            }
         }
     }
 

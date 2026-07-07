@@ -2,11 +2,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'app_localizations.dart';
 import 'clipboard_manager.dart';
+import 'database/notification_repository.dart';
 import 'models.dart';
 import 'notification_manager.dart';
+import 'notification_health_monitor.dart';
 
 class NotificationSyncPage extends StatefulWidget {
-  const NotificationSyncPage({super.key});
+  final bool embedded;
+
+  const NotificationSyncPage({super.key, this.embedded = false});
 
   @override
   State<NotificationSyncPage> createState() => _NotificationSyncPageState();
@@ -26,6 +30,10 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   StreamSubscription? _allowedPackagesSubscription;
   final Set<String> _expandedApps = {};
   List<_HistoryListItem> _historyItems = [];
+  final Map<String, List<NotificationEntry>> _packageNotificationsCache = {};
+  bool _appsLoaded = false;
+  static const _packageGroupPageSize = 20;
+  static const _notificationsPerPackage = 50;
 
   @override
   void initState() {
@@ -33,15 +41,15 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(_handleTabChanged);
     _loadPermissionStatus();
-    _loadInstalledApps();
-    _rebuildHistoryItems();
+    unawaited(_rebuildHistoryItems());
     _notifSubscription =
         NotificationManager.instance.onNotificationsChanged.listen((_) {
       if (!mounted) return;
-      _rebuildHistoryItems();
-      if (_tabController.index == _historyTabIndex) {
-        setState(() {});
-      }
+      unawaited(_rebuildHistoryItems().then((_) {
+        if (mounted && _tabController.index == _historyTabIndex) {
+          setState(() {});
+        }
+      }));
     });
     _allowedPackagesSubscription =
         NotificationManager.instance.onAllowedPackagesChanged.listen((_) {
@@ -70,6 +78,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
 
   void _handleTabChanged() {
     if (_tabController.indexIsChanging) return;
+    if (_tabController.index == 0 && !_appsLoaded) {
+      unawaited(_loadInstalledApps());
+    }
     if (_tabController.index == _historyTabIndex) {
       setState(() {});
     }
@@ -112,53 +123,68 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     return items;
   }
 
-  void _rebuildHistoryItems() {
-    final notifications = NotificationManager.instance.activeNotifications;
-    if (notifications.isEmpty) {
-      _historyItems = const [];
+  Future<void> _rebuildHistoryItems() async {
+    final totalCount = await NotificationManager.instance.count();
+    final appCount =
+        await NotificationRepository.instance.packageGroupCount();
+    final groups = await NotificationRepository.instance.fetchPackageGroups(
+      offset: 0,
+      limit: _packageGroupPageSize,
+    );
+
+    if (totalCount == 0) {
+      if (mounted) setState(() => _historyItems = const []);
       return;
     }
 
-    final grouped = <String, List<NotificationEntry>>{};
-    for (final notification in notifications) {
-      grouped.putIfAbsent(notification.packageName, () => []).add(notification);
-    }
-    for (final items in grouped.values) {
-      items.sort((a, b) => b.postTime.compareTo(a.postTime));
-    }
-    final order = grouped.keys.toList()
-      ..sort((a, b) =>
-          grouped[b]!.first.postTime.compareTo(grouped[a]!.first.postTime));
-
     final rows = <_HistoryListItem>[
       _HistoryListItem.summary(
-        notificationCount: notifications.length,
-        appCount: order.length,
+        notificationCount: totalCount,
+        appCount: appCount,
       ),
     ];
 
-    for (final packageName in order) {
-      final items = grouped[packageName]!;
-      final first = items.first;
-      final isExpanded = _expandedApps.contains(packageName);
+    for (final group in groups) {
+      final isExpanded = _expandedApps.contains(group.packageName);
+      List<NotificationEntry>? expandedItems;
+      if (isExpanded) {
+        expandedItems = _packageNotificationsCache[group.packageName] ??
+            await NotificationRepository.instance.fetchByPackage(
+              group.packageName,
+              offset: 0,
+              limit: _notificationsPerPackage,
+            );
+        _packageNotificationsCache[group.packageName] = expandedItems;
+      }
+
       rows.add(
         _HistoryListItem.groupHeader(
-          appName: first.appName,
-          packageName: packageName,
-          count: items.length,
+          appName: group.appName,
+          packageName: group.packageName,
+          count: group.count,
           isExpanded: isExpanded,
-          latestPostTime: first.postTime,
-          notifications: items,
+          latestPostTime: group.latestPostTime,
+          notifications: expandedItems ?? const [],
         ),
       );
-      if (isExpanded) {
-        for (final entry in items) {
+      if (isExpanded && expandedItems != null) {
+        for (final entry in expandedItems) {
           rows.add(_HistoryListItem.notification(entry));
         }
       }
     }
 
-    _historyItems = rows;
+    if (mounted) setState(() => _historyItems = rows);
+  }
+
+  Future<List<NotificationEntry>> _notificationsForPackage(
+      String packageName) async {
+    return _packageNotificationsCache[packageName] ??
+        await NotificationRepository.instance.fetchByPackage(
+          packageName,
+          offset: 0,
+          limit: 500,
+        );
   }
 
   Future<void> _loadPermissionStatus() async {
@@ -169,12 +195,41 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
 
   Future<void> _loadInstalledApps() async {
     final apps = await NotificationManager.instance.getInstalledApps();
-    if (mounted) setState(() => _installedApps = apps);
+    if (mounted) {
+      setState(() {
+        _installedApps = apps;
+        _appsLoaded = true;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final tabBar = TabBar(
+      controller: _tabController,
+      tabs: [
+        Tab(icon: const Icon(Icons.tune), text: l10n.settings),
+        Tab(icon: const Icon(Icons.notifications), text: l10n.notificationHistory),
+      ],
+    );
+    final body = TabBarView(
+      controller: _tabController,
+      children: [
+        _buildSettingsTab(),
+        _buildHistoryTab(),
+      ],
+    );
+
+    if (widget.embedded) {
+      return Column(
+        children: [
+          Material(color: Theme.of(context).colorScheme.surface, child: tabBar),
+          Expanded(child: body),
+        ],
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.notificationSync),
@@ -198,23 +253,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
             ],
           ),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: [
-            Tab(icon: const Icon(Icons.tune), text: l10n.settings),
-            Tab(
-                icon: const Icon(Icons.notifications),
-                text: l10n.notificationHistory),
-          ],
-        ),
+        bottom: tabBar,
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildSettingsTab(),
-          _buildHistoryTab(),
-        ],
-      ),
+      body: body,
     );
   }
 
@@ -243,6 +284,11 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
             onChanged: _permissionGranted
                 ? (value) async {
                     await manager.setEnabled(value);
+                    if (value) {
+                      await NotificationHealthMonitor.instance.startIfNeeded();
+                    } else {
+                      NotificationHealthMonitor.instance.stop();
+                    }
                     if (mounted) setState(() {});
                   }
                 : null,
@@ -492,18 +538,18 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
               syncEnabled: syncEnabled,
               onToggleSync: (enabled) =>
                   _setPackageSyncEnabled(item.packageName!, enabled),
-              onTap: () {
-                setState(() {
-                  if (item.isExpanded!) {
-                    _expandedApps.remove(item.packageName);
-                  } else {
-                    _expandedApps.add(item.packageName!);
-                  }
-                  _rebuildHistoryItems();
-                });
+              onTap: () async {
+                if (item.isExpanded!) {
+                  _expandedApps.remove(item.packageName);
+                } else {
+                  _expandedApps.add(item.packageName!);
+                }
+                await _rebuildHistoryItems();
               },
-              onDismissAll: () {
-                for (final notification in item.notifications!) {
+              onDismissAll: () async {
+                final notifications =
+                    await _notificationsForPackage(item.packageName!);
+                for (final notification in notifications) {
                   NotificationManager.instance.broadcastDismissToRemote(
                     NotificationDismissRequest(
                       packageName: notification.packageName,
@@ -511,18 +557,24 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                       notificationKey: notification.notificationKey,
                     ),
                   );
-                  NotificationManager.instance
+                  await NotificationManager.instance
                       .removeNotification(notification.id);
                 }
+                _packageNotificationsCache.remove(item.packageName);
               },
-              onDeleteAll: () {
-                for (final notification in item.notifications!) {
-                  NotificationManager.instance
+              onDeleteAll: () async {
+                final notifications =
+                    await _notificationsForPackage(item.packageName!);
+                for (final notification in notifications) {
+                  await NotificationManager.instance
                       .removeNotification(notification.id);
                 }
+                _packageNotificationsCache.remove(item.packageName);
               },
-              onCopyAll: () {
-                final text = item.notifications!
+              onCopyAll: () async {
+                final notifications =
+                    await _notificationsForPackage(item.packageName!);
+                final text = notifications
                     .map(_notificationDetailText)
                     .join('\n\n');
                 ClipboardManager.instance.copyToClipboard(

@@ -13,16 +13,10 @@ struct SettingsView: View {
     @State private var historyEncryptionEnabled: Bool
     @State private var searchGlobalShortcutEnabled: Bool
     @State private var searchHistoryShortcut: ShortcutCombo?
-    @State private var screenshotShortcutEnabled: Bool
-    @State private var screenshotShortcut: ShortcutCombo?
-    @State private var screenshotDefaultMode: ScreenshotCaptureMode
-    @State private var screenshotMagnifierEnabled: Bool
-    @State private var screenshotElementSnapEnabled: Bool
-    @State private var screenCaptureGranted: Bool
     @State private var syncEnabled: Bool
     @State private var syncPort: String
-    @State private var availableDevices: [String] = []
-    @State private var selectedSyncTargets: Set<String> = Set(PreferencesManager.shared.authorizedDevices)
+    @State private var availablePeers: [DiscoveredPeer] = []
+    @State private var selectedSyncTargets: Set<String> = Set(PreferencesManager.shared.authorizedPeerIds)
     @State private var notificationSyncEnabled: Bool
     @State private var notificationSound: Bool
     @State private var collectorSyncEnabled: Bool
@@ -49,12 +43,6 @@ struct SettingsView: View {
         _historyEncryptionEnabled = State(initialValue: prefs.isHistoryEncryptionEnabled)
         _searchGlobalShortcutEnabled = State(initialValue: prefs.isSearchGlobalShortcutEnabled)
         _searchHistoryShortcut = State(initialValue: prefs.searchHistoryShortcut)
-        _screenshotShortcutEnabled = State(initialValue: prefs.isScreenshotShortcutEnabled)
-        _screenshotShortcut = State(initialValue: prefs.screenshotShortcut)
-        _screenshotDefaultMode = State(initialValue: prefs.screenshotDefaultMode)
-        _screenshotMagnifierEnabled = State(initialValue: prefs.isScreenshotMagnifierEnabled)
-        _screenshotElementSnapEnabled = State(initialValue: prefs.isScreenshotElementSnapEnabled)
-        _screenCaptureGranted = State(initialValue: ScreenCapturePermissionManager.isAuthorized)
         _syncEnabled = State(initialValue: prefs.isSyncEnabled)
         _syncPort = State(initialValue: "\(prefs.syncPort)")
         _notificationSyncEnabled = State(initialValue: NotificationManager.shared.notificationSyncEnabled)
@@ -185,63 +173,6 @@ struct SettingsView: View {
             }
 
             Section {
-                HStack {
-                    Text(L10n.t(.screenCapturePermission))
-                        .font(AppFont.caption)
-                    Spacer()
-                    Text(screenCaptureGranted ? L10n.t(.accessibilityGranted) : L10n.t(.accessibilityNotGranted))
-                        .font(AppFont.caption)
-                        .foregroundStyle(screenCaptureGranted ? .green : .orange)
-                }
-
-                Button(L10n.t(.openSystemSettings)) {
-                    ScreenCapturePermissionManager.requestAccess()
-                    ScreenCapturePermissionManager.openSettings()
-                }
-                .buttonStyle(.bordered)
-
-                Toggle(L10n.t(.screenshotShortcut), isOn: $screenshotShortcutEnabled)
-                    .onChange(of: screenshotShortcutEnabled) { newValue in
-                        PreferencesManager.shared.isScreenshotShortcutEnabled = newValue
-                        ScreenshotGlobalHotKeyManager.register()
-                    }
-                ShortcutRecorderRepresentable(combo: $screenshotShortcut) { combo in
-                    PreferencesManager.shared.screenshotShortcut = combo
-                    ScreenshotGlobalHotKeyManager.register()
-                }
-                .frame(height: 30)
-                Picker(L10n.t(.screenshotDefaultMode), selection: $screenshotDefaultMode) {
-                    Text(L10n.t(.screenshotRegion)).tag(ScreenshotCaptureMode.region)
-                    Text(L10n.t(.screenshotWindow)).tag(ScreenshotCaptureMode.window)
-                    Text(L10n.t(.screenshotFullscreen)).tag(ScreenshotCaptureMode.fullscreen)
-                }
-                .onChange(of: screenshotDefaultMode) { newValue in
-                    PreferencesManager.shared.screenshotDefaultMode = newValue
-                }
-
-                Toggle(L10n.t(.screenshotMagnifier), isOn: $screenshotMagnifierEnabled)
-                    .onChange(of: screenshotMagnifierEnabled) { newValue in
-                        PreferencesManager.shared.isScreenshotMagnifierEnabled = newValue
-                    }
-
-                Toggle(L10n.t(.screenshotElementSnap), isOn: $screenshotElementSnapEnabled)
-                    .onChange(of: screenshotElementSnapEnabled) { newValue in
-                        PreferencesManager.shared.isScreenshotElementSnapEnabled = newValue
-                    }
-
-                if screenshotElementSnapEnabled && !accessibilityGranted {
-                    Text(L10n.t(.screenshotElementSnapAccessibilityHint))
-                        .font(AppFont.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                Text(L10n.t(.screenshot))
-            } footer: {
-                Text(L10n.t(.screenshotShortcutDescription))
-                    .font(AppFont.caption)
-            }
-
-            Section {
                 Toggle(L10n.t(.enableLanSync), isOn: $syncEnabled)
                     .onChange(of: syncEnabled) { newValue in
                         PreferencesManager.shared.isSyncEnabled = newValue
@@ -266,23 +197,32 @@ struct SettingsView: View {
                     .font(AppFont.caption)
                     .foregroundStyle(.secondary)
 
-                if availableDevices.isEmpty {
+                Text(L10n.format(.syncLocalNameHint, PreferencesManager.shared.deviceName, String(PreferencesManager.shared.syncPeerId.prefix(8))))
+
+                let staleAuthorized = selectedSyncTargets.subtracting(Set(availablePeers.map(\.peerId)))
+                if !staleAuthorized.isEmpty {
+                    Text(L10n.format(.staleAuthorizedDevicesWarning, staleAuthorized.sorted().joined(separator: ", ")))
+                        .font(AppFont.caption)
+                        .foregroundStyle(.orange)
+                }
+
+                if availablePeers.isEmpty {
                     Text(L10n.t(.noDevicesFound))
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(availableDevices, id: \.self) { deviceName in
+                    ForEach(availablePeers, id: \.peerId) { peer in
                         Toggle(isOn: Binding(
-                            get: { selectedSyncTargets.contains(deviceName) },
+                            get: { selectedSyncTargets.contains(peer.peerId) },
                             set: { enabled in
                                 if enabled {
-                                    selectedSyncTargets.insert(deviceName)
+                                    selectedSyncTargets.insert(peer.peerId)
                                 } else {
-                                    selectedSyncTargets.remove(deviceName)
+                                    selectedSyncTargets.remove(peer.peerId)
                                 }
-                                PreferencesManager.shared.authorizedDevices = selectedSyncTargets.sorted()
+                                PreferencesManager.shared.authorizedPeerIds = selectedSyncTargets.sorted()
                             }
                         )) {
-                            Text(deviceName)
+                            Text(peer.displayName)
                         }
                     }
                 }
@@ -365,17 +305,18 @@ struct SettingsView: View {
         .frame(width: AppWindowSize.settings.width)
         .frame(minHeight: AppWindowSize.settings.height, alignment: .top)
         .onReceive(NotificationCenter.default.publisher(for: .syncAvailableDevicesDidChange)) { notification in
-            if let devices = notification.userInfo?["devices"] as? [String] {
-                availableDevices = devices
+            if let peers = notification.userInfo?["peers"] as? [DiscoveredPeer] {
+                availablePeers = peers
+            } else if let devices = notification.userInfo?["devices"] as? [String] {
+                availablePeers = SyncManager.shared.availablePeers
             }
         }
         .onAppear {
-            availableDevices = SyncManager.shared.availableDeviceNames
-            selectedSyncTargets = Set(PreferencesManager.shared.authorizedDevices)
+            availablePeers = SyncManager.shared.availablePeers
+            selectedSyncTargets = Set(PreferencesManager.shared.authorizedPeerIds)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             accessibilityGranted = AccessibilityManager.isTrusted
-            screenCaptureGranted = ScreenCapturePermissionManager.isAuthorized
             launchAtLogin = LaunchAtLoginManager.isEnabled
             currentHistoryCount = ClipboardManager.shared.totalHistoryCount
         }

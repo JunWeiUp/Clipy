@@ -1,30 +1,42 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'database/app_log_repository.dart';
 
 class LogManager extends ChangeNotifier {
   static final LogManager instance = LogManager._();
   LogManager._();
 
-  final List<String> _logs = [];
-  List<String> get logs => List.unmodifiable(_logs);
+  Timer? _notifyDebounce;
+
+  Future<List<AppLogRecord>> fetchPage({required int offset, required int limit}) {
+    return AppLogRepository.instance.fetchPage(offset: offset, limit: limit);
+  }
+
+  Future<int> count() => AppLogRepository.instance.count();
 
   void log(String message, {String level = 'info'}) {
     final timestamp = DateTime.now().toString().split('.')[0];
     final logMessage = '[$timestamp] [${level.toUpperCase()}] $message';
-    _logs.add(logMessage);
-    if (_logs.length > 1000) {
-      _logs.removeAt(0);
+    if (kDebugMode) {
+      debugPrint(logMessage);
     }
-    debugPrint(logMessage); // Still print to console
-    notifyListeners();
+    unawaited(AppLogRepository.instance.insert(level: level, message: message));
+    _scheduleNotify();
   }
 
-  void clear() {
-    _logs.clear();
+  void _scheduleNotify() {
+    _notifyDebounce?.cancel();
+    _notifyDebounce = Timer(const Duration(milliseconds: 100), () {
+      notifyListeners();
+    });
+  }
+
+  Future<void> clear() async {
+    await AppLogRepository.instance.clearAll();
     notifyListeners();
   }
 }
 
-// Global helper function for logging
 void appLog(String message, {String level = 'info'}) {
   LogManager.instance.log(message, level: level);
 }

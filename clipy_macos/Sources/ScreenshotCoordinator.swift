@@ -10,7 +10,10 @@ final class ScreenshotCoordinator {
 
     func start(mode: ScreenshotCaptureMode? = nil) {
         guard !isCapturing else { return }
-        guard ScreenCapturePermissionManager.ensureAccess() else { return }
+        guard ScreenCapturePermissionManager.ensureAccess() else {
+            appLog("Screenshot skipped: screen recording permission not granted", level: .warning)
+            return
+        }
 
         let captureMode = mode ?? PreferencesManager.shared.screenshotDefaultMode
         isCapturing = true
@@ -20,12 +23,21 @@ final class ScreenshotCoordinator {
         case .fullscreen:
             let screenRect = NSScreen.main?.frame ?? .zero
             ScreenshotCaptureService.captureFullscreen { [weak self] image in
-                self?.handleCaptureResult(image, screenRect: screenRect)
+                guard let self else { return }
+                autoreleasepool {
+                    guard let image,
+                          let pngData = ScreenshotImageProcessor.pngData(from: image, logicalSize: image.size) else {
+                        self.handleCaptureResult(screenRect: nil)
+                        return
+                    }
+                    ScreenshotExport.exportPNG(pngData, image: image, logicalSize: image.size)
+                    self.handleCaptureResult(screenRect: screenRect)
+                }
             }
         case .region, .window:
-            overlayController = CaptureOverlayController(mode: captureMode) { [weak self] image, rect in
+            overlayController = CaptureOverlayController(mode: captureMode) { [weak self] rect in
                 self?.overlayController = nil
-                self?.handleCaptureResult(image, screenRect: rect)
+                self?.handleCaptureResult(screenRect: rect)
             }
             overlayController?.present()
         }
@@ -34,22 +46,15 @@ final class ScreenshotCoordinator {
     func cancel() {
         overlayController?.cancel()
         overlayController = nil
-        ScreenshotInlineEditor.current?.dismiss()
         isCapturing = false
     }
 
-    private func handleCaptureResult(_ image: NSImage?, screenRect: NSRect?) {
+    private func handleCaptureResult(screenRect: NSRect?) {
         isCapturing = false
-        guard let image, let screenRect, screenRect.width > 1, screenRect.height > 1 else {
-            if image == nil {
-                appLog("Screenshot capture failed or was cancelled", level: .warning)
-            }
+        guard let screenRect, screenRect.width > 1, screenRect.height > 1 else {
+            appLog("Screenshot capture failed or was cancelled", level: .warning)
             return
         }
-        presentInlineEditor(image: image, screenRect: screenRect)
-    }
-
-    private func presentInlineEditor(image: NSImage, screenRect: NSRect) {
-        ScreenshotInlineEditor.present(image: image, screenRect: screenRect)
+        appLog("Screenshot captured \(Int(screenRect.width))x\(Int(screenRect.height))", level: .info)
     }
 }
