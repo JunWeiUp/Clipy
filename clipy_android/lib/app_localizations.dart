@@ -186,6 +186,13 @@ class AppStrings {
       syncLocalNameHint.replaceFirst('%s', displayName).replaceFirst('%s', peerIdShort);
   String get lanDevices => _t('局域网设备', 'Devices on Network');
   String get sendFile => _t('发送文件…', 'Send File…');
+  String get sendText => _t('发送文本…', 'Send Text…');
+  String sendTextTo(String deviceName) =>
+      _t('发送文本到 $deviceName', 'Send text to $deviceName');
+  String get enterTextToSend => _t('输入要发送的文本', 'Enter text to send');
+  String get send => _t('发送', 'Send');
+  String textSentTo(String deviceName) =>
+      _t('文本已发送至 $deviceName', 'Text sent to $deviceName');
   String fileSentTo(String deviceName) =>
       _t('已发送至 $deviceName', 'Sent to $deviceName');
   String get noDevicesFound => _t('未发现设备', 'No devices found');

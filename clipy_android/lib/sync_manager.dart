@@ -767,18 +767,8 @@ class SyncManager {
     if (!isEnabled) return;
 
     appLog('Broadcasting sync to authorized devices...');
-    final encrypted = _encrypt(content);
-    if (encrypted == null) return;
-
-    final message = SyncMessage(
-      deviceId: deviceId,
-      timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
-      type: 'text/plain',
-      content: encrypted,
-      hash: hash,
-    );
-
-    final jsonData = jsonEncode(message.toJson());
+    final jsonData = _makeTextSyncPayload(content, hash);
+    if (jsonData == null) return;
 
     var sentCount = 0;
     for (var peer in availablePeers) {
@@ -794,6 +784,50 @@ class SyncManager {
         level: 'warning',
       );
     }
+  }
+
+  Future<void> sendText(String content, {required String targetDevice}) async {
+    if (!isEnabled) return;
+
+    final trimmed = content.trim();
+    if (trimmed.isEmpty) return;
+
+    final targets =
+        availablePeers.where((p) => p.displayName == targetDevice).toList();
+    if (targets.isEmpty) {
+      appLog('Could not find endpoint for device: $targetDevice', level: 'error');
+      return;
+    }
+
+    final hash = _contentHashForPlainText(content);
+    final jsonData = _makeTextSyncPayload(content, hash);
+    if (jsonData == null) return;
+
+    appLog('Sending text to ${targets.first.displayName}...');
+    await _sendSync(jsonData, targets.first.service);
+  }
+
+  String _contentHashForPlainText(String text) {
+    final normalized = text
+        .trim()
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
+    return sha256.convert(utf8.encode(normalized)).toString();
+  }
+
+  String? _makeTextSyncPayload(String content, String hash) {
+    final encrypted = _encrypt(content);
+    if (encrypted == null) return null;
+
+    final message = SyncMessage(
+      deviceId: deviceId,
+      timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+      type: 'text/plain',
+      content: encrypted,
+      hash: hash,
+    );
+
+    return jsonEncode(message.toJson());
   }
 
   Future<void> sendFile(File file, {required String targetDevice}) async {

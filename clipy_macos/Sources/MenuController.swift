@@ -229,14 +229,29 @@ class MenuController: NSObject {
             menu.addItem(emptyItem)
         } else {
             for deviceName in availableDevices {
+                let deviceItem = NSMenuItem(title: "  \(deviceName)", action: nil, keyEquivalent: "")
+                let deviceSubmenu = NSMenu()
+
+                let sendTextItem = NSMenuItem(
+                    title: L10n.t(.sendText),
+                    action: #selector(sendTextClicked(_:)),
+                    keyEquivalent: ""
+                )
+                sendTextItem.target = self
+                sendTextItem.representedObject = deviceName
+                deviceSubmenu.addItem(sendTextItem)
+
                 let sendFileItem = NSMenuItem(
-                    title: "  \(deviceName) — \(L10n.t(.sendFile))",
+                    title: L10n.t(.sendFile),
                     action: #selector(sendFileClicked(_:)),
                     keyEquivalent: ""
                 )
                 sendFileItem.target = self
                 sendFileItem.representedObject = deviceName
-                menu.addItem(sendFileItem)
+                deviceSubmenu.addItem(sendFileItem)
+
+                deviceItem.submenu = deviceSubmenu
+                menu.addItem(deviceItem)
             }
         }
         
@@ -456,6 +471,40 @@ class MenuController: NSObject {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
     
+    @objc private func sendTextClicked(_ sender: NSMenuItem) {
+        guard let deviceName = sender.representedObject as? String else { return }
+        appLog("Send Text clicked for device: \(deviceName)")
+
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = L10n.format(.chooseTextToSend, deviceName)
+        alert.informativeText = L10n.t(.sendTextHint)
+        alert.addButton(withTitle: L10n.t(.send))
+        alert.addButton(withTitle: L10n.t(.cancel))
+
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 96))
+        textField.stringValue = NSPasteboard.general.string(forType: .string) ?? ""
+        textField.placeholderString = L10n.t(.enterTextToSend)
+        textField.isEditable = true
+        textField.isSelectable = true
+        textField.isBezeled = true
+        textField.bezelStyle = .roundedBezel
+        textField.maximumNumberOfLines = 0
+        textField.cell?.wraps = true
+        textField.cell?.isScrollable = true
+        alert.accessoryView = textField
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        let content = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty else { return }
+
+        let hash = ClipboardManager.shared.contentHashForPlainText(content) ?? UUID().uuidString
+        SyncManager.shared.sendText(content, hash: hash, toDevice: deviceName)
+    }
+
     @objc private func sendFileClicked(_ sender: NSMenuItem) {
         guard let deviceName = sender.representedObject as? String else { return }
         appLog("Send File clicked for device: \(deviceName)")

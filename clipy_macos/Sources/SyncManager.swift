@@ -683,22 +683,12 @@ class SyncManager: NSObject, NetServiceDelegate {
     func broadcastSync(content: String, hash: String) {
         appLog("Broadcasting sync message: \(hash.prefix(8))...")
         guard PreferencesManager.shared.isSyncEnabled else { return }
-        
-        guard let encryptedContent = encrypt(content) else { return }
-        
-        let message = SyncMessage(
-            deviceId: peerId,
-            timestamp: Date().timeIntervalSince1970,
-            type: "text/plain",
-            content: encryptedContent,
-            hash: hash
-        )
-        
-        guard let jsonData = try? JSONEncoder().encode(message) else { return }
-        
+
+        guard let jsonData = makeTextSyncPayload(content: content, hash: hash) else { return }
+
         let authorizedPeerIds = PreferencesManager.shared.authorizedPeerIds
         let targets = availablePeers.filter { authorizedPeerIds.contains($0.peerId) }
-        
+
         if targets.isEmpty {
             let discovered = availablePeers.map { "\($0.displayName):\($0.peerId)" }.joined(separator: ", ")
             let authorized = authorizedPeerIds.joined(separator: ", ")
@@ -713,6 +703,36 @@ class SyncManager: NSObject, NetServiceDelegate {
             appLog("Sending sync to \(peer.displayName) (peerId=\(peer.peerId))")
             sendSync(jsonData, to: peer.endpoint)
         }
+    }
+
+    func sendText(_ content: String, hash: String, toDevice targetName: String) {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard PreferencesManager.shared.isSyncEnabled else { return }
+
+        guard let peer = availablePeers.first(where: { $0.displayName == targetName }) else {
+            appLog("Could not find endpoint for device: \(targetName)", level: .error)
+            return
+        }
+
+        guard let jsonData = makeTextSyncPayload(content: content, hash: hash) else { return }
+
+        appLog("Sending text to \(peer.displayName) (peerId=\(peer.peerId))")
+        sendSync(jsonData, to: peer.endpoint)
+    }
+
+    private func makeTextSyncPayload(content: String, hash: String) -> Data? {
+        guard let encryptedContent = encrypt(content) else { return nil }
+
+        let message = SyncMessage(
+            deviceId: peerId,
+            timestamp: Date().timeIntervalSince1970,
+            type: "text/plain",
+            content: encryptedContent,
+            hash: hash
+        )
+
+        return try? JSONEncoder().encode(message)
     }
     
     func sendFile(at url: URL, toDevice targetName: String) {

@@ -34,6 +34,95 @@ Future<void> pickAndSendFileToDevice(BuildContext context, String deviceName) as
   }
 }
 
+Future<void> showSendTextToDeviceDialog(
+  BuildContext context,
+  String deviceName, {
+  String? initialText,
+}) async {
+  final l10n = context.l10n;
+  final controller = TextEditingController(text: initialText ?? '');
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(l10n.sendTextTo(deviceName)),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        maxLines: 6,
+        minLines: 3,
+        decoration: InputDecoration(
+          hintText: l10n.enterTextToSend,
+          border: const OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: Text(l10n.cancel),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: Text(l10n.send),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || controller.text.trim().isEmpty) return;
+  await SyncManager.instance.sendText(
+    controller.text,
+    targetDevice: deviceName,
+  );
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(l10n.textSentTo(deviceName))),
+    );
+  }
+}
+
+class LanDeviceActionTile extends StatelessWidget {
+  final String deviceName;
+
+  const LanDeviceActionTile({super.key, required this.deviceName});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return ListTile(
+      leading: const Icon(Icons.devices),
+      title: Text(deviceName),
+      trailing: PopupMenuButton<String>(
+        onSelected: (value) {
+          if (value == 'text') {
+            showSendTextToDeviceDialog(context, deviceName);
+          } else if (value == 'file') {
+            pickAndSendFileToDevice(context, deviceName);
+          }
+        },
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            value: 'text',
+            child: ListTile(
+              leading: const Icon(Icons.short_text),
+              title: Text(l10n.sendText),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+            ),
+          ),
+          PopupMenuItem(
+            value: 'file',
+            child: ListTile(
+              leading: const Icon(Icons.upload_file),
+              title: Text(l10n.sendFile),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class SyncTargetDeviceList extends StatefulWidget {
   const SyncTargetDeviceList({super.key});
 
@@ -561,14 +650,9 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
             subtitle: Text(l10n.sameWifiHint),
           )
         else
-          ..._availableDevices.map((deviceName) {
-            return ListTile(
-              leading: const Icon(Icons.upload_file),
-              title: Text(deviceName),
-              subtitle: Text(l10n.sendFile),
-              onTap: () => pickAndSendFileToDevice(context, deviceName),
-            );
-          }),
+          ..._availableDevices.map(
+            (deviceName) => LanDeviceActionTile(deviceName: deviceName),
+          ),
         const Divider(),
         ListTile(
           title: Text(l10n.about),
@@ -952,14 +1036,9 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
             subtitle: Text(l10n.sameWifiHint),
           )
         else
-          ..._availableDevices.map((deviceName) {
-            return ListTile(
-              leading: const Icon(Icons.upload_file),
-              title: Text(deviceName),
-              subtitle: Text(l10n.sendFile),
-              onTap: () => pickAndSendFileToDevice(context, deviceName),
-            );
-          }),
+          ..._availableDevices.map(
+            (deviceName) => LanDeviceActionTile(deviceName: deviceName),
+          ),
         const Divider(),
         ListTile(
           leading: const Icon(Icons.folder_open),
@@ -1129,14 +1208,9 @@ class _SettingsPageState extends State<SettingsPage> {
               subtitle: Text(l10n.sameWifiHint),
             )
           else
-            ..._availableDevices.map((deviceName) {
-              return ListTile(
-                leading: const Icon(Icons.upload_file),
-                title: Text(deviceName),
-                subtitle: Text(l10n.sendFile),
-                onTap: () => pickAndSendFileToDevice(context, deviceName),
-              );
-            }),
+            ..._availableDevices.map(
+              (deviceName) => LanDeviceActionTile(deviceName: deviceName),
+            ),
           const Divider(),
           ListTile(
             leading: const Icon(Icons.list_alt),

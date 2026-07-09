@@ -692,23 +692,22 @@ class ClipboardManager {
     }
     
     func handleRemoteSync(content: String, hash: String) {
-        appLog("Handling remote sync: \(hash.prefix(8))")
-        // Prevent loop if we already have this content
-        guard hash != lastSyncHash else { 
-            appLog("Sync loop detected or duplicate hash, ignoring")
-            return 
-        }
-        
-        
-        lastSyncHash = hash
-        
-        // Update pasteboard
+        let effectiveHash = hash.isEmpty
+            ? (contentHash(for: .text(content)) ?? UUID().uuidString)
+            : hash
+        appLog("Handling remote sync: \(effectiveHash.prefix(8))")
+
+        lastSyncHash = effectiveHash
+
         pasteboard.clearContents()
         pasteboard.setString(content, forType: .string)
         changeCount = pasteboard.changeCount
-        
-        // Add to history
+
         addToHistory(.text(content), sourceApp: "Remote Device")
+    }
+
+    func contentHashForPlainText(_ text: String) -> String? {
+        contentHash(for: .text(text))
     }
 
     func availableSourceApps() -> [String] {

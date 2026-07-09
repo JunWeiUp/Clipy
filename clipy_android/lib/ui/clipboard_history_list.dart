@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../app_localizations.dart';
 import '../clipboard_manager.dart';
 import '../models.dart';
+import '../sync_manager.dart';
 
 class PaginatedClipboardHistoryList extends StatefulWidget {
   final void Function(HistoryEntry entry)? onFileTap;
@@ -77,6 +78,50 @@ class _PaginatedClipboardHistoryListState
     }
   }
 
+  Future<void> _showSendTextSheet(BuildContext context, String text) async {
+    final l10n = context.l10n;
+    final devices = SyncManager.instance.availableDeviceNames;
+    if (devices.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.noDevicesFound)),
+      );
+      return;
+    }
+
+    final deviceName = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                l10n.sendText,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+            ...devices.map(
+              (name) => ListTile(
+                leading: const Icon(Icons.devices),
+                title: Text(name),
+                onTap: () => Navigator.pop(sheetContext, name),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (deviceName == null || !context.mounted) return;
+    await SyncManager.instance.sendText(text, targetDevice: deviceName);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(l10n.textSentTo(deviceName))),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
@@ -127,6 +172,9 @@ class _PaginatedClipboardHistoryListState
               );
             }
           },
+          onLongPress: !isFile && entry.item.type == 'text'
+              ? () => _showSendTextSheet(context, entry.item.value as String)
+              : null,
         );
       },
     );
