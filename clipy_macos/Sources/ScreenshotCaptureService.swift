@@ -105,29 +105,51 @@ enum ScreenshotCaptureService {
         let cgPoint = ScreenshotCoordinateConverter.cgPoint(from: point)
         let ownPID = ProcessInfo.processInfo.processIdentifier
 
+        // Quartz returns windows front-to-back; pick the first visible window at the point.
         for info in windowInfoList {
-            guard let boundsDict = info[kCGWindowBounds as String] as? [String: CGFloat],
-                  let layer = info[kCGWindowLayer as String] as? Int,
-                  layer == 0,
-                  let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t,
-                  ownerPID != ownPID,
-                  let ownerName = info[kCGWindowOwnerName as String] as? String,
-                  ownerName != "Window Server",
-                  let windowID = info[kCGWindowNumber as String] as? CGWindowID else {
+            guard let windowID = info[kCGWindowNumber as String] as? CGWindowID,
+                  isSelectableWindow(info, ownPID: ownPID),
+                  let bounds = cgWindowBounds(from: info),
+                  bounds.contains(cgPoint) else {
                 continue
             }
-
-            let bounds = CGRect(
-                x: boundsDict["X"] ?? 0,
-                y: boundsDict["Y"] ?? 0,
-                width: boundsDict["Width"] ?? 0,
-                height: boundsDict["Height"] ?? 0
-            )
-            if bounds.contains(cgPoint) {
-                return windowID
-            }
+            return windowID
         }
         return nil
+    }
+
+    private static func isSelectableWindow(_ info: [String: Any], ownPID: pid_t) -> Bool {
+        guard let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t,
+              ownerPID != ownPID,
+              let ownerName = info[kCGWindowOwnerName as String] as? String,
+              ownerName != "Window Server" else {
+            return false
+        }
+
+        if let alpha = info[kCGWindowAlpha as String] as? CGFloat, alpha < 0.01 {
+            return false
+        }
+
+        if let isOnScreen = info[kCGWindowIsOnscreen as String] as? Int, isOnScreen != 1 {
+            return false
+        }
+
+        guard let bounds = cgWindowBounds(from: info) else { return false }
+        return bounds.width >= 1 && bounds.height >= 1
+    }
+
+    private static func cgWindowBounds(from info: [String: Any]) -> CGRect? {
+        guard let boundsDict = info[kCGWindowBounds as String] as? [String: CGFloat] else {
+            return nil
+        }
+        let bounds = CGRect(
+            x: boundsDict["X"] ?? 0,
+            y: boundsDict["Y"] ?? 0,
+            width: boundsDict["Width"] ?? 0,
+            height: boundsDict["Height"] ?? 0
+        )
+        guard bounds.width > 0, bounds.height > 0 else { return nil }
+        return bounds
     }
 
     static func windowBounds(for windowID: CGWindowID) -> NSRect? {
@@ -183,17 +205,9 @@ enum ScreenshotCaptureService {
             )
         }
 
-        if resolution == .auto {
-            return try await captureDisplayRegionByCropping(
-                rect: rect,
-                display: display,
-                nativeScale: nativeScale,
-                resolution: resolution,
-                filter: filter
-            )
-        }
-
-        return try await captureDisplayRegionWithSourceRect(
+        // Both `.auto` and `.native` resolve to the display's native pixel scale, so the
+        // crop-the-full-display path is always correct and avoids any capture-time scaling.
+        return try await captureDisplayRegionByCropping(
             rect: rect,
             display: display,
             nativeScale: nativeScale,
@@ -218,8 +232,15 @@ enum ScreenshotCaptureService {
 
         appLog("Screenshot: capturing full display \(display.width)x\(display.height) then cropping")
         let fullImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+        // `rect` is AppKit global (y-up); convert to CG global (y-down) so it shares a
+        // coordinate system with `display.frame`, then to display-local top-down.
+        let cgSelection = ScreenshotCoordinateConverter.cgRect(from: rect)
+        let localRect = ScreenshotCoordinateConverter.displayLocalTopDownRect(
+            of: cgSelection,
+            displayFrame: display.frame
+        )
         let cropRect = ScreenshotCoordinateConverter.pixelCropRect(
-            from: rect,
+            fromLocalRect: localRect,
             displayFrame: display.frame,
             pixelWidth: fullImage.width,
             pixelHeight: fullImage.height
@@ -244,9 +265,12 @@ enum ScreenshotCaptureService {
         filter: SCContentFilter,
         pixelScaleOverride: CGFloat? = nil
     ) async throws -> CapturedImage? {
+        let cgSelection = ScreenshotCoordinateConverter.cgRect(from: rect)
         let relativeRect = ScreenshotCoordinateConverter.displayRelativeRect(
-            from: rect,
-            displayFrame: display.frame
+            fromLocalRect: ScreenshotCoordinateConverter.displayLocalTopDownRect(
+                of: cgSelection,
+                displayFrame: display.frame
+            )
         )
         let pixelScale = pixelScaleOverride ?? resolution.pixelScale(
             for: screenContaining(rect: rect),

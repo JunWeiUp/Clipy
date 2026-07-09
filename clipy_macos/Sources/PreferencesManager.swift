@@ -38,6 +38,8 @@ class PreferencesManager {
     private let screenshotAutoSaveEnabledKey = "screenshotAutoSaveEnabled"
     private let screenshotSaveDirectoryKey = "screenshotSaveDirectory"
     private let screenshotResolutionKey = "screenshotResolution"
+    private let screenshotPostCaptureActionKey = "screenshotPostCaptureAction"
+    private let screenshotOCRLanguageKey = "screenshotOCRLanguage"
     
     var deviceName: String {
         get { defaults.string(forKey: deviceNameKey) ?? Host.current().localizedName ?? "Mac" }
@@ -309,6 +311,28 @@ class PreferencesManager {
             return .default
         }
         set { defaults.set(newValue.rawValue, forKey: screenshotResolutionKey) }
+    }
+
+    var screenshotPostCaptureAction: ScreenshotPostCaptureAction {
+        get {
+            guard let raw = defaults.string(forKey: screenshotPostCaptureActionKey),
+                  let action = ScreenshotPostCaptureAction(rawValue: raw) else {
+                return .default
+            }
+            return action
+        }
+        set { defaults.set(newValue.rawValue, forKey: screenshotPostCaptureActionKey) }
+    }
+
+    var screenshotOCRLanguage: ScreenshotOCRLanguage {
+        get {
+            guard let raw = defaults.string(forKey: screenshotOCRLanguageKey),
+                  let language = ScreenshotOCRLanguage(rawValue: raw) else {
+                return .default
+            }
+            return language
+        }
+        set { defaults.set(newValue.rawValue, forKey: screenshotOCRLanguageKey) }
     }
 
     static var defaultScreenshotSaveDirectoryPath: String {

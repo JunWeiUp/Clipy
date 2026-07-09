@@ -56,6 +56,10 @@ enum L10nKey: String {
     case syncLocalNameHint
     case authorized
     case sendFile
+    case sendText
+    case chooseTextToSend
+    case sendTextHint
+    case enterTextToSend
     case editSnippets
     case clearHistory
     case showLogs
@@ -219,6 +223,8 @@ enum L10nKey: String {
     case screenshotShortcutDescription
     case screenshotDefaultMode
     case screenshotEditorTitle
+    case screenshotEdit
+    case screenshotEditDone
     case screenshotCopy
     case screenshotPin
     case screenshotOCR
@@ -260,8 +266,19 @@ enum L10nKey: String {
     case screenshotSavedTo
     case screenshotResolution
     case screenshotResolutionAuto
-    case screenshotResolutionOption
+    case screenshotResolutionNative
     case screenshotResolutionHint
+    case screenshotPostAction
+    case screenshotPostActionHint
+    case screenshotPostActionCopy
+    case screenshotPostActionPin
+    case screenshotPostActionOCR
+    case screenshotPostActionSaveAs
+    case screenshotOCRLanguage
+    case screenshotOCRLanguageHint
+    case screenshotOCRLanguageEnglish
+    case screenshotOCRLanguageChineseEnglish
+    case screenshotOCRLanguageAuto
 }
 
 struct L10n {
@@ -310,6 +327,10 @@ struct L10n {
             .syncLocalNameHint: "本机名称：%@，设备 ID：%@…。对方勾选本机即可向本机发送剪贴板，本机无需勾选对方即可接收。",
             .authorized: "已授权",
             .sendFile: "发送文件...",
+            .sendText: "发送文本...",
+            .chooseTextToSend: "发送文本到 %@",
+            .sendTextHint: "文本将发送到对方设备并写入剪贴板。",
+            .enterTextToSend: "输入要发送的文本",
             .editSnippets: "编辑片段...",
             .clearHistory: "清空历史记录",
             .showLogs: "显示日志...",
@@ -473,6 +494,8 @@ struct L10n {
             .screenshotShortcutDescription: "按下此快捷键开始截图，默认使用偏好设置中的截图模式。",
             .screenshotDefaultMode: "默认截图模式",
             .screenshotEditorTitle: "截图标注",
+            .screenshotEdit: "编辑贴图",
+            .screenshotEditDone: "完成",
             .screenshotCopy: "复制",
             .screenshotPin: "贴图",
             .screenshotOCR: "OCR",
@@ -514,8 +537,19 @@ struct L10n {
             .screenshotSavedTo: "已保存：%@",
             .screenshotResolution: "截图分辨率",
             .screenshotResolutionAuto: "自动（跟随屏幕）",
-            .screenshotResolutionOption: "%d DPI",
-            .screenshotResolutionHint: "自动跟随当前屏幕 Retina 倍率；72 DPI 文件更小；更高 DPI 适合打印。",
+            .screenshotResolutionNative: "原生像素",
+            .screenshotResolutionHint: "始终以屏幕原生分辨率截图，保证清晰。两种模式效果相同，「原生」用于明确锁定不缩放。",
+            .screenshotPostAction: "截图后默认动作",
+            .screenshotPostActionHint: "选区确认或全屏截图完成后自动执行的动作。工具栏按钮会临时覆盖此项。",
+            .screenshotPostActionCopy: "复制到剪贴板",
+            .screenshotPostActionPin: "贴在屏幕上",
+            .screenshotPostActionOCR: "识别文字 (OCR)",
+            .screenshotPostActionSaveAs: "另存为…",
+            .screenshotOCRLanguage: "OCR 识别语言",
+            .screenshotOCRLanguageHint: "中文+英文适合大多数中文截图；自动会使用系统支持的全部语言，速度较慢。",
+            .screenshotOCRLanguageEnglish: "仅英文",
+            .screenshotOCRLanguageChineseEnglish: "中文 + 英文",
+            .screenshotOCRLanguageAuto: "自动（全部语言）",
         ],
         .en: [
             .recordShortcut: "Click to record shortcut",
@@ -553,6 +587,10 @@ struct L10n {
             .syncLocalNameHint: "This device: %@ (ID: %@…). Others must check this device to send clipboard here; you can receive without checking them.",
             .authorized: "Authorized",
             .sendFile: "Send File...",
+            .sendText: "Send Text...",
+            .chooseTextToSend: "Send text to %@",
+            .sendTextHint: "The text will be delivered to the other device and copied to its clipboard.",
+            .enterTextToSend: "Enter text to send",
             .editSnippets: "Edit Snippets...",
             .clearHistory: "Clear History",
             .showLogs: "Show Logs...",
@@ -716,6 +754,8 @@ struct L10n {
             .screenshotShortcutDescription: "Press this shortcut to start a screenshot using the default mode below.",
             .screenshotDefaultMode: "Default Capture Mode",
             .screenshotEditorTitle: "Screenshot Editor",
+            .screenshotEdit: "Edit Pin",
+            .screenshotEditDone: "Done",
             .screenshotCopy: "Copy",
             .screenshotPin: "Pin to Screen",
             .screenshotOCR: "OCR",
@@ -757,8 +797,19 @@ struct L10n {
             .screenshotSavedTo: "Saved: %@",
             .screenshotResolution: "Screenshot Resolution",
             .screenshotResolutionAuto: "Auto (Match Screen)",
-            .screenshotResolutionOption: "%d DPI",
-            .screenshotResolutionHint: "Auto follows the current screen Retina scale. 72 DPI keeps files smaller. Higher DPI is for print.",
+            .screenshotResolutionNative: "Native Pixels",
+            .screenshotResolutionHint: "Always captures at the screen's native resolution for sharp results. Both modes behave the same; Native explicitly locks to no scaling.",
+            .screenshotPostAction: "After Capture",
+            .screenshotPostActionHint: "Action to run automatically after a selection or fullscreen capture. Toolbar buttons override this temporarily.",
+            .screenshotPostActionCopy: "Copy to Clipboard",
+            .screenshotPostActionPin: "Pin on Screen",
+            .screenshotPostActionOCR: "Recognize Text (OCR)",
+            .screenshotPostActionSaveAs: "Save As…",
+            .screenshotOCRLanguage: "OCR Language",
+            .screenshotOCRLanguageHint: "Chinese + English works for most Chinese screenshots. Auto uses all system-supported languages and is slower.",
+            .screenshotOCRLanguageEnglish: "English Only",
+            .screenshotOCRLanguageChineseEnglish: "Chinese + English",
+            .screenshotOCRLanguageAuto: "Auto (All Languages)",
         ]
     ]
 }

@@ -35,17 +35,11 @@ enum ScreenshotImageProcessor {
         resolution: ScreenshotResolution = PreferencesManager.shared.screenshotResolution,
         displayNativeScale: CGFloat? = nil
     ) -> NSImage {
-        switch resolution {
-        case .auto:
-            return NSImage(cgImage: cgImage, size: logicalSize)
-        default:
-            return normalized(
-                from: cgImage,
-                logicalSize: logicalSize,
-                displayNativeScale: displayNativeScale,
-                allowDownscale: true
-            )
-        }
+        // All resolution modes now resolve to native pixels, so simply wrap the capture
+        // without resampling. Avoids both downsampling blur and upsampling softness.
+        _ = resolution
+        _ = displayNativeScale
+        return NSImage(cgImage: cgImage, size: logicalSize)
     }
 
     static func normalized(
@@ -67,10 +61,10 @@ enum ScreenshotImageProcessor {
            (cgImage.width > Int(target.width) || cgImage.height > Int(target.height)) {
             return NSImage(cgImage: cgImage, size: logicalSize)
         }
-        if cgImage.width < Int(target.width) || cgImage.height < Int(target.height) {
-            return resample(cgImage: cgImage, to: target, logicalSize: logicalSize)
-        }
-        if allowDownscale {
+        // Never upscale: inventing pixels makes screenshots soft and inflates file size
+        // without adding real detail. Only resample down (when explicitly allowed).
+        if allowDownscale,
+           (cgImage.width > Int(target.width) || cgImage.height > Int(target.height)) {
             return resample(cgImage: cgImage, to: target, logicalSize: logicalSize)
         }
         return NSImage(cgImage: cgImage, size: logicalSize)

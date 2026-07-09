@@ -65,8 +65,6 @@ final class CaptureOverlayController: NSObject {
             magnifier.show()
         }
 
-        NSApp.activate(ignoringOtherApps: true)
-
         let mask: NSEvent.EventTypeMask = [.keyDown, .leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .mouseMoved]
         eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
             self?.forwardEvent(event)
@@ -329,7 +327,7 @@ final class CaptureOverlayController: NSObject {
                         self.finish(screenRect: self.pendingCaptureRect)
                         return
                     }
-                    ScreenshotExport.exportPNG(pngData, image: image, logicalSize: image.size)
+                    self.exportAndPostAction(pngData: pngData, image: image, logicalSize: image.size)
                     self.finish(screenRect: self.pendingCaptureRect)
                 }
             }
@@ -337,9 +335,18 @@ final class CaptureOverlayController: NSObject {
     }
 
     private func exportAndPostAction(pngData: Data, image: NSImage, logicalSize: NSSize) {
+        // A toolbar button press (pin/ocr) takes precedence over the configured default.
+        // When the user simply confirms the selection, fall back to the preference.
         switch pendingPostAction {
         case .none:
-            ScreenshotExport.exportPNG(pngData, image: image, logicalSize: logicalSize)
+            let action = PreferencesManager.shared.screenshotPostCaptureAction
+            ScreenshotExport.applyPostAction(
+                action,
+                pngData: pngData,
+                image: image,
+                logicalSize: logicalSize,
+                screenRect: pendingCaptureRect
+            )
         case .pin:
             ScreenshotExport.exportPNG(pngData, image: image, logicalSize: logicalSize)
             ScreenshotExport.pin(image: image, at: pendingCaptureRect, skipIngest: true)

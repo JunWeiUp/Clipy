@@ -10,6 +10,8 @@ struct ScreenshotSettingsView: View {
     @State private var screenshotAutoSaveEnabled: Bool
     @State private var screenshotSaveDirectoryPath: String
     @State private var screenshotResolution: ScreenshotResolution
+    @State private var screenshotPostCaptureAction: ScreenshotPostCaptureAction
+    @State private var screenshotOCRLanguage: ScreenshotOCRLanguage
     @State private var screenCaptureGranted: Bool
     @State private var accessibilityGranted: Bool
 
@@ -23,6 +25,8 @@ struct ScreenshotSettingsView: View {
         _screenshotAutoSaveEnabled = State(initialValue: prefs.isScreenshotAutoSaveEnabled)
         _screenshotSaveDirectoryPath = State(initialValue: prefs.screenshotSaveDirectoryPath)
         _screenshotResolution = State(initialValue: prefs.screenshotResolution)
+        _screenshotPostCaptureAction = State(initialValue: prefs.screenshotPostCaptureAction)
+        _screenshotOCRLanguage = State(initialValue: prefs.screenshotOCRLanguage)
         _screenCaptureGranted = State(initialValue: ScreenCapturePermissionManager.isAuthorized)
         _accessibilityGranted = State(initialValue: AccessibilityManager.isTrusted)
     }
@@ -81,6 +85,15 @@ struct ScreenshotSettingsView: View {
                             PreferencesManager.shared.screenshotDefaultMode = newValue
                         }
 
+                        Picker(L10n.t(.screenshotPostAction), selection: $screenshotPostCaptureAction) {
+                            ForEach(ScreenshotPostCaptureAction.allCases) { action in
+                                Text(action.displayName()).tag(action)
+                            }
+                        }
+                        .onChange(of: screenshotPostCaptureAction) { newValue in
+                            PreferencesManager.shared.screenshotPostCaptureAction = newValue
+                        }
+
                         Picker(L10n.t(.screenshotResolution), selection: $screenshotResolution) {
                             ForEach(ScreenshotResolution.allCases) { resolution in
                                 Text(resolution.displayName()).tag(resolution)
@@ -88,6 +101,15 @@ struct ScreenshotSettingsView: View {
                         }
                         .onChange(of: screenshotResolution) { newValue in
                             PreferencesManager.shared.screenshotResolution = newValue
+                        }
+
+                        Picker(L10n.t(.screenshotOCRLanguage), selection: $screenshotOCRLanguage) {
+                            ForEach(ScreenshotOCRLanguage.allCases) { language in
+                                Text(language.displayName()).tag(language)
+                            }
+                        }
+                        .onChange(of: screenshotOCRLanguage) { newValue in
+                            PreferencesManager.shared.screenshotOCRLanguage = newValue
                         }
 
                         Toggle(L10n.t(.screenshotMagnifier), isOn: $screenshotMagnifierEnabled)
@@ -133,6 +155,8 @@ struct ScreenshotSettingsView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(L10n.t(.screenshotShortcutDescription))
                             Text(L10n.t(.screenshotResolutionHint))
+                            Text(L10n.t(.screenshotPostActionHint))
+                            Text(L10n.t(.screenshotOCRLanguageHint))
                         }
                         .font(AppFont.caption)
                     }

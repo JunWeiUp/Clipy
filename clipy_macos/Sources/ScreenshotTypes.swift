@@ -10,25 +10,78 @@ enum ScreenshotCaptureMode: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-enum ScreenshotResolution: String, CaseIterable, Identifiable, Codable {
+/// Action performed automatically after a capture completes.
+enum ScreenshotPostCaptureAction: String, CaseIterable, Identifiable, Codable {
+    /// Copy to clipboard (and auto-save if enabled). Default behavior.
+    case copy
+    /// Pin the capture on top of the screen.
+    case pin
+    /// Run OCR and copy recognized text to the clipboard.
+    case ocr
+    /// Prompt the user for a save location.
+    case saveAs
+
+    var id: String { rawValue }
+
+    static var `default`: ScreenshotPostCaptureAction { .copy }
+
+    func displayName() -> String {
+        switch self {
+        case .copy: return L10n.t(.screenshotPostActionCopy)
+        case .pin: return L10n.t(.screenshotPostActionPin)
+        case .ocr: return L10n.t(.screenshotPostActionOCR)
+        case .saveAs: return L10n.t(.screenshotPostActionSaveAs)
+        }
+    }
+}
+
+/// Languages used for OCR recognition.
+enum ScreenshotOCRLanguage: String, CaseIterable, Identifiable, Codable {
+    /// English only (legacy behavior, fastest).
+    case english
+    /// Simplified Chinese + English (recommended for Chinese users).
+    case chineseEnglish
+    /// Let the system auto-detect using all supported languages.
     case auto
-    case dpi72
-    case dpi96
-    case dpi144
-    case dpi216
-    case dpi300
+
+    var id: String { rawValue }
+
+    static var `default`: ScreenshotOCRLanguage { .chineseEnglish }
+
+    /// BCP-47 language tags passed to `VNRecognizeTextRequest.recognitionLanguages`.
+    var recognitionLanguages: [String] {
+        switch self {
+        case .english: return ["en-US"]
+        case .chineseEnglish: return ["zh-Hans", "zh-Hans-CN", "en-US"]
+        case .auto: return []
+        }
+    }
+
+    func displayName() -> String {
+        switch self {
+        case .english: return L10n.t(.screenshotOCRLanguageEnglish)
+        case .chineseEnglish: return L10n.t(.screenshotOCRLanguageChineseEnglish)
+        case .auto: return L10n.t(.screenshotOCRLanguageAuto)
+        }
+    }
+}
+
+enum ScreenshotResolution: String, CaseIterable, Identifiable, Codable {
+    /// Match the current screen's native backing scale (Retina-aware).
+    case auto
+    /// Always capture at native display pixels. Identical to `.auto` in practice, but
+    /// exposed so users can explicitly lock to "no resampling ever".
+    case native
 
     var id: String { rawValue }
 
     static var `default`: ScreenshotResolution { .auto }
 
+    /// Legacy builds stored an integer DPI (72/96/144/216/300). All of them migrate to
+    /// `.native` so users never get silently downsampled screenshots.
     static func fromLegacyDPI(_ dpi: Int) -> ScreenshotResolution? {
         switch dpi {
-        case 72: return .dpi72
-        case 96: return .dpi96
-        case 144: return .dpi144
-        case 216: return .dpi216
-        case 300: return .dpi300
+        case 72, 96, 144, 216, 300: return .native
         default: return nil
         }
     }
@@ -36,28 +89,17 @@ enum ScreenshotResolution: String, CaseIterable, Identifiable, Codable {
     func displayName() -> String {
         switch self {
         case .auto: return L10n.t(.screenshotResolutionAuto)
-        case .dpi72: return L10n.format(.screenshotResolutionOption, 72)
-        case .dpi96: return L10n.format(.screenshotResolutionOption, 96)
-        case .dpi144: return L10n.format(.screenshotResolutionOption, 144)
-        case .dpi216: return L10n.format(.screenshotResolutionOption, 216)
-        case .dpi300: return L10n.format(.screenshotResolutionOption, 300)
+        case .native: return L10n.t(.screenshotResolutionNative)
         }
     }
 
-    /// Pixel density relative to the default 72 DPI baseline.
+    /// Both modes resolve to the display's native backing scale, so captures are never
+    /// downsampled below real pixels or artificially upsampled above them.
     func pixelScale(for screen: NSScreen?, displayNativeScale: CGFloat? = nil) -> CGFloat {
-        switch self {
-        case .auto:
-            return displayNativeScale ?? screen?.backingScaleFactor ?? 1
-        case .dpi72: return 1
-        case .dpi96: return 96.0 / 72.0
-        case .dpi144: return 144.0 / 72.0
-        case .dpi216: return 216.0 / 72.0
-        case .dpi300: return 300.0 / 72.0
-        }
+        displayNativeScale ?? screen?.backingScaleFactor ?? 1
     }
 
-    var prefersNominalCapture: Bool { self == .dpi72 }
+    var prefersNominalCapture: Bool { false }
 }
 
 enum ScreenshotAnnotationTool: String, CaseIterable, Identifiable {
@@ -170,21 +212,35 @@ enum ScreenshotCoordinateConverter {
         )
     }
 
-    /// Map a Cocoa selection rect to pixel coordinates inside a captured display image.
+    /// Convert a CG-global rect into the display-local coordinate space used by
+    /// ScreenCaptureKit (origin at the display's top-left, y pointing down).
+    /// Both inputs must already be in the same CoreGraphics global space; the caller is
+    /// responsible for turning an AppKit selection into CG space first (use `cgRect(from:)`).
+    static func displayLocalTopDownRect(of cgRect: CGRect, displayFrame: CGRect) -> CGRect {
+        CGRect(
+            x: cgRect.minX - displayFrame.minX,
+            y: cgRect.minY - displayFrame.minY,
+            width: cgRect.width,
+            height: cgRect.height
+        )
+    }
+
+    /// Map a display-local top-down rect to pixel coordinates inside a captured display image.
+    /// `localRect` must be relative to the display's top-left corner (CG convention),
+    /// NOT AppKit global coords — convert first with `cgRect(from:)` then
+    /// `displayLocalTopDownRect(of:displayFrame:)`.
     static func pixelCropRect(
-        from selection: NSRect,
+        fromLocalRect localRect: CGRect,
         displayFrame: CGRect,
         pixelWidth: Int,
         pixelHeight: Int
     ) -> CGRect {
         let scaleX = CGFloat(pixelWidth) / max(displayFrame.width, 1)
         let scaleY = CGFloat(pixelHeight) / max(displayFrame.height, 1)
-        let localX = selection.minX - displayFrame.minX
-        let localY = selection.minY - displayFrame.minY
-        let cropX = localX * scaleX
-        let cropY = CGFloat(pixelHeight) - (localY + selection.height) * scaleY
-        let cropW = selection.width * scaleX
-        let cropH = selection.height * scaleY
+        let cropX = localRect.minX * scaleX
+        let cropY = localRect.minY * scaleY
+        let cropW = localRect.width * scaleX
+        let cropH = localRect.height * scaleY
 
         var crop = CGRect(x: cropX, y: cropY, width: cropW, height: cropH).integral
         crop.origin.x = max(0, crop.origin.x)
@@ -194,14 +250,10 @@ enum ScreenshotCoordinateConverter {
         return crop
     }
 
-    /// Display-relative capture rect in ScreenCaptureKit coordinates.
-    static func displayRelativeRect(from selection: NSRect, displayFrame: CGRect) -> CGRect {
-        CGRect(
-            x: selection.minX - displayFrame.minX,
-            y: selection.minY - displayFrame.minY,
-            width: selection.width,
-            height: selection.height
-        )
+    /// Display-relative capture rect in ScreenCaptureKit coordinates (top-left origin, y-down).
+    /// `localRect` must be relative to the display's top-left corner (CG convention).
+    static func displayRelativeRect(fromLocalRect localRect: CGRect) -> CGRect {
+        localRect
     }
 
     private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {

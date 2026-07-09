@@ -62,10 +62,19 @@ enum ScreenshotSaveService {
         return candidate
     }
 
+    /// A timestamped filename (no extension) suitable for save panels.
+    static func defaultFilename() -> String {
+        formattedBaseName()
+    }
+
     private static func formattedBaseName() -> String {
+        // Include milliseconds so rapid successive captures stay unique without
+        // falling back to the "-1/-2" suffix path.
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
-        return "Screenshot \(formatter.string(from: Date()))"
+        let seconds = formatter.string(from: Date())
+        let ms = Int(Date().timeIntervalSince1970 * 1000) % 1000
+        return String(format: "Screenshot %@.%03d", seconds, ms)
     }
 }

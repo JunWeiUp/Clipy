@@ -17,7 +17,6 @@ final class ScreenshotCoordinator {
 
         let captureMode = mode ?? PreferencesManager.shared.screenshotDefaultMode
         isCapturing = true
-        NSApp.activate(ignoringOtherApps: true)
 
         switch captureMode {
         case .fullscreen:
@@ -30,7 +29,14 @@ final class ScreenshotCoordinator {
                         self.handleCaptureResult(screenRect: nil)
                         return
                     }
-                    ScreenshotExport.exportPNG(pngData, image: image, logicalSize: image.size)
+                    let action = PreferencesManager.shared.screenshotPostCaptureAction
+                    ScreenshotExport.applyPostAction(
+                        action,
+                        pngData: pngData,
+                        image: image,
+                        logicalSize: image.size,
+                        screenRect: screenRect
+                    )
                     self.handleCaptureResult(screenRect: screenRect)
                 }
             }
