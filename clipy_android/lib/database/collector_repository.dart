@@ -7,8 +7,9 @@ class CollectorRepository {
   CollectorRepository._();
   static final CollectorRepository instance = CollectorRepository._();
 
-  static const duplicateNotificationWindowMs = 30000;
-  static const duplicateSmsWindowMs = 5000;
+  /// Hard cap so long-running installs don't grow the DB without bound.
+  static const maxRows = 2000;
+  int _insertsSinceTrim = 0;
 
   Future<Database> get _db => AppDatabase.instance.database;
 
@@ -63,60 +64,9 @@ class CollectorRepository {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
-  Future<bool> isDuplicate(CollectorEvent incoming) async {
-    final db = await _db;
-    switch (incoming.category) {
-      case CollectorCategories.notification:
-        final key = incoming.payload['notificationKey'];
-        if (key != null) {
-          final rows = await db.query(
-            'collector_events',
-            where:
-                'category = ? AND json_extract(payload_json, \'\$.notificationKey\') = ? AND ABS(timestamp - ?) <= ?',
-            whereArgs: [
-              incoming.category,
-              key,
-              incoming.timestamp,
-              duplicateNotificationWindowMs,
-            ],
-            limit: 1,
-          );
-          if (rows.isNotEmpty) return true;
-        }
-        return false;
-      case CollectorCategories.sms:
-        final rows = await db.query(
-          'collector_events',
-          where:
-              "category = ? AND json_extract(payload_json, '\$.address') = ? AND json_extract(payload_json, '\$.body') = ? AND ABS(timestamp - ?) <= ?",
-          whereArgs: [
-            incoming.category,
-            incoming.payload['address'],
-            incoming.payload['body'],
-            incoming.timestamp,
-            duplicateSmsWindowMs,
-          ],
-          limit: 1,
-        );
-        return rows.isNotEmpty;
-      case CollectorCategories.clipboard:
-        final hash = incoming.payload['hash'];
-        if (hash == null) return false;
-        final rows = await db.query(
-          'collector_events',
-          where:
-              "category = ? AND json_extract(payload_json, '\$.hash') = ?",
-          whereArgs: [incoming.category, hash],
-          limit: 1,
-        );
-        return rows.isNotEmpty;
-      default:
-        return false;
-    }
-  }
-
   Future<void> insert(CollectorEvent event, {bool synced = false}) async {
-    await (await _db).insert(
+    final db = await _db;
+    await db.insert(
       'collector_events',
       {
         'id': event.id,
@@ -128,6 +78,20 @@ class CollectorRepository {
       },
       conflictAlgorithm: ConflictAlgorithm.ignore,
     );
+    // Trim in batches: an exact-count check per insert would double the writes.
+    _insertsSinceTrim++;
+    if (_insertsSinceTrim >= 50) {
+      _insertsSinceTrim = 0;
+      // Keep unsynced rows so pending events are never dropped before flush.
+      await db.rawDelete('''
+        DELETE FROM collector_events
+        WHERE synced = 1 AND id NOT IN (
+          SELECT id FROM collector_events
+          ORDER BY timestamp DESC
+          LIMIT ?
+        )
+      ''', [maxRows]);
+    }
   }
 
   Future<void> markSynced(String id, {bool synced = true}) async {

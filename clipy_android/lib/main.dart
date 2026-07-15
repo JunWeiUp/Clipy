@@ -856,7 +856,9 @@ class _HomePageState extends State<HomePage> {
               ]
             : null,
       ),
-      body: bodies[_selectedIndex],
+      // IndexedStack keeps tab state (scroll position, loaded pages) alive
+      // instead of rebuilding and re-querying the DB on every tab switch.
+      body: IndexedStack(index: _selectedIndex, children: bodies),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         onTap: (index) => setState(() => _selectedIndex = index),
