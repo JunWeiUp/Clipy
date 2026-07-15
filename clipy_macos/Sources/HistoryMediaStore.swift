@@ -1,6 +1,8 @@
 import AppKit
 import CryptoKit
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 enum HistoryMediaKind: String {
     case image
@@ -128,6 +130,12 @@ final class HistoryMediaStore {
     }
 
     func contentHash(forPath path: String) -> String? {
+        if isManagedPath(path) {
+            let name = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+            if name.count == 64, name.allSatisfy(\.isHexDigit) {
+                return name.lowercased()
+            }
+        }
         guard let data = data(at: path) else { return nil }
         return sha256Hex(data)
     }
@@ -195,14 +203,32 @@ final class HistoryMediaStore {
     }
 
     private func writeImageData(_ data: Data, to url: URL) {
-        if let image = NSImage(data: data),
-           let tiffData = image.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiffData),
-           let pngData = bitmap.representation(using: .png, properties: [:]) {
-            writeProtectedData(pngData, to: url)
-            return
+        autoreleasepool {
+            if let pngData = Self.pngData(from: data) {
+                writeProtectedData(pngData, to: url)
+                return
+            }
+            writeProtectedData(data, to: url)
         }
-        writeProtectedData(data, to: url)
+    }
+
+    private static func pngData(from data: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return nil
+        }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, cgImage, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
     }
 
     private func sha256Hex(_ data: Data) -> String {

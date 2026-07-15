@@ -79,7 +79,7 @@ class MenuController: NSObject {
 
             let menuItem = NSMenuItem(title: prefix + snippet.title, action: #selector(menuItemClicked(_:)), keyEquivalent: keyEquivalent)
             menuItem.target = self
-            menuItem.representedObject = HistoryItem.text(snippet.content)
+            menuItem.representedObject = SnippetMenuReference(snippetId: snippet.id)
             menu.addItem(menuItem)
         }
 
@@ -94,13 +94,16 @@ class MenuController: NSObject {
     
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        
+
         if let button = statusItem.button {
             button.title = "📋"
         }
-        
-        updateMenu(with: clipboardManager.recentSummaries)
-        
+
+        // 常驻菜单对象：靠 menuNeedsUpdate 在每次打开前就地刷新内容。
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
+
         SyncManager.shared.onDevicesChanged = { [weak self] _ in
             DispatchQueue.main.async {
                 self?.scheduleMenuUpdate()
@@ -125,15 +128,28 @@ class MenuController: NSObject {
         menuUpdateWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            self.updateMenu(with: self.clipboardManager.recentSummaries)
+            // 仅在菜单已打开（仍保留摘要）时刷新；关闭状态下交给下次 menuNeedsUpdate。
+            guard self.clipboardManager.isMenuMemoryRetained,
+                  let menu = self.statusItem.menu else { return }
+            self.clipboardManager.ensureMenuSummariesLoaded()
+            self.rebuildMenuContents(menu, with: self.clipboardManager.recentSummaries)
         }
         menuUpdateWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
-    
-    private func updateMenu(with summaries: [HistorySummary]) {
-        let menu = NSMenu()
-        
+
+    private func refreshMenuForOpen(_ menu: NSMenu) {
+        clipboardManager.refreshFromPasteboardIfNeeded()
+        clipboardManager.ensureMenuSummariesLoaded()
+        rebuildMenuContents(menu, with: clipboardManager.recentSummaries)
+    }
+
+    private func rebuildMenuContents(_ menu: NSMenu, with summaries: [HistorySummary]) {
+        menu.removeAllItems()
+        populateMenu(menu, with: summaries)
+    }
+
+    private func populateMenu(_ menu: NSMenu, with summaries: [HistorySummary]) {
         // --- History Section ---
         let historyHeader = NSMenuItem(
             title: L10n.format(.historyWithCount, clipboardManager.totalHistoryCount),
@@ -175,7 +191,7 @@ class MenuController: NSObject {
 
                 let menuItem = NSMenuItem(title: prefix + snippet.title, action: #selector(menuItemClicked(_:)), keyEquivalent: keyEquivalent)
                 menuItem.target = self
-                menuItem.representedObject = HistoryItem.text(snippet.content)
+                menuItem.representedObject = SnippetMenuReference(snippetId: snippet.id)
                 categoryMenu.addItem(menuItem)
             }
 
@@ -299,8 +315,6 @@ class MenuController: NSObject {
         menu.addItem(logsItem)
         
         menu.addItem(NSMenuItem(title: L10n.t(.quit), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        
-        statusItem.menu = menu
     }
 
     private func addHistoryGroups(to menu: NSMenu, summaries: [HistorySummary], startIndex: Int) {
@@ -422,6 +436,9 @@ class MenuController: NSObject {
             let entry = clipboardManager.resolveEntry(summary)
             clipboardManager.moveHistoryEntryToFront(entry)
             clipboardManager.copyToPasteboard(entry.item)
+        } else if let reference = sender.representedObject as? SnippetMenuReference,
+                  let snippet = snippetManager.snippet(id: reference.snippetId) {
+            clipboardManager.copyToPasteboard(.text(snippet.content))
         } else if let item = sender.representedObject as? HistoryItem {
             clipboardManager.copyToPasteboard(item)
         }
@@ -583,6 +600,21 @@ class MenuController: NSObject {
     }
 
     @objc private func languageDidChange() {
-        updateMenu(with: clipboardManager.recentSummaries)
+        if clipboardManager.isMenuMemoryRetained, let menu = statusItem.menu {
+            rebuildMenuContents(menu, with: clipboardManager.recentSummaries)
+        }
+    }
+}
+
+extension MenuController: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === statusItem.menu else { return }
+        refreshMenuForOpen(menu)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        guard menu === statusItem.menu else { return }
+        clipboardManager.releaseMenuMemory()
+        MemoryFootprintReclaimer.reclaimIfIdle()
     }
 }

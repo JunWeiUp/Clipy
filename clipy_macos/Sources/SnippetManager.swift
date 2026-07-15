@@ -42,6 +42,14 @@ struct SnippetFolder: Codable, Identifiable {
     var shortcut: ShortcutCombo?
 }
 
+final class SnippetMenuReference: NSObject {
+    let snippetId: UUID
+
+    init(snippetId: UUID) {
+        self.snippetId = snippetId
+    }
+}
+
 extension UUID {
     var hashValue32: UInt32 {
         let (u0, u1, u2, u3, u4, u5, u6, u7, u8, u9, u10, u11, u12, u13, u14, u15) = self.uuid
@@ -204,6 +212,15 @@ class SnippetManager {
             folders[i].snippets.removeAll(where: { $0.id == id })
         }
         saveSnippets()
+    }
+
+    func snippet(id: UUID) -> Snippet? {
+        for folder in folders {
+            if let snippet = folder.snippets.first(where: { $0.id == id }) {
+                return snippet
+            }
+        }
+        return nil
     }
     
     func addFolder(title: String) {

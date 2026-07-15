@@ -476,20 +476,11 @@ struct SearchView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.orange)
                 }
-                if let thumbnail = HistoryThumbnailCache.thumbnail(
-                    for: path,
-                    size: NSSize(width: 72, height: 54)
-                ) {
-                    Image(nsImage: thumbnail)
-                        .resizable()
-                        .frame(width: 72, height: 54)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                } else {
-                    Image(systemName: "photo")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 72, height: 54)
-                }
+                LazyHistoryThumbnailView(
+                    path: path,
+                    size: NSSize(width: 72, height: 54),
+                    placeholderSize: NSSize(width: 72, height: 54)
+                )
                 VStack(alignment: .leading, spacing: 2) {
                     Text(result.entry.listDisplayTitle)
                         .font(AppFont.body)
@@ -524,11 +515,13 @@ struct SearchView: View {
             Image(nsImage: NSWorkspace.shared.icon(forFile: first.path))
                 .resizable()
                 .frame(width: 16, height: 16)
-        } else if case .image(let path) = entry.item, let image = HistoryThumbnailCache.thumbnail(for: path, size: NSSize(width: 16, height: 16)) {
-            Image(nsImage: image)
-                .resizable()
-                .frame(width: 16, height: 16)
-                .clipShape(RoundedRectangle(cornerRadius: 2))
+        } else if case .image(let path) = entry.item {
+            LazyHistoryThumbnailView(
+                path: path,
+                size: NSSize(width: 16, height: 16),
+                placeholderSize: NSSize(width: 16, height: 16),
+                cornerRadius: 2
+            )
         } else {
             Image(systemName: iconName(for: entry.item))
                 .font(.system(size: 12))
@@ -783,6 +776,50 @@ private final class KeyCatcherView: NSView {
         if let coordinator, let window = window {
             coordinator.installMonitor(for: self)
             _ = window
+        }
+    }
+}
+
+private struct LazyHistoryThumbnailView: View {
+    let path: String
+    let size: NSSize
+    let placeholderSize: NSSize
+    var cornerRadius: CGFloat = 4
+
+    @State private var thumbnail: NSImage?
+
+    var body: some View {
+        Group {
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .frame(width: placeholderSize.width, height: placeholderSize.height)
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            } else {
+                Image(systemName: "photo")
+                    .font(.system(size: min(placeholderSize.width, placeholderSize.height) * 0.35))
+                    .foregroundStyle(.secondary)
+                    .frame(width: placeholderSize.width, height: placeholderSize.height)
+            }
+        }
+        .onAppear {
+            loadThumbnailIfNeeded()
+        }
+        .onChange(of: path) { _ in
+            thumbnail = nil
+            loadThumbnailIfNeeded()
+        }
+    }
+
+    private func loadThumbnailIfNeeded() {
+        guard thumbnail == nil else { return }
+        let path = path
+        let size = size
+        DispatchQueue.global(qos: .utility).async {
+            let image = HistoryThumbnailCache.thumbnail(for: path, size: size)
+            DispatchQueue.main.async {
+                self.thumbnail = image
+            }
         }
     }
 }

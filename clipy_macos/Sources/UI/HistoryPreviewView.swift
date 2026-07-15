@@ -67,7 +67,7 @@ struct HistoryPreviewView: View {
             }
 
         case .image(let path):
-            imagePreview(path: path)
+            AsyncHistoryImagePreviewView(path: path)
 
         case .rtf(let path):
             if let data = HistoryMediaStore.shared.data(at: path),
@@ -143,17 +143,7 @@ struct HistoryPreviewView: View {
         let kind = HistoryPreviewSupport.fileKind(for: url)
         switch kind {
         case .image:
-            if let image = NSImage(contentsOf: url) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
-                    .padding(AppSpacing.sm)
-            } else {
-                fileRow(for: url)
-                    .padding(AppSpacing.sm)
-            }
+            AsyncLocalImagePreviewView(url: url)
         case .pdf:
             if PDFDocument(url: url) != nil {
                 PDFFilePreviewRepresentable(url: url)
@@ -173,21 +163,6 @@ struct HistoryPreviewView: View {
                 fileRow(for: url)
                     .padding(AppSpacing.sm)
             }
-        }
-    }
-
-    @ViewBuilder
-    private func imagePreview(path: String) -> some View {
-        if let data = HistoryMediaStore.shared.data(at: path),
-           let image = NSImage(data: data) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
-                .padding(AppSpacing.sm)
-        } else {
-            typePlaceholder(icon: "photo", label: L10n.t(.historyTypeImage))
         }
     }
 
@@ -271,5 +246,80 @@ struct HistoryPreviewView: View {
             options: [.documentType: NSAttributedString.DocumentType.rtf],
             documentAttributes: nil
         )
+    }
+}
+
+private struct AsyncHistoryImagePreviewView: View {
+    let path: String
+    private let maxPixelSize = 1600
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
+                    .padding(AppSpacing.sm)
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: path) {
+            image = nil
+            let loaded = await Task.detached(priority: .utility) {
+                ImageDownsampler.thumbnail(at: path, maxPixelSize: maxPixelSize)
+            }.value
+            image = loaded
+        }
+    }
+}
+
+private struct AsyncLocalImagePreviewView: View {
+    let url: URL
+    private let maxPixelSize = 1600
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
+                    .padding(AppSpacing.sm)
+            } else {
+                filePreviewPlaceholder
+            }
+        }
+        .task(id: url) {
+            image = nil
+            let loaded = await Task.detached(priority: .utility) {
+                ImageDownsampler.thumbnail(atFileURL: url, maxPixelSize: maxPixelSize)
+            }.value
+            image = loaded
+        }
+    }
+
+    private var filePreviewPlaceholder: some View {
+        HStack(alignment: .top, spacing: AppSpacing.xs) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                .resizable()
+                .frame(width: 32, height: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(url.lastPathComponent)
+                    .font(AppFont.body)
+                    .lineLimit(2)
+                Text(FilePathDisplay.string(for: url))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+        }
+        .padding(AppSpacing.sm)
     }
 }

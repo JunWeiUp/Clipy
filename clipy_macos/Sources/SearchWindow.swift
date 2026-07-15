@@ -27,6 +27,7 @@ final class SearchWindow {
             },
             onTeardown: { [weak self] in
                 self?.viewModel = nil
+                MemoryFootprintReclaimer.reclaimIfIdle()
             },
             update: { window in
                 window.title = L10n.t(.searchHistory)

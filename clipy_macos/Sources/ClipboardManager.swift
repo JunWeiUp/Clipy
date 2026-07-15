@@ -320,6 +320,7 @@ class ClipboardManager {
     private var changeCount: Int
     private var timer: Timer?
     private(set) var recentSummaries: [HistorySummary] = []
+    private(set) var isMenuMemoryRetained = false
     private(set) var totalHistoryCount = 0
     private var menuHistoryLimit: Int { PreferencesManager.shared.historyLoadCount }
     var fileHistory: [FileHistoryItem] = []
@@ -450,12 +451,39 @@ class ClipboardManager {
             reimportHistoryForLegacyMediaMigration()
         }
         totalHistoryCount = repository.count()
-        recentSummaries = repository.fetchSummaries(limit: menuHistoryLimit)
         pruneUnreferencedMediaFiles()
+    }
+
+    func ensureMenuSummariesLoaded() {
+        isMenuMemoryRetained = true
+        totalHistoryCount = repository.count()
+        recentSummaries = repository.fetchSummaries(limit: menuHistoryLimit)
+    }
+
+    func releaseMenuMemory() {
+        isMenuMemoryRetained = false
+        recentSummaries.removeAll(keepingCapacity: false)
+    }
+
+    /// 打开菜单前同步检查剪贴板，避免轮询防抖导致记录滞后。
+    func refreshFromPasteboardIfNeeded() {
+        guard pasteboard.changeCount != changeCount else { return }
+        lastCheckTime = Date()
+        pendingContentCheck = false
+        // 临时保留内存，让 addToHistory 写入后立即填充 recentSummaries。
+        let wasRetained = isMenuMemoryRetained
+        isMenuMemoryRetained = true
+        processClipboardContent()
+        if !wasRetained {
+            // 调用方通常会立刻 ensureMenuSummariesLoaded；这里也重拉一次确保完整。
+            recentSummaries = repository.fetchSummaries(limit: menuHistoryLimit)
+            totalHistoryCount = repository.count()
+        }
     }
 
     private func reloadLoadedSummaries() {
         totalHistoryCount = repository.count()
+        guard isMenuMemoryRetained else { return }
         recentSummaries = repository.fetchSummaries(limit: menuHistoryLimit)
     }
 
@@ -848,7 +876,7 @@ class ClipboardManager {
     func clearHistory() {
         _ = repository.deleteAll()
         HistoryMediaStore.shared.removeAllManagedFiles()
-        HistoryThumbnailCache.clear()
+        HistoryThumbnailCache.removeAllThumbnailFiles()
         reloadLoadedSummaries()
         updateRecentContentHashes()
         notifyHistoryChanged()
@@ -881,6 +909,7 @@ class ClipboardManager {
     private func pruneUnreferencedMediaFiles() {
         let referenced = repository.referencedStoragePaths()
         HistoryMediaStore.shared.removeUnreferencedFiles(keeping: referenced)
+        HistoryThumbnailCache.pruneUnreferenced(keepingSourcePaths: referenced)
     }
 
     func writePlainTextToPasteboard(_ item: HistoryItem, textPath: String? = nil) {

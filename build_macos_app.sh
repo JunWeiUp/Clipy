@@ -19,6 +19,8 @@ RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 SWIFT_SOURCES=(
     Sources/Localization.swift
     Sources/HistoryMediaStore.swift
+    Sources/ImageDownsampler.swift
+    Sources/MemoryFootprintReclaimer.swift
     Sources/HistoryThumbnailCache.swift
     Sources/AppDatabase.swift
     Sources/HistoryRepository.swift

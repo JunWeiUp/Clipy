@@ -4,7 +4,9 @@ import PDFKit
 
 enum HistorySearchIndexBuilder {
     private static let maxIndexLength = 500
+    private static let ocrMaxPixelSize = 2048
     private static let indexQueue = DispatchQueue(label: "com.clipy.history-index", qos: .utility)
+    private static let ocrSemaphore = DispatchSemaphore(value: 1)
 
     static func buildIndex(for item: HistoryItem) -> String? {
         let store = HistoryMediaStore.shared
@@ -30,12 +32,13 @@ enum HistorySearchIndexBuilder {
     }
 
     static func scheduleOCR(for entry: HistoryEntry, contentHash: String, updater: @escaping (String, String) -> Void) {
-        guard case .image(let path) = entry.item,
-              let data = HistoryMediaStore.shared.data(at: path),
-              let image = NSImage(data: data),
-              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        guard case .image(let path) = entry.item else { return }
 
         indexQueue.async {
+            ocrSemaphore.wait()
+            defer { ocrSemaphore.signal() }
+
+            guard let cgImage = ImageDownsampler.cgImage(at: path, maxPixelSize: ocrMaxPixelSize) else { return }
             let text = ImageOCRService.recognizeSync(cgImage: cgImage)
             guard let text, !text.isEmpty else { return }
             DispatchQueue.main.async {
