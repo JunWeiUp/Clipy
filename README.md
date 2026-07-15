@@ -7,8 +7,8 @@ Clipy is a cross-platform clipboard manager for macOS and Android. It keeps clip
 ## Highlights
 
 - **Clipboard history**: Automatically monitors, deduplicates, and stores clipboard content.
-- **Snippets**: Organize frequently used text or code snippets in folders and paste them quickly.
-- **LAN sync**: Synchronize clipboard history and snippets between macOS and Android devices on the same local network.
+- **Snippets** (macOS): Organize frequently used text or code snippets in folders and paste them quickly.
+- **LAN sync**: Synchronize clipboard history between macOS and Android devices on the same local network.
 - **LAN file transfer**: Send files directly between devices with macOS hover actions and Android progress tracking.
 - **Secure transport**: Encrypts network payloads with AES-GCM 256-bit encryption and a pre-shared key.
 - **Real-time logs**: Built-in log windows help inspect sync, transfer, and debugging events.
@@ -32,27 +32,29 @@ Clipy is a cross-platform clipboard manager for macOS and Android. It keeps clip
 - Built with Swift and AppKit as a native menu bar app.
 - `MenuController` renders the status bar menu and handles history, snippets, devices, and actions.
 - `ClipboardManager` polls the system pasteboard, persists history, removes duplicates, and dispatches sync events.
-- `SnippetManager` manages folders, snippets, shortcuts, imports, exports, and sync updates.
-- `SyncManager` handles Bonjour discovery, HTTP sync endpoints, AES-GCM encryption, hashing, and deduplication.
+- `SnippetManager` manages folders, snippets, shortcuts, imports, and exports (local only).
+- `SyncManager` handles Bonjour discovery, length-prefixed TCP sync, AES-GCM encryption, hashing, and deduplication.
 - `SettingsWindow`, `SnippetEditorWindow`, and `LogWindow` provide the main configuration and editing surfaces.
 
 ### Android App
 
 - Built with Flutter and Dart.
-- `lib/main.dart` contains the tab-based UI for history, snippets, preferences, logs, and transfer actions.
+- `lib/main.dart` contains the tab-based UI for history, collector, preferences, logs, and transfer actions.
 - `lib/clipboard_manager.dart` monitors clipboard changes, stores history, and coordinates sync events.
-- `lib/sync_manager.dart` handles service registration, discovery, HTTP sync, encryption, file transfer, and deduplication.
+- `lib/sync_manager.dart` handles service registration, discovery, TCP sync, encryption, file transfer, and deduplication.
 - `lib/app_localizations.dart` provides the Chinese and English text resources.
 
 ## Sync Protocol
 
-Clipy uses a LAN-first sync protocol for clipboard, snippet, and file data:
+Clipy uses a LAN-first sync protocol for clipboard and file data:
 
-- **Discovery**: Devices discover each other through Bonjour/mDNS.
-- **Transport**: Sync data is exchanged through local HTTP endpoints.
-- **Payloads**: Clipboard and snippet messages are JSON payloads encrypted before transmission.
-- **File transfer**: Files are sent in 512 KB chunks with metadata and real-time progress updates.
-- **Encryption**: AES-GCM 256-bit with a shared key configured on each device.
+- **Discovery**: Devices discover each other through Bonjour/mDNS (`_clipy-sync._tcp`).
+- **Transport**: Raw TCP with a 4-byte big-endian length prefix per JSON message (max 2 MB per frame).
+- **Payloads**: Clipboard and file messages are JSON payloads encrypted before transmission.
+- **File transfer**: Files are sent in 128 KB chunks over a single ordered connection with metadata and real-time progress updates.
+- **Compression**: Text-like file chunks are gzip-compressed when beneficial (same rules on both platforms).
+- **Encryption**: AES-GCM 256-bit.
+- **Authorization**: Inbound messages are accepted only from peers checked in each device's authorized list.
 - **Loop prevention**: Content hashes such as `lastSyncHash` prevent rebroadcast loops.
 
 ## Build
@@ -62,11 +64,10 @@ Clipy uses a LAN-first sync protocol for clipboard, snippet, and file data:
 Requirements: Xcode command line tools.
 
 ```bash
-cd clipy_macos
 ./build_macos_app.sh
 ```
 
-The generated app bundle is `clipy_macos/ClipyClone.app`.
+The script lives at the repository root, generates `clipy_macos/ClipyClone.app`, and installs it to `/Applications`.
 
 ### Android
 

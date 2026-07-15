@@ -4,6 +4,14 @@ AGENTS.md
 build/
 Kim_AGENTS.md
 
+# Build artifacts (distribute via CI/release assets, not git)
+dist/
+*.apk
+*.aab
+*.dmg
+*.icns
+AppIcon.iconset/
+
 # Flutter generated (machine-specific paths)
 clipy_android/.flutter-plugins
 clipy_android/.flutter-plugins-dependencies
