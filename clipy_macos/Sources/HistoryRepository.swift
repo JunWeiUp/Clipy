@@ -127,7 +127,10 @@ final class HistoryRepository {
 
     @discardableResult
     func insertOrReplace(_ entry: HistoryEntry) -> Bool {
-        queue.sync { insertOrReplaceLocked(entry, preserveExistingMetadata: false) }
+        // Externalize large text to disk BEFORE taking the DB lock so file IO
+        // never serializes other readers behind the queue.
+        let prepared = prepareForStorage(entry).entry
+        return queue.sync { insertOrReplaceLocked(prepared, preserveExistingMetadata: false) }
     }
 
     func update(
@@ -160,9 +163,36 @@ final class HistoryRepository {
     func trimToLimit(_ maxItems: Int) {
         queue.sync {
             guard maxItems > 0 else { return }
-            while countLocked() > maxItems {
-                if deleteOldestUnpinnedLocked() { continue }
-                if deleteOldestLocked() { continue }
+            let total = countLocked()
+            guard total > maxItems else { return }
+            let overflow = total - maxItems
+
+            // Delete the oldest unpinned rows in one statement instead of row-by-row.
+            let deleteUnpinned = """
+            DELETE FROM history_entries
+            WHERE rowid IN (
+                SELECT rowid FROM history_entries
+                WHERE is_pinned = 0
+                ORDER BY date ASC
+                LIMIT ?
+            )
+            """
+            if let db {
+                var stmt: OpaquePointer?
+                if sqlite3_prepare_v2(db, deleteUnpinned, -1, &stmt, nil) == SQLITE_OK {
+                    sqlite3_bind_int(stmt, 1, Int32(overflow))
+                    sqlite3_step(stmt)
+                }
+                sqlite3_finalize(stmt)
+            }
+
+            // If everything left is pinned we may still be over the limit.
+            var remaining = countLocked()
+            while remaining > maxItems {
+                if deleteOldestLocked() {
+                    remaining -= 1
+                    continue
+                }
                 break
             }
         }

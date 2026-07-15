@@ -25,6 +25,8 @@ final class SearchViewModel: ObservableObject {
     private var browseLimit: Int
 
     private var isLoadingMore = false
+    private var searchGeneration = 0
+    private let searchQueue = DispatchQueue(label: "com.clipy.search", qos: .userInitiated)
 
     init() {
         browseLimit = PreferencesManager.shared.historyLoadCount
@@ -40,8 +42,8 @@ final class SearchViewModel: ObservableObject {
         isLoadingMore = true
         let pageSize = PreferencesManager.shared.historyLoadCount
         browseLimit = min(browseLimit + pageSize, ClipboardManager.shared.totalHistoryCount)
+        // Cleared in applySearchResults once the async page lands.
         performSearch(immediate: true)
-        isLoadingMore = false
     }
 
     private var canAutoLoadMore: Bool {
@@ -129,10 +131,8 @@ final class SearchViewModel: ObservableObject {
 
     func performSearch(immediate: Bool) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let previousSelection = selectedIDs
         let manager = ClipboardManager.shared
-        availableSourceApps = manager.availableSourceApps()
-        if !sourceAppFilter.isEmpty, !availableSourceApps.contains(sourceAppFilter) {
+        if !sourceAppFilter.isEmpty, !availableSourceApps.contains(sourceAppFilter), !availableSourceApps.isEmpty {
             sourceAppFilter = ""
         }
         let selectedSourceApp = sourceAppFilter.isEmpty ? nil : sourceAppFilter
@@ -142,7 +142,7 @@ final class SearchViewModel: ObservableObject {
             && dateFilter == .all
             && contentCategory == nil
             && !useRegex
-        results = manager.searchHistory(options: SearchHistoryOptions(
+        let options = SearchHistoryOptions(
             query: trimmed,
             typeFilter: typeFilter,
             sourceApp: selectedSourceApp,
@@ -150,8 +150,38 @@ final class SearchViewModel: ObservableObject {
             contentCategory: contentCategory,
             useRegex: useRegex,
             browseLimit: isBrowseMode ? browseLimit : nil
-        ))
-        let totalCount = manager.totalHistoryCount
+        )
+
+        // SQLite fetch (up to historyLimit rows) plus ranking (which may read full
+        // text from disk) can take long on large histories: run off the main thread
+        // and drop stale generations.
+        searchGeneration += 1
+        let generation = searchGeneration
+        searchQueue.async { [weak self] in
+            let sourceApps = manager.availableSourceApps()
+            let searchResults = manager.searchHistory(options: options)
+            DispatchQueue.main.async {
+                guard let self, generation == self.searchGeneration else { return }
+                self.availableSourceApps = sourceApps
+                self.applySearchResults(
+                    searchResults,
+                    trimmed: trimmed,
+                    selectedSourceApp: selectedSourceApp,
+                    totalCount: manager.totalHistoryCount
+                )
+            }
+        }
+    }
+
+    private func applySearchResults(
+        _ searchResults: [HistorySearchResult],
+        trimmed: String,
+        selectedSourceApp: String?,
+        totalCount: Int
+    ) {
+        let previousSelection = selectedIDs
+        results = searchResults
+        isLoadingMore = false
 
         if totalCount == 0 {
             statusText = L10n.t(.noHistory)
@@ -173,7 +203,6 @@ final class SearchViewModel: ObservableObject {
         if selectedIDs.isEmpty {
             selectedIDs = [results.first?.id].compactMap { $0 }.reduce(into: Set()) { $0.insert($1) }
         }
-
     }
 
     var primarySelectedID: HistoryEntry.ID? {
