@@ -22,6 +22,9 @@ class NotificationRepository {
   static final NotificationRepository instance = NotificationRepository._();
 
   static const duplicateWindowMs = 30000;
+  /// Hard cap so long-running installs don't grow the DB without bound.
+  static const maxRows = 5000;
+  int _insertsSinceTrim = 0;
 
   Future<Database> get _db => AppDatabase.instance.database;
 
@@ -97,7 +100,24 @@ class NotificationRepository {
 
     await db.insert('notifications', _toRow(entry),
         conflictAlgorithm: ConflictAlgorithm.replace);
+    // Trim in batches: an exact-count check per insert would double the writes.
+    _insertsSinceTrim++;
+    if (_insertsSinceTrim >= 50) {
+      _insertsSinceTrim = 0;
+      await _trimToLimit(db);
+    }
     return true;
+  }
+
+  Future<void> _trimToLimit(Database db) async {
+    await db.rawDelete('''
+      DELETE FROM notifications
+      WHERE id NOT IN (
+        SELECT id FROM notifications
+        ORDER BY post_time DESC
+        LIMIT ?
+      )
+    ''', [maxRows]);
   }
 
   bool _isDuplicate(NotificationEntry existing, NotificationEntry incoming) {
