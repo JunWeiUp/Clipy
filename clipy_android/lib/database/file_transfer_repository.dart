@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'app_database.dart';
+import '../storage_paths.dart';
 
 class FileTransferRecord {
   final int id;
@@ -50,7 +52,23 @@ class FileTransferRepository {
   }
 
   Future<void> _trim(int maxRows) async {
-    await (await _db).rawDelete('''
+    final db = await _db;
+    // Delete the received files too, otherwise the Clipy/ directory grows forever
+    // even though the DB rows are capped.
+    final expired = await db.rawQuery('''
+      SELECT file_path FROM file_transfers
+      WHERE id NOT IN (
+        SELECT id FROM file_transfers
+        ORDER BY created_at DESC
+        LIMIT ?
+      )
+    ''', [maxRows]);
+    for (final row in expired) {
+      final path = row['file_path'] as String?;
+      if (path == null) continue;
+      await _deleteReceivedFileIfManaged(path);
+    }
+    await db.rawDelete('''
       DELETE FROM file_transfers
       WHERE id NOT IN (
         SELECT id FROM file_transfers
@@ -58,6 +76,22 @@ class FileTransferRepository {
         LIMIT ?
       )
     ''', [maxRows]);
+  }
+
+  /// Only delete files inside our own Clipy/ receive directory; records may
+  /// also point at user files that were SENT from this device.
+  Future<void> _deleteReceivedFileIfManaged(String path) async {
+    try {
+      final appDir = await StoragePaths.appStorageDirectory();
+      final managedPrefix = '${appDir.path}/Clipy/';
+      if (!path.startsWith(managedPrefix)) return;
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {
+      // Best-effort cleanup.
+    }
   }
 
   Future<List<FileTransferRecord>> fetchPage({

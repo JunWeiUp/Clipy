@@ -117,10 +117,14 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
 
   void _updateBackgroundPoll() {
     if (!Platform.isAndroid || !_monitoring) return;
+    // The native OnPrimaryClipChangedListener is the primary capture path.
+    // On Android 10+ background clipboard reads fail anyway, so polling in the
+    // background mostly burns battery; keep only a very sparse fallback for
+    // older devices where background reads still work.
     final needsFallback = _inBackground &&
         (SyncManager.instance.isEnabled || CollectorManager.instance.isEnabled);
     if (needsFallback) {
-      _startPolling(const Duration(seconds: 30));
+      _startPolling(const Duration(minutes: 5));
     } else {
       _stopPolling();
     }
