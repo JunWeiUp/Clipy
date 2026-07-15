@@ -141,7 +141,8 @@ swiftc \
     -framework ScreenCaptureKit \
     -framework UniformTypeIdentifiers \
     -framework PDFKit \
-    -framework WebKit
+    -framework WebKit \
+    -framework Compression
 
 # 4. 准备资源文件
 echo "📦 准备资源文件..."
@@ -183,11 +184,6 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
-    </dict>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Clipy needs local network access to sync clipboard content with your other devices.</string>
     <key>NSScreenCaptureUsageDescription</key>
