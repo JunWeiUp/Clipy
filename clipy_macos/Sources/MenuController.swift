@@ -365,14 +365,23 @@ class MenuController: NSObject {
 
             fileItem.submenu = fileSubmenu
             fileItem.toolTip = historyFileToolTip(for: summary, urls: urls)
-            fileItem.image = NSWorkspace.shared.icon(forFile: urls[0].path)
+            fileItem.image = Self.cachedFileIcon(forPath: urls[0].path)
             return fileItem
         }
 
         if case .html = summary.item {
-            let plainTitle = clipboardManager.plainText(for: summary.asEntry()) ?? rawTitle
-            let htmlDisplayTitle = plainTitle.count > 50 ? String(plainTitle.prefix(50)) + "..." : plainTitle
-            let htmlItem = NSMenuItem(title: prefix + htmlDisplayTitle, action: nil, keyEquivalent: keyEquivalent)
+            // Show the fast title immediately; resolving plain text reads and parses
+            // the HTML file from disk, so do it off the main thread and patch the title.
+            let htmlItem = NSMenuItem(title: prefix + displayTitle, action: nil, keyEquivalent: keyEquivalent)
+            let entry = summary.asEntry()
+            let manager = clipboardManager
+            DispatchQueue.global(qos: .userInitiated).async { [weak htmlItem] in
+                guard let plainTitle = manager.plainText(for: entry), !plainTitle.isEmpty else { return }
+                let htmlDisplayTitle = plainTitle.count > 50 ? String(plainTitle.prefix(50)) + "..." : plainTitle
+                DispatchQueue.main.async {
+                    htmlItem?.title = prefix + htmlDisplayTitle
+                }
+            }
             let htmlSubmenu = NSMenu()
 
             let pastePlainItem = NSMenuItem(title: L10n.t(.pastePlainText), action: #selector(pasteHTMLPlainTextClicked(_:)), keyEquivalent: "")
@@ -397,10 +406,35 @@ class MenuController: NSObject {
         menuItem.toolTip = historyToolTip(for: summary)
 
         if case .image(let path) = summary.item {
-            menuItem.image = HistoryThumbnailCache.thumbnail(for: path, size: NSSize(width: 32, height: 32))
+            // Thumbnails come from disk (possibly with decrypt + downsample on miss);
+            // never block menu construction on that IO.
+            DispatchQueue.global(qos: .userInitiated).async { [weak menuItem] in
+                let thumbnail = HistoryThumbnailCache.thumbnail(for: path, size: NSSize(width: 32, height: 32))
+                DispatchQueue.main.async {
+                    menuItem?.image = thumbnail
+                }
+            }
         }
 
         return menuItem
+    }
+
+    private static let fileIconCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        return cache
+    }()
+
+    private static func cachedFileIcon(forPath path: String) -> NSImage {
+        let key = (path as NSString).pathExtension.lowercased() as NSString
+        if key.length > 0, let cached = fileIconCache.object(forKey: key) {
+            return cached
+        }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        if key.length > 0 {
+            fileIconCache.setObject(icon, forKey: key)
+        }
+        return icon
     }
 
     private func summaryDisplayTitle(for summary: HistorySummary) -> String {

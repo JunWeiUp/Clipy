@@ -333,6 +333,12 @@ class ClipboardManager {
     private var lastCheckTime: Date = Date()
     private var pendingContentCheck: Bool = false
     private let minCheckInterval: TimeInterval = 0.3 // Reduced from 0.5s to 0.3s with better logic
+    /// Slower poll interval used while the app is idle (no windows, not active).
+    private let idleCheckInterval: TimeInterval = 2.0
+    private var currentPollInterval: TimeInterval = 0.3
+    private var pruneWorkItem: DispatchWorkItem?
+    /// Heavy ingest work (media store writes, hashing, index building, DB insert).
+    private let ingestQueue = DispatchQueue(label: "com.clipy.ingest", qos: .userInitiated)
     private var recentContentHashes: Set<String> = []
     private let recentContentHashesMaxSize = 50
     private var pendingIndexHashes: Set<String> = []
@@ -396,15 +402,22 @@ class ClipboardManager {
         self.fileHistoryURL = appSupport.appendingPathComponent("file_history.json")
 
         HistoryRepository.shared.migrateFromLegacyJSONIfNeeded()
-        HistoryRepository.shared.clearTextSearchIndexes()
         loadHistory()
         loadFileHistory()
         startPolling()
-        backfillSearchIndexesIfNeeded()
         startPasteUsageMonitoringIfNeeded()
         
         // Initialize recent content hashes from existing history
         updateRecentContentHashes()
+
+        // Maintenance work (index cleanup/backfill, orphan pruning) is not needed
+        // for first paint; run it shortly after launch off the critical path.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self else { return }
+            HistoryRepository.shared.clearTextSearchIndexes()
+            self.backfillSearchIndexesIfNeeded()
+            self.schedulePruneUnreferencedMediaFiles()
+        }
     }
     
     private func updateRecentContentHashes() {
@@ -451,7 +464,6 @@ class ClipboardManager {
             reimportHistoryForLegacyMediaMigration()
         }
         totalHistoryCount = repository.count()
-        pruneUnreferencedMediaFiles()
     }
 
     func ensureMenuSummariesLoaded() {
@@ -473,7 +485,8 @@ class ClipboardManager {
         // 临时保留内存，让 addToHistory 写入后立即填充 recentSummaries。
         let wasRetained = isMenuMemoryRetained
         isMenuMemoryRetained = true
-        processClipboardContent()
+        // Menu is about to open: ingest synchronously so the new entry is visible now.
+        processClipboardContent(synchronous: true)
         if !wasRetained {
             // 调用方通常会立刻 ensureMenuSummariesLoaded；这里也重拉一次确保完整。
             recentSummaries = repository.fetchSummaries(limit: menuHistoryLimit)
@@ -510,9 +523,46 @@ class ClipboardManager {
     }
 
     private func startPolling() {
-        Timer.scheduledTimer(withTimeInterval: minCheckInterval, repeats: true) { [weak self] _ in
+        startPollingTimer(interval: minCheckInterval)
+
+        // Poll fast while the user is interacting with this Mac session; ease off when
+        // the app is idle so the RunLoop is not woken 3x per second around the clock.
+        let center = NotificationCenter.default
+        center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.adjustPollingInterval()
+        }
+        center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.adjustPollingInterval()
+        }
+        // Wake events arrive on NSWorkspace's own notification center.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.adjustPollingInterval()
+        }
+    }
+
+    private func startPollingTimer(interval: TimeInterval) {
+        timer?.invalidate()
+        currentPollInterval = interval
+        let newTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.checkPasteboardWithDebounce()
         }
+        newTimer.tolerance = interval * 0.2
+        timer = newTimer
+    }
+
+    private func adjustPollingInterval() {
+        let hasVisibleWindows = NSApp.windows.contains { $0.isVisible && !($0 is NSPanel) }
+        let desired = (NSApp.isActive || hasVisibleWindows) ? minCheckInterval : idleCheckInterval
+        if desired != currentPollInterval {
+            startPollingTimer(interval: desired)
+        }
+    }
+
+    func stopPolling() {
+        timer?.invalidate()
+        timer = nil
     }
 
     private func checkPasteboardWithDebounce() {
@@ -548,26 +598,56 @@ class ClipboardManager {
         }
     }
     
-    private func processClipboardContent() {
+    private func processClipboardContent(synchronous: Bool = false) {
         changeCount = pasteboard.changeCount
 
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         let sourceApp = frontmostApp?.localizedName
         let bundleIdentifier = frontmostApp?.bundleIdentifier
 
-        appLog("Clipboard changed. Source: \(sourceApp ?? "Unknown") (\(bundleIdentifier ?? "N/A"))")
-
         // Clipy feature: Exclude sensitive apps (e.g., Password managers)
         if let bundleID = bundleIdentifier, PreferencesManager.shared.excludedApps.contains(bundleID) {
             return
         }
 
-        guard let item = historyItemFromCurrentPasteboard() else { return }
-        addToHistory(item, sourceApp: sourceApp, sourceBundleId: bundleIdentifier)
+        // Pasteboard reads stay on the main thread; the payload is then plain
+        // value data that heavy processing can consume from any thread.
+        guard let payload = readPasteboardPayload() else { return }
+
+        if synchronous {
+            let item = historyItem(from: payload)
+            addToHistory(item, sourceApp: sourceApp, sourceBundleId: bundleIdentifier)
+            return
+        }
+
+        // Media store writes, SHA256, RTF/HTML/PDF index parsing and the DB insert can
+        // take hundreds of ms for large payloads; keep them off the main thread.
+        let capturedSyncHash = lastSyncHash
+        ingestQueue.async { [weak self] in
+            guard let self else { return }
+            let item = self.historyItem(from: payload)
+            let prepared = self.prepareHistoryInsert(
+                item,
+                sourceApp: sourceApp,
+                sourceBundleId: bundleIdentifier,
+                lastKnownSyncHash: capturedSyncHash
+            )
+            DispatchQueue.main.async {
+                self.finalizeHistoryInsert(prepared)
+            }
+        }
     }
 
-    private func historyItemFromCurrentPasteboard() -> HistoryItem? {
-        let store = HistoryMediaStore.shared
+    private enum PasteboardPayload {
+        case files([URL])
+        case text(String)
+        case rtf(Data)
+        case html(Data)
+        case pdf(Data)
+        case image(Data)
+    }
+
+    private func readPasteboardPayload() -> PasteboardPayload? {
         if let fileURLs = readFileURLsFromPasteboard(), !fileURLs.isEmpty {
             return .files(fileURLs)
         }
@@ -576,18 +656,36 @@ class ClipboardManager {
             return .text(newString)
         }
         if let rtfData = pasteboard.data(forType: .rtf) {
-            return .rtf(store.store(data: rtfData, kind: .rtf))
+            return .rtf(rtfData)
         }
         if let htmlData = pasteboard.data(forType: .html) {
-            return .html(store.store(data: htmlData, kind: .html))
+            return .html(htmlData)
         }
         if let pdfData = pasteboard.data(forType: .pdf) {
-            return .pdf(store.store(data: pdfData, kind: .pdf))
+            return .pdf(pdfData)
         }
         if let imageData = pasteboard.data(forType: .tiff) ?? pasteboard.data(forType: .png) {
-            return .image(store.store(data: imageData, kind: .image))
+            return .image(imageData)
         }
         return nil
+    }
+
+    private func historyItem(from payload: PasteboardPayload) -> HistoryItem {
+        let store = HistoryMediaStore.shared
+        switch payload {
+        case .files(let urls):
+            return .files(urls)
+        case .text(let text):
+            return .text(text)
+        case .rtf(let data):
+            return .rtf(store.store(data: data, kind: .rtf))
+        case .html(let data):
+            return .html(store.store(data: data, kind: .html))
+        case .pdf(let data):
+            return .pdf(store.store(data: data, kind: .pdf))
+        case .image(let data):
+            return .image(store.store(data: data, kind: .image))
+        }
     }
 
     func startPasteUsageMonitoringIfNeeded() {
@@ -635,8 +733,9 @@ class ClipboardManager {
     }
 
     func recordUsageIfPasteboardMatchesHistory() {
-        guard let item = historyItemFromCurrentPasteboard(),
-              let entry = historyEntry(matching: item) else { return }
+        guard let payload = readPasteboardPayload() else { return }
+        let item = historyItem(from: payload)
+        guard let entry = historyEntry(matching: item) else { return }
         recordHistoryUsage(entry)
         moveHistoryEntryToFront(entry)
     }
@@ -676,11 +775,33 @@ class ClipboardManager {
         }
     }
 
+    private struct PreparedHistoryInsert {
+        let entry: HistoryEntry
+        let hash: String?
+    }
+
     private func addToHistory(_ item: HistoryItem, sourceApp: String?, sourceBundleId: String? = nil) {
+        let prepared = prepareHistoryInsert(
+            item,
+            sourceApp: sourceApp,
+            sourceBundleId: sourceBundleId,
+            lastKnownSyncHash: lastSyncHash
+        )
+        finalizeHistoryInsert(prepared)
+    }
+
+    /// Heavy half of the insert (hashing, index build, DB write). Safe on any thread:
+    /// the repository is internally serialized and the media store only touches disk.
+    private func prepareHistoryInsert(
+        _ item: HistoryItem,
+        sourceApp: String?,
+        sourceBundleId: String?,
+        lastKnownSyncHash: String?
+    ) -> PreparedHistoryInsert {
         let hash = contentHash(for: item)
         appLog("Adding to history: \(item.title), Hash: \(hash?.prefix(8) ?? "N/A")")
 
-        if let sync = plainTextForLANSync(from: item), sync.hash != lastSyncHash {
+        if let sync = plainTextForLANSync(from: item), sync.hash != lastKnownSyncHash {
             SyncManager.shared.broadcastSync(content: sync.text, hash: sync.hash)
         }
 
@@ -700,11 +821,16 @@ class ClipboardManager {
 
         _ = repository.insertOrReplace(entry)
         repository.trimToLimit(maxHistoryItems)
+        return PreparedHistoryInsert(entry: entry, hash: hash)
+    }
+
+    /// Main-thread half: updates in-memory summaries and notifies the UI.
+    private func finalizeHistoryInsert(_ prepared: PreparedHistoryInsert) {
         reloadLoadedSummaries()
 
-        scheduleImageOCRIfNeeded(for: entry)
+        scheduleImageOCRIfNeeded(for: prepared.entry)
 
-        if let hash = hash {
+        if let hash = prepared.hash {
             recentContentHashes.insert(hash)
             if recentContentHashes.count > recentContentHashesMaxSize {
                 updateRecentContentHashes()
@@ -835,7 +961,7 @@ class ClipboardManager {
         guard repository.delete(contentHash: hash, item: entry.item) else { return }
         reloadLoadedSummaries()
         updateRecentContentHashes()
-        pruneUnreferencedMediaFiles()
+        schedulePruneUnreferencedMediaFiles()
         notifyHistoryChanged()
     }
 
@@ -851,7 +977,7 @@ class ClipboardManager {
         guard removed else { return }
         reloadLoadedSummaries()
         updateRecentContentHashes()
-        pruneUnreferencedMediaFiles()
+        schedulePruneUnreferencedMediaFiles()
         notifyHistoryChanged()
     }
 
@@ -888,7 +1014,7 @@ class ClipboardManager {
         reloadLoadedSummaries()
         guard totalHistoryCount != previousTotal else { return }
         updateRecentContentHashes()
-        pruneUnreferencedMediaFiles()
+        schedulePruneUnreferencedMediaFiles()
         notifyHistoryChanged()
     }
 
@@ -906,10 +1032,17 @@ class ClipboardManager {
         notifyHistoryChanged()
     }
 
-    private func pruneUnreferencedMediaFiles() {
-        let referenced = repository.referencedStoragePaths()
-        HistoryMediaStore.shared.removeUnreferencedFiles(keeping: referenced)
-        HistoryThumbnailCache.pruneUnreferenced(keepingSourcePaths: referenced)
+    /// Full-table path scan + directory walk; debounced and run off the main thread.
+    private func schedulePruneUnreferencedMediaFiles() {
+        pruneWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let referenced = self.repository.referencedStoragePaths()
+            HistoryMediaStore.shared.removeUnreferencedFiles(keeping: referenced)
+            HistoryThumbnailCache.pruneUnreferenced(keepingSourcePaths: referenced)
+        }
+        pruneWorkItem = work
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30, execute: work)
     }
 
     func writePlainTextToPasteboard(_ item: HistoryItem, textPath: String? = nil) {

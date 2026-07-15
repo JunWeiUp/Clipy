@@ -27,7 +27,7 @@ struct DiscoveredPeer {
 struct FileChunk: Codable {
     let fileId: String
     let chunkIndex: Int
-    let data: String // Base64 encrypted chunk data
+    let data: String // Base64 chunk data (encryption happens on the outer SyncMessage)
     let isLast: Bool
     let isCompressed: Bool
     let originalSize: Int?
@@ -76,9 +76,27 @@ class SyncManager: NSObject, NetServiceDelegate {
     private var listener: NWListener? 
     private var netService: NetService?
     private var discoveredPeers: [String: DiscoveredPeer] = [:]
+    private let peersLock = NSLock()
     private var activeConnections: [NWConnection] = [] 
     private let syncQueue = DispatchQueue(label: "com.clipy.sync")
-    private var pendingFiles: [String: (header: FileHeader, senderName: String, localURL: URL)] = [:]
+    // File transfers run on their own queue so blocking sends never stall message receive.
+    private let fileTransferQueue = DispatchQueue(label: "com.clipy.sync.filetransfer")
+
+    /// Reject any frame larger than this to avoid attacker-controlled allocations.
+    private static let maxMessageLength = 2 * 1024 * 1024
+    /// Incomplete inbound transfers are dropped after this much inactivity.
+    private static let pendingFileTimeout: TimeInterval = 60
+
+    private struct PendingFileTransfer {
+        let header: FileHeader
+        let senderName: String
+        let localURL: URL
+        var expectedChunkIndex: Int = 0
+        var lastActivity = Date()
+    }
+
+    private var pendingFiles: [String: PendingFileTransfer] = [:]
+    private var pendingFileCleanupTimer: DispatchSourceTimer?
      
     private let serviceType = "_clipy-sync._tcp" 
     private var displayName: String { PreferencesManager.shared.deviceName }
@@ -186,51 +204,111 @@ class SyncManager: NSObject, NetServiceDelegate {
         }
     }
     
-    private func compressData(_ data: Data) -> Data? {
-        let bufferSize = data.count + 64 // Add some overhead for compression metadata
-        var buffer = [UInt8](repeating: 0, count: bufferSize)
-        
-        let compressedSize = data.withUnsafeBytes { inputPtr in
-            buffer.withUnsafeMutableBytes { outputPtr in
-                compression_encode_buffer(
-                    outputPtr.baseAddress!,
-                    bufferSize,
-                    inputPtr.baseAddress!,
-                    data.count,
-                    nil,
-                    COMPRESSION_LZFSE
-                )
+    // MARK: - Compression (gzip container, interoperable with Android's dart:io gzip codec)
+    //
+    // Apple's Compression framework only produces RAW deflate (COMPRESSION_ZLIB
+    // without headers), so we wrap/unwrap the gzip container manually to stay
+    // byte-compatible with Dart's `gzip.encode`/`gzip.decode`.
+
+    private static let crc32Table: [UInt32] = {
+        (0..<256).map { index -> UInt32 in
+            var crc = UInt32(index)
+            for _ in 0..<8 {
+                crc = (crc & 1) == 1 ? (0xEDB88320 ^ (crc >> 1)) : (crc >> 1)
             }
+            return crc
         }
-        
-        if compressedSize == 0 {
-            return nil // Compression failed or not beneficial
+    }()
+
+    private static func crc32(_ data: Data) -> UInt32 {
+        var crc: UInt32 = 0xFFFFFFFF
+        for byte in data {
+            crc = Self.crc32Table[Int((crc ^ UInt32(byte)) & 0xFF)] ^ (crc >> 8)
         }
-        
+        return crc ^ 0xFFFFFFFF
+    }
+
+    private func rawDeflate(_ data: Data) -> Data? {
+        let bufferSize = data.count + 1024
+        var buffer = [UInt8](repeating: 0, count: bufferSize)
+        let compressedSize = data.withUnsafeBytes { inputPtr -> Int in
+            guard let base = inputPtr.baseAddress else { return 0 }
+            return compression_encode_buffer(
+                &buffer, bufferSize,
+                base.assumingMemoryBound(to: UInt8.self), data.count,
+                nil, COMPRESSION_ZLIB
+            )
+        }
+        guard compressedSize > 0 else { return nil }
         return Data(buffer[0..<compressedSize])
     }
-    
-    private func decompressData(_ data: Data, originalSize: Int) -> Data? {
-        var buffer = [UInt8](repeating: 0, count: originalSize)
-        
-        let decompressedSize = data.withUnsafeBytes { inputPtr in
-            buffer.withUnsafeMutableBytes { outputPtr in
-                compression_decode_buffer(
-                    outputPtr.baseAddress!,
-                    originalSize,
-                    inputPtr.baseAddress!,
-                    data.count,
-                    nil,
-                    COMPRESSION_LZFSE
-                )
-            }
+
+    private func rawInflate(_ data: Data, expectedSize: Int) -> Data? {
+        var buffer = [UInt8](repeating: 0, count: expectedSize)
+        let decompressedSize = data.withUnsafeBytes { inputPtr -> Int in
+            guard let base = inputPtr.baseAddress else { return 0 }
+            return compression_decode_buffer(
+                &buffer, expectedSize,
+                base.assumingMemoryBound(to: UInt8.self), data.count,
+                nil, COMPRESSION_ZLIB
+            )
         }
-        
-        if decompressedSize != originalSize {
-            return nil // Decompression failed
-        }
-        
+        guard decompressedSize == expectedSize else { return nil }
         return Data(buffer)
+    }
+
+    private func compressData(_ data: Data) -> Data? {
+        guard !data.isEmpty, let deflated = rawDeflate(data) else { return nil }
+
+        var output = Data(capacity: deflated.count + 18)
+        // Minimal gzip header: magic, deflate method, no flags, no mtime, unknown OS.
+        output.append(contentsOf: [0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF])
+        output.append(deflated)
+
+        var crc = Self.crc32(data).littleEndian
+        withUnsafeBytes(of: &crc) { output.append(contentsOf: $0) }
+        var isize = UInt32(truncatingIfNeeded: data.count).littleEndian
+        withUnsafeBytes(of: &isize) { output.append(contentsOf: $0) }
+        return output
+    }
+
+    private func decompressData(_ data: Data, originalSize: Int) -> Data? {
+        guard originalSize > 0, data.count > 18 else { return nil }
+        let bytes = [UInt8](data)
+        // gzip magic + deflate method.
+        guard bytes[0] == 0x1F, bytes[1] == 0x8B, bytes[2] == 0x08 else { return nil }
+
+        let flags = bytes[3]
+        var offset = 10
+        if flags & 0x04 != 0 { // FEXTRA
+            guard bytes.count > offset + 2 else { return nil }
+            let extraLength = Int(bytes[offset]) | (Int(bytes[offset + 1]) << 8)
+            offset += 2 + extraLength
+        }
+        if flags & 0x08 != 0 { // FNAME (NUL-terminated)
+            while offset < bytes.count, bytes[offset] != 0 { offset += 1 }
+            offset += 1
+        }
+        if flags & 0x10 != 0 { // FCOMMENT (NUL-terminated)
+            while offset < bytes.count, bytes[offset] != 0 { offset += 1 }
+            offset += 1
+        }
+        if flags & 0x02 != 0 { // FHCRC
+            offset += 2
+        }
+        guard offset < bytes.count - 8 else { return nil }
+
+        let deflateBody = data.subdata(in: offset..<(data.count - 8))
+        guard let inflated = rawInflate(deflateBody, expectedSize: originalSize) else { return nil }
+
+        // Verify the trailer CRC so corrupt chunks can never be written to disk.
+        let trailerStart = data.count - 8
+        let expectedCRC = UInt32(bytes[trailerStart])
+            | (UInt32(bytes[trailerStart + 1]) << 8)
+            | (UInt32(bytes[trailerStart + 2]) << 16)
+            | (UInt32(bytes[trailerStart + 3]) << 24)
+        guard Self.crc32(inflated) == expectedCRC else { return nil }
+        return inflated
     }
 
     private func encrypt(_ text: String) -> String? {
@@ -318,7 +396,13 @@ class SyncManager: NSObject, NetServiceDelegate {
         }
         activeConnections.removeAll()
         
+        peersLock.lock()
         discoveredPeers.removeAll()
+        peersLock.unlock()
+
+        syncQueue.async {
+            self.abortAllPendingFiles()
+        }
         appLog("SyncManager stopped.")
     }
     
@@ -359,7 +443,7 @@ class SyncManager: NSObject, NetServiceDelegate {
             
             appLog("mDNS browse results changed: \(results.count) devices found")
             
-            self.discoveredPeers.removeAll()
+            var updatedPeers: [String: DiscoveredPeer] = [:]
             for result in results {
                 if case let .service(name, type, domain, interface) = result.endpoint {
                     let interfaceName = interface?.name ?? "any"
@@ -367,18 +451,20 @@ class SyncManager: NSObject, NetServiceDelegate {
                     appLog("Discovered service: \(name) peerId=\(remotePeerId) (\(type).\(domain)) on interface \(interfaceName)")
                     
                     if name == self.displayName || remotePeerId == self.peerId {
-                        appLog("Skipping local service: \(name)")
                         continue
                     }
-                    let peer = DiscoveredPeer(
+                    updatedPeers[remotePeerId] = DiscoveredPeer(
                         peerId: remotePeerId,
                         displayName: name,
                         endpoint: result.endpoint,
                         browseResult: result
                     )
-                    self.discoveredPeers[remotePeerId] = peer
                 }
             }
+
+            self.peersLock.lock()
+            self.discoveredPeers = updatedPeers
+            self.peersLock.unlock()
 
             PreferencesManager.shared.migrateAuthorizedPeerIds(from: self.availablePeers)
             
@@ -400,7 +486,9 @@ class SyncManager: NSObject, NetServiceDelegate {
     }
     
     var availablePeers: [DiscoveredPeer] {
-        discoveredPeers.values.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        peersLock.lock()
+        defer { peersLock.unlock() }
+        return discoveredPeers.values.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
 
     var availableDeviceNames: [String] {
@@ -446,12 +534,11 @@ class SyncManager: NSObject, NetServiceDelegate {
                 case .cancelled:
                     appLog("NWListener cancelled")
                 default:
-                    appLog("NWListener state: \(state)")
+                    break
                 }
             }
             
             listener.newConnectionHandler = { [weak self] connection in
-                appLog("New incoming connection from \(connection.endpoint)")
                 self?.handleIncomingConnection(connection)
             }
             
@@ -501,40 +588,49 @@ class SyncManager: NSObject, NetServiceDelegate {
         }
     }
     
+    /// Reads length-prefixed frames in a loop so one connection can carry many messages
+    /// (used by file transfers to keep chunks ordered on a single connection).
     private func receiveMessage(from connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] data, _, isComplete, error in
-            if let data = data, data.count == 4 {
-                let length = Int(data.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian })
-                appLog("Incoming message length: \(length)")
-                
-                connection.receive(minimumIncompleteLength: length, maximumLength: length) { [weak self, weak connection] data, _, _, error in
-                    if let data = data {
-                        self?.processReceivedData(data)
-                    }
-                    if let connection = connection {
-                        self?.removeConnection(connection)
-                        connection.cancel()
-                    }
+        connection.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self, weak connection] data, _, isComplete, error in
+            guard let self = self, let connection = connection else { return }
+            guard let data = data, data.count == 4 else {
+                if error != nil || isComplete {
+                    self.removeConnection(connection)
+                    connection.cancel()
                 }
-            } else if let error = error {
-                appLog("Receive length failed: \(error)", level: .error)
-                self?.removeConnection(connection)
+                return
+            }
+
+            let length = Int(data.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian })
+            guard length > 0, length <= Self.maxMessageLength else {
+                appLog("Rejecting frame with invalid length \(length)", level: .error)
+                self.removeConnection(connection)
                 connection.cancel()
+                return
+            }
+
+            connection.receive(minimumIncompleteLength: length, maximumLength: length) { [weak self, weak connection] data, _, isComplete, error in
+                guard let self = self, let connection = connection else { return }
+                if let data = data {
+                    self.processReceivedData(data)
+                }
+                if error != nil || isComplete {
+                    self.removeConnection(connection)
+                    connection.cancel()
+                } else {
+                    self.receiveMessage(from: connection)
+                }
             }
         }
     }
     
     private func processReceivedData(_ data: Data) {
-        appLog("Processing received data (\(data.count) bytes)")
         guard let message = try? JSONDecoder().decode(SyncMessage.self, from: data) else {
             appLog("Failed to decode SyncMessage", level: .error)
             return
         }
         
-        let isFileMessage = message.type == "file/header" || message.type == "file/chunk"
-        let isClipboardMessage = message.type == "text/plain"
-        let isCollectorMessage = message.type == "collector/event"
-        if !isFileMessage && !isClipboardMessage && !isCollectorMessage && !PreferencesManager.shared.authorizedPeerIds.contains(message.deviceId) {
+        guard PreferencesManager.shared.authorizedPeerIds.contains(message.deviceId) else {
             appLog("Rejecting sync from unauthorized peer: \(message.deviceId)", level: .warning)
             return
         }
@@ -544,23 +640,38 @@ class SyncManager: NSObject, NetServiceDelegate {
             return
         }
         
-        if message.type == "text/plain" {
-            appLog("Received sync from \(message.deviceId): \(decrypted.prefix(20))...")
-            ClipboardManager.shared.handleRemoteSync(content: decrypted, hash: message.hash)
-        } else if message.type == "file/header" {
+        switch message.type {
+        case "text/plain":
+            // ClipboardManager touches NSPasteboard and UI state: main thread only.
+            DispatchQueue.main.async {
+                ClipboardManager.shared.handleRemoteSync(content: decrypted, hash: message.hash)
+            }
+        case "file/header":
             handleFileHeader(decrypted, from: message.deviceId)
-        } else if message.type == "file/chunk" {
+        case "file/chunk":
             handleFileChunk(decrypted, from: message.deviceId)
-        } else if message.type == "notification/post" {
-            NotificationManager.shared.handleRemoteNotification(decrypted, from: message.deviceId)
-        } else if message.type == "notification/dismiss" {
-            NotificationManager.shared.handleRemoteDismiss(decrypted)
-        } else if message.type == "notification/clear_all" {
-            NotificationManager.shared.handleRemoteClearAll()
-        } else if message.type == "notification/config" {
-            handleNotificationConfig(decrypted)
-        } else if message.type == "collector/event" {
-            DeviceCollectorManager.shared.handleRemoteEvent(decrypted, from: message.deviceId)
+        case "notification/post":
+            DispatchQueue.main.async {
+                NotificationManager.shared.handleRemoteNotification(decrypted, from: message.deviceId)
+            }
+        case "notification/dismiss":
+            DispatchQueue.main.async {
+                NotificationManager.shared.handleRemoteDismiss(decrypted)
+            }
+        case "notification/clear_all":
+            DispatchQueue.main.async {
+                NotificationManager.shared.handleRemoteClearAll()
+            }
+        case "notification/config":
+            DispatchQueue.main.async {
+                self.handleNotificationConfig(decrypted)
+            }
+        case "collector/event":
+            DispatchQueue.main.async {
+                DeviceCollectorManager.shared.handleRemoteEvent(decrypted, from: message.deviceId)
+            }
+        default:
+            break
         }
     }
 
@@ -572,6 +683,8 @@ class SyncManager: NSObject, NetServiceDelegate {
         NotificationManager.shared.savePreferences()
     }
     
+    // MARK: - Inbound File Transfers (state confined to syncQueue)
+
     private func handleFileHeader(_ json: String, from sender: String) {
         guard let data = json.data(using: .utf8),
               let header = try? JSONDecoder().decode(FileHeader.self, from: data) else {
@@ -590,7 +703,8 @@ class SyncManager: NSObject, NetServiceDelegate {
         try? FileManager.default.removeItem(at: localURL)
         FileManager.default.createFile(atPath: localURL.path, contents: nil)
         
-        pendingFiles[header.fileId] = (header, sender, localURL)
+        pendingFiles[header.fileId] = PendingFileTransfer(header: header, senderName: sender, localURL: localURL)
+        schedulePendingFileCleanupIfNeeded()
     }
     
     private func handleFileChunk(_ json: String, from sender: String) {
@@ -600,56 +714,110 @@ class SyncManager: NSObject, NetServiceDelegate {
             return
         }
         
-        guard let (header, senderName, localURL) = pendingFiles[chunk.fileId] else {
+        guard var pending = pendingFiles[chunk.fileId] else {
             appLog("Received chunk for unknown fileId: \(chunk.fileId)", level: .error)
+            return
+        }
+
+        guard chunk.chunkIndex == pending.expectedChunkIndex else {
+            appLog(
+                "Out-of-order chunk for \(pending.header.fileName): got \(chunk.chunkIndex), expected \(pending.expectedChunkIndex). Aborting transfer.",
+                level: .error
+            )
+            abortPendingFile(chunk.fileId)
             return
         }
         
         guard var chunkData = Data(base64Encoded: chunk.data) else {
             appLog("Failed to decode base64 chunk data", level: .error)
+            abortPendingFile(chunk.fileId)
             return
         }
         
         // Handle decompression if needed
         if chunk.isCompressed, let originalSize = chunk.originalSize {
-            if let decompressedData = decompressData(chunkData, originalSize: originalSize) {
-                chunkData = decompressedData
-                appLog("Decompressed chunk \(chunk.chunkIndex) from \(Data(base64Encoded: chunk.data)!.count) to \(decompressedData.count) bytes")
-            } else {
-                appLog("Failed to decompress chunk \(chunk.chunkIndex)", level: .error)
+            guard let decompressedData = decompressData(chunkData, originalSize: originalSize) else {
+                appLog("Failed to decompress chunk \(chunk.chunkIndex) of \(pending.header.fileName). Aborting transfer.", level: .error)
+                abortPendingFile(chunk.fileId)
                 return
             }
+            chunkData = decompressedData
         }
         
         do {
-            let fileHandle = try FileHandle(forWritingTo: localURL)
+            let fileHandle = try FileHandle(forWritingTo: pending.localURL)
             defer { try? fileHandle.close() }
             try fileHandle.seekToEnd()
             try fileHandle.write(contentsOf: chunkData)
-            
-            if chunk.isLast {
-                appLog("File transfer completed: \(header.fileName)")
-                pendingFiles.removeValue(forKey: chunk.fileId)
-                
-                // Add to history
-                DispatchQueue.main.async {
-                    ClipboardManager.shared.addToFileHistory(
-                        fileName: header.fileName,
-                        filePath: localURL.path,
-                        fileSize: header.fileSize,
-                        senderName: senderName
-                    )
-                    
-                    // Show notification
-                    let notification = NSUserNotification()
-                    notification.title = L10n.t(.fileReceived)
-                    notification.informativeText = L10n.format(.receivedFileFrom, header.fileName, senderName)
-                    notification.soundName = NSUserNotificationDefaultSoundName
-                    NSUserNotificationCenter.default.deliver(notification)
-                }
-            }
         } catch {
             appLog("Failed to write chunk: \(error)", level: .error)
+            abortPendingFile(chunk.fileId)
+            return
+        }
+
+        pending.expectedChunkIndex += 1
+        pending.lastActivity = Date()
+        pendingFiles[chunk.fileId] = pending
+
+        if chunk.isLast {
+            appLog("File transfer completed: \(pending.header.fileName)")
+            pendingFiles.removeValue(forKey: chunk.fileId)
+            let header = pending.header
+            let senderName = pending.senderName
+            let localURL = pending.localURL
+
+            DispatchQueue.main.async {
+                ClipboardManager.shared.addToFileHistory(
+                    fileName: header.fileName,
+                    filePath: localURL.path,
+                    fileSize: header.fileSize,
+                    senderName: senderName
+                )
+                
+                let notification = NSUserNotification()
+                notification.title = L10n.t(.fileReceived)
+                notification.informativeText = L10n.format(.receivedFileFrom, header.fileName, senderName)
+                notification.soundName = NSUserNotificationDefaultSoundName
+                NSUserNotificationCenter.default.deliver(notification)
+            }
+        }
+    }
+
+    private func schedulePendingFileCleanupIfNeeded() {
+        guard pendingFileCleanupTimer == nil, !pendingFiles.isEmpty else { return }
+        let timer = DispatchSource.makeTimerSource(queue: syncQueue)
+        timer.schedule(deadline: .now() + 30, repeating: 30)
+        timer.setEventHandler { [weak self] in
+            self?.cleanupStalePendingFiles()
+        }
+        timer.resume()
+        pendingFileCleanupTimer = timer
+    }
+
+    private func cleanupStalePendingFiles() {
+        let cutoff = Date().addingTimeInterval(-Self.pendingFileTimeout)
+        for (fileId, pending) in pendingFiles where pending.lastActivity < cutoff {
+            appLog("File transfer timed out: \(pending.header.fileName)", level: .warning)
+            abortPendingFile(fileId)
+        }
+        if pendingFiles.isEmpty {
+            pendingFileCleanupTimer?.cancel()
+            pendingFileCleanupTimer = nil
+        }
+    }
+
+    private func abortPendingFile(_ fileId: String) {
+        guard let pending = pendingFiles.removeValue(forKey: fileId) else { return }
+        try? FileManager.default.removeItem(at: pending.localURL)
+        if pendingFiles.isEmpty {
+            pendingFileCleanupTimer?.cancel()
+            pendingFileCleanupTimer = nil
+        }
+    }
+
+    private func abortAllPendingFiles() {
+        for fileId in Array(pendingFiles.keys) {
+            abortPendingFile(fileId)
         }
     }
     
@@ -674,14 +842,12 @@ class SyncManager: NSObject, NetServiceDelegate {
         let targets = availablePeers.filter { authorizedPeerIds.contains($0.peerId) }
 
         for peer in targets {
-            appLog("Sending notification message to: \(peer.displayName) (peerId=\(peer.peerId))")
             sendSync(jsonData, to: peer.endpoint)
         }
     }
 
     // MARK: - Sending Sync
     func broadcastSync(content: String, hash: String) {
-        appLog("Broadcasting sync message: \(hash.prefix(8))...")
         guard PreferencesManager.shared.isSyncEnabled else { return }
 
         guard let jsonData = makeTextSyncPayload(content: content, hash: hash) else { return }
@@ -778,18 +944,29 @@ class SyncManager: NSObject, NetServiceDelegate {
         )
 
         guard let headerJson = try? JSONEncoder().encode(headerMessage) else { return }
-        sendSync(headerJson, to: endpoint)
 
-        syncQueue.async {
+        // Send header + all chunks over ONE connection so ordering is guaranteed,
+        // and run everything on the dedicated transfer queue so syncQueue stays responsive.
+        fileTransferQueue.async {
+            guard let connection = self.openBlockingConnection(to: endpoint) else {
+                appLog("Failed to open connection for file transfer to \(targetName)", level: .error)
+                return
+            }
+            defer { connection.cancel() }
+
+            guard self.sendFrameBlocking(headerJson, over: connection) else {
+                appLog("Failed to send file header to \(targetName)", level: .error)
+                return
+            }
+
             do {
                 let fileHandle = try FileHandle(forReadingFrom: url)
                 defer { try? fileHandle.close() }
 
-                // Keep packets comfortably below Android's 1MB safety limit after JSON/Base64/encryption overhead.
+                // Keep packets comfortably below the 2MB frame limit after JSON/Base64/encryption overhead.
                 let chunkSize = 128 * 1024
 
                 let shouldCompress = self.shouldCompressFile(at: url)
-                appLog("File compression enabled: \(shouldCompress), chunk size: \(chunkSize)")
 
                 var chunkIndex = 0
                 var bytesRead: Int64 = 0
@@ -835,16 +1012,14 @@ class SyncManager: NSObject, NetServiceDelegate {
 
                     guard let chunkJson = try? JSONEncoder().encode(chunkMessage) else { break }
 
-                    let delay = min(0.1, Double(processedData.count) / 1000000.0)
-                    if delay > 0 {
-                        Thread.sleep(forTimeInterval: delay)
+                    guard self.sendFrameBlocking(chunkJson, over: connection) else {
+                        appLog("Failed to send chunk \(chunkIndex) of \(fileName)", level: .error)
+                        return
                     }
-                    self.sendSync(chunkJson, to: endpoint)
 
                     chunkIndex += 1
-                    appLog("Sent chunk \(chunkIndex) (\(bytesRead)/\(fileSize) bytes, compressed: \(isCompressed))")
                 }
-                appLog("File transfer completed for \(fileName)")
+                appLog("File transfer completed for \(fileName) (\(chunkIndex) chunks)")
 
                 if addToFileHistory {
                     DispatchQueue.main.async {
@@ -861,41 +1036,68 @@ class SyncManager: NSObject, NetServiceDelegate {
             }
         }
     }
+
+    /// Opens a connection and blocks (on fileTransferQueue only) until ready or timeout.
+    private func openBlockingConnection(to endpoint: NWEndpoint) -> NWConnection? {
+        let parameters = NWParameters.tcp
+        parameters.preferNoProxies = true
+        let connection = NWConnection(to: endpoint, using: parameters)
+
+        let ready = DispatchSemaphore(value: 0)
+        var didConnect = false
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                didConnect = true
+                ready.signal()
+            case .failed(let error):
+                appLog("File transfer connection failed: \(error)", level: .error)
+                ready.signal()
+            case .cancelled:
+                ready.signal()
+            default:
+                break
+            }
+        }
+        connection.start(queue: syncQueue)
+
+        guard ready.wait(timeout: .now() + 10) == .success, didConnect else {
+            connection.cancel()
+            return nil
+        }
+        connection.stateUpdateHandler = nil
+        return connection
+    }
+
+    /// Sends one length-prefixed frame, blocking until the send completes (fileTransferQueue only).
+    private func sendFrameBlocking(_ data: Data, over connection: NWConnection) -> Bool {
+        var frame = Data(capacity: data.count + 4)
+        var length = UInt32(data.count).bigEndian
+        withUnsafeBytes(of: &length) { frame.append(contentsOf: $0) }
+        frame.append(data)
+
+        let done = DispatchSemaphore(value: 0)
+        var succeeded = false
+        connection.send(content: frame, completion: .contentProcessed { error in
+            succeeded = (error == nil)
+            if let error = error {
+                appLog("Frame send failed: \(error)", level: .error)
+            }
+            done.signal()
+        })
+        return done.wait(timeout: .now() + 30) == .success && succeeded
+    }
     
     private func sendSync(_ data: Data, to endpoint: NWEndpoint) {
-        appLog("Starting TCP connection to \(endpoint)...")
-        
         let parameters = NWParameters.tcp
         // Bypass system proxies to avoid 127.0.0.1 redirection from tools like Clash/Surge
         parameters.preferNoProxies = true
-        
-        // Force IPv6 preference if possible by allowing all but explicitly logging results
-        // Network framework naturally prefers IPv6 (Happy Eyeballs) if not intercepted
         
         let connection = NWConnection(to: endpoint, using: parameters)
         
         connection.stateUpdateHandler = { state in
             switch state {
             case .ready:
-                let remoteAddress: String
-                let localAddress: String
-                let interfaceName: String
-                
-                if let remote = connection.currentPath?.remoteEndpoint {
-                    remoteAddress = "\(remote)"
-                } else {
-                    remoteAddress = "unknown"
-                }
-                
-                if let local = connection.currentPath?.localEndpoint {
-                    localAddress = "\(local)"
-                } else {
-                    localAddress = "unknown"
-                }
-                
-                interfaceName = connection.currentPath?.availableInterfaces.first?.name ?? "unknown"
-
-                appLog("TCP connection ready to \(endpoint). Remote: \(remoteAddress), Local: \(localAddress), Interface: \(interfaceName)")
                 // Send length prefix (4 bytes, big-endian) followed by data
                 var messageData = Data()
                 var length = UInt32(data.count).bigEndian
@@ -903,13 +1105,9 @@ class SyncManager: NSObject, NetServiceDelegate {
                 messageData.append(lengthBytes)
                 messageData.append(data)
                 
-                appLog("Sending total \(messageData.count) bytes (length prefix: \(data.count))")
-                
                 connection.send(content: messageData, completion: .contentProcessed({ error in
                     if let error = error {
                         appLog("Send failed to \(endpoint): \(error)", level: .error)
-                    } else {
-                        appLog("Sync data sent successfully to \(endpoint)")
                     }
                     // Give it a tiny bit of time before closing to ensure flush
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -920,13 +1118,7 @@ class SyncManager: NSObject, NetServiceDelegate {
                 appLog("Connection waiting for \(endpoint): \(error)", level: .warning)
             case .failed(let error):
                 appLog("Connection failed to \(endpoint): \(error)", level: .error)
-            case .preparing:
-                appLog("Connection preparing for \(endpoint)...")
-            case .setup:
-                appLog("Connection setup for \(endpoint)...")
-            case .cancelled:
-                appLog("Connection cancelled for \(endpoint)")
-            @unknown default:
+            default:
                 break
             }
         }

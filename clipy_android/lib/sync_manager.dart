@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:nsd/nsd.dart';
@@ -115,6 +114,8 @@ class _PendingFile {
   final File file;
   final IOSink sink;
   int receivedBytes = 0;
+  int expectedChunkIndex = 0;
+  DateTime lastActivity = DateTime.now();
 
   _PendingFile({required this.header, required this.senderName, required this.file, required this.sink});
 }
@@ -138,6 +139,7 @@ class SyncManager {
   Registration? _registration;
   Discovery? _discovery;
   ServerSocket? _server;
+  ServerSocket? _serverV6;
   final Map<String, DiscoveredPeer> _discoveredPeers = {};
   
   final _devicesChangedController = StreamController<List<String>>.broadcast();
@@ -154,6 +156,10 @@ class SyncManager {
 
   final Map<String, _PendingFile> _pendingFiles = {};
   final Map<String, DateTime> _lastProgressUpdate = {};
+  Timer? _pendingFileCleanupTimer;
+
+  /// Incomplete inbound transfers are dropped after this much inactivity.
+  static const Duration _pendingFileTimeout = Duration(seconds: 60);
   
   List<DiscoveredPeer> get availablePeers {
     final peers = _discoveredPeers.values.toList()
@@ -285,9 +291,66 @@ class SyncManager {
     }
     await _server?.close();
     _server = null;
+    await _serverV6?.close();
+    _serverV6 = null;
+    await _abortAllPendingFiles();
     _discoveredPeers.clear();
     _devicesChangedController.add(availableDeviceNames);
     _peersChangedController.add(availablePeers);
+  }
+
+  Future<void> _abortAllPendingFiles() async {
+    _pendingFileCleanupTimer?.cancel();
+    _pendingFileCleanupTimer = null;
+    final fileIds = _pendingFiles.keys.toList();
+    for (final fileId in fileIds) {
+      await _abortPendingFile(fileId);
+    }
+  }
+
+  Future<void> _abortPendingFile(String fileId) async {
+    final pending = _pendingFiles.remove(fileId);
+    if (pending == null) return;
+    _lastProgressUpdate.remove(fileId);
+    try {
+      await pending.sink.close();
+    } catch (_) {}
+    try {
+      if (await pending.file.exists()) {
+        await pending.file.delete();
+      }
+    } catch (_) {}
+    _fileProgressController.add(FileProgress(
+      fileId: pending.header.fileId,
+      fileName: pending.header.fileName,
+      progress: 0,
+      receivedBytes: pending.receivedBytes,
+      totalBytes: pending.header.fileSize,
+      isFailed: true,
+    ));
+    if (_pendingFiles.isEmpty) {
+      _pendingFileCleanupTimer?.cancel();
+      _pendingFileCleanupTimer = null;
+    }
+  }
+
+  void _schedulePendingFileCleanup() {
+    _pendingFileCleanupTimer ??=
+        Timer.periodic(const Duration(seconds: 30), (_) async {
+      final cutoff = DateTime.now().subtract(_pendingFileTimeout);
+      final stale = _pendingFiles.entries
+          .where((e) => e.value.lastActivity.isBefore(cutoff))
+          .map((e) => e.key)
+          .toList();
+      for (final fileId in stale) {
+        appLog('File transfer timed out: ${_pendingFiles[fileId]?.header.fileName}', level: 'warning');
+        await _abortPendingFile(fileId);
+      }
+      if (_pendingFiles.isEmpty) {
+        _pendingFileCleanupTimer?.cancel();
+        _pendingFileCleanupTimer = null;
+      }
+    });
   }
 
   // MARK: - mDNS Publishing
@@ -359,10 +422,10 @@ class SyncManager {
       
       // Also try to bind to IPv6 if possible, but don't fail if it's already handled by IPv4 or port busy
       try {
-        final v6Server = await ServerSocket.bind(InternetAddress.anyIPv6, port, v6Only: true, shared: true);
-        v6Server.listen(_handleConnection);
+        _serverV6 = await ServerSocket.bind(InternetAddress.anyIPv6, port, v6Only: true, shared: true);
+        _serverV6!.listen(_handleConnection);
         if (kDebugMode) {
-          appLog('SUCCESS: Sync TCP server also listening on IPv6: ${v6Server.address.address}:${v6Server.port}');
+          appLog('SUCCESS: Sync TCP server also listening on IPv6: ${_serverV6!.address.address}:${_serverV6!.port}');
         }
       } catch (e) {
         if (kDebugMode) {
@@ -452,14 +515,7 @@ class SyncManager {
   }
 
   Future<void> _handleSyncMessage(SyncMessage message) async {
-    final isFileMessage =
-        message.type == 'file/header' || message.type == 'file/chunk';
-    final isClipboardMessage = message.type == 'text/plain';
-    final isCollectorMessage = message.type == 'collector/event';
-    if (!isFileMessage &&
-        !isClipboardMessage &&
-        !isCollectorMessage &&
-        !authorizedPeerIds.contains(message.deviceId)) {
+    if (!authorizedPeerIds.contains(message.deviceId)) {
       appLog('Rejecting message from unauthorized peer: ${message.deviceId}', level: 'warning');
       return;
     }
@@ -590,6 +646,7 @@ class SyncManager {
         file: file,
         sink: sink,
       );
+      _schedulePendingFileCleanup();
       
       appLog('File will be saved to: ${file.path}');
     } catch (e) {
@@ -629,27 +686,33 @@ class SyncManager {
         return;
       }
 
+      if (chunk.chunkIndex != pending.expectedChunkIndex) {
+        appLog(
+          'Out-of-order chunk for ${pending.header.fileName}: got ${chunk.chunkIndex}, expected ${pending.expectedChunkIndex}. Aborting transfer.',
+          level: 'error',
+        );
+        await _abortPendingFile(chunk.fileId);
+        return;
+      }
+
       var data = base64Decode(chunk.data);
 
-      // Handle decompression if needed
+      // Handle decompression if needed. A corrupt chunk must abort the transfer:
+      // writing compressed bytes as-is would silently produce a broken file.
       if (chunk.isCompressed && chunk.originalSize != null) {
-        try {
-          final decompressed = CompressionUtils.decompressData(data);
-          if (decompressed != null) {
-            data = decompressed;
-            appLog('Decompressed chunk ${chunk.chunkIndex} from ${base64Decode(chunk.data).length} to ${data.length} bytes');
-          } else {
-            appLog('Decompression failed for chunk ${chunk.chunkIndex}, using original data', level: 'warning');
-            // Continue with original compressed data (treat as uncompressed)
-          }
-        } catch (e) {
-          appLog('Decompression error: $e, using original data', level: 'warning');
-          // Continue with original data
+        final decompressed = CompressionUtils.decompressData(data);
+        if (decompressed == null || decompressed.length != chunk.originalSize) {
+          appLog('Decompression failed for chunk ${chunk.chunkIndex} of ${pending.header.fileName}. Aborting transfer.', level: 'error');
+          await _abortPendingFile(chunk.fileId);
+          return;
         }
+        data = decompressed;
       }
       
       pending.sink.add(data);
       pending.receivedBytes += data.length;
+      pending.expectedChunkIndex += 1;
+      pending.lastActivity = DateTime.now();
 
       // Broadcast progress with throttling (max once every 100ms per file)
       final now = DateTime.now();
@@ -743,11 +806,9 @@ class SyncManager {
     }
   }
 
-  encrypt.Key _getEncryptionKey() => _getEncryptionKeyStatic();
-
-  String? _encrypt(String text) {
+  static String? encryptStatic(String text) {
     try {
-      final key = _getEncryptionKey();
+      final key = _getEncryptionKeyStatic();
       final iv = encrypt.IV.fromLength(12); // Use 12 bytes for GCM
       final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.gcm));
       final encrypted = encrypter.encrypt(text, iv: iv);
@@ -755,10 +816,11 @@ class SyncManager {
       // The 'encrypt' package for GCM includes the tag at the end of encrypted.bytes
       return base64Encode(iv.bytes + encrypted.bytes);
     } catch (e) {
-      appLog('Encryption error: $e');
       return null;
     }
   }
+
+  String? _encrypt(String text) => encryptStatic(text);
 
   String? _decrypt(String base64String) => _decryptStatic(base64String);
 
@@ -877,56 +939,49 @@ class SyncManager {
         content: encryptedHeader,
         hash: '',
       );
-      await _sendSync(jsonEncode(headerMessage.toJson()), service);
 
-      final shouldCompress = CompressionUtils.shouldCompressFile(file.path);
-      const chunkSize = 128 * 1024;
-      final raf = await file.open();
+      // Send header + all chunks over ONE socket so ordering is guaranteed
+      // and we avoid per-chunk connection setup cost.
+      final socket = await _connectToService(service);
+      if (socket == null) return;
+
       try {
-        var chunkIndex = 0;
-        var bytesRead = 0;
-        while (bytesRead < fileSize) {
-          final rawData = await raf.read(chunkSize);
-          if (rawData.isEmpty) break;
+        _writeFrame(socket, jsonEncode(headerMessage.toJson()));
 
-          bytesRead += rawData.length;
-          var processedData = Uint8List.fromList(rawData);
-          var isCompressed = false;
-          int? originalSize;
+        final shouldCompress = await CompressionUtils.shouldCompressFile(file.path);
+        const chunkSize = 128 * 1024;
+        final raf = await file.open();
+        try {
+          var chunkIndex = 0;
+          var bytesRead = 0;
+          while (bytesRead < fileSize) {
+            final rawData = await raf.read(chunkSize);
+            if (rawData.isEmpty) break;
 
-          if (shouldCompress) {
-            final compressed = CompressionUtils.compressData(processedData);
-            if (compressed != null && compressed.length < processedData.length) {
-              originalSize = processedData.length;
-              processedData = compressed;
-              isCompressed = true;
-            }
+            bytesRead += rawData.length;
+
+            // gzip + AES on 128KB blocks is heavy enough to jank the UI isolate.
+            final frameJson = await compute(_prepareChunkFrame, _ChunkFramePayload(
+              rawData: Uint8List.fromList(rawData),
+              fileId: fileId,
+              chunkIndex: chunkIndex,
+              isLast: bytesRead >= fileSize,
+              shouldCompress: shouldCompress,
+              deviceId: deviceId,
+              chunkType: chunkType,
+            ));
+            if (frameJson == null) break;
+
+            _writeFrame(socket, frameJson);
+            chunkIndex += 1;
           }
-
-          final chunkJson = jsonEncode({
-            'fileId': fileId,
-            'chunkIndex': chunkIndex,
-            'data': base64Encode(processedData),
-            'isLast': bytesRead >= fileSize,
-            'isCompressed': isCompressed,
-            if (originalSize != null) 'originalSize': originalSize,
-          });
-
-          final encryptedChunk = _encrypt(chunkJson);
-          if (encryptedChunk == null) break;
-          final chunkMessage = SyncMessage(
-            deviceId: deviceId,
-            timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
-            type: chunkType,
-            content: encryptedChunk,
-            hash: '',
-          );
-          await _sendSync(jsonEncode(chunkMessage.toJson()), service);
-          await Future.delayed(const Duration(milliseconds: 30));
-          chunkIndex += 1;
+        } finally {
+          await raf.close();
         }
+
+        await socket.flush();
       } finally {
-        await raf.close();
+        await socket.close();
       }
 
       if (addToFileHistory) {
@@ -943,56 +998,108 @@ class SyncManager {
     }
   }
 
-  Future<void> _sendSync(String jsonData, Service service) async {
+  Future<Socket?> _connectToService(Service service) async {
     try {
       var target = service;
       final needsResolve = (target.host == null || target.host!.isEmpty) &&
           (target.addresses == null || target.addresses!.isEmpty);
       if (needsResolve) {
-        appLog('Resolving service ${service.name} before connect...');
         target = await resolve(service);
       }
 
       final port = target.port ?? this.port;
-      Socket socket;
-
       if (target.addresses != null && target.addresses!.isNotEmpty) {
         final v4 = target.addresses!
             .where((a) => a.type == InternetAddressType.IPv4)
             .toList();
         final address = v4.isNotEmpty ? v4.first : target.addresses!.first;
-        appLog('Connecting to ${service.name} at ${address.address}:$port');
-        socket = await Socket.connect(
-          address,
-          port,
-          timeout: const Duration(seconds: 5),
-        );
-      } else {
-        final host = target.host;
-        if (host == null || host.isEmpty) {
-          appLog('No host/address for ${service.name}', level: 'error');
-          return;
-        }
-        appLog('Connecting to ${service.name} at $host:$port');
-        socket = await Socket.connect(
-          host,
-          port,
-          timeout: const Duration(seconds: 5),
-        );
+        return await Socket.connect(address, port, timeout: const Duration(seconds: 5));
       }
-
-      final messageBytes = utf8.encode(jsonData);
-      final length = messageBytes.length;
-
-      final lengthHeader = ByteData(4)..setUint32(0, length, Endian.big);
-      socket.add(lengthHeader.buffer.asUint8List());
-      socket.add(messageBytes);
-
-      await socket.flush();
-      await socket.close();
-      appLog('Sync sent successfully to ${service.name}');
+      final host = target.host;
+      if (host == null || host.isEmpty) {
+        appLog('No host/address for ${service.name}', level: 'error');
+        return null;
+      }
+      return await Socket.connect(host, port, timeout: const Duration(seconds: 5));
     } catch (e) {
-      appLog('Failed to send sync to ${service.name}: $e', level: 'error');
+      appLog('Failed to connect to ${service.name}: $e', level: 'error');
+      return null;
     }
   }
+
+  void _writeFrame(Socket socket, String jsonData) {
+    final messageBytes = utf8.encode(jsonData);
+    final lengthHeader = ByteData(4)..setUint32(0, messageBytes.length, Endian.big);
+    socket.add(lengthHeader.buffer.asUint8List());
+    socket.add(messageBytes);
+  }
+
+  Future<void> _sendSync(String jsonData, Service service) async {
+    final socket = await _connectToService(service);
+    if (socket == null) return;
+    try {
+      _writeFrame(socket, jsonData);
+      await socket.flush();
+      await socket.close();
+    } catch (e) {
+      appLog('Failed to send sync to ${service.name}: $e', level: 'error');
+      socket.destroy();
+    }
+  }
+}
+
+class _ChunkFramePayload {
+  final Uint8List rawData;
+  final String fileId;
+  final int chunkIndex;
+  final bool isLast;
+  final bool shouldCompress;
+  final String deviceId;
+  final String chunkType;
+
+  const _ChunkFramePayload({
+    required this.rawData,
+    required this.fileId,
+    required this.chunkIndex,
+    required this.isLast,
+    required this.shouldCompress,
+    required this.deviceId,
+    required this.chunkType,
+  });
+}
+
+/// Runs in a background isolate: gzip + base64 + AES-GCM for one file chunk.
+String? _prepareChunkFrame(_ChunkFramePayload payload) {
+  var processedData = payload.rawData;
+  var isCompressed = false;
+  int? originalSize;
+
+  if (payload.shouldCompress) {
+    final compressed = CompressionUtils.compressData(processedData);
+    if (compressed != null && compressed.length < processedData.length) {
+      originalSize = processedData.length;
+      processedData = compressed;
+      isCompressed = true;
+    }
+  }
+
+  final chunkJson = jsonEncode({
+    'fileId': payload.fileId,
+    'chunkIndex': payload.chunkIndex,
+    'data': base64Encode(processedData),
+    'isLast': payload.isLast,
+    'isCompressed': isCompressed,
+    if (originalSize != null) 'originalSize': originalSize,
+  });
+
+  final encryptedChunk = SyncManager.encryptStatic(chunkJson);
+  if (encryptedChunk == null) return null;
+
+  return jsonEncode(SyncMessage(
+    deviceId: payload.deviceId,
+    timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+    type: payload.chunkType,
+    content: encryptedChunk,
+    hash: '',
+  ).toJson());
 }
