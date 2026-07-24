@@ -96,7 +96,13 @@ class MenuController: NSObject {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem.button {
-            button.title = "📋"
+            // 使用 SF Symbol 替代 emoji，与系统菜单栏图标风格统一。
+            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+            button.image = NSImage(
+                systemSymbolName: "clipboard",
+                accessibilityDescription: NSLocalizedString("Clipy", comment: "status item accessibility")
+            )?.withSymbolConfiguration(config)
+            button.image?.isTemplate = true
         }
 
         // 常驻菜单对象：靠 menuNeedsUpdate 在每次打开前就地刷新内容。

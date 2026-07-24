@@ -14,7 +14,7 @@ struct HistoryPreviewView: View {
             }
         }
         .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppColor.windowChrome)
+        .background(Color.clear)
     }
 
     @ViewBuilder
@@ -191,8 +191,8 @@ struct HistoryPreviewView: View {
             }
         }
         .padding(AppSpacing.xs)
-        .background(AppColor.windowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.medium))
     }
 
     private func typePlaceholder(icon: String, label: String) -> some View {
