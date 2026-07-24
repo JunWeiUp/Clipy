@@ -33,12 +33,10 @@ Clipy lives in your menu bar and quietly supercharges your clipboard. Beyond sav
 ## 🖼️ Screenshots
 
 <p align="center">
-  <img src="res/menubar.png" width="300" alt="macOS menu bar" />
-  &nbsp;&nbsp;
-  <img src="res/search.png" width="420" alt="Global search" />
+  <img src="res/search.png" width="560" alt="Global search with regex and type / source-app / date filters" />
 </p>
 
-<p align="center"><sub>Left: the menu-bar dropdown with history, snippets, devices, screenshot & notification sync. &nbsp;&nbsp; Right: global search (<kbd>⇧</kbd><kbd>⌘</kbd><kbd>F</kbd>) with regex and type / source-app / date filters.</sub></p>
+<p align="center"><sub>Global search (<kbd>⇧</kbd><kbd>⌘</kbd><kbd>F</kbd>) — regex, type / source-app / date filters, ranked results.</sub></p>
 
 > Screenshots for the **screenshot & annotation tool** and **notification mirror** coming soon.
 

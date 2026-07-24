@@ -26,8 +26,18 @@ enum AppRowHeight {
     static let group: CGFloat = 40
 }
 
+/// 标题栏（红黄绿按钮条）相关尺寸，用于 fullSizeContentView 下让出空间。
+enum AppTitleBar {
+    /// 标题栏高度，顶部 padding 用。
+    static let height: CGFloat = 28
+    /// 交通灯按钮的实际占用宽度（含到窗口边缘的间距），左侧 leading 内容让出。
+    static let trafficLightsWidth: CGFloat = 56
+}
+
 enum AppCornerRadius {
     static let small: CGFloat = 4
+    static let medium: CGFloat = 8
+    static let large: CGFloat = 12
     static let badge: CGFloat = 10
 }
 

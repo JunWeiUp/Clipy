@@ -16,14 +16,16 @@ struct AppToolbar: View {
             ForEach(leading) { button in
                 toolbarButton(button)
             }
-            Spacer()
+            Spacer(minLength: 0)
             ForEach(trailing) { button in
                 toolbarButton(button)
             }
         }
         .padding(.horizontal, AppSpacing.sm)
-        .padding(.vertical, AppSpacing.xs)
-        .background(AppColor.windowChrome)
+        // 顶部让出标题栏高度，功能按钮位于交通灯按钮下方一行。
+        .padding(.top, AppTitleBar.height)
+        .padding(.bottom, AppSpacing.xs)
+        .background(.thinMaterial)
     }
 
     @ViewBuilder

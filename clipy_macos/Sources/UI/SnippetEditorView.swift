@@ -30,7 +30,7 @@ struct SnippetEditorView: View {
                     .frame(minWidth: 280)
             }
         }
-        .background(AppColor.windowBackground)
+        .background(Color.clear)
         .frame(minWidth: AppWindowSize.editorMin.width, minHeight: AppWindowSize.editorMin.height)
     }
 
