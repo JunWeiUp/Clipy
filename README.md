@@ -39,7 +39,7 @@ Clipy is a cross-platform clipboard manager for macOS and Android. It keeps clip
 ### Android App
 
 - Built with Flutter and Dart.
-- `lib/main.dart` contains the tab-based UI for history, collector, preferences, logs, and transfer actions.
+- `lib/main.dart` contains the tab-based UI for history, preferences, logs, notification sync, and transfer actions.
 - `lib/clipboard_manager.dart` monitors clipboard changes, stores history, and coordinates sync events.
 - `lib/sync_manager.dart` handles service registration, discovery, TCP sync, encryption, file transfer, and deduplication.
 - `lib/app_localizations.dart` provides the Chinese and English text resources.

@@ -24,8 +24,13 @@ final class NotificationWindow {
             onTeardown: { [weak self] in
                 self?.viewModel = nil
             },
-            update: { window in
+            update: { [weak self] window in
                 window.title = L10n.t(.notificationSync)
+                // Reliable "window became visible" hook. Unlike SwiftUI's
+                // onAppear this fires on both fresh and reused windows, so
+                // notifications that arrived while the window was closed are
+                // loaded when the user reopens it.
+                self?.viewModel?.refreshIfStale()
             }
         )
     }

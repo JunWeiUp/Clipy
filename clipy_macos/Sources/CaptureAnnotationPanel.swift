@@ -4,6 +4,13 @@ final class CaptureAnnotationPanel: NSPanel {
     let canvasView: AnnotationCanvasView
     private var canvasSize: NSSize = .zero
 
+    /// Cache of fully-transparent base images keyed by exact pixel size. While
+    /// dragging the selection this panel used to `lockFocus` a brand-new
+    /// same-size bitmap on every size change; reusing the cached one avoids
+    /// a steady stream of throwaway allocations that inflate the malloc
+    /// high-water mark. Cleared on deinit.
+    private static var transparentImageCache: [String: NSImage] = [:]
+
     init(model: AnnotationCanvasModel, size: NSSize) {
         canvasSize = size
         let placeholder = Self.transparentImage(size: size)
@@ -67,12 +74,25 @@ final class CaptureAnnotationPanel: NSPanel {
         }
     }
 
+    deinit {
+        Self.transparentImageCache.removeAll()
+    }
+
     private static func transparentImage(size: NSSize) -> NSImage {
+        let key = "\(Int(size.width))x\(Int(size.height))"
+        if let cached = transparentImageCache[key] {
+            return cached
+        }
         let image = NSImage(size: size)
         image.lockFocus()
         NSColor.clear.set()
         NSRect(origin: .zero, size: size).fill()
         image.unlockFocus()
+        // Cap the cache so an erratic drag (many distinct sizes) cannot grow
+        // it without bound; a handful of entries covers typical drag behavior.
+        if transparentImageCache.count < 16 {
+            transparentImageCache[key] = image
+        }
         return image
     }
 }

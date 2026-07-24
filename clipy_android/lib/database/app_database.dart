@@ -66,21 +66,6 @@ class AppDatabase {
         'CREATE INDEX idx_notifications_post_time ON notifications(post_time DESC)');
 
     await db.execute('''
-      CREATE TABLE collector_events (
-        id TEXT PRIMARY KEY,
-        category TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        device_id TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        synced INTEGER NOT NULL DEFAULT 0
-      )
-    ''');
-    await db.execute(
-        'CREATE INDEX idx_collector_category_time ON collector_events(category, timestamp DESC)');
-    await db.execute(
-        'CREATE INDEX idx_collector_synced ON collector_events(synced)');
-
-    await db.execute('''
       CREATE TABLE file_transfers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         file_name TEXT NOT NULL,

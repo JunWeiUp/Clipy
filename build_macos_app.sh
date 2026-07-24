@@ -55,10 +55,6 @@ SWIFT_SOURCES=(
     Sources/NotificationManager.swift
     Sources/NotificationRepository.swift
     Sources/NotificationWindow.swift
-    Sources/DeviceCollectorTypes.swift
-    Sources/DeviceCollectorRepository.swift
-    Sources/DeviceCollectorManager.swift
-    Sources/CollectorWindow.swift
     Sources/HotKeyManager.swift
     Sources/SettingsWindow.swift
     Sources/ScreenshotSettingsWindow.swift
@@ -90,7 +86,6 @@ SWIFT_SOURCES=(
     Sources/UI/HistoryPreviewView.swift
     Sources/UI/HistoryPreviewRepresentables.swift
     Sources/UI/NotificationView.swift
-    Sources/UI/CollectorView.swift
     Sources/UI/SnippetEditorViewModel.swift
     Sources/UI/SnippetEditorSidebarRepresentable.swift
     Sources/UI/SnippetEditorView.swift
@@ -142,7 +137,7 @@ swiftc \
     -framework UniformTypeIdentifiers \
     -framework PDFKit \
     -framework WebKit \
-    -framework Compression
+    -lcompression
 
 # 4. 准备资源文件
 echo "📦 准备资源文件..."

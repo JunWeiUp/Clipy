@@ -18,7 +18,6 @@ class LegacyMigration {
     final dir = await StoragePaths.appStorageDirectory();
     await _importClipboard(db, File('${dir.path}/history.json'));
     await _importNotifications(db, File('${dir.path}/notification_history.jsonl'));
-    await _importCollectorEvents(db, File('${dir.path}/collector_events.jsonl'));
     await _importFileHistory(db, prefs);
 
     await prefs.setInt(_prefKey, _targetVersion);
@@ -97,40 +96,6 @@ class LegacyMigration {
       'is_clearable': entry.isClearable ? 1 : 0,
       'extras_json': jsonEncode(entry.extras),
     };
-  }
-
-  static Future<void> _importCollectorEvents(Database db, File file) async {
-    if (!await file.exists()) return;
-    try {
-      final batch = db.batch();
-      await for (final line in file
-          .openRead()
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty) continue;
-        final event = CollectorEvent.fromJson(
-            Map<String, dynamic>.from(jsonDecode(trimmed) as Map));
-        if (event.category == CollectorCategories.notification) continue;
-        batch.insert(
-          'collector_events',
-          {
-            'id': event.id,
-            'category': event.category,
-            'timestamp': event.timestamp,
-            'device_id': event.deviceId,
-            'payload_json': jsonEncode(event.payload),
-            'synced': 1,
-          },
-          conflictAlgorithm: ConflictAlgorithm.ignore,
-        );
-      }
-      await batch.commit(noResult: true);
-      await file.rename('${file.path}.migrated.bak');
-      appLog('LegacyMigration: imported collector events');
-    } catch (e) {
-      appLog('LegacyMigration: collector import error: $e', level: 'warning');
-    }
   }
 
   static Future<void> _importFileHistory(

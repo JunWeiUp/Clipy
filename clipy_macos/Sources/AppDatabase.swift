@@ -54,18 +54,6 @@ final class AppDatabase {
         CREATE INDEX IF NOT EXISTS idx_history_hash ON history_entries(content_hash);
         CREATE INDEX IF NOT EXISTS idx_history_source_app ON history_entries(source_app);
 
-        CREATE TABLE IF NOT EXISTS collector_events (
-            rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-            id TEXT NOT NULL UNIQUE,
-            category TEXT NOT NULL,
-            timestamp REAL NOT NULL,
-            device_id TEXT NOT NULL,
-            payload_json TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_collector_order ON collector_events(timestamp DESC);
-        CREATE INDEX IF NOT EXISTS idx_collector_category ON collector_events(category);
-        CREATE INDEX IF NOT EXISTS idx_collector_category_time ON collector_events(category, timestamp DESC);
-
         CREATE TABLE IF NOT EXISTS phone_notifications (
             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
             id TEXT NOT NULL UNIQUE,
@@ -91,11 +79,6 @@ final class AppDatabase {
             table: "history_entries",
             legacyFileName: "history_v3.db",
             legacyTable: "history_entries"
-        )
-        migrateLegacyTableIfEmpty(
-            table: "collector_events",
-            legacyFileName: "collector_events.db",
-            legacyTable: "collector_events"
         )
         migrateLegacyTableIfEmpty(
             table: "phone_notifications",

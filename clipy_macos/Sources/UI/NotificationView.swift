@@ -18,6 +18,12 @@ final class NotificationViewModel: ObservableObject {
     private var loadedOffset = 0
     private var isLoadingMore = false
     private var isActive = false
+    /// Tracks the last full reload so the window can refresh on (re)show when
+    /// notifications arrived while it was closed. SwiftUI's `onAppear` does not
+    /// fire when an NSWindow is reused (only `makeKeyAndOrderFront` runs), so
+    /// we cannot rely on it as the sole data-load trigger.
+    private var lastReloadAt: Date = .distantPast
+    private static let refreshMinInterval: TimeInterval = 1
 
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -60,9 +66,21 @@ final class NotificationViewModel: ObservableObject {
 
     @objc private func notificationsDidChange() {
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.isActive else { return }
-            self.reload()
+            // Refresh unconditionally. The DB read is a cheap indexed query and
+            // the previous `isActive` gate caused notifications that arrived
+            // while the window was closed to be dropped — since a reused
+            // NSWindow does not re-fire SwiftUI `onAppear`, reload was never
+            // triggered again on reopen.
+            self?.reload()
         }
+    }
+
+    /// Called from the window's show hook (WindowSession.update). Ensures data
+    /// is fresh even when the window was closed (or reused) when notifications
+    /// arrived. Throttled to avoid reloading on every focus change.
+    func refreshIfStale() {
+        guard Date().timeIntervalSince(lastReloadAt) >= Self.refreshMinInterval else { return }
+        reload()
     }
 
     var statusText: String {
@@ -78,6 +96,7 @@ final class NotificationViewModel: ObservableObject {
         loadedEntries = []
         loadedOffset = 0
         isLoadingMore = false
+        lastReloadAt = Date()
         loadNextPage()
     }
 
