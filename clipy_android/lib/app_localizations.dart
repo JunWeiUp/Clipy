@@ -69,52 +69,33 @@ class AppStrings {
   String get preferences => _t('偏好设置', 'Preferences');
   String get settings => _t('设置', 'Settings');
   String get status => _t('状态', 'Status');
-  String get collector => _t('采集', 'Collector');
   String get permissions => _t('权限', 'Permissions');
   String get advancedFeatures => _t('高级功能', 'Advanced');
-  String get collectorServiceStatus => _t('采集服务状态', 'Collector Service Status');
-  String get collectorEnabled => _t('采集服务', 'Collector Service');
   String get syncEnabled => _t('局域网同步', 'LAN Sync');
   String get connectedMac => _t('已连接 Mac', 'Connected Mac');
   String get notConnected => _t('未连接', 'Not Connected');
   String get enabled => _t('已启用', 'Enabled');
   String get disabled => _t('已停用', 'Disabled');
-  String get collectorCategoryToggles => _t('采集类型', 'Collector Categories');
-  String get recentCollectorEvents => _t('最近采集', 'Recent Events');
-  String get noCollectorEvents => _t('暂无采集数据', 'No collected events yet');
-  String get collectorPermissionsIntro =>
-      _t('请逐项授权以下权限，确保数据能实时同步到 Mac。', 'Grant the permissions below so data can sync to your Mac in real time.');
   String get permissionNotificationListener => _t('通知监听', 'Notification Listener');
-  String get permissionSms => _t('短信', 'SMS');
-  String get permissionPhone => _t('电话状态', 'Phone State');
-  String get permissionCallLog => _t('通话记录', 'Call Log');
-  String get permissionLocation => _t('定位', 'Location');
   String get permissionPostNotifications => _t('通知权限', 'Post Notifications');
-  String get permissionBatteryOptimization => _t('电池优化白名单', 'Battery Optimization');
   String get granted => _t('已授权', 'Granted');
   String get notGranted => _t('未授权', 'Not Granted');
   String get grant => _t('授权', 'Grant');
   String get openAppSettings => _t('打开设置', 'Open Settings');
-  String get smsPermissionDeniedHint => _t(
-        '短信权限未授予。如未弹出授权框，请到系统设置中手动开启。',
-        'SMS permission was not granted. If no prompt appeared, enable it manually in system settings.',
-      );
-  String get startCollectorService => _t('启动采集服务', 'Start Collector Service');
-  String get collectorServiceStarted => _t('采集服务已启动', 'Collector service started');
   String get refreshPermissions => _t('刷新权限状态', 'Refresh Permissions');
   String get notificationListenerIssueTitle =>
-      _t('通知采集异常', 'Notification Collection Issue');
+      _t('通知同步异常', 'Notification Sync Issue');
   String get notificationListenerPermissionDenied => _t(
-        '未授予通知监听权限，无法采集系统通知。请重新授权 Clipy Android。',
-        'Notification listener permission is missing. Re-authorize Clipy Android to collect notifications.',
+        '未授予通知监听权限，无法同步系统通知。请重新授权 Clipy Android。',
+        'Notification listener permission is missing. Re-authorize Clipy Android to sync notifications.',
       );
   String get notificationListenerNotConnected => _t(
         '通知监听服务未连接。请点击重新授权，并在系统设置中确认 Clipy Android 的通知使用权已开启。',
         'The notification listener service is not connected. Tap Re-authorize and ensure Clipy Android notification access is enabled.',
       );
   String get notificationListenerNotReceiving => _t(
-        '手机上有通知但长时间未采集到数据。请重新授权通知监听权限，或重启采集服务。',
-        'Notifications are present on the phone but none have been collected recently. Re-authorize notification access or restart the collector service.',
+        '手机上有通知但长时间未同步到数据。请重新授权通知监听权限。',
+        'Notifications are present on the phone but none have been synced recently. Re-authorize notification access.',
       );
   String get reauthorizeNotificationListener => _t('重新授权', 'Re-authorize');
   String get notificationListenerRecovered =>
@@ -123,24 +104,7 @@ class AppStrings {
         '通知监听仍未恢复，请在系统设置中手动开启',
         'Notification listener is still unavailable. Enable it manually in system settings.',
       );
-  String get collectorClipboardOnly => _t('剪贴板仅上报到 Mac', 'Clipboard collector only (no legacy sync)');
   String get showAdvancedFeatures => _t('显示高级功能', 'Show Advanced Features');
-  String collectorCategoryLabel(String category) {
-    switch (category) {
-      case 'notification':
-        return _t('通知', 'Notifications');
-      case 'sms':
-        return _t('短信', 'SMS');
-      case 'call':
-        return _t('通话', 'Calls');
-      case 'call_log':
-        return _t('通话记录', 'Call Log');
-      case 'clipboard':
-        return _t('剪贴板', 'Clipboard');
-      default:
-        return category;
-    }
-  }
   String get clearHistory => _t('清空历史记录', 'Clear History');
   String get appLogs => _t('应用日志', 'App Logs');
   String get clearLogs => _t('清空日志', 'Clear Logs');
@@ -197,6 +161,9 @@ class AppStrings {
       _t('已发送至 $deviceName', 'Sent to $deviceName');
   String get noDevicesFound => _t('未发现设备', 'No devices found');
   String get sameWifiHint => _t('请确认其他设备连接到同一个 Wi-Fi', 'Ensure other devices are on the same WiFi');
+  String get refreshDevices => _t('刷新设备', 'Refresh Devices');
+  String get refreshingDevices => _t('正在刷新…', 'Refreshing…');
+  String get devicesRefreshed => _t('已刷新局域网设备', 'LAN devices refreshed');
   String get appRuntimeLogs => _t('用于排查问题的应用运行日志', 'App runtime logs for troubleshooting');
   String get noFilesReceived => _t('暂无已接收文件', 'No files received yet');
   String fromSender(String senderName) => _t('来自：$senderName', 'From: $senderName');

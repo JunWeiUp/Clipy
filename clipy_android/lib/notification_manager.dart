@@ -119,13 +119,14 @@ class NotificationManager {
   }
 
   void _broadcastToSync(NotificationEntry entry) {
-    final event = CollectorEvent.fromNotificationEntry(
-      entry,
-      SyncManager.instance.deviceId,
+    final payload = entry.toJson();
+    payload['extras'] = entry.extras.map(
+      (key, value) => MapEntry(key, value?.toString() ?? ''),
     );
-    SyncManager.instance.broadcastCollectorEvent(
-      content: jsonEncode(event.toJson()),
-      hash: event.id,
+    SyncManager.instance.broadcastNotificationMessage(
+      type: 'notification/post',
+      content: jsonEncode(payload),
+      hash: entry.id,
     );
   }
 

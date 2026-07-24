@@ -52,6 +52,8 @@ enum L10nKey: String {
     case lanDevices
     case authorizedDevices
     case noDevicesFound
+    case refreshDevices
+    case refreshingDevices
     case staleAuthorizedDevicesWarning
     case syncLocalNameHint
     case authorized
@@ -139,20 +141,6 @@ enum L10nKey: String {
     case notificationFilter
     case notificationSound
     case clearNotifications
-    case phoneCollector
-    case noCollectorEvents
-    case collectorEventCount
-    case collectorSearchPlaceholder
-    case collectorFilterAll
-    case enableCollectorSync
-    case collectorAlertOnSmsCall
-    case collectorCategoryNotification
-    case collectorCategorySms
-    case collectorCategoryCall
-    case collectorCategoryCallLog
-    case collectorCategoryClipboard
-    case collectorCategoryLocation
-    case collectorCategorySystem
     case launchAtLogin
     case launchAtLoginFailed
     case accessibilityPermission
@@ -313,16 +301,18 @@ struct L10n {
             .syncTargetsHint: "勾选需要同步剪贴板的设备。仅需在本机授权，对方无需勾选即可接收。",
             .close: "关闭",
             .history: "历史记录",
-            .noHistory: "  暂无历史记录",
+            .noHistory: "暂无历史记录",
             .snippets: "片段",
-            .noSnippets: "  暂无片段",
+            .noSnippets: "暂无片段",
             .fileHistory: "文件历史",
             .noFiles: "暂无文件",
             .source: "来源",
             .from: "来自",
             .authorizedDevices: "授权设备",
             .lanDevices: "局域网设备",
-            .noDevicesFound: "  未发现设备",
+            .noDevicesFound: "未发现设备",
+            .refreshDevices: "刷新设备",
+            .refreshingDevices: "正在刷新…",
             .staleAuthorizedDevicesWarning: "已授权但未在线：%@。请在下方列表勾选当前显示的设备名称（如 Android-redmi）。",
             .syncLocalNameHint: "本机名称：%@，设备 ID：%@…。对方勾选本机即可向本机发送剪贴板，本机无需勾选对方即可接收。",
             .authorized: "已授权",
@@ -410,20 +400,6 @@ struct L10n {
             .notificationFilter: "通知过滤",
             .notificationSound: "通知声音",
             .clearNotifications: "清空通知",
-            .phoneCollector: "手机采集",
-            .noCollectorEvents: "暂无采集数据",
-            .collectorEventCount: "%d 条采集记录",
-            .collectorSearchPlaceholder: "搜索号码、内容或应用",
-            .collectorFilterAll: "全部",
-            .enableCollectorSync: "启用手机采集同步",
-            .collectorAlertOnSmsCall: "短信/来电时弹出通知",
-            .collectorCategoryNotification: "通知",
-            .collectorCategorySms: "短信",
-            .collectorCategoryCall: "通话",
-            .collectorCategoryCallLog: "通话记录",
-            .collectorCategoryClipboard: "剪贴板",
-            .collectorCategoryLocation: "位置",
-            .collectorCategorySystem: "系统状态",
             .launchAtLogin: "登录时启动",
             .launchAtLoginFailed: "无法更新登录时启动设置，请重试。",
             .accessibilityPermission: "辅助功能权限（自动粘贴需要）：",
@@ -573,16 +549,18 @@ struct L10n {
             .syncTargetsHint: "Select devices to sync clipboard to. Only this device needs to authorize; the other side can receive without checking you.",
             .close: "Close",
             .history: "History",
-            .noHistory: "  No History",
+            .noHistory: "No History",
             .snippets: "Snippets",
-            .noSnippets: "  No Snippets",
+            .noSnippets: "No Snippets",
             .fileHistory: "File History",
             .noFiles: "No Files",
             .source: "Source",
             .from: "From",
             .authorizedDevices: "Authorized Devices",
             .lanDevices: "Devices on Network",
-            .noDevicesFound: "  No Devices Found",
+            .noDevicesFound: "No Devices Found",
+            .refreshDevices: "Refresh Devices",
+            .refreshingDevices: "Refreshing…",
             .staleAuthorizedDevicesWarning: "Authorized but offline: %@. Select the name shown in the list below (e.g. Android-redmi).",
             .syncLocalNameHint: "This device: %@ (ID: %@…). Others must check this device to send clipboard here; you can receive without checking them.",
             .authorized: "Authorized",
@@ -670,20 +648,6 @@ struct L10n {
             .notificationFilter: "Notification Filter",
             .notificationSound: "Notification Sound",
             .clearNotifications: "Clear Notifications",
-            .phoneCollector: "Phone Collector",
-            .noCollectorEvents: "No collected events",
-            .collectorEventCount: "%d collected events",
-            .collectorSearchPlaceholder: "Search number, content, or app",
-            .collectorFilterAll: "All",
-            .enableCollectorSync: "Enable Phone Collector Sync",
-            .collectorAlertOnSmsCall: "Alert on SMS/Calls",
-            .collectorCategoryNotification: "Notifications",
-            .collectorCategorySms: "SMS",
-            .collectorCategoryCall: "Calls",
-            .collectorCategoryCallLog: "Call Log",
-            .collectorCategoryClipboard: "Clipboard",
-            .collectorCategoryLocation: "Location",
-            .collectorCategorySystem: "System",
             .launchAtLogin: "Launch at Login",
             .launchAtLoginFailed: "Unable to update launch at login settings. Please try again.",
             .accessibilityPermission: "Accessibility Permission (required for auto-paste):",

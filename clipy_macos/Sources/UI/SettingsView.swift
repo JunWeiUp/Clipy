@@ -17,17 +17,9 @@ struct SettingsView: View {
     @State private var syncPort: String
     @State private var availablePeers: [DiscoveredPeer] = []
     @State private var selectedSyncTargets: Set<String> = Set(PreferencesManager.shared.authorizedPeerIds)
+    @State private var isRefreshingDevices = false
     @State private var notificationSyncEnabled: Bool
     @State private var notificationSound: Bool
-    @State private var collectorSyncEnabled: Bool
-    @State private var collectorAlertEnabled: Bool
-    @State private var collectorNotificationEnabled: Bool
-    @State private var collectorSmsEnabled: Bool
-    @State private var collectorCallEnabled: Bool
-    @State private var collectorCallLogEnabled: Bool
-    @State private var collectorClipboardEnabled: Bool
-    @State private var collectorLocationEnabled: Bool
-    @State private var collectorSystemEnabled: Bool
     @State private var accessibilityGranted: Bool
 
     init() {
@@ -47,15 +39,6 @@ struct SettingsView: View {
         _syncPort = State(initialValue: "\(prefs.syncPort)")
         _notificationSyncEnabled = State(initialValue: NotificationManager.shared.notificationSyncEnabled)
         _notificationSound = State(initialValue: NotificationManager.shared.notificationSound)
-        _collectorSyncEnabled = State(initialValue: prefs.isCollectorSyncEnabled)
-        _collectorAlertEnabled = State(initialValue: prefs.isCollectorAlertEnabled)
-        _collectorNotificationEnabled = State(initialValue: prefs.isCollectorNotificationEnabled)
-        _collectorSmsEnabled = State(initialValue: prefs.isCollectorSmsEnabled)
-        _collectorCallEnabled = State(initialValue: prefs.isCollectorCallEnabled)
-        _collectorCallLogEnabled = State(initialValue: prefs.isCollectorCallLogEnabled)
-        _collectorClipboardEnabled = State(initialValue: prefs.isCollectorClipboardEnabled)
-        _collectorLocationEnabled = State(initialValue: prefs.isCollectorLocationEnabled)
-        _collectorSystemEnabled = State(initialValue: prefs.isCollectorSystemEnabled)
         _accessibilityGranted = State(initialValue: AccessibilityManager.isTrusted)
     }
 
@@ -199,6 +182,27 @@ struct SettingsView: View {
 
                 Text(L10n.format(.syncLocalNameHint, PreferencesManager.shared.deviceName, String(PreferencesManager.shared.syncPeerId.prefix(8))))
 
+                Button {
+                    guard !isRefreshingDevices else { return }
+                    isRefreshingDevices = true
+                    SyncManager.shared.refreshDiscovery()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        availablePeers = SyncManager.shared.availablePeers
+                        isRefreshingDevices = false
+                    }
+                } label: {
+                    HStack {
+                        if isRefreshingDevices {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(L10n.t(.refreshingDevices))
+                        } else {
+                            Text(L10n.t(.refreshDevices))
+                        }
+                    }
+                }
+                .disabled(!syncEnabled || isRefreshingDevices)
+
                 let staleAuthorized = selectedSyncTargets.subtracting(Set(availablePeers.map(\.peerId)))
                 if !staleAuthorized.isEmpty {
                     Text(L10n.format(.staleAuthorizedDevicesWarning, staleAuthorized.sorted().joined(separator: ", ")))
@@ -226,49 +230,6 @@ struct SettingsView: View {
                         }
                     }
                 }
-            }
-
-            Section {
-                Toggle(L10n.t(.enableCollectorSync), isOn: $collectorSyncEnabled)
-                    .onChange(of: collectorSyncEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorSyncEnabled = newValue
-                        NotificationManager.shared.notificationSyncEnabled = newValue
-                        NotificationManager.shared.savePreferences()
-                    }
-
-                Toggle(L10n.t(.collectorAlertOnSmsCall), isOn: $collectorAlertEnabled)
-                    .onChange(of: collectorAlertEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorAlertEnabled = newValue
-                    }
-
-                Toggle(L10n.t(.collectorCategoryNotification), isOn: $collectorNotificationEnabled)
-                    .onChange(of: collectorNotificationEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorNotificationEnabled = newValue
-                    }
-                Toggle(L10n.t(.collectorCategorySms), isOn: $collectorSmsEnabled)
-                    .onChange(of: collectorSmsEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorSmsEnabled = newValue
-                    }
-                Toggle(L10n.t(.collectorCategoryCall), isOn: $collectorCallEnabled)
-                    .onChange(of: collectorCallEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorCallEnabled = newValue
-                    }
-                Toggle(L10n.t(.collectorCategoryCallLog), isOn: $collectorCallLogEnabled)
-                    .onChange(of: collectorCallLogEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorCallLogEnabled = newValue
-                    }
-                Toggle(L10n.t(.collectorCategoryClipboard), isOn: $collectorClipboardEnabled)
-                    .onChange(of: collectorClipboardEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorClipboardEnabled = newValue
-                    }
-                Toggle(L10n.t(.collectorCategoryLocation), isOn: $collectorLocationEnabled)
-                    .onChange(of: collectorLocationEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorLocationEnabled = newValue
-                    }
-                Toggle(L10n.t(.collectorCategorySystem), isOn: $collectorSystemEnabled)
-                    .onChange(of: collectorSystemEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorSystemEnabled = newValue
-                    }
             }
 
             Section {

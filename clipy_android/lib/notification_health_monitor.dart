@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/widgets.dart';
-import 'collector_manager.dart';
 import 'log_manager.dart';
 import 'models.dart';
 import 'notification_manager.dart';
@@ -125,12 +124,7 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
     }
 
     final notificationManager = NotificationManager.instance;
-    final notificationCollectionEnabled =
-        notificationManager.isEnabled &&
-            (CollectorManager.instance.categoryEnabled[
-                    CollectorCategories.notification] ??
-                true);
-    if (!notificationCollectionEnabled) {
+    if (!notificationManager.isEnabled) {
       return _publish(_healthyStatus(const NotificationListenerStatus(
         permissionGranted: true,
         serviceConnected: true,

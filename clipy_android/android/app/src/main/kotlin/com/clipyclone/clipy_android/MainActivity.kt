@@ -4,10 +4,8 @@ import android.Manifest
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Environment
-import android.os.PowerManager
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import androidx.core.app.ActivityCompat
@@ -23,10 +21,8 @@ class MainActivity: FlutterActivity() {
     private val PERMISSIONS_CHANNEL = "com.clipyclone.clipy_android/permissions"
     private val STORAGE_CHANNEL = "com.clipyclone.clipy_android/storage"
     private val NOTIFICATIONS_CHANNEL = "com.clipyclone.clipy_android/notifications"
-    private val COLLECTOR_CHANNEL = "com.clipyclone.clipy_android/collector"
     private val CLIPBOARD_CHANNEL = "com.clipyclone.clipy_android/clipboard"
     private val STORAGE_PERMISSION_REQUEST_CODE = 1001
-    private val COLLECTOR_PERMISSION_REQUEST_CODE = 1002
     private var clipboardChangeListener: ClipboardChangeListener? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -190,149 +186,12 @@ class MainActivity: FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
-
-        val collectorChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, COLLECTOR_CHANNEL)
-        CollectorEventBridge.setMethodChannel(collectorChannel)
-        collectorChannel.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "reloadCollectorConfig" -> {
-                    reloadCollectorService()
-                    result.success(null)
-                }
-                "startForegroundService" -> {
-                    val intent = Intent(this, CollectorForegroundService::class.java).apply {
-                        action = CollectorForegroundService.ACTION_START
-                    }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(intent)
-                    } else {
-                        startService(intent)
-                    }
-                    result.success(null)
-                }
-                "stopForegroundService" -> {
-                    val intent = Intent(this, CollectorForegroundService::class.java).apply {
-                        action = CollectorForegroundService.ACTION_STOP
-                    }
-                    startService(intent)
-                    result.success(null)
-                }
-                "checkPermission" -> {
-                    val permission = call.argument<String>("permission")
-                    result.success(permission?.let { hasPermission(it) } ?: false)
-                }
-                "requestPermission" -> {
-                    val permission = call.argument<String>("permission")
-                    if (permission == null) {
-                        result.error("INVALID_ARGUMENT", "permission is required", null)
-                        return@setMethodCallHandler
-                    }
-                    requestCollectorPermissions(arrayOf(permission))
-                    result.success(null)
-                }
-                "requestPermissions" -> {
-                    val permissions = call.argument<List<String>>("permissions")
-                    if (permissions.isNullOrEmpty()) {
-                        result.error("INVALID_ARGUMENT", "permissions is required", null)
-                        return@setMethodCallHandler
-                    }
-                    requestCollectorPermissions(permissions.toTypedArray())
-                    result.success(null)
-                }
-                "openPermissionSettings" -> {
-                    val type = call.argument<String>("type") ?: ""
-                    openPermissionSettings(type)
-                    result.success(null)
-                }
-                "isBatteryOptimizationIgnored" -> {
-                    result.success(isBatteryOptimizationIgnored())
-                }
-                "requestIgnoreBatteryOptimization" -> {
-                    requestIgnoreBatteryOptimization()
-                    result.success(null)
-                }
-                else -> result.notImplemented()
-            }
-        }
-    }
-
-    private fun hasPermission(permission: String): Boolean {
-        return when (permission) {
-            "notification_listener" -> isNotificationListenerEnabled()
-            else -> ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
-        }
-    }
-
-    private fun requestCollectorPermissions(permissions: Array<String>) {
-        val missing = permissions.filter { !hasPermission(it) }.toTypedArray()
-        if (missing.isEmpty()) return
-        ActivityCompat.requestPermissions(this, missing, COLLECTOR_PERMISSION_REQUEST_CODE)
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray,
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != COLLECTOR_PERMISSION_REQUEST_CODE) return
-        if (grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
-            reloadCollectorService()
-        }
-    }
-
-    private fun reloadCollectorService() {
-        val intent = Intent(this, CollectorForegroundService::class.java).apply {
-            action = CollectorForegroundService.ACTION_RELOAD
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                startForegroundService(intent)
-            } catch (_: Exception) {
-                startService(intent)
-            }
-        } else {
-            startService(intent)
-        }
     }
 
     override fun onDestroy() {
         clipboardChangeListener?.detach()
         clipboardChangeListener = null
         super.onDestroy()
-    }
-
-    private fun openPermissionSettings(type: String) {
-        val intent = when (type) {
-            "notification_listener" -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-            "battery" -> Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-            "app_details" -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.fromParts("package", packageName, null)
-            }
-            else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.fromParts("package", packageName, null)
-            }
-        }
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(intent)
-    }
-
-    private fun isBatteryOptimizationIgnored(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
-        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-        return powerManager.isIgnoringBatteryOptimizations(packageName)
-    }
-
-    private fun requestIgnoreBatteryOptimization() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
-        try {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
-            }
-            startActivity(intent)
-        } catch (_: Exception) {
-            openPermissionSettings("battery")
-        }
     }
 
     private fun isNotificationListenerEnabled(): Boolean {

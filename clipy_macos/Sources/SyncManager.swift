@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Network
 import CryptoKit
 import Compression
@@ -97,8 +98,38 @@ class SyncManager: NSObject, NetServiceDelegate {
 
     private var pendingFiles: [String: PendingFileTransfer] = [:]
     private var pendingFileCleanupTimer: DispatchSourceTimer?
-     
-    private let serviceType = "_clipy-sync._tcp" 
+    private var isRefreshingDiscovery = false
+
+    /// mDNS does not reliably report abrupt departures (kill, power loss, Wi-Fi
+    /// drop), so discovered peers are probed over TCP on this interval and
+    /// evicted after peerLivenessMaxMisses consecutive failures.
+    private static let peerLivenessInterval: TimeInterval = 30
+    private static let peerLivenessMaxMisses = 2
+    private var peerLivenessTimer: DispatchSourceTimer?
+    private var peerMissCounts: [String: Int] = [:]
+
+    /// Per-connection reassembly buffer. Network.framework does not guarantee a
+    /// single `receive` returns a whole frame; we accumulate until the declared
+    /// length is available, mirroring the Android side's buffer loop.
+    private var receiveBuffers: [ObjectIdentifier: Data] = [:]
+    private var isProbingPeers = false
+
+    /// Outbound retry buffer: when an authorized peer is momentarily unreachable
+    /// (mDNS flutter, peer asleep, transient connect failure) the frame is kept
+    /// here and flushed once the peer reappears. Bounded + TTL'd to avoid leaks.
+    /// Keep aligned with the Android side's _pendingQueue.
+    private struct PendingSync {
+        let data: Data
+        let type: String
+        let targetPeerId: String
+        let enqueueAt: Date
+    }
+    private var pendingQueue: [PendingSync] = []
+    private static let pendingQueueMax = 50
+    private static let pendingQueueTTL: TimeInterval = 30
+    private static let sendConnectTimeout: TimeInterval = 5
+
+    private let serviceType = "_clipy-sync._tcp"
     private var displayName: String { PreferencesManager.shared.deviceName }
     private var peerId: String { PreferencesManager.shared.syncPeerId }
      
@@ -357,14 +388,24 @@ class SyncManager: NSObject, NetServiceDelegate {
 
     private override init() {
         super.init()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard PreferencesManager.shared.isSyncEnabled else { return }
+            appLog("System wake detected; refreshing LAN discovery")
+            self?.refreshDiscovery()
+        }
     }
     
     func start() {
         appLog("SyncManager starting...")
         guard PreferencesManager.shared.isSyncEnabled else { return }
-        
+
         startListening()
         startBrowsing()
+        startPeerLivenessProbing()
     }
     
     func stop() {
@@ -396,9 +437,31 @@ class SyncManager: NSObject, NetServiceDelegate {
         }
         activeConnections.removeAll()
         
+        peerLivenessTimer?.cancel()
+        peerLivenessTimer = nil
+        isProbingPeers = false
+
+        // A stop discards queued frames: they were bound to the now-vanished
+        // session. On restart, fresh copies will re-broadcast as the user re-copies.
+        pendingQueue.removeAll()
+        receiveBuffers.removeAll()
+
         peersLock.lock()
         discoveredPeers.removeAll()
+        peerMissCounts.removeAll()
         peersLock.unlock()
+
+        // Notify UI so stale device snapshots do not linger after sync stops.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.onDevicesChanged?([])
+            self.onPeersChanged?([])
+            NotificationCenter.default.post(
+                name: .syncAvailableDevicesDidChange,
+                object: self,
+                userInfo: ["devices": [String](), "peers": [DiscoveredPeer]()]
+            )
+        }
 
         syncQueue.async {
             self.abortAllPendingFiles()
@@ -414,6 +477,69 @@ class SyncManager: NSObject, NetServiceDelegate {
         syncQueue.asyncAfter(deadline: .now() + 1.5) {
             self.start()
         }
+    }
+
+    /// Restart mDNS browse (and re-advertise) so stale/missing peers can reappear.
+    /// Keeps the TCP listener running so inbound messages are not interrupted.
+    func refreshDiscovery() {
+        guard PreferencesManager.shared.isSyncEnabled else {
+            appLog("refreshDiscovery skipped: sync disabled", level: .warning)
+            return
+        }
+        guard !isRefreshingDiscovery else {
+            appLog("refreshDiscovery skipped: already in progress")
+            return
+        }
+        isRefreshingDiscovery = true
+        appLog("Refreshing LAN device discovery...")
+
+        browser?.stateUpdateHandler = nil
+        browser?.browseResultsChangedHandler = nil
+        browser?.cancel()
+        browser = nil
+
+        peersLock.lock()
+        discoveredPeers.removeAll()
+        peerMissCounts.removeAll()
+        peersLock.unlock()
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.onDevicesChanged?([])
+            self.onPeersChanged?([])
+            NotificationCenter.default.post(
+                name: .syncAvailableDevicesDidChange,
+                object: self,
+                userInfo: ["devices": [String](), "peers": [DiscoveredPeer]()]
+            )
+            self.republishNetService()
+        }
+
+        syncQueue.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self else { return }
+            self.startBrowsing()
+            self.isRefreshingDiscovery = false
+            appLog("LAN device discovery refresh completed")
+        }
+    }
+
+    private func republishNetService() {
+        let currentDisplayName = displayName
+        let currentPeerId = peerId
+        let port = Int32(PreferencesManager.shared.syncPort)
+
+        netService?.delegate = nil
+        netService?.stop()
+        netService = nil
+
+        let ns = NetService(domain: "local.", type: serviceType, name: currentDisplayName, port: port)
+        let txtData = NetService.data(fromTXTRecord: ["peerId": Data(currentPeerId.utf8)])
+        ns.setTXTRecord(txtData)
+        ns.delegate = self
+        ns.schedule(in: .main, forMode: .common)
+        ns.publish()
+        netService = ns
+        appLog("NetService re-published as: \(currentDisplayName) peerId=\(currentPeerId) on port \(port)")
     }
     
     // MARK: - Network Framework Discovery (NWBrowser)
@@ -463,8 +589,16 @@ class SyncManager: NSObject, NetServiceDelegate {
             }
 
             self.peersLock.lock()
+            let previousPeerIds = Set(self.discoveredPeers.keys)
             self.discoveredPeers = updatedPeers
+            self.peerMissCounts = self.peerMissCounts.filter { updatedPeers[$0.key] != nil }
             self.peersLock.unlock()
+
+            // Newly (re)appeared peers: deliver anything queued while they were gone.
+            let reappeared = Set(updatedPeers.keys).subtracting(previousPeerIds)
+            for peerId in reappeared where !self.pendingQueue.isEmpty {
+                self.flushPendingQueue(forPeerId: peerId)
+            }
 
             PreferencesManager.shared.migrateAuthorizedPeerIds(from: self.availablePeers)
             
@@ -494,13 +628,145 @@ class SyncManager: NSObject, NetServiceDelegate {
     var availableDeviceNames: [String] {
         return availablePeers.map(\.displayName)
     }
-    
+
+    // MARK: - Peer Liveness Probing
+    private func startPeerLivenessProbing() {
+        peerLivenessTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: syncQueue)
+        timer.schedule(deadline: .now() + Self.peerLivenessInterval, repeating: Self.peerLivenessInterval)
+        timer.setEventHandler { [weak self] in
+            self?.probeDiscoveredPeers()
+        }
+        peerLivenessTimer = timer
+        timer.resume()
+    }
+
+    /// Probes every discovered peer's TCP server; browse results alone cannot be
+    /// trusted because mDNS may never report an abrupt departure.
+    private func probeDiscoveredPeers() {
+        guard !isRefreshingDiscovery, !isProbingPeers else { return }
+        let peers = availablePeers
+        guard !peers.isEmpty else { return }
+        isProbingPeers = true
+
+        let group = DispatchGroup()
+        let resultsLock = NSLock()
+        var failedPeerIds: [String] = []
+
+        for peer in peers {
+            group.enter()
+            probePeer(peer) { [weak self] reachable in
+                if reachable {
+                    self?.peersLock.lock()
+                    self?.peerMissCounts[peer.peerId] = 0
+                    self?.peersLock.unlock()
+                } else {
+                    resultsLock.lock()
+                    failedPeerIds.append(peer.peerId)
+                    resultsLock.unlock()
+                }
+                group.leave()
+            }
+        }
+
+        group.notify(queue: syncQueue) { [weak self] in
+            guard let self else { return }
+            self.isProbingPeers = false
+            for peerId in failedPeerIds {
+                self.recordPeerMiss(peerId: peerId)
+            }
+        }
+    }
+
+    /// A live peer accepts a bare TCP connection on its sync port instantly.
+    private func probePeer(_ peer: DiscoveredPeer, completion: @escaping (Bool) -> Void) {
+        let parameters = NWParameters.tcp
+        parameters.preferNoProxies = true
+        let connection = NWConnection(to: peer.endpoint, using: parameters)
+
+        let finishLock = NSLock()
+        var finished = false
+        let finish: (Bool) -> Void = { reachable in
+            finishLock.lock()
+            guard !finished else {
+                finishLock.unlock()
+                return
+            }
+            finished = true
+            finishLock.unlock()
+            connection.stateUpdateHandler = nil
+            connection.cancel()
+            completion(reachable)
+        }
+
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                finish(true)
+            case .failed:
+                finish(false)
+            default:
+                break
+            }
+        }
+        connection.start(queue: syncQueue)
+        syncQueue.asyncAfter(deadline: .now() + 4) {
+            finish(false)
+        }
+    }
+
+    /// Counts a failed connection attempt; evicts the peer after repeated failures.
+    private func recordPeerMiss(peerId: String) {
+        peersLock.lock()
+        guard discoveredPeers[peerId] != nil else {
+            peerMissCounts.removeValue(forKey: peerId)
+            peersLock.unlock()
+            return
+        }
+        let misses = (peerMissCounts[peerId] ?? 0) + 1
+        peerMissCounts[peerId] = misses
+        let shouldEvict = misses >= Self.peerLivenessMaxMisses
+        if shouldEvict {
+            discoveredPeers.removeValue(forKey: peerId)
+            peerMissCounts.removeValue(forKey: peerId)
+        }
+        peersLock.unlock()
+
+        guard shouldEvict else { return }
+        appLog("Evicting unreachable peer \(peerId) after \(misses) failed probes", level: .warning)
+        DispatchQueue.main.async {
+            let names = self.availableDeviceNames
+            let peers = self.availablePeers
+            self.onDevicesChanged?(names)
+            self.onPeersChanged?(peers)
+            NotificationCenter.default.post(
+                name: .syncAvailableDevicesDidChange,
+                object: self,
+                userInfo: ["devices": names, "peers": peers]
+            )
+        }
+    }
+
+    /// Maps a failed send endpoint back to a discovered peer and counts the miss.
+    private func recordPeerMiss(forEndpoint endpoint: NWEndpoint) {
+        guard case let .service(name, _, _, _) = endpoint else { return }
+        peersLock.lock()
+        let peerId = discoveredPeers.values.first { peer in
+            if case let .service(peerName, _, _, _) = peer.endpoint {
+                return peerName == name
+            }
+            return false
+        }?.peerId
+        peersLock.unlock()
+        if let peerId {
+            recordPeerMiss(peerId: peerId)
+        }
+    }
+
     // MARK: - Network Framework Listener (NWListener)
     private func startListening() {
-        let currentDisplayName = displayName
-        let currentPeerId = peerId
         let port = Int32(PreferencesManager.shared.syncPort)
-        appLog("Starting listener on port \(port) as '\(currentDisplayName)' (peerId=\(currentPeerId))...")
+        appLog("Starting listener on port \(port) as '\(displayName)' (peerId=\(peerId))...")
         
         do {
             let parameters = NWParameters.tcp
@@ -508,14 +774,7 @@ class SyncManager: NSObject, NetServiceDelegate {
             let listener = try NWListener(using: parameters, on: nwPort)
             
             DispatchQueue.main.async {
-                let ns = NetService(domain: "local.", type: self.serviceType, name: currentDisplayName, port: port)
-                let txtData = NetService.data(fromTXTRecord: ["peerId": Data(currentPeerId.utf8)])
-                ns.setTXTRecord(txtData)
-                ns.delegate = self
-                ns.schedule(in: .main, forMode: .common)
-                ns.publish()
-                self.netService = ns
-                appLog("NetService publishing as: \(currentDisplayName) peerId=\(currentPeerId) on port \(port)")
+                self.republishNetService()
             }
             
             listener.stateUpdateHandler = { [weak self] state in
@@ -591,37 +850,48 @@ class SyncManager: NSObject, NetServiceDelegate {
     /// Reads length-prefixed frames in a loop so one connection can carry many messages
     /// (used by file transfers to keep chunks ordered on a single connection).
     private func receiveMessage(from connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self, weak connection] data, _, isComplete, error in
+        connection.receive(minimumIncompleteLength: 4, maximumLength: Self.maxMessageLength) { [weak self, weak connection] data, _, isComplete, error in
             guard let self = self, let connection = connection else { return }
-            guard let data = data, data.count == 4 else {
-                if error != nil || isComplete {
-                    self.removeConnection(connection)
-                    connection.cancel()
-                }
-                return
+            if let data = data, !data.isEmpty {
+                self.ingestReceivedData(data, from: connection)
             }
+            if error != nil || isComplete {
+                self.receiveBuffers.removeValue(forKey: ObjectIdentifier(connection))
+                self.removeConnection(connection)
+                connection.cancel()
+            } else {
+                self.receiveMessage(from: connection)
+            }
+        }
+    }
 
-            let length = Int(data.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian })
+    /// Appends newly arrived bytes to the per-connection buffer and extracts as
+    /// many whole length-prefixed frames as are available. A single TCP segment
+    /// may carry a partial frame, multiple frames, or a frame spanning segments.
+    private func ingestReceivedData(_ chunk: Data, from connection: NWConnection) {
+        let key = ObjectIdentifier(connection)
+        var buffer = receiveBuffers[key] ?? Data()
+        buffer.append(chunk)
+
+        while true {
+            guard buffer.count >= 4 else { break }
+            let length = Int(buffer.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian })
             guard length > 0, length <= Self.maxMessageLength else {
                 appLog("Rejecting frame with invalid length \(length)", level: .error)
-                self.removeConnection(connection)
+                receiveBuffers.removeValue(forKey: key)
+                removeConnection(connection)
                 connection.cancel()
                 return
             }
+            guard buffer.count >= 4 + length else { break }
 
-            connection.receive(minimumIncompleteLength: length, maximumLength: length) { [weak self, weak connection] data, _, isComplete, error in
-                guard let self = self, let connection = connection else { return }
-                if let data = data {
-                    self.processReceivedData(data)
-                }
-                if error != nil || isComplete {
-                    self.removeConnection(connection)
-                    connection.cancel()
-                } else {
-                    self.receiveMessage(from: connection)
-                }
-            }
+            let frame = buffer.subdata(in: 4..<(4 + length))
+            processReceivedData(frame)
+
+            buffer.removeSubrange(0..<(4 + length))
         }
+
+        receiveBuffers[key] = buffer
     }
     
     private func processReceivedData(_ data: Data) {
@@ -629,12 +899,9 @@ class SyncManager: NSObject, NetServiceDelegate {
             appLog("Failed to decode SyncMessage", level: .error)
             return
         }
-        
-        guard PreferencesManager.shared.authorizedPeerIds.contains(message.deviceId) else {
-            appLog("Rejecting sync from unauthorized peer: \(message.deviceId)", level: .warning)
-            return
-        }
-        
+
+        // Inbound trust is the shared AES secret. authorizedPeerIds only controls
+        // which peers this device pushes clipboard/history to (one-way authorize UX).
         guard let decrypted = decrypt(message.content) else {
             appLog("Failed to decrypt message from \(message.deviceId), type: \(message.type)", level: .error)
             return
@@ -665,10 +932,6 @@ class SyncManager: NSObject, NetServiceDelegate {
         case "notification/config":
             DispatchQueue.main.async {
                 self.handleNotificationConfig(decrypted)
-            }
-        case "collector/event":
-            DispatchQueue.main.async {
-                DeviceCollectorManager.shared.handleRemoteEvent(decrypted, from: message.deviceId)
             }
         default:
             break
@@ -838,12 +1101,7 @@ class SyncManager: NSObject, NetServiceDelegate {
 
         guard let jsonData = try? JSONEncoder().encode(message) else { return }
 
-        let authorizedPeerIds = PreferencesManager.shared.authorizedPeerIds
-        let targets = availablePeers.filter { authorizedPeerIds.contains($0.peerId) }
-
-        for peer in targets {
-            sendSync(jsonData, to: peer.endpoint)
-        }
+        dispatchBroadcast(jsonData: jsonData, type: type)
     }
 
     // MARK: - Sending Sync
@@ -852,22 +1110,66 @@ class SyncManager: NSObject, NetServiceDelegate {
 
         guard let jsonData = makeTextSyncPayload(content: content, hash: hash) else { return }
 
-        let authorizedPeerIds = PreferencesManager.shared.authorizedPeerIds
-        let targets = availablePeers.filter { authorizedPeerIds.contains($0.peerId) }
+        dispatchBroadcast(jsonData: jsonData, type: "text/plain")
+    }
 
-        if targets.isEmpty {
-            let discovered = availablePeers.map { "\($0.displayName):\($0.peerId)" }.joined(separator: ", ")
-            let authorized = authorizedPeerIds.joined(separator: ", ")
-            appLog(
-                "Sync not sent: authorizedPeerIds=[\(authorized)], discovered=[\(discovered)]. Enable a device in Settings → LAN Sync.",
-                level: .warning
-            )
-            return
+    /// Shared fan-out: sends to authorized peers that are online now, and queues
+    /// a copy for each authorized peer that is momentarily offline so it can be
+    /// flushed when the peer reappears. Eliminates the "copy during a flutter =
+    /// content lost forever" failure mode.
+    private func dispatchBroadcast(jsonData: Data, type: String) {
+        let authorizedPeerIds = PreferencesManager.shared.authorizedPeerIds
+        guard !authorizedPeerIds.isEmpty else { return }
+
+        let onlineTargets = availablePeers.filter { authorizedPeerIds.contains($0.peerId) }
+        let onlineIds = Set(onlineTargets.map { $0.peerId })
+
+        for peer in onlineTargets {
+            appLog("Sending \(type) to \(peer.displayName) (peerId=\(peer.peerId))")
+            sendSync(jsonData, to: peer.endpoint, type: type, targetPeerId: peer.peerId)
         }
 
-        for peer in targets {
-            appLog("Sending sync to \(peer.displayName) (peerId=\(peer.peerId))")
-            sendSync(jsonData, to: peer.endpoint)
+        let offlineAuthorized = authorizedPeerIds.filter { !onlineIds.contains($0) }
+        if !offlineAuthorized.isEmpty {
+            appLog(
+                "Queuing \(type) for offline authorized peers: \(offlineAuthorized.joined(separator: ", "))",
+                level: .warning
+            )
+            for peerId in offlineAuthorized {
+                enqueuePendingSync(data: jsonData, type: type, targetPeerId: peerId)
+            }
+        }
+    }
+
+    private func enqueuePendingSync(data: Data, type: String, targetPeerId: String) {
+        // Drop expired entries first to make room and keep the queue fresh.
+        let cutoff = Date().addingTimeInterval(-Self.pendingQueueTTL)
+        pendingQueue.removeAll { $0.enqueueAt < cutoff || $0.targetPeerId == targetPeerId && $0.data == data }
+
+        // Per-peer cap: avoid one chatty offline peer monopolizing the buffer.
+        let perPeerCount = pendingQueue.filter { $0.targetPeerId == targetPeerId }.count
+        guard perPeerCount < Self.pendingQueueMax else { return }
+
+        pendingQueue.append(PendingSync(
+            data: data,
+            type: type,
+            targetPeerId: targetPeerId,
+            enqueueAt: Date()
+        ))
+    }
+
+    /// Called from the browse-results callback when a peer (re)appears: deliver
+    /// any frames queued for it while it was offline, oldest first.
+    private func flushPendingQueue(forPeerId peerId: String) {
+        let cutoff = Date().addingTimeInterval(-Self.pendingQueueTTL)
+        let due = pendingQueue.filter { $0.targetPeerId == peerId && $0.enqueueAt >= cutoff }
+        guard !due.isEmpty else { return }
+        pendingQueue.removeAll { $0.targetPeerId == peerId }
+
+        guard let endpoint = availablePeers.first(where: { $0.peerId == peerId })?.endpoint else { return }
+        appLog("Flushing \(due.count) queued frame(s) to reappeared peer \(peerId)")
+        for item in due.sorted(by: { $0.enqueueAt < $1.enqueueAt }) {
+            sendSync(item.data, to: endpoint, type: item.type, targetPeerId: peerId)
         }
     }
 
@@ -1088,26 +1390,62 @@ class SyncManager: NSObject, NetServiceDelegate {
         return done.wait(timeout: .now() + 30) == .success && succeeded
     }
     
-    private func sendSync(_ data: Data, to endpoint: NWEndpoint) {
+    private func sendSync(
+        _ data: Data,
+        to endpoint: NWEndpoint,
+        type: String? = nil,
+        targetPeerId: String? = nil
+    ) {
         let parameters = NWParameters.tcp
         // Bypass system proxies to avoid 127.0.0.1 redirection from tools like Clash/Surge
         parameters.preferNoProxies = true
-        
+
         let connection = NWConnection(to: endpoint, using: parameters)
-        
-        connection.stateUpdateHandler = { state in
+
+        // Track readiness so the connect-timeout below can no-op once the send
+        // has started. NWConnection exposes current state only via its handler.
+        // Both the state handler and the timeout fire on syncQueue (serial), so
+        // a plain captured var is race-free here.
+        var didConnect = false
+
+        // Bounded connection establishment. Without this a `.waiting` connection
+        // can linger for the system default (tens of seconds) during network
+        // flutter, pinning a slot on syncQueue. Aligns with Android's 5s timeout.
+        let timeoutWork: DispatchWorkItem
+        if let targetPeerId = targetPeerId, let type = type {
+            timeoutWork = DispatchWorkItem { [weak self] in
+                guard !didConnect else { return }
+                connection.cancel()
+                // Transient failure before establishment: re-queue if still fresh.
+                self?.enqueuePendingSync(data: data, type: type, targetPeerId: targetPeerId)
+            }
+        } else {
+            timeoutWork = DispatchWorkItem {
+                guard !didConnect else { return }
+                connection.cancel()
+            }
+        }
+        syncQueue.asyncAfter(deadline: .now() + Self.sendConnectTimeout, execute: timeoutWork)
+
+        connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
+                didConnect = true
+                timeoutWork.cancel()
                 // Send length prefix (4 bytes, big-endian) followed by data
                 var messageData = Data()
                 var length = UInt32(data.count).bigEndian
                 let lengthBytes = withUnsafeBytes(of: &length) { Data($0) }
                 messageData.append(lengthBytes)
                 messageData.append(data)
-                
+
                 connection.send(content: messageData, completion: .contentProcessed({ error in
                     if let error = error {
                         appLog("Send failed to \(endpoint): \(error)", level: .error)
+                        // Established but the send itself failed: re-queue once.
+                        if let targetPeerId = targetPeerId, let type = type, let self = self {
+                            self.enqueuePendingSync(data: data, type: type, targetPeerId: targetPeerId)
+                        }
                     }
                     // Give it a tiny bit of time before closing to ensure flush
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -1118,11 +1456,15 @@ class SyncManager: NSObject, NetServiceDelegate {
                 appLog("Connection waiting for \(endpoint): \(error)", level: .warning)
             case .failed(let error):
                 appLog("Connection failed to \(endpoint): \(error)", level: .error)
+                self?.recordPeerMiss(forEndpoint: endpoint)
+                if let targetPeerId = targetPeerId, let type = type, let self = self {
+                    self.enqueuePendingSync(data: data, type: type, targetPeerId: targetPeerId)
+                }
             default:
                 break
             }
         }
-        
+
         connection.start(queue: syncQueue)
     }
 }

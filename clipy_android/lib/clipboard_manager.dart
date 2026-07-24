@@ -9,7 +9,6 @@ import 'database/clipboard_repository.dart';
 import 'log_manager.dart';
 import 'models.dart';
 import 'sync_manager.dart';
-import 'collector_manager.dart';
 
 class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   static final ClipboardManager instance = ClipboardManager._();
@@ -19,10 +18,29 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
       MethodChannel('com.clipyclone.clipy_android/clipboard');
 
   String? _lastText;
-  String? _lastSyncHash;
+  /// Recent remote-origin hashes used as a second loopback guard (the first
+  /// line is `_lastText == text`). Kept as a bounded, time-windowed set so
+  /// concurrent remote pushes and restart windows are both covered.
+  /// Keep aligned with the macOS side's recentRemoteHashes.
+  final List<_RemoteHashEntry> _recentRemoteHashes = [];
+  static const int _recentRemoteHashMax = 20;
+  static const Duration _recentRemoteHashTtl = Duration(seconds: 60);
+
+  /// Bundle ids / package names excluded from history and sync. Defaults match
+  /// the macOS side (password managers / keychain) so behavior is symmetric.
+  /// Keep aligned with PreferencesManager.defaultExcludedApps on macOS.
+  static const List<String> _defaultExcludedApps = [
+    // macOS password managers / keychain
+    'com.agilebits.onepassword7',
+    'com.apple.keychainaccess',
+    // Android password managers (best-effort package ids)
+    'com.android.onepassword',
+    'com.agilebits.onepassword',
+    'com.onepassword.android',
+  ];
+
   int _historyLimit = 1000;
   List<String> _excludedApps = [];
-  bool _collectorClipboardOnly = false;
   Timer? _pollTimer;
   bool _monitoring = false;
   bool _inBackground = false;
@@ -30,7 +48,6 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
 
   int get historyLimit => _historyLimit;
   List<String> get excludedApps => List.unmodifiable(_excludedApps);
-  bool get collectorClipboardOnly => _collectorClipboardOnly;
 
   Future<List<HistoryEntry>> fetchPage({required int offset, required int limit}) {
     return ClipboardRepository.instance.fetchPage(offset: offset, limit: limit);
@@ -63,8 +80,18 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
       final args = Map<String, dynamic>.from(call.arguments as Map);
       final text = args['text'] as String?;
       final isBaseline = args['isBaseline'] as bool? ?? false;
+      // Real source package from the native side (Android). Falls back to a
+      // generic platform label so excludedApps still has something to compare.
+      final sourcePackage = args['sourcePackage'] as String?;
+      final sourceApp = (sourcePackage != null && sourcePackage.isNotEmpty)
+          ? sourcePackage
+          : (Platform.isIOS ? 'iOS' : 'Android');
       if (text != null && text.isNotEmpty) {
-        await _processClipboardText(text, recordHistory: !isBaseline && _lastText != null);
+        await _processClipboardText(
+          text,
+          recordHistory: !isBaseline && _lastText != null,
+          sourceApp: sourceApp,
+        );
       }
     }
     return null;
@@ -121,8 +148,7 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     // On Android 10+ background clipboard reads fail anyway, so polling in the
     // background mostly burns battery; keep only a very sparse fallback for
     // older devices where background reads still work.
-    final needsFallback = _inBackground &&
-        (SyncManager.instance.isEnabled || CollectorManager.instance.isEnabled);
+    final needsFallback = _inBackground && SyncManager.instance.isEnabled;
     if (needsFallback) {
       _startPolling(const Duration(minutes: 5));
     } else {
@@ -143,20 +169,26 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   Future<void> _pollClipboardOnce() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     if (data?.text != null && data!.text!.isNotEmpty) {
-      await _processClipboardText(data.text!, recordHistory: _lastText != null);
+      await _processClipboardText(
+        data.text!,
+        recordHistory: _lastText != null,
+        sourceApp: Platform.isMacOS ? 'macOS' : (Platform.isIOS ? 'iOS' : 'Android'),
+      );
     }
   }
 
-  Future<void> _processClipboardText(String text, {required bool recordHistory}) async {
+  Future<void> _processClipboardText(
+    String text, {
+    required bool recordHistory,
+    String? sourceApp,
+  }) async {
     if (text == _lastText) return;
     if (recordHistory) {
       final item = HistoryItem(type: 'text', value: text);
       final entry = HistoryEntry(
         item: item,
         date: DateTime.now(),
-        sourceApp: Platform.isMacOS
-            ? 'macOS'
-            : (Platform.isIOS ? 'iOS' : 'Android'),
+        sourceApp: sourceApp,
         contentHash: _contentHashForItem(item),
       );
       await _addToHistory(entry);
@@ -167,8 +199,27 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
     _historyLimit = prefs.getInt('historyLimit') ?? 1000;
-    _excludedApps = prefs.getStringList('excludedApps') ?? [];
-    _collectorClipboardOnly = prefs.getBool('collectorClipboardOnly') ?? false;
+    _excludedApps = prefs.getStringList('excludedApps') ?? List.from(_defaultExcludedApps);
+  }
+
+  /// Records a remote-origin hash so the next local copy of the same content is
+  /// recognized as a loopback and not re-broadcast.
+  void _rememberRemoteHash(String hash) {
+    _recentRemoteHashes.add(_RemoteHashEntry(hash: hash, at: DateTime.now()));
+    _pruneRemoteHashes();
+  }
+
+  bool _wasRecentlyRemote(String hash) {
+    _pruneRemoteHashes();
+    return _recentRemoteHashes.any((e) => e.hash == hash);
+  }
+
+  void _pruneRemoteHashes() {
+    final cutoff = DateTime.now().subtract(_recentRemoteHashTtl);
+    _recentRemoteHashes.removeWhere((e) => e.at.isBefore(cutoff));
+    while (_recentRemoteHashes.length > _recentRemoteHashMax) {
+      _recentRemoteHashes.removeAt(0);
+    }
   }
 
   Future<void> _addToHistory(HistoryEntry entry, {bool broadcast = true}) async {
@@ -185,9 +236,14 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
             contentHash: _contentHashForItem(entry.item),
           );
 
-    if (broadcast && normalizedEntry.contentHash != _lastSyncHash) {
+    // Loopback guard: skip broadcast if this exact content just arrived from a
+    // remote peer (single-field `_lastText` check above is the first line).
+    final isLoopback = normalizedEntry.contentHash != null &&
+        _wasRecentlyRemote(normalizedEntry.contentHash!);
+
+    if (broadcast && !isLoopback) {
       if (normalizedEntry.item.type == 'text') {
-        // Primary LAN clipboard sync — always text/plain, independent of Collector.
+        // Primary LAN clipboard sync — always text/plain.
         unawaited(SyncManager.instance.broadcastSync(
           normalizedEntry.item.value as String,
           normalizedEntry.contentHash!,
@@ -211,7 +267,10 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   Future<void> handleRemoteSync(String text, String hash) async {
     // Always refresh history (delete + re-insert) even when hash repeats,
     // so Mac re-copies move the item to the top on Android.
-    _lastSyncHash = hash.isNotEmpty ? hash : _contentHashForItem(HistoryItem(type: 'text', value: text));
+    final effectiveHash = hash.isNotEmpty
+        ? hash
+        : (_contentHashForItem(HistoryItem(type: 'text', value: text)) ?? text.hashCode.toString());
+    _rememberRemoteHash(effectiveHash);
     _lastText = text;
 
     final item = HistoryItem(type: 'text', value: text);
@@ -219,7 +278,7 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
       item: item,
       date: DateTime.now(),
       sourceApp: 'Remote Sync',
-      contentHash: _lastSyncHash,
+      contentHash: effectiveHash,
     );
 
     await _addToHistory(entry, broadcast: false);
@@ -262,4 +321,10 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
         return sha256.convert(bytes).toString();
     }
   }
+}
+
+class _RemoteHashEntry {
+  final String hash;
+  final DateTime at;
+  const _RemoteHashEntry({required this.hash, required this.at});
 }

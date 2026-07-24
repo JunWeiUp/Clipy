@@ -133,17 +133,6 @@ class NotificationEntry {
     );
   }
 
-  Map<String, dynamic> toCollectorPayload() => {
-        'notificationKey': notificationKey,
-        'packageName': packageName,
-        'appName': appName,
-        'title': title,
-        'subtitle': subtitle,
-        'body': body,
-        'groupKey': groupKey,
-        'isClearable': isClearable,
-        ...extras.map((key, value) => MapEntry('extra_$key', value)),
-      };
 }
 
 class NotificationDismissRequest {
@@ -168,69 +157,6 @@ class NotificationDismissRequest {
       packageName: json['packageName'],
       groupKey: json['groupKey'],
       notificationKey: json['notificationKey'],
-    );
-  }
-}
-
-class CollectorCategories {
-  static const notification = 'notification';
-  static const sms = 'sms';
-  static const call = 'call';
-  static const callLog = 'call_log';
-  static const clipboard = 'clipboard';
-
-  static const all = [
-    sms,
-    call,
-    callLog,
-    clipboard,
-  ];
-}
-
-class CollectorEvent {
-  final String id;
-  final String category;
-  final int timestamp;
-  final String deviceId;
-  final Map<String, dynamic> payload;
-
-  CollectorEvent({
-    required this.id,
-    required this.category,
-    required this.timestamp,
-    required this.deviceId,
-    required this.payload,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'category': category,
-        'timestamp': timestamp,
-        'deviceId': deviceId,
-        'payload': payload,
-      };
-
-  factory CollectorEvent.fromJson(Map<String, dynamic> json) {
-    return CollectorEvent(
-      id: json['id'] as String,
-      category: json['category'] as String,
-      timestamp: (json['timestamp'] as num?)?.toInt() ??
-          DateTime.now().millisecondsSinceEpoch,
-      deviceId: json['deviceId'] as String? ?? '',
-      payload: Map<String, dynamic>.from(json['payload'] as Map? ?? {}),
-    );
-  }
-
-  factory CollectorEvent.fromNotificationEntry(
-    NotificationEntry entry,
-    String deviceId,
-  ) {
-    return CollectorEvent(
-      id: entry.id,
-      category: CollectorCategories.notification,
-      timestamp: entry.postTime,
-      deviceId: deviceId,
-      payload: entry.toCollectorPayload(),
     );
   }
 }

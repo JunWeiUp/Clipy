@@ -21,15 +21,6 @@ class PreferencesManager {
     private let historyEncryptionEnabledKey = "historyEncryptionEnabled"
     private let searchGlobalShortcutEnabledKey = "searchGlobalShortcutEnabled"
     private let searchHistoryShortcutKey = "searchHistoryShortcut"
-    private let collectorSyncEnabledKey = "collectorSyncEnabled"
-    private let collectorAlertEnabledKey = "collectorAlertEnabled"
-    private let collectorNotificationEnabledKey = "collectorNotificationEnabled"
-    private let collectorSmsEnabledKey = "collectorSmsEnabled"
-    private let collectorCallEnabledKey = "collectorCallEnabled"
-    private let collectorCallLogEnabledKey = "collectorCallLogEnabled"
-    private let collectorClipboardEnabledKey = "collectorClipboardEnabled"
-    private let collectorLocationEnabledKey = "collectorLocationEnabled"
-    private let collectorSystemEnabledKey = "collectorSystemEnabled"
     private let screenshotShortcutEnabledKey = "screenshotShortcutEnabled"
     private let screenshotShortcutKey = "screenshotShortcut"
     private let screenshotDefaultModeKey = "screenshotDefaultMode"
@@ -176,56 +167,6 @@ class PreferencesManager {
                 defaults.removeObject(forKey: searchHistoryShortcutKey)
             }
         }
-    }
-
-    var isCollectorSyncEnabled: Bool {
-        get {
-            if defaults.object(forKey: collectorSyncEnabledKey) == nil {
-                return defaults.object(forKey: "notificationSyncEnabled") as? Bool ?? true
-            }
-            return defaults.bool(forKey: collectorSyncEnabledKey)
-        }
-        set { defaults.set(newValue, forKey: collectorSyncEnabledKey) }
-    }
-
-    var isCollectorAlertEnabled: Bool {
-        get { defaults.object(forKey: collectorAlertEnabledKey) == nil ? true : defaults.bool(forKey: collectorAlertEnabledKey) }
-        set { defaults.set(newValue, forKey: collectorAlertEnabledKey) }
-    }
-
-    var isCollectorNotificationEnabled: Bool {
-        get { defaults.object(forKey: collectorNotificationEnabledKey) == nil ? true : defaults.bool(forKey: collectorNotificationEnabledKey) }
-        set { defaults.set(newValue, forKey: collectorNotificationEnabledKey) }
-    }
-
-    var isCollectorSmsEnabled: Bool {
-        get { defaults.object(forKey: collectorSmsEnabledKey) == nil ? true : defaults.bool(forKey: collectorSmsEnabledKey) }
-        set { defaults.set(newValue, forKey: collectorSmsEnabledKey) }
-    }
-
-    var isCollectorCallEnabled: Bool {
-        get { defaults.object(forKey: collectorCallEnabledKey) == nil ? true : defaults.bool(forKey: collectorCallEnabledKey) }
-        set { defaults.set(newValue, forKey: collectorCallEnabledKey) }
-    }
-
-    var isCollectorCallLogEnabled: Bool {
-        get { defaults.object(forKey: collectorCallLogEnabledKey) == nil ? true : defaults.bool(forKey: collectorCallLogEnabledKey) }
-        set { defaults.set(newValue, forKey: collectorCallLogEnabledKey) }
-    }
-
-    var isCollectorClipboardEnabled: Bool {
-        get { defaults.object(forKey: collectorClipboardEnabledKey) == nil ? true : defaults.bool(forKey: collectorClipboardEnabledKey) }
-        set { defaults.set(newValue, forKey: collectorClipboardEnabledKey) }
-    }
-
-    var isCollectorLocationEnabled: Bool {
-        get { defaults.object(forKey: collectorLocationEnabledKey) == nil ? true : defaults.bool(forKey: collectorLocationEnabledKey) }
-        set { defaults.set(newValue, forKey: collectorLocationEnabledKey) }
-    }
-
-    var isCollectorSystemEnabled: Bool {
-        get { defaults.object(forKey: collectorSystemEnabledKey) == nil ? true : defaults.bool(forKey: collectorSystemEnabledKey) }
-        set { defaults.set(newValue, forKey: collectorSystemEnabledKey) }
     }
 
     var isScreenshotShortcutEnabled: Bool {

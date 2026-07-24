@@ -327,6 +327,13 @@ class ClipboardManager {
     private var maxHistoryItems: Int { PreferencesManager.shared.historyLimit }
     private let repository = HistoryRepository.shared
     private let fileHistoryURL: URL
+    /// Recent remote-origin hashes, used as a loopback guard in addition to the
+    /// changeCount check. Single-field `lastSyncHash` is fragile under burst
+    /// pushes and lost on restart; a bounded TTL set covers both.
+    /// Keep aligned with the Android side's _recentRemoteHashes.
+    private var recentRemoteHashes: [(hash: String, at: Date)] = []
+    private static let recentRemoteHashMax = 20
+    private static let recentRemoteHashTTL: TimeInterval = 60
     private var lastSyncHash: String?
     
     // Performance optimization: debounce and content tracking
@@ -623,6 +630,9 @@ class ClipboardManager {
         // Media store writes, SHA256, RTF/HTML/PDF index parsing and the DB insert can
         // take hundreds of ms for large payloads; keep them off the main thread.
         let capturedSyncHash = lastSyncHash
+        // Snapshot the loopback set on the main thread (it is mutated here only);
+        // the heavy ingest runs off-thread and must not race the live list.
+        let capturedRemoteHashes = Set(recentRemoteHashes.map { $0.hash })
         ingestQueue.async { [weak self] in
             guard let self else { return }
             let item = self.historyItem(from: payload)
@@ -630,7 +640,8 @@ class ClipboardManager {
                 item,
                 sourceApp: sourceApp,
                 sourceBundleId: bundleIdentifier,
-                lastKnownSyncHash: capturedSyncHash
+                lastKnownSyncHash: capturedSyncHash,
+                recentRemoteHashes: capturedRemoteHashes
             )
             DispatchQueue.main.async {
                 self.finalizeHistoryInsert(prepared)
@@ -785,7 +796,8 @@ class ClipboardManager {
             item,
             sourceApp: sourceApp,
             sourceBundleId: sourceBundleId,
-            lastKnownSyncHash: lastSyncHash
+            lastKnownSyncHash: lastSyncHash,
+            recentRemoteHashes: Set(recentRemoteHashes.map { $0.hash })
         )
         finalizeHistoryInsert(prepared)
     }
@@ -796,12 +808,18 @@ class ClipboardManager {
         _ item: HistoryItem,
         sourceApp: String?,
         sourceBundleId: String?,
-        lastKnownSyncHash: String?
+        lastKnownSyncHash: String?,
+        recentRemoteHashes: Set<String>
     ) -> PreparedHistoryInsert {
         let hash = contentHash(for: item)
         appLog("Adding to history: \(item.title), Hash: \(hash?.prefix(8) ?? "N/A")")
 
-        if let sync = plainTextForLANSync(from: item), sync.hash != lastKnownSyncHash {
+        // Broadcast unless this content was just delivered by a remote peer
+        // (loopback). Both the single-slot lastKnownSyncHash and the time-windowed
+        // set are checked: either match means we keep it local.
+        if let sync = plainTextForLANSync(from: item),
+           sync.hash != lastKnownSyncHash,
+           !recentRemoteHashes.contains(sync.hash) {
             SyncManager.shared.broadcastSync(content: sync.text, hash: sync.hash)
         }
 
@@ -852,12 +870,33 @@ class ClipboardManager {
         appLog("Handling remote sync: \(effectiveHash.prefix(8))")
 
         lastSyncHash = effectiveHash
+        rememberRemoteHash(effectiveHash)
 
         pasteboard.clearContents()
         pasteboard.setString(content, forType: .string)
         changeCount = pasteboard.changeCount
 
         addToHistory(.text(content), sourceApp: "Remote Device")
+    }
+
+    /// Records a remote-origin hash so a subsequent local copy of the same
+    /// content is treated as a loopback rather than re-broadcast.
+    private func rememberRemoteHash(_ hash: String) {
+        recentRemoteHashes.append((hash: hash, at: Date()))
+        pruneRemoteHashes()
+    }
+
+    private func wasRecentlyRemote(_ hash: String) -> Bool {
+        pruneRemoteHashes()
+        return recentRemoteHashes.contains { $0.hash == hash }
+    }
+
+    private func pruneRemoteHashes() {
+        let cutoff = Date().addingTimeInterval(-Self.recentRemoteHashTTL)
+        recentRemoteHashes.removeAll { $0.at < cutoff }
+        while recentRemoteHashes.count > Self.recentRemoteHashMax {
+            recentRemoteHashes.removeFirst()
+        }
     }
 
     func contentHashForPlainText(_ text: String) -> String? {

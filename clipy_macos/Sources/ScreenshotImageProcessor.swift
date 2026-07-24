@@ -3,7 +3,26 @@ import CoreGraphics
 import CoreImage
 
 enum ScreenshotImageProcessor {
-    static let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
+    /// Lazily-created CIContext used only for pixellate/mosaic annotations and
+    /// resampling. A CIContext retains an IOSurface/texture pool sized by the
+    /// largest image it has processed, and that pool never shrinks for the life
+    /// of the context. To keep the post-screenshot footprint low we hold the
+    /// context only while it is in use and drop it once a capture finishes, so
+    /// the pool is released back to the system instead of lingering at the peak
+    /// (e.g. ~30-80MB for a 4K screenshot). Re-creation costs only tens of ms.
+    private static var _sharedCIContext: CIContext?
+    static var sharedCIContext: CIContext {
+        if let context = _sharedCIContext { return context }
+        let context = CIContext(options: [.useSoftwareRenderer: false])
+        _sharedCIContext = context
+        return context
+    }
+
+    /// Releases the cached CIContext so its GPU/IOSurface pool is reclaimed.
+    /// Called after a screenshot flow completes; the next consumer recreates it.
+    static func releaseCIContext() {
+        _sharedCIContext = nil
+    }
 
     static func pixelSize(
         forLogicalSize logicalSize: NSSize,

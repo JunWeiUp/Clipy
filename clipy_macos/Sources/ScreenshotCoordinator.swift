@@ -59,8 +59,17 @@ final class ScreenshotCoordinator {
         isCapturing = false
         guard let screenRect, screenRect.width > 1, screenRect.height > 1 else {
             appLog("Screenshot capture failed or was cancelled", level: .warning)
+            // Even on cancel, release the transient CIContext pool so its
+            // IOSurface cache does not linger from a prior mosaic annotation.
+            MemoryFootprintReclaimer.reclaimAfterScreenshot()
             return
         }
         appLog("Screenshot captured \(Int(screenRect.width))x\(Int(screenRect.height))", level: .info)
+        // The capture pipeline briefly held several large bitmaps (full-display
+        // capture, cropped copy, flatten context, PNG encoding) plus a CIContext
+        // pool used for mosaic annotations. Drop the CIContext and nudge malloc
+        // zones to return the now-free pages to the system, so the footprint
+        // recovers toward baseline instead of staying near the peak.
+        MemoryFootprintReclaimer.reclaimAfterScreenshot()
     }
 }

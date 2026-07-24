@@ -8,8 +8,7 @@ import 'package:file_picker/file_picker.dart';
 import 'clipboard_manager.dart';
 import 'sync_manager.dart';
 import 'notification_manager.dart';
-import 'collector_manager.dart';
-import 'collector_page.dart';
+import 'notification_sync_page.dart';
 import 'notification_health_monitor.dart';
 import 'log_manager.dart';
 import 'models.dart';
@@ -133,6 +132,7 @@ class SyncTargetDeviceList extends StatefulWidget {
 class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
   StreamSubscription? _subscription;
   List<DiscoveredPeer> _availablePeers = [];
+  bool _isRefreshing = false;
 
   @override
   void initState() {
@@ -151,6 +151,22 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
     super.dispose();
   }
 
+  Future<void> _refreshDevices() async {
+    if (_isRefreshing || !SyncManager.instance.isEnabled) return;
+    setState(() => _isRefreshing = true);
+    try {
+      await SyncManager.instance.refreshBrowsing();
+      if (mounted) {
+        setState(() => _availablePeers = SyncManager.instance.availablePeers);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.devicesRefreshed)),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isRefreshing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
@@ -158,14 +174,35 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: Text(
-            l10n.authorizedDevices,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: Colors.blue,
-            ),
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  l10n.authorizedDevices,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: SyncManager.instance.isEnabled && !_isRefreshing
+                    ? _refreshDevices
+                    : null,
+                icon: _isRefreshing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh, size: 18),
+                label: Text(
+                  _isRefreshing ? l10n.refreshingDevices : l10n.refreshDevices,
+                ),
+              ),
+            ],
           ),
         ),
         Padding(
@@ -228,12 +265,6 @@ void main() async {
     await NotificationManager.instance.init();
   } catch (e) {
     debugPrint('NotificationManager init error: $e');
-  }
-
-  try {
-    await CollectorManager.instance.init();
-  } catch (e) {
-    debugPrint('CollectorManager init error: $e');
   }
 
   try {
@@ -785,25 +816,6 @@ class _HomePageState extends State<HomePage> {
           onOpenLogs: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const LogPage())),
           onOpenReceivedFiles: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ReceivedFilesPage())),
         ),
-        const Divider(),
-        SwitchListTile(
-          title: Text(context.l10n.collectorEnabled),
-          value: CollectorManager.instance.isEnabled,
-          onChanged: (value) async {
-            await CollectorManager.instance.setEnabled(value);
-            if (mounted) setState(() {});
-          },
-        ),
-        SwitchListTile(
-          title: Text(context.l10n.collectorClipboardOnly),
-          value: ClipboardManager.instance.collectorClipboardOnly,
-          onChanged: (value) async {
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setBool('collectorClipboardOnly', value);
-            await ClipboardManager.instance.reloadPreferences();
-            if (mounted) setState(() {});
-          },
-        ),
       ],
     );
   }
@@ -812,8 +824,8 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
 
-    final titles = [l10n.clipyHistory, l10n.collector, l10n.settings];
-    final bodies = [_buildHistoryTab(), const CollectorPage(), _buildSettingsTab()];
+    final titles = [l10n.clipyHistory, l10n.settings];
+    final bodies = [_buildHistoryTab(), _buildSettingsTab()];
 
     return Scaffold(
       appBar: AppBar(
@@ -822,12 +834,15 @@ class _HomePageState extends State<HomePage> {
             ? [
                 IconButton(
                   icon: const Icon(Icons.sync),
-                  onPressed: () => setState(() => _selectedIndex = 2),
+                  onPressed: () => setState(() => _selectedIndex = 1),
                   tooltip: l10n.authorizedDevices,
                 ),
                 IconButton(
                   icon: const Icon(Icons.notifications_outlined),
-                  onPressed: () => setState(() => _selectedIndex = 1),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const NotificationSyncPage()),
+                  ),
                   tooltip: l10n.notificationSync,
                 ),
                 IconButton(
@@ -865,7 +880,6 @@ class _HomePageState extends State<HomePage> {
         type: BottomNavigationBarType.fixed,
         items: [
           BottomNavigationBarItem(icon: const Icon(Icons.history), label: l10n.history),
-          BottomNavigationBarItem(icon: const Icon(Icons.sensors), label: l10n.collector),
           BottomNavigationBarItem(icon: const Icon(Icons.settings), label: l10n.settings),
         ],
       ),
