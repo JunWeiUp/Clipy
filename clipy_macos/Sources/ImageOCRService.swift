@@ -53,7 +53,9 @@ enum ImageOCRService {
     }
 
     static func recognize(image: NSImage) -> String? {
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+        // Use bestCGImage to get the native-pixel CGImage (the rep attached by
+        // fromCapture), not cgImage(forProposedRect:) which can re-rasterize.
+        guard let cgImage = ScreenshotImageProcessor.bestCGImage(from: image) else {
             return nil
         }
         return recognizeSync(cgImage: cgImage)

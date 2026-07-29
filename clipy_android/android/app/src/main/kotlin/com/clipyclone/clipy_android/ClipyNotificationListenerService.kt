@@ -17,10 +17,12 @@ class ClipyNotificationListenerService : NotificationListenerService() {
         private val pendingPostedNotifications = ConcurrentLinkedQueue<Map<String, Any?>>()
         private val appNameCache = LruCache<String, String>(128)
 
-        fun setMethodChannel(channel: MethodChannel) {
+        fun setMethodChannel(channel: MethodChannel?) {
             methodChannel = channel
-            flushPendingPostedNotifications()
-            instance?.emitActiveNotifications()
+            if (channel != null) {
+                flushPendingPostedNotifications()
+                instance?.emitActiveNotifications()
+            }
         }
 
         private fun emitNotificationPosted(data: Map<String, Any?>) {

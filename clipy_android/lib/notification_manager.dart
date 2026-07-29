@@ -15,7 +15,8 @@ class NotificationManager {
       MethodChannel('com.clipyclone.clipy_android/notifications');
   static const _selfPackageName = 'com.clipyclone.clipy_android';
 
-  List<String> allowedPackages = [];
+  List<String> collectedPackages = []; // 收集白名单：空 = 收集全部
+  List<String> syncedPackages = []; // 同步白名单：空 = 同步全部已收集
   bool isEnabled = false;
   DateTime? lastNotificationReceivedAt;
   DateTime? monitoringStartedAt;
@@ -25,10 +26,15 @@ class NotificationManager {
   Stream<void> get onNotificationsChanged =>
       _notificationsChangedController.stream;
 
-  final _allowedPackagesChangedController =
+  final _collectedPackagesChangedController =
       StreamController<List<String>>.broadcast();
-  Stream<List<String>> get onAllowedPackagesChanged =>
-      _allowedPackagesChangedController.stream;
+  Stream<List<String>> get onCollectedPackagesChanged =>
+      _collectedPackagesChangedController.stream;
+
+  final _syncedPackagesChangedController =
+      StreamController<List<String>>.broadcast();
+  Stream<List<String>> get onSyncedPackagesChanged =>
+      _syncedPackagesChangedController.stream;
 
   Future<int> count() => NotificationRepository.instance.count();
 
@@ -57,7 +63,19 @@ class NotificationManager {
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     isEnabled = prefs.getBool('notificationSyncEnabled') ?? false;
-    allowedPackages = prefs.getStringList('notificationAllowedPackages') ?? [];
+
+    // 一次性迁移旧键 notificationAllowedPackages → collectedPackages
+    final legacy = prefs.getStringList('notificationAllowedPackages');
+    if (legacy != null) {
+      collectedPackages = legacy;
+      await prefs.remove('notificationAllowedPackages');
+      await prefs.setStringList(
+          'notificationCollectedPackages', collectedPackages);
+    } else {
+      collectedPackages =
+          prefs.getStringList('notificationCollectedPackages') ?? [];
+    }
+    syncedPackages = prefs.getStringList('notificationSyncedPackages') ?? [];
 
     _channel.setMethodCallHandler(_handleMethodCall);
     monitoringStartedAt = DateTime.now();
@@ -74,6 +92,9 @@ class NotificationManager {
           await _handleNotificationPosted(Map<String, dynamic>.from(args));
           break;
         case 'onNotificationRemoved':
+          final Map<dynamic, dynamic> removedArgs = call.arguments;
+          await _handleNotificationRemoved(
+              Map<String, dynamic>.from(removedArgs));
           break;
       }
     } catch (e) {
@@ -86,9 +107,9 @@ class NotificationManager {
 
     final packageName = data['packageName'] as String? ?? '';
     if (packageName != _selfPackageName &&
-        allowedPackages.isNotEmpty &&
-        !allowedPackages.contains(packageName)) {
-      return;
+        collectedPackages.isNotEmpty &&
+        !collectedPackages.contains(packageName)) {
+      return; // 不收集，不入库
     }
 
     final notificationKey = data['key'] as String?;
@@ -111,11 +132,35 @@ class NotificationManager {
     final accepted = await NotificationRepository.instance.upsert(entry);
     if (accepted) {
       lastNotificationReceivedAt = DateTime.now();
-      if (!_suppressBroadcast) {
+      if (!_suppressBroadcast && _shouldSync(packageName)) {
         _broadcastToSync(entry);
       }
       _notificationsChangedController.add(null);
     }
+  }
+
+  bool _shouldSync(String packageName) {
+    if (packageName == _selfPackageName) return false;
+    if (syncedPackages.isEmpty) return true; // 空 = 同步全部
+    return syncedPackages.contains(packageName);
+  }
+
+  Future<void> _handleNotificationRemoved(Map<String, dynamic> data) async {
+    final key = data['key'] as String?;
+    final packageName = data['packageName'] as String? ?? '';
+    if (key == null) return;
+    await NotificationRepository.instance.removeByNotificationKey(key);
+    _notificationsChangedController.add(null);
+    // 广播 dismiss 到 Mac
+    SyncManager.instance.broadcastNotificationMessage(
+      type: 'notification/dismiss',
+      content: jsonEncode({
+        'notificationKey': key,
+        'packageName': packageName,
+        'groupKey': null,
+      }),
+      hash: '',
+    );
   }
 
   void _broadcastToSync(NotificationEntry entry) {
@@ -123,11 +168,25 @@ class NotificationManager {
     payload['extras'] = entry.extras.map(
       (key, value) => MapEntry(key, value?.toString() ?? ''),
     );
-    SyncManager.instance.broadcastNotificationMessage(
-      type: 'notification/post',
-      content: jsonEncode(payload),
+    final content = jsonEncode(payload);
+    // Persist to offline delivery queue (removed on ACK from Mac)
+    NotificationRepository.instance.insertPendingSync(
+      notificationId: entry.id,
+      content: content,
       hash: entry.id,
     );
+    SyncManager.instance.broadcastNotificationMessage(
+      type: 'notification/post',
+      content: content,
+      hash: entry.id,
+    );
+  }
+
+  /// Called when Mac acknowledges receipt of a notification.
+  void handleAck(String hash) {
+    if (hash.isEmpty) return;
+    NotificationRepository.instance.removePendingSync(hash);
+    appLog('NotificationManager: ACK received, removed pending sync for $hash');
   }
 
   void handleRemoteNotification(String decrypted, String senderDevice) {
@@ -280,37 +339,86 @@ class NotificationManager {
     }
   }
 
-  Future<void> updateAllowedPackages(List<String> packages) async {
-    allowedPackages = packages;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('notificationAllowedPackages', packages);
-    _allowedPackagesChangedController.add(allowedPackages);
-  }
-
-  bool isPackageSyncEnabled(String packageName) {
+  // —— 收集层 ——
+  bool isPackageCollected(String packageName) {
     if (packageName == _selfPackageName) return false;
-    if (allowedPackages.isEmpty) return true;
-    return allowedPackages.contains(packageName);
+    if (collectedPackages.isEmpty) return true; // 空 = 收集全部
+    return collectedPackages.contains(packageName);
   }
 
-  Future<void> setPackageSyncEnabled(String packageName, bool enabled) async {
+  Future<void> setPackageCollected(String packageName, bool collected) async {
     if (packageName == _selfPackageName) return;
-
-    var packages = List<String>.from(allowedPackages);
-    if (allowedPackages.isEmpty) {
-      if (enabled) return;
-      final known = await _knownPackageNames();
-      packages = known.where((pkg) => pkg != packageName).toList();
+    final prefs = await SharedPreferences.getInstance();
+    var packages = List<String>.from(collectedPackages);
+    if (collectedPackages.isEmpty) {
+      // 从"收集全部"切换到显式列表：需先排除目标
+      if (!collected) {
+        final known = await _knownPackageNames();
+        packages = known.where((p) => p != packageName).toList();
+      }
     } else {
-      if (enabled) {
+      if (collected) {
+        packages.add(packageName);
+      } else {
+        packages.remove(packageName);
+        // 收集关闭时，同步也一并关闭
+        if (syncedPackages.contains(packageName)) {
+          syncedPackages.remove(packageName);
+          await prefs.setStringList(
+              'notificationSyncedPackages', syncedPackages);
+          _syncedPackagesChangedController.add(syncedPackages);
+        }
+      }
+      packages = packages.toSet().toList()..sort();
+    }
+    collectedPackages = packages;
+    await prefs.setStringList(
+        'notificationCollectedPackages', collectedPackages);
+    _collectedPackagesChangedController.add(collectedPackages);
+  }
+
+  // —— 同步层 ——
+  bool isPackageSynced(String packageName) {
+    if (packageName == _selfPackageName) return false;
+    if (syncedPackages.isEmpty) return true; // 空 = 同步全部已收集
+    return syncedPackages.contains(packageName);
+  }
+
+  Future<void> setPackageSynced(String packageName, bool synced) async {
+    if (packageName == _selfPackageName) return;
+    final prefs = await SharedPreferences.getInstance();
+    var packages = List<String>.from(syncedPackages);
+    if (syncedPackages.isEmpty) {
+      if (!synced) {
+        final known = await _knownPackageNames();
+        packages = known.where((p) => p != packageName).toList();
+      }
+    } else {
+      if (synced) {
         packages.add(packageName);
       } else {
         packages.remove(packageName);
       }
       packages = packages.toSet().toList()..sort();
     }
+    syncedPackages = packages;
+    await prefs.setStringList('notificationSyncedPackages', syncedPackages);
+    _syncedPackagesChangedController.add(syncedPackages);
+  }
 
-    await updateAllowedPackages(packages);
+  // —— 批量操作 ——
+  Future<void> collectAllPackages() async {
+    collectedPackages = [];
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('notificationCollectedPackages');
+    _collectedPackagesChangedController.add(collectedPackages);
+  }
+
+  Future<void> syncAllPackages() async {
+    syncedPackages = [];
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('notificationSyncedPackages');
+    _syncedPackagesChangedController.add(syncedPackages);
   }
 
   Future<List<String>> _knownPackageNames() async {

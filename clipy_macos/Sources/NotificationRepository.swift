@@ -1,8 +1,6 @@
 import Foundation
 import SQLite3
 
-private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-
 final class NotificationRepository {
     static let shared = NotificationRepository()
 
@@ -224,7 +222,7 @@ final class NotificationRepository {
         FROM phone_notifications
         WHERE package_name = ?
         ORDER BY post_time DESC
-        LIMIT 50
+        LIMIT 200
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
@@ -241,7 +239,7 @@ final class NotificationRepository {
             let existingGroupKey = optionalString(stmt, 5)
             let existingPostTime = sqlite3_column_double(stmt, 6)
 
-            guard abs(existingPostTime - incoming.postTime) <= duplicateWindowMilliseconds else { continue }
+            _ = existingPostTime // 时间窗口已移除：内容相同即视为重复
 
             if let existingKey, let incomingKey = incoming.notificationKey,
                !existingKey.isEmpty, existingKey == incomingKey {
@@ -312,16 +310,4 @@ final class NotificationRepository {
         return extras
     }
 
-    private func optionalString(_ stmt: OpaquePointer?, _ index: Int32) -> String? {
-        guard let cString = sqlite3_column_text(stmt, index) else { return nil }
-        return String(cString: cString)
-    }
-
-    private func bindText(_ stmt: OpaquePointer?, _ index: Int32, _ value: String?) {
-        if let value {
-            sqlite3_bind_text(stmt, index, value, -1, sqliteTransient)
-        } else {
-            sqlite3_bind_null(stmt, index)
-        }
-    }
 }

@@ -45,10 +45,7 @@ enum L10nKey: String {
     case noHistory
     case snippets
     case noSnippets
-    case fileHistory
-    case noFiles
     case source
-    case from
     case lanDevices
     case authorizedDevices
     case noDevicesFound
@@ -68,6 +65,7 @@ enum L10nKey: String {
     case quit
     case chooseFileToSend
     case send
+    case sendFailed
     case snippetEditorTitle
     case nameColumn
     case newFolder
@@ -304,10 +302,7 @@ struct L10n {
             .noHistory: "暂无历史记录",
             .snippets: "片段",
             .noSnippets: "暂无片段",
-            .fileHistory: "文件历史",
-            .noFiles: "暂无文件",
             .source: "来源",
-            .from: "来自",
             .authorizedDevices: "授权设备",
             .lanDevices: "局域网设备",
             .noDevicesFound: "未发现设备",
@@ -327,6 +322,7 @@ struct L10n {
             .quit: "退出",
             .chooseFileToSend: "选择要发送到 %@ 的文件",
             .send: "发送",
+            .sendFailed: "发送失败。目标设备可能离线或网络连接异常。",
             .snippetEditorTitle: "Clipy - 片段编辑器",
             .nameColumn: "名称",
             .newFolder: "新文件夹",
@@ -552,10 +548,7 @@ struct L10n {
             .noHistory: "No History",
             .snippets: "Snippets",
             .noSnippets: "No Snippets",
-            .fileHistory: "File History",
-            .noFiles: "No Files",
             .source: "Source",
-            .from: "From",
             .authorizedDevices: "Authorized Devices",
             .lanDevices: "Devices on Network",
             .noDevicesFound: "No Devices Found",
@@ -575,6 +568,7 @@ struct L10n {
             .quit: "Quit",
             .chooseFileToSend: "Choose a file to send to %@",
             .send: "Send",
+            .sendFailed: "Send failed. The target device may be offline or the network connection may be unstable.",
             .snippetEditorTitle: "Clipy - Snippet Editor",
             .nameColumn: "Name",
             .newFolder: "New Folder",

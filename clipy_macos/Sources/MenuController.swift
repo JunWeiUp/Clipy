@@ -123,11 +123,6 @@ class MenuController: NSObject {
                 self?.scheduleMenuUpdate()
             }
         }
-        clipboardManager.onFileHistoryChanged = { [weak self] _ in
-            DispatchQueue.main.async {
-                self?.scheduleMenuUpdate()
-            }
-        }
     }
 
     private func scheduleMenuUpdate() {
@@ -245,8 +240,8 @@ class MenuController: NSObject {
             self?.refreshLanDevices()
         })
 
-        let availableDevices = SyncManager.shared.availableDeviceNames
-        if availableDevices.isEmpty {
+        let deviceEntries = SyncManager.shared.availableDeviceEntries
+        if deviceEntries.isEmpty {
             let emptyItem = NSMenuItem(
                 title: Self.indentedMenuTitle(L10n.t(.noDevicesFound)),
                 action: nil,
@@ -255,9 +250,9 @@ class MenuController: NSObject {
             emptyItem.isEnabled = false
             menu.addItem(emptyItem)
         } else {
-            for deviceName in availableDevices {
+            for entry in deviceEntries {
                 let deviceItem = NSMenuItem(
-                    title: Self.indentedMenuTitle(deviceName),
+                    title: Self.indentedMenuTitle(entry.displayName),
                     action: nil,
                     keyEquivalent: ""
                 )
@@ -269,7 +264,7 @@ class MenuController: NSObject {
                     keyEquivalent: ""
                 )
                 sendTextItem.target = self
-                sendTextItem.representedObject = deviceName
+                sendTextItem.representedObject = entry.peerId
                 deviceSubmenu.addItem(sendTextItem)
 
                 let sendFileItem = NSMenuItem(
@@ -278,7 +273,7 @@ class MenuController: NSObject {
                     keyEquivalent: ""
                 )
                 sendFileItem.target = self
-                sendFileItem.representedObject = deviceName
+                sendFileItem.representedObject = entry.peerId
                 deviceSubmenu.addItem(sendFileItem)
 
                 deviceItem.submenu = deviceSubmenu
@@ -286,31 +281,6 @@ class MenuController: NSObject {
             }
         }
 
-        let fileHistoryItem = NSMenuItem(
-            title: Self.indentedMenuTitle(L10n.t(.fileHistory)),
-            action: nil,
-            keyEquivalent: ""
-        )
-        let fileHistorySubmenu = NSMenu()
-        if clipboardManager.fileHistory.isEmpty {
-            let emptyItem = NSMenuItem(title: L10n.t(.noFiles), action: nil, keyEquivalent: "")
-            emptyItem.isEnabled = false
-            fileHistorySubmenu.addItem(emptyItem)
-        } else {
-            for file in clipboardManager.fileHistory {
-                let menuItem = NSMenuItem(
-                    title: file.fileName,
-                    action: #selector(fileHistoryItemClicked(_:)),
-                    keyEquivalent: ""
-                )
-                menuItem.target = self
-                menuItem.representedObject = file
-                menuItem.toolTip = "\(L10n.t(.from)): \(file.senderName)\nPath: \(file.filePath)"
-                fileHistorySubmenu.addItem(menuItem)
-            }
-        }
-        fileHistoryItem.submenu = fileHistorySubmenu
-        menu.addItem(fileHistoryItem)
         menu.addItem(NSMenuItem.separator())
 
         // --- Tools / Settings ---
@@ -581,16 +551,12 @@ class MenuController: NSObject {
         guard let summary = sender.representedObject as? HistorySummary else { return nil }
         return clipboardManager.resolveEntry(summary)
     }
-    
-    @objc private func fileHistoryItemClicked(_ sender: NSMenuItem) {
-        guard let file = sender.representedObject as? FileHistoryItem else { return }
-        let url = URL(fileURLWithPath: file.filePath)
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-    
+
     @objc private func sendTextClicked(_ sender: NSMenuItem) {
-        guard let deviceName = sender.representedObject as? String else { return }
-        appLog("Send Text clicked for device: \(deviceName)")
+        guard let peerId = sender.representedObject as? String else { return }
+        // Resolve display name for the dialog title
+        let deviceName = SyncManager.shared.availableDeviceEntries.first(where: { $0.peerId == peerId })?.displayName ?? peerId
+        appLog("Send Text clicked for peer: \(peerId)")
 
         NSApp.activate(ignoringOtherApps: true)
 
@@ -619,28 +585,44 @@ class MenuController: NSObject {
         guard !content.isEmpty else { return }
 
         let hash = ClipboardManager.shared.contentHashForPlainText(content) ?? UUID().uuidString
-        SyncManager.shared.sendText(content, hash: hash, toDevice: deviceName)
+        let success = SyncManager.shared.sendTextToPeer(content, hash: hash, peerId: peerId)
+        if !success {
+            Self.showSendFailedAlert()
+        }
     }
 
     @objc private func sendFileClicked(_ sender: NSMenuItem) {
-        guard let deviceName = sender.representedObject as? String else { return }
-        appLog("Send File clicked for device: \(deviceName)")
-        
+        guard let peerId = sender.representedObject as? String else { return }
+        let deviceName = SyncManager.shared.availableDeviceEntries.first(where: { $0.peerId == peerId })?.displayName ?? peerId
+        appLog("Send File clicked for peer: \(peerId)")
+
         NSApp.activate(ignoringOtherApps: true)
-        
+
         let openPanel = NSOpenPanel()
         openPanel.canChooseFiles = true
         openPanel.canChooseDirectories = false
         openPanel.allowsMultipleSelection = false
         openPanel.message = L10n.format(.chooseFileToSend, deviceName)
         openPanel.prompt = L10n.t(.send)
-        
+
         // Use runModal to ensure the dialog appears and blocks until a choice is made
         let response = openPanel.runModal()
         if response == .OK, let url = openPanel.url {
             appLog("Selected file: \(url.lastPathComponent), sending...")
-            SyncManager.shared.sendFile(at: url, toDevice: deviceName)
+            let success = SyncManager.shared.sendFileToPeer(at: url, peerId: peerId)
+            if !success {
+                Self.showSendFailedAlert()
+            }
         }
+    }
+
+    private static func showSendFailedAlert() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = L10n.t(.sendFailed)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.t(.ok))
+        alert.runModal()
     }
     
     @objc private func clearHistory() {

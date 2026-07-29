@@ -323,9 +323,11 @@ class ClipboardManager {
     private(set) var isMenuMemoryRetained = false
     private(set) var totalHistoryCount = 0
     private var menuHistoryLimit: Int { PreferencesManager.shared.historyLoadCount }
-    var fileHistory: [FileHistoryItem] = []
     private var maxHistoryItems: Int { PreferencesManager.shared.historyLimit }
     private let repository = HistoryRepository.shared
+    /// Path of the legacy standalone file-history JSON. Kept only so
+    /// `migrateFileHistoryToMainIfNeeded()` can read+archive it; no longer read
+    /// or written at runtime after migration.
     private let fileHistoryURL: URL
     /// Recent remote-origin hashes, used as a loopback guard in addition to the
     /// changeCount check. Single-field `lastSyncHash` is fragile under burst
@@ -397,7 +399,6 @@ class ClipboardManager {
     }()
 
     var onHistoryChanged: (() -> Void)?
-    var onFileHistoryChanged: (([FileHistoryItem]) -> Void)?
 
     private init() {
         self.changeCount = pasteboard.changeCount
@@ -410,7 +411,7 @@ class ClipboardManager {
 
         HistoryRepository.shared.migrateFromLegacyJSONIfNeeded()
         loadHistory()
-        loadFileHistory()
+        migrateFileHistoryToMainIfNeeded()
         startPolling()
         startPasteUsageMonitoringIfNeeded()
         
@@ -436,35 +437,85 @@ class ClipboardManager {
         }
     }
     
-    private func loadFileHistory() {
-        if let data = try? Data(contentsOf: fileHistoryURL),
-           let savedHistory = try? decoder.decode([FileHistoryItem].self, from: data) {
-            self.fileHistory = savedHistory
+    /// One-shot migration: imports the legacy `file_history.json` (the old
+    /// standalone "File History" submenu store) into the main SQLite history as
+    /// `.files` entries, preserving each item's original timestamp and sender.
+    /// Runs at launch right after `loadHistory()`. After a successful import the
+    /// JSON file is renamed to `.bak` so this never runs twice and the source of
+    /// truth becomes the main history DB. Idempotent: missing/corrupt file
+    /// or already-migrated (`.bak` present) → no-op.
+    ///
+    /// Uses `prepareHistoryInsert` directly (not `addToHistory`) so each row is
+    /// written to the DB without per-row UI refresh / OCR scheduling — the UI is
+    /// refreshed once after the whole batch, since this runs during init before
+    /// the menu/window observers are wired up.
+    private func migrateFileHistoryToMainIfNeeded() {
+        guard FileManager.default.fileExists(atPath: fileHistoryURL.path) else { return }
+        guard let data = try? Data(contentsOf: fileHistoryURL),
+              let legacyItems = try? decoder.decode([FileHistoryItem].self, from: data),
+              !legacyItems.isEmpty else {
+            appLog("File history migration: failed to decode legacy file_history.json, archiving it anyway", level: .warning)
+            archiveLegacyFileHistory()
+            return
+        }
+        appLog("File history migration: importing \(legacyItems.count) legacy file record(s) into main history")
+        let syncHash = lastSyncHash
+        let remoteHashes = Set(recentRemoteHashes.map { $0.hash })
+        // `prepareHistoryInsert` already inserts into the DB (and trims once per
+        // call). We deliberately let trim run: per the agreed behavior, the main
+        // history respects its max-history cap, so legacy file records older than
+        // the current window will be naturally evicted — only those recent enough
+        // to fit under the limit survive. This keeps a single source of truth and
+        // avoids growing the DB beyond the user-configured cap.
+        for item in legacyItems.reversed() {
+            let url = URL(fileURLWithPath: item.filePath)
+            _ = prepareHistoryInsert(
+                .files([url]),
+                sourceApp: item.senderName,
+                sourceBundleId: nil,
+                lastKnownSyncHash: syncHash,
+                recentRemoteHashes: remoteHashes,
+                date: item.timestamp
+            )
+        }
+        appLog("File history migration: imported \(legacyItems.count) legacy record(s) (subject to history cap)")
+        reloadLoadedSummaries()
+        notifyHistoryChanged()
+        archiveLegacyFileHistory()
+    }
+
+    private func archiveLegacyFileHistory() {
+        let backupURL = fileHistoryURL.deletingPathExtension().appendingPathExtension("json.bak")
+        do {
+            if FileManager.default.fileExists(atPath: backupURL.path) {
+                try FileManager.default.removeItem(at: backupURL)
+            }
+            try FileManager.default.moveItem(at: fileHistoryURL, to: backupURL)
+            appLog("File history migration: archived legacy file_history.json → \(backupURL.lastPathComponent)")
+        } catch {
+            appLog("File history migration: failed to archive legacy json: \(error)", level: .warning)
         }
     }
-    
-    func saveFileHistory() {
-        if let data = try? encoder.encode(fileHistory) {
-            try? data.write(to: fileHistoryURL)
-            onFileHistoryChanged?(fileHistory)
-        }
+
+    /// Inserts a file received from a remote peer into the main clipboard
+    /// history, so it shows up in the history list, global search, and the
+    /// "Files" type filter — matching the behavior of locally-copied files and
+    /// remotely-synced text. `addToHistory` is private, hence this wrapper.
+    /// Files history entries are stored as URL path references, so no extra
+    /// copy is needed; `plainTextForLANSync` returns nil for `.files`, so this
+    /// never loops back to other devices.
+    func addReceivedFileToHistory(_ url: URL, senderName: String) {
+        addToHistory(.files([url]), sourceApp: senderName, sourceBundleId: nil)
     }
-    
-    func addToFileHistory(fileName: String, filePath: String, fileSize: Int64, senderName: String) {
-        let item = FileHistoryItem(
-            id: UUID(),
-            fileName: fileName,
-            filePath: filePath,
-            fileSize: fileSize,
-            timestamp: Date(),
-            senderName: senderName
-        )
-        fileHistory.insert(item, at: 0)
-        if fileHistory.count > 20 {
-            fileHistory.removeLast()
-        }
-        saveFileHistory()
+
+    /// Inserts a file the user just sent to a remote peer into the main
+    /// clipboard history. Mirrors `addReceivedFileToHistory` so both directions
+    /// of a transfer are recorded in the same place. `sourceApp` carries the
+    /// recipient so it appears in the history list / source filter.
+    func addSentFileToHistory(_ url: URL, recipientName: String) {
+        addToHistory(.files([url]), sourceApp: "Me (Sent to \(recipientName))", sourceBundleId: nil)
     }
+
     
     private func loadHistory() {
         if HistoryMediaStore.shared.consumeLegacyMigrationNeeded() {
@@ -791,13 +842,14 @@ class ClipboardManager {
         let hash: String?
     }
 
-    private func addToHistory(_ item: HistoryItem, sourceApp: String?, sourceBundleId: String? = nil) {
+    private func addToHistory(_ item: HistoryItem, sourceApp: String?, sourceBundleId: String? = nil, date: Date? = nil) {
         let prepared = prepareHistoryInsert(
             item,
             sourceApp: sourceApp,
             sourceBundleId: sourceBundleId,
             lastKnownSyncHash: lastSyncHash,
-            recentRemoteHashes: Set(recentRemoteHashes.map { $0.hash })
+            recentRemoteHashes: Set(recentRemoteHashes.map { $0.hash }),
+            date: date
         )
         finalizeHistoryInsert(prepared)
     }
@@ -809,7 +861,8 @@ class ClipboardManager {
         sourceApp: String?,
         sourceBundleId: String?,
         lastKnownSyncHash: String?,
-        recentRemoteHashes: Set<String>
+        recentRemoteHashes: Set<String>,
+        date: Date? = nil
     ) -> PreparedHistoryInsert {
         let hash = contentHash(for: item)
         appLog("Adding to history: \(item.title), Hash: \(hash?.prefix(8) ?? "N/A")")
@@ -827,7 +880,7 @@ class ClipboardManager {
         let existing = repository.findMatching(item: item, contentHash: hash)
         let entry = HistoryEntry(
             item: item,
-            date: Date(),
+            date: date ?? Date(),
             sourceApp: sourceApp,
             sourceBundleId: sourceBundleId,
             contentHash: hash,

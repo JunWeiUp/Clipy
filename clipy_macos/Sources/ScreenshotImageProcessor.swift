@@ -58,7 +58,23 @@ enum ScreenshotImageProcessor {
         // without resampling. Avoids both downsampling blur and upsampling softness.
         _ = resolution
         _ = displayNativeScale
-        return NSImage(cgImage: cgImage, size: logicalSize)
+        // wrapWithBitmapRep attaches an explicit NSBitmapImageRep so downstream
+        // bestCGImage / cgImage(forProposedRect:) get the native pixels instead
+        // of re-rasterizing at the logical point size (which dropped Retina 2x).
+        return wrapWithBitmapRep(cgImage, logicalSize: logicalSize)
+    }
+
+    /// Wrap a CGImage in an NSImage that carries an explicit NSBitmapImageRep at
+    /// the CGImage's native pixel size. This keeps `bestCGImage` /
+    /// `cgImage(forProposedRect:)` from re-rasterizing at the logical point size
+    /// (which would drop Retina 2x pixels). Used for capture results and
+    /// flattened (annotated) exports alike.
+    static func wrapWithBitmapRep(_ cgImage: CGImage, logicalSize: NSSize) -> NSImage {
+        let image = NSImage(cgImage: cgImage, size: logicalSize)
+        let rep = NSBitmapImageRep(cgImage: cgImage)
+        rep.size = logicalSize
+        image.addRepresentation(rep)
+        return image
     }
 
     static func normalized(
@@ -137,6 +153,116 @@ enum ScreenshotImageProcessor {
         let bitmap = NSBitmapImageRep(cgImage: cgImage)
         bitmap.size = logicalSize
         return bitmap.representation(using: .png, properties: [:])
+    }
+
+    /// A disk-bound encoded image paired with the file extension matching its format.
+    /// Used so screenshots save as compact JPEG when opaque (5-10x smaller than PNG)
+    /// while still falling back to PNG when transparency is present.
+    struct EncodedImage {
+        let data: Data
+        let fileExtension: String   // "jpg" or "png"
+    }
+
+    /// Returns true if `cgImage` has any meaningful alpha (any pixel with alpha < 1).
+    /// Screen captures are normally fully opaque, so this lets us switch to JPEG.
+    /// Samples up to `maxSamples` pixels for speed on large images; alpha is usually
+    /// uniform across the whole image so sampling is reliable.
+    static func cgImageIsOpaque(_ cgImage: CGImage, maxSamples: Int = 200_000) -> Bool {
+        let width = cgImage.width
+        let height = cgImage.height
+        guard width > 0, height > 0 else { return true }
+        let alphaInfo = cgImage.alphaInfo
+        if alphaInfo == .none || alphaInfo == .noneSkipFirst || alphaInfo == .noneSkipLast {
+            return true
+        }
+        // Has an alpha channel: scan it. Use a stride so we sample across the image.
+        guard let dataProvider = cgImage.dataProvider else { return false }
+        guard let data = dataProvider.data else { return false }
+        let bytesPerRow = cgImage.bytesPerRow
+        let bitsPerPixel = cgImage.bitsPerPixel
+        let bytesPerPixel = bitsPerPixel / 8
+        guard bytesPerPixel >= 1 else { return true }
+        let totalPixels = width * height
+        let sampleStride = max(1, totalPixels / maxSamples)
+
+        // Locate the alpha byte for each pixel based on alphaInfo.
+        let alphaOffset: Int
+        switch alphaInfo {
+        case .premultipliedLast, .last:        // alpha is last component (RGBA)
+            alphaOffset = bytesPerPixel - 1
+        case .premultipliedFirst, .first:       // alpha is first component (ARGB)
+            alphaOffset = 0
+        default:
+            return false
+        }
+
+        let nsData = data as Data
+        return nsData.withUnsafeBytes { (rawBuf: UnsafeRawBufferPointer) -> Bool in
+            guard let base = rawBuf.bindMemory(to: UInt8.self).baseAddress else { return false }
+            let length = rawBuf.count
+            for i in stride(from: 0, to: totalPixels, by: sampleStride) {
+                let px = i % width
+                let py = i / width
+                let offset = py * bytesPerRow + px * bytesPerPixel + alphaOffset
+                if offset >= length { break }
+                if base[offset] < 255 {
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
+    /// Encode for disk saving: opaque images become high-quality JPEG (visually
+    /// lossless at 0.85, 5-10x smaller than PNG); images with transparency stay
+    /// PNG to preserve the alpha channel. Pixel resolution is never changed.
+    static func encodeForSave(from cgImage: CGImage, logicalSize: NSSize) -> EncodedImage? {
+        if cgImageIsOpaque(cgImage), let jpg = jpegData(from: cgImage, logicalSize: logicalSize) {
+            return EncodedImage(data: jpg, fileExtension: "jpg")
+        }
+        if let png = pngData(from: cgImage, logicalSize: logicalSize) {
+            return EncodedImage(data: png, fileExtension: "png")
+        }
+        return nil
+    }
+
+    static func encodeForSave(from image: NSImage, logicalSize: NSSize? = nil) -> EncodedImage? {
+        let logical = logicalSize ?? image.size
+        guard let cgImage = bestCGImage(from: image) else { return nil }
+        return encodeForSave(from: cgImage, logicalSize: logical)
+    }
+
+    /// JPEG cannot carry alpha. Flatten the CGImage onto white and re-encode at
+    /// quality 0.85 (visually lossless for screen content, far smaller than PNG).
+    private static func jpegData(from cgImage: CGImage, logicalSize: NSSize) -> Data? {
+        let pixelW = cgImage.width
+        let pixelH = cgImage.height
+        // Draw onto an opaque RGB context to drop the alpha channel and composite
+        // any (already-known-opaque) pixels onto white for safety.
+        guard let context = CGContext(
+            data: nil,
+            width: pixelW,
+            height: pixelH,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
+                | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else {
+            return nil
+        }
+        context.setFillColor(CGColor.white)
+        context.fill(CGRect(x: 0, y: 0, width: pixelW, height: pixelH))
+        context.interpolationQuality = .high
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: pixelW, height: pixelH))
+        guard let flattened = context.makeImage() else { return nil }
+
+        let bitmap = NSBitmapImageRep(cgImage: flattened)
+        bitmap.size = logicalSize
+        return bitmap.representation(
+            using: .jpeg,
+            properties: [.compressionFactor: 0.85]
+        )
     }
 
     private static func dimensionsMatch(cgImage: CGImage, target: NSSize) -> Bool {
@@ -224,6 +350,9 @@ enum ScreenshotImageProcessor {
         var best: CGImage?
         var bestPixels = 0
 
+        // Prefer an attached NSBitmapImageRep: it carries the true pixel buffer,
+        // so its cgImage is at native resolution (e.g. Retina 2x). This is why
+        // `fromCapture` / `wrapWithBitmapRep` explicitly add a rep.
         for rep in image.representations {
             guard let bitmap = rep as? NSBitmapImageRep, let cgImage = bitmap.cgImage else { continue }
             let pixels = cgImage.width * cgImage.height
@@ -237,6 +366,10 @@ enum ScreenshotImageProcessor {
             return best
         }
 
+        // Fallback: rasterize on demand. CAVEAT — passing a rect of `image.size`
+        // (logical points) makes AppKit draw at point resolution, dropping Retina
+        // pixels. Callers that need native pixels must attach a bitmap rep (see
+        // `fromCapture`); this branch exists only for legacy/ad-hoc NSImages.
         var rect = NSRect(origin: .zero, size: image.size)
         if let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) {
             return cgImage

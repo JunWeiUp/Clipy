@@ -187,14 +187,19 @@ enum ScreenshotCaptureService {
         }
 
         let resolution = PreferencesManager.shared.screenshotResolution
-        let nativeScale = CGFloat(display.width) / max(display.frame.width, 1)
+        // `display.width` is documented as the display's pixel width, but on HiDPI
+        // scaled modes it actually reports the *logical* resolution (e.g. 1512 on
+        // a 3024-physical-pixel Retina panel). Dividing by frame.width then yields
+        // 1.0, which would make us capture at 1x — blurry on zoom. The reliable
+        // backing-pixel multiplier is the screen's backingScaleFactor (2.0 on
+        // Retina), so take the max of the two.
+        let screen = screenContaining(rect: rect)
+        let ratioScale = CGFloat(display.width) / max(display.frame.width, 1)
+        let nativeScale = max(ratioScale, screen.backingScaleFactor)
         let filter = SCContentFilter(display: display, excludingWindows: ownApplicationWindows(from: content))
 
         if forMagnifier {
-            let magnifierScale = max(
-                nativeScale,
-                screenContaining(rect: rect).backingScaleFactor
-            )
+            let magnifierScale = max(nativeScale, screen.backingScaleFactor)
             return try await captureDisplayRegionWithSourceRect(
                 rect: rect,
                 display: display,
@@ -224,13 +229,18 @@ enum ScreenshotCaptureService {
         resolution: ScreenshotResolution,
         filter: SCContentFilter
     ) async throws -> CapturedImage? {
+        // `display.width/height` can be the *logical* resolution on HiDPI scaled
+        // modes; multiply by nativeScale (backingScaleFactor) to get real backing
+        // pixels so the captured image is full Retina resolution (e.g. 3024 not 1512).
+        let capturePixelWidth = Int(CGFloat(display.width) * nativeScale)
+        let capturePixelHeight = Int(CGFloat(display.height) * nativeScale)
         let configuration = makeStreamConfiguration(
-            width: display.width,
-            height: display.height,
+            width: capturePixelWidth,
+            height: capturePixelHeight,
             resolution: resolution
         )
 
-        appLog("Screenshot: capturing full display \(display.width)x\(display.height) then cropping")
+        appLog("Screenshot: capturing full display \(capturePixelWidth)x\(capturePixelHeight) (scale \(nativeScale)) then cropping")
         let fullImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
         // `rect` is AppKit global (y-up); convert to CG global (y-down) so it shares a
         // coordinate system with `display.frame`, then to display-local top-down.
@@ -314,7 +324,12 @@ enum ScreenshotCaptureService {
         let display = content.displays.first { display in
             display.frame.intersects(window.frame)
         }
-        let nativeScale = display.map { CGFloat($0.width) / $0.frame.width }
+        // Same HiDPI caveat as region capture: display.width may equal the
+        // logical width, so take the max with the screen's backingScaleFactor.
+        let nativeScale = display.map { d -> CGFloat in
+            let ratio = CGFloat(d.width) / max(d.frame.width, 1)
+            return max(ratio, screen?.backingScaleFactor ?? 1)
+        }
         let pixelScale = resolution.pixelScale(for: screen, displayNativeScale: nativeScale)
         let logicalSize = NSSize(width: window.frame.width, height: window.frame.height)
         let targetPixelSize = ScreenshotImageProcessor.pixelSize(

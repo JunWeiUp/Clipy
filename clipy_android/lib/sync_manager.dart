@@ -8,12 +8,14 @@ import 'package:nsd/nsd.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:crypto/crypto.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'log_manager.dart';
 import 'clipboard_manager.dart';
 import 'notification_manager.dart';
 import 'compression_utils.dart';
 import 'storage_paths.dart';
 import 'database/file_transfer_repository.dart';
+import 'database/notification_repository.dart';
 
 class SyncMessage {
   final String deviceId;
@@ -163,6 +165,11 @@ class SyncManager with WidgetsBindingObserver {
   bool _isProbingPeers = false;
   bool _isRefreshingDiscovery = false;
   bool _lifecycleObserverAttached = false;
+  /// Subscribes to OS connectivity changes so we can immediately refresh mDNS
+  /// browsing after a Wi-Fi switch / reconnect, instead of waiting up to the
+  /// 2-minute discovery watchdog. Only refreshes when there is network again.
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+  List<ConnectivityResult> _lastConnectivity = [ConnectivityResult.none];
 
   /// Outbound retry buffer: when an authorized peer is momentarily unreachable
   /// the frame is kept here and flushed once the peer reappears. Bounded + TTL'd.
@@ -178,8 +185,14 @@ class SyncManager with WidgetsBindingObserver {
   /// mDNS may never report an abrupt departure (kill, power loss, Wi-Fi drop),
   /// so discovered peers are probed over TCP on this interval and evicted
   /// after [_peerLivenessMaxMisses] consecutive failures.
-  static const Duration _peerLivenessInterval = Duration(seconds: 30);
-  static const int _peerLivenessMaxMisses = 2;
+  ///
+  /// 45s × 3 ≈ 2 min 15s grace window. The previous 30s × 2 ≈ 1 min was too
+  /// aggressive: macOS AppNap / display sleep / a brief Wi-Fi roam can make the
+  /// TCP listener unresponsive for ~1 min, after which the peer would be evicted
+  /// and only reappear on the next mDNS browse cycle — experienced by users as
+  /// "sometimes Android can't see the Mac".
+  static const Duration _peerLivenessInterval = Duration(seconds: 45);
+  static const int _peerLivenessMaxMisses = 3;
   /// Wait after stopDiscovery before restart (Android FAILURE_ALREADY_ACTIVE).
   static const Duration _discoveryRestartDelay = Duration(milliseconds: 400);
   
@@ -253,6 +266,29 @@ class SyncManager with WidgetsBindingObserver {
     if (isEnabled) {
       start();
     }
+  }
+
+  void _startConnectivityMonitoring() {
+    _connectivitySub?.cancel();
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
+      final wasOffline = _lastConnectivity.every(
+        (r) => r == ConnectivityResult.none,
+      );
+      _lastConnectivity = results;
+      // This stream only fires on an actual connectivity change, so any event
+      // while we have network and sync is on is worth a refresh — it covers
+      // Wi-Fi roaming, AP handoff, and reconnecting after airplane mode.
+      final isOffline = results.every((r) => r == ConnectivityResult.none);
+      if (isOffline || !isEnabled || _isRefreshingDiscovery) return;
+      appLog('Connectivity changed ($results, wasOffline=$wasOffline); refreshing LAN discovery');
+      unawaited(refreshBrowsing());
+    });
+  }
+
+  void _stopConnectivityMonitoring() {
+    _connectivitySub?.cancel();
+    _connectivitySub = null;
+    _lastConnectivity = [ConnectivityResult.none];
   }
 
   @override
@@ -354,6 +390,35 @@ class SyncManager with WidgetsBindingObserver {
     for (final item in due) {
       await _sendSync(item.data, peer.service);
     }
+  }
+
+  /// Backfill persisted pending notifications to a reconnected peer.
+  /// These are notifications collected while the peer was offline.
+  Future<void> _backfillPendingNotifications(String peerId) async {
+    final peer = _discoveredPeers[peerId];
+    if (peer == null) return;
+
+    final pending = await NotificationRepository.instance.fetchAllPendingSync();
+    if (pending.isEmpty) return;
+
+    appLog('Backfilling ${pending.length} pending notification(s) to $peerId');
+    for (final row in pending) {
+      final content = row['content'] as String;
+      final hash = row['hash'] as String;
+      final encrypted = _encrypt(content);
+      if (encrypted == null) continue;
+      final message = SyncMessage(
+        deviceId: deviceId,
+        timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+        type: 'notification/post',
+        content: encrypted,
+        hash: hash,
+      );
+      final jsonData = jsonEncode(message.toJson());
+      await _sendSync(jsonData, peer.service);
+    }
+    // Clean up old entries
+    await NotificationRepository.instance.cleanOldPendingSync();
   }
 
   void _startDiscoveryWatchdog() {
@@ -471,6 +536,7 @@ class SyncManager with WidgetsBindingObserver {
       await startBrowsing();
       _startDiscoveryWatchdog();
       _startPeerLivenessProbing();
+      _startConnectivityMonitoring();
     } else {
       appLog('Skipping mDNS publishing because server failed to start', level: 'error');
     }
@@ -480,6 +546,7 @@ class SyncManager with WidgetsBindingObserver {
     appLog('Stopping sync services...');
     _stopDiscoveryWatchdog();
     _stopPeerLivenessProbing();
+    _stopConnectivityMonitoring();
     _peerMissCounts.clear();
     _pendingQueue.clear();
     if (_registration != null) {
@@ -622,6 +689,8 @@ class SyncManager with WidgetsBindingObserver {
           if (_pendingQueue.any((e) => e.targetPeerId == peerId)) {
             unawaited(_flushPendingQueue(peerId));
           }
+          // Backfill persisted pending notifications (offline delivery)
+          unawaited(_backfillPendingNotifications(peerId));
         }
       });
     } catch (e) {
@@ -803,6 +872,8 @@ class SyncManager with WidgetsBindingObserver {
       await _handleFileChunk(decrypted, message.deviceId);
     } else if (message.type == 'notification/post') {
       NotificationManager.instance.handleRemoteNotification(decrypted, message.deviceId);
+    } else if (message.type == 'notification/ack') {
+      NotificationManager.instance.handleAck(message.hash);
     } else if (message.type == 'notification/dismiss') {
       NotificationManager.instance.handleRemoteDismiss(decrypted);
     } else if (message.type == 'notification/clear_all') {
@@ -813,13 +884,10 @@ class SyncManager with WidgetsBindingObserver {
   }
 
   void _handleNotificationConfig(String decrypted) {
-    try {
-      final json = jsonDecode(decrypted);
-      final packages = (json['allowedPackages'] as List?)?.cast<String>() ?? [];
-      NotificationManager.instance.updateAllowedPackages(packages);
-    } catch (e) {
-      appLog('Error handling notification config: $e', level: 'error');
-    }
+    // 安全加固：不再允许对端远程覆盖本地白名单。
+    // 筛选配置由本机用户自主管理（两层筛选模型）。
+    appLog('Ignored remote notification config (security policy)',
+        level: 'warning');
   }
 
   Future<void> broadcastNotificationMessage({
@@ -1076,6 +1144,27 @@ class SyncManager with WidgetsBindingObserver {
     await _sendSync(jsonData, targets.first.service);
   }
 
+  /// Peer-targeted send: resolves by peerId, returns success/failure.
+  Future<bool> sendTextToPeer(String content, {required String peerId}) async {
+    if (!isEnabled) return false;
+
+    final trimmed = content.trim();
+    if (trimmed.isEmpty) return false;
+
+    final target = availablePeers.where((p) => p.peerId == peerId).toList();
+    if (target.isEmpty) {
+      appLog('Could not find peer: $peerId', level: 'error');
+      return false;
+    }
+
+    final hash = _contentHashForPlainText(content);
+    final jsonData = _makeTextSyncPayload(content, hash);
+    if (jsonData == null) return false;
+
+    appLog('Sending text to ${target.first.displayName} (peerId=$peerId)...');
+    return await _sendSync(jsonData, target.first.service);
+  }
+
   String _contentHashForPlainText(String text) {
     final normalized = text
         .trim()
@@ -1113,6 +1202,25 @@ class SyncManager with WidgetsBindingObserver {
       chunkType: 'file/chunk',
       addToFileHistory: true,
     );
+  }
+
+  /// Peer-targeted send: resolves by peerId, returns success/failure.
+  Future<bool> sendFileToPeer(File file, {required String peerId}) async {
+    if (!isEnabled) return false;
+    final target = availablePeers.where((p) => p.peerId == peerId).toList();
+    if (target.isEmpty) {
+      appLog('Could not find peer: $peerId', level: 'error');
+      return false;
+    }
+    appLog('Sending file to ${target.first.displayName} (peerId=$peerId)...');
+    await _sendFile(
+      file,
+      service: target.first.service,
+      headerType: 'file/header',
+      chunkType: 'file/chunk',
+      addToFileHistory: true,
+    );
+    return true;
   }
 
   Future<void> _sendFile(
@@ -1225,37 +1333,44 @@ class SyncManager with WidgetsBindingObserver {
   }
 
   Future<Socket?> _connectToService(Service service) async {
-    try {
-      // Android docs: resolve immediately before connecting. Avoid relying on
-      // stale browse-time endpoints (and avoid IpLookup during discovery).
-      var target = service;
+    for (var attempt = 0; attempt < 2; attempt++) {
       try {
-        target = await resolve(service);
-      } catch (e) {
-        appLog(
-          'Resolve failed for ${service.name}, trying cached endpoint: $e',
-          level: 'warning',
-        );
-      }
+        var target = service;
+        try {
+          target = await resolve(service);
+        } catch (e) {
+          if (attempt == 0) {
+            await Future.delayed(const Duration(milliseconds: 200));
+            continue;
+          }
+          appLog(
+            'Resolve failed for ${service.name}, trying cached endpoint: $e',
+            level: 'warning',
+          );
+        }
 
-      final port = target.port ?? this.port;
-      if (target.addresses != null && target.addresses!.isNotEmpty) {
-        final v4 = target.addresses!
-            .where((a) => a.type == InternetAddressType.IPv4)
-            .toList();
-        final address = v4.isNotEmpty ? v4.first : target.addresses!.first;
-        return await Socket.connect(address, port, timeout: const Duration(seconds: 5));
+        final port = target.port ?? this.port;
+        if (target.addresses != null && target.addresses!.isNotEmpty) {
+          final v4 = target.addresses!
+              .where((a) => a.type == InternetAddressType.IPv4)
+              .toList();
+          final address = v4.isNotEmpty ? v4.first : target.addresses!.first;
+          return await Socket.connect(address, port, timeout: const Duration(seconds: 5));
+        }
+        final host = target.host;
+        if (host == null || host.isEmpty) {
+          appLog('No host/address for ${service.name}', level: 'error');
+          return null;
+        }
+        return await Socket.connect(host, port, timeout: const Duration(seconds: 5));
+      } catch (e) {
+        if (attempt > 0) {
+          appLog('Failed to connect to ${service.name}: $e', level: 'error');
+          return null;
+        }
       }
-      final host = target.host;
-      if (host == null || host.isEmpty) {
-        appLog('No host/address for ${service.name}', level: 'error');
-        return null;
-      }
-      return await Socket.connect(host, port, timeout: const Duration(seconds: 5));
-    } catch (e) {
-      appLog('Failed to connect to ${service.name}: $e', level: 'error');
-      return null;
     }
+    return null;
   }
 
   /// Writes one length-prefixed frame. Awaits flush so callers can detect a

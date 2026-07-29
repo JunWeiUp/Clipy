@@ -159,6 +159,7 @@ class AppStrings {
       _t('文本已发送至 $deviceName', 'Text sent to $deviceName');
   String fileSentTo(String deviceName) =>
       _t('已发送至 $deviceName', 'Sent to $deviceName');
+  String get sendFailed => _t('发送失败，目标设备可能离线或网络异常', 'Send failed. The target device may be offline or the network is unstable');
   String get noDevicesFound => _t('未发现设备', 'No devices found');
   String get sameWifiHint => _t('请确认其他设备连接到同一个 Wi-Fi', 'Ensure other devices are on the same WiFi');
   String get refreshDevices => _t('刷新设备', 'Refresh Devices');
@@ -202,6 +203,16 @@ class AppStrings {
   String get userApps => _t('用户应用', 'User Apps');
   String get systemApps => _t('系统应用', 'System Apps');
   String appCount(int count) => _t('$count 个应用', '$count apps');
+
+  // Notification Sync - two-layer filtering
+  String get collect => _t('收集', 'Collect');
+  String get sync => _t('同步', 'Sync');
+  String get collectAll => _t('收集全部', 'Collect All');
+  String get syncAll => _t('同步全部', 'Sync All');
+  String get syncing => _t('正在同步', 'Syncing');
+  String get paused => _t('已暂停', 'Paused');
+  String get collectedSection => _t('可收集', 'Collected');
+  String get notCollectedSection => _t('不可收集', 'Not Collected');
 
   String get clearAll => _t('清空', 'Clear All');
   String get copyContent => _t('复制内容', 'Copy Content');

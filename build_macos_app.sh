@@ -23,6 +23,11 @@ SWIFT_SOURCES=(
     Sources/MemoryFootprintReclaimer.swift
     Sources/HistoryThumbnailCache.swift
     Sources/AppDatabase.swift
+    Sources/SQLiteHelpers.swift
+    Sources/HistoryQueryBuilder.swift
+    Sources/HistorySerializer.swift
+    Sources/HistorySearchIndexManager.swift
+    Sources/HistoryMigrationService.swift
     Sources/HistoryRepository.swift
     Sources/ClipboardManager.swift
     Sources/HistorySearchRanker.swift

@@ -24,8 +24,24 @@ enum ScreenshotSaveService {
         let directory = PreferencesManager.shared.screenshotSaveDirectory
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let fileURL = uniqueFileURL(in: directory)
+            let fileURL = uniqueFileURL(in: directory, fileExtension: "png")
             try pngData.write(to: fileURL, options: .atomic)
+            return fileURL
+        } catch {
+            appLog("Screenshot save failed: \(error.localizedDescription)", level: .error)
+            return nil
+        }
+    }
+
+    /// Save an already-encoded image (JPEG or PNG) with its matching extension.
+    /// Used by the smart-encoding path so opaque screenshots save as compact .jpg.
+    @discardableResult
+    static func save(encoded: ScreenshotImageProcessor.EncodedImage) -> URL? {
+        let directory = PreferencesManager.shared.screenshotSaveDirectory
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let fileURL = uniqueFileURL(in: directory, fileExtension: encoded.fileExtension)
+            try encoded.data.write(to: fileURL, options: .atomic)
             return fileURL
         } catch {
             appLog("Screenshot save failed: \(error.localizedDescription)", level: .error)
@@ -38,7 +54,13 @@ enum ScreenshotSaveService {
         let directory = PreferencesManager.shared.screenshotSaveDirectory
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let fileURL = uniqueFileURL(in: directory)
+            if let encoded = ScreenshotImageProcessor.encodeForSave(from: image) {
+                let fileURL = uniqueFileURL(in: directory, fileExtension: encoded.fileExtension)
+                try encoded.data.write(to: fileURL, options: .atomic)
+                return fileURL
+            }
+            // Fallback: plain PNG if smart encoding fails.
+            let fileURL = uniqueFileURL(in: directory, fileExtension: "png")
             guard let pngData = ScreenshotImageProcessor.pngData(from: image) else {
                 appLog("Screenshot save failed: could not encode PNG", level: .error)
                 return nil
@@ -51,12 +73,12 @@ enum ScreenshotSaveService {
         }
     }
 
-    private static func uniqueFileURL(in directory: URL) -> URL {
+    private static func uniqueFileURL(in directory: URL, fileExtension: String) -> URL {
         let baseName = formattedBaseName()
-        var candidate = directory.appendingPathComponent("\(baseName).png")
+        var candidate = directory.appendingPathComponent("\(baseName).\(fileExtension)")
         var index = 1
         while FileManager.default.fileExists(atPath: candidate.path) {
-            candidate = directory.appendingPathComponent("\(baseName)-\(index).png")
+            candidate = directory.appendingPathComponent("\(baseName)-\(index).\(fileExtension)")
             index += 1
         }
         return candidate

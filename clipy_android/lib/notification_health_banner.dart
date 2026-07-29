@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'app_localizations.dart';
 import 'notification_health_monitor.dart';
@@ -13,18 +14,25 @@ class NotificationHealthBanner extends StatefulWidget {
 
 class _NotificationHealthBannerState extends State<NotificationHealthBanner> {
   NotificationHealthStatus? _status;
+  StreamSubscription<NotificationHealthStatus>? _healthSub;
 
   @override
   void initState() {
     super.initState();
     _status = NotificationHealthMonitor.instance.latestStatus;
-    NotificationHealthMonitor.instance.onHealthChanged.listen((status) {
+    _healthSub = NotificationHealthMonitor.instance.onHealthChanged.listen((status) {
       if (mounted) setState(() => _status = status);
     });
     Future<void>.microtask(() async {
       final status = await NotificationHealthMonitor.instance.checkHealth();
       if (mounted) setState(() => _status = status);
     });
+  }
+
+  @override
+  void dispose() {
+    _healthSub?.cancel();
+    super.dispose();
   }
 
   @override

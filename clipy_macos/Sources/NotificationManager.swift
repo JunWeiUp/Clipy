@@ -14,7 +14,7 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     private let repository = NotificationRepository.shared
 
     var allowedPackages: Set<String> = []
-    var notificationSyncEnabled: Bool = false
+    var notificationSyncEnabled: Bool = true
     var notificationSound: Bool = true
 
     var notificationCount: Int { repository.count() }
@@ -148,7 +148,10 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // MARK: - Handle Remote Notifications
 
     func handleRemoteNotification(_ decrypted: String, from senderDevice: String) {
-        guard notificationSyncEnabled else { return }
+        guard notificationSyncEnabled else {
+            appLog("NotificationManager: dropped incoming notification, sync disabled", level: .warning)
+            return
+        }
 
         guard let data = decrypted.data(using: .utf8),
               let entry = try? JSONDecoder().decode(NotificationEntry.self, from: data) else {
@@ -160,13 +163,11 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             return
         }
 
-        if !allowedPackages.isEmpty && !allowedPackages.contains(entry.packageName) {
-            return
-        }
-
         let accepted = upsertNotification(entry)
         if accepted {
             showSystemNotification(entry)
+            // Acknowledge receipt so Android can remove from offline queue
+            SyncManager.shared.sendNotificationAck(hash: entry.id)
         }
         appLog("NotificationManager: received from \(senderDevice): \(entry.title)")
     }
@@ -194,13 +195,17 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         guard !isEmptyNotification(entry) else { return false }
 
         switch repository.upsert(entry) {
-        case .inserted, .updated:
+        case .inserted:
             notifyNotificationsChanged()
             return true
         case .replacedDuplicate(let removedId):
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [removedId])
             notifyNotificationsChanged()
             return true
+        case .updated:
+            // Same id already exists — this is a re-send (backfill). Don't show banner again.
+            notifyNotificationsChanged()
+            return false
         }
     }
 
@@ -277,9 +282,18 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func loadPreferences() {
-        notificationSyncEnabled = UserDefaults.standard.bool(forKey: "notificationSyncEnabled")
-        notificationSound = UserDefaults.standard.bool(forKey: "notificationSound")
-        if let packages = UserDefaults.standard.stringArray(forKey: "notificationAllowedPackages") {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: "notificationSyncEnabled") == nil {
+            notificationSyncEnabled = true
+        } else {
+            notificationSyncEnabled = defaults.bool(forKey: "notificationSyncEnabled")
+        }
+        if defaults.object(forKey: "notificationSound") == nil {
+            notificationSound = true
+        } else {
+            notificationSound = defaults.bool(forKey: "notificationSound")
+        }
+        if let packages = defaults.stringArray(forKey: "notificationAllowedPackages") {
             allowedPackages = Set(packages)
         }
     }

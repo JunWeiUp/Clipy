@@ -66,6 +66,22 @@ final class SearchViewModel: ObservableObject {
         dateFilter = snapshot.dateFilter
         useRegex = snapshot.useRegex
         performSearch(immediate: true)
+        registerHistoryChangeObserver()
+    }
+
+    /// Called when the search window is reopened while still cached (within the
+    /// WindowSession teardown window). SwiftUI's `.onAppear` does NOT fire again
+    /// in that case because the view tree is reused, yet `prepareForClose`
+    /// cleared `results` and removed the change observer on close. Without this
+    /// the list would be blank until the user toggled a filter. Re-runs the
+    /// query and re-registers the observer so the reopened window reflects the
+    /// current history (including anything copied while it was closed).
+    func reactivate() {
+        performSearch(immediate: true)
+        registerHistoryChangeObserver()
+    }
+
+    private func registerHistoryChangeObserver() {
         guard historyObserver == nil else { return }
         historyObserver = NotificationCenter.default.addObserver(
             forName: .clipboardHistoryDidChange,

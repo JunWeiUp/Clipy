@@ -201,6 +201,53 @@ final class NotificationViewModel: ObservableObject {
         manager.clearAllOnRemote()
     }
 
+    func exportJSON() {
+        let panel = NSSavePanel()
+        panel.title = "Export Notifications"
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "notifications_\(exportTimestamp()).json"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let allEntries = loadedEntries
+        let jsonArray = allEntries.map { entry -> [String: Any] in
+            var dict: [String: Any] = [
+                "id": entry.id,
+                "packageName": entry.packageName,
+                "appName": entry.appName,
+                "title": entry.title,
+                "body": entry.body,
+                "postTime": entry.postTime,
+                "isClearable": entry.isClearable,
+            ]
+            if let key = entry.notificationKey, !key.isEmpty { dict["notificationKey"] = key }
+            if let subtitle = entry.subtitle, !subtitle.isEmpty { dict["subtitle"] = subtitle }
+            if let groupKey = entry.groupKey, !groupKey.isEmpty { dict["groupKey"] = groupKey }
+            if let extras = entry.extras, !extras.isEmpty { dict["extras"] = extras }
+            return dict
+        }
+
+        let data: Data
+        do {
+            data = try JSONSerialization.data(withJSONObject: jsonArray, options: [.prettyPrinted, .sortedKeys])
+        } catch {
+            appLog("Failed to serialize notifications: \(error)", level: .error)
+            return
+        }
+
+        do {
+            try data.write(to: url)
+            appLog("Exported \(jsonArray.count) notifications to \(url.path)")
+        } catch {
+            appLog("Failed to write export file: \(error)", level: .error)
+        }
+    }
+
+    private func exportTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        return formatter.string(from: Date())
+    }
+
     private func date(from timestamp: TimeInterval) -> Date {
         timestamp > 10_000_000_000
             ? Date(timeIntervalSince1970: timestamp / 1000)
@@ -254,6 +301,7 @@ struct NotificationView: View {
                 ],
                 trailing: [
                     AppToolbarButton(title: L10n.t(.copyContent), systemImage: "doc.on.doc", action: viewModel.copySelected),
+                    AppToolbarButton(title: "Export JSON", systemImage: "square.and.arrow.up", action: viewModel.exportJSON),
                 ]
             )
         } content: {
