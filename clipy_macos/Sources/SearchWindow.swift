@@ -31,6 +31,12 @@ final class SearchWindow {
             },
             update: { window in
                 window.title = L10n.t(.searchHistory)
+            },
+            // Fired only when reopening a cached window: SwiftUI .onAppear does
+            // not re-run there, so the ViewModel must be told to reload (its
+            // results were cleared on close and its change observer removed).
+            onShow: { [weak self] in
+                self?.viewModel?.reactivate()
             }
         )
     }

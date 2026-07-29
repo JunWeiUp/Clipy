@@ -1,5 +1,6 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+import '../log_manager.dart';
 import '../storage_paths.dart';
 import 'legacy_migration.dart';
 
@@ -8,7 +9,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'clipy.db';
-  static const schemaVersion = 1;
+  static const schemaVersion = 2;
 
   Database? _db;
 
@@ -25,6 +26,19 @@ class AppDatabase {
       path,
       version: schemaVersion,
       onCreate: _onCreate,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        appLog('AppDatabase: upgrade from $oldVersion to $newVersion');
+        if (oldVersion < 2) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS pending_notification_sync (
+              notification_id TEXT PRIMARY KEY,
+              content TEXT NOT NULL,
+              hash TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            )
+          ''');
+        }
+      },
     );
     await LegacyMigration.runIfNeeded(db);
     return db;
@@ -88,5 +102,14 @@ class AppDatabase {
     ''');
     await db.execute(
         'CREATE INDEX idx_app_logs_created ON app_logs(created_at DESC)');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pending_notification_sync (
+        notification_id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    ''');
   }
 }

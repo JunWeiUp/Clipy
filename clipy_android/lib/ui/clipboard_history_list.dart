@@ -80,8 +80,8 @@ class _PaginatedClipboardHistoryListState
 
   Future<void> _showSendTextSheet(BuildContext context, String text) async {
     final l10n = context.l10n;
-    final devices = SyncManager.instance.availableDeviceNames;
-    if (devices.isEmpty) {
+    final peers = SyncManager.instance.availablePeers;
+    if (peers.isEmpty) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.noDevicesFound)),
@@ -89,7 +89,7 @@ class _PaginatedClipboardHistoryListState
       return;
     }
 
-    final deviceName = await showModalBottomSheet<String>(
+    final peer = await showModalBottomSheet<DiscoveredPeer>(
       context: context,
       builder: (sheetContext) => SafeArea(
         child: Column(
@@ -102,23 +102,29 @@ class _PaginatedClipboardHistoryListState
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ),
-            ...devices.map(
-              (name) => ListTile(
-                leading: const Icon(Icons.devices),
-                title: Text(name),
-                onTap: () => Navigator.pop(sheetContext, name),
-              ),
+            ...peers.map(
+              (p) {
+                final shortId = p.peerId.length > 8
+                    ? p.peerId.substring(0, 8)
+                    : p.peerId;
+                return ListTile(
+                  leading: const Icon(Icons.devices),
+                  title: Text(p.displayName),
+                  subtitle: Text(shortId, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                  onTap: () => Navigator.pop(sheetContext, p),
+                );
+              },
             ),
           ],
         ),
       ),
     );
 
-    if (deviceName == null || !context.mounted) return;
-    await SyncManager.instance.sendText(text, targetDevice: deviceName);
+    if (peer == null || !context.mounted) return;
+    final success = await SyncManager.instance.sendTextToPeer(text, peerId: peer.peerId);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(l10n.textSentTo(deviceName))),
+      SnackBar(content: Text(success ? l10n.textSentTo(peer.displayName) : l10n.sendFailed)),
     );
   }
 

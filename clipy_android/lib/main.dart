@@ -17,7 +17,7 @@ import 'database/app_database.dart';
 import 'database/file_transfer_repository.dart';
 import 'ui/clipboard_history_list.dart';
 
-Future<void> pickAndSendFileToDevice(BuildContext context, String deviceName) async {
+Future<void> pickAndSendFileToDevice(BuildContext context, DiscoveredPeer peer) async {
   final l10n = context.l10n;
   final result = await FilePicker.pickFiles(allowMultiple: false);
   if (result == null || result.files.isEmpty) return;
@@ -25,17 +25,17 @@ Future<void> pickAndSendFileToDevice(BuildContext context, String deviceName) as
   if (path == null) return;
   final file = File(path);
   if (!file.existsSync()) return;
-  await SyncManager.instance.sendFile(file, targetDevice: deviceName);
+  final success = await SyncManager.instance.sendFileToPeer(file, peerId: peer.peerId);
   if (context.mounted) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(l10n.fileSentTo(deviceName))),
+      SnackBar(content: Text(success ? l10n.fileSentTo(peer.displayName) : l10n.sendFailed)),
     );
   }
 }
 
 Future<void> showSendTextToDeviceDialog(
   BuildContext context,
-  String deviceName, {
+  DiscoveredPeer peer, {
   String? initialText,
 }) async {
   final l10n = context.l10n;
@@ -43,7 +43,7 @@ Future<void> showSendTextToDeviceDialog(
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: Text(l10n.sendTextTo(deviceName)),
+      title: Text(l10n.sendTextTo(peer.displayName)),
       content: TextField(
         controller: controller,
         autofocus: true,
@@ -67,34 +67,38 @@ Future<void> showSendTextToDeviceDialog(
     ),
   );
   if (confirmed != true || controller.text.trim().isEmpty) return;
-  await SyncManager.instance.sendText(
+  final success = await SyncManager.instance.sendTextToPeer(
     controller.text,
-    targetDevice: deviceName,
+    peerId: peer.peerId,
   );
   if (context.mounted) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(l10n.textSentTo(deviceName))),
+      SnackBar(content: Text(success ? l10n.textSentTo(peer.displayName) : l10n.sendFailed)),
     );
   }
 }
 
 class LanDeviceActionTile extends StatelessWidget {
-  final String deviceName;
+  final DiscoveredPeer peer;
 
-  const LanDeviceActionTile({super.key, required this.deviceName});
+  const LanDeviceActionTile({super.key, required this.peer});
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final shortId = peer.peerId.length > 8
+        ? peer.peerId.substring(0, 8)
+        : peer.peerId;
     return ListTile(
       leading: const Icon(Icons.devices),
-      title: Text(deviceName),
+      title: Text(peer.displayName),
+      subtitle: Text(shortId, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
       trailing: PopupMenuButton<String>(
         onSelected: (value) {
           if (value == 'text') {
-            showSendTextToDeviceDialog(context, deviceName);
+            showSendTextToDeviceDialog(context, peer);
           } else if (value == 'file') {
-            pickAndSendFileToDevice(context, deviceName);
+            pickAndSendFileToDevice(context, peer);
           }
         },
         itemBuilder: (context) => [
@@ -523,7 +527,7 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
   late TextEditingController _excludedController;
   late TextEditingController _portController;
   StreamSubscription? _devicesSubscription;
-  List<String> _availableDevices = [];
+  List<DiscoveredPeer> _availableDevices = [];
 
   @override
   void initState() {
@@ -534,11 +538,11 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
     _portController = TextEditingController(
       text: SyncManager.instance.port.toString(),
     );
-    _availableDevices = SyncManager.instance.availableDeviceNames;
-    _devicesSubscription = SyncManager.instance.onDevicesChanged.listen((devices) {
+    _availableDevices = SyncManager.instance.availablePeers;
+    _devicesSubscription = SyncManager.instance.onPeersChanged.listen((peers) {
       if (mounted) {
         setState(() {
-          _availableDevices = devices;
+          _availableDevices = peers;
         });
       }
     });
@@ -682,7 +686,7 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
           )
         else
           ..._availableDevices.map(
-            (deviceName) => LanDeviceActionTile(deviceName: deviceName),
+            (peer) => LanDeviceActionTile(peer: peer),
           ),
         const Divider(),
         ListTile(
@@ -904,7 +908,7 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
   late TextEditingController _portController;
   late TextEditingController _nameController;
   StreamSubscription? _devicesSubscription;
-  List<String> _availableDevices = [];
+  List<DiscoveredPeer> _availableDevices = [];
 
   @override
   void initState() {
@@ -915,11 +919,11 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
     _nameController = TextEditingController(
       text: SyncManager.instance.displayName,
     );
-    _availableDevices = SyncManager.instance.availableDeviceNames;
-    _devicesSubscription = SyncManager.instance.onDevicesChanged.listen((devices) {
+    _availableDevices = SyncManager.instance.availablePeers;
+    _devicesSubscription = SyncManager.instance.onPeersChanged.listen((peers) {
       if (mounted) {
         setState(() {
-          _availableDevices = devices;
+          _availableDevices = peers;
         });
       }
     });
@@ -1053,7 +1057,7 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
           )
         else
           ..._availableDevices.map(
-            (deviceName) => LanDeviceActionTile(deviceName: deviceName),
+            (peer) => LanDeviceActionTile(peer: peer),
           ),
         const Divider(),
         ListTile(
@@ -1088,7 +1092,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late TextEditingController _portController;
   late TextEditingController _nameController;
   StreamSubscription? _devicesSubscription;
-  List<String> _availableDevices = [];
+  List<DiscoveredPeer> _availableDevices = [];
 
   @override
   void initState() {
@@ -1099,11 +1103,11 @@ class _SettingsPageState extends State<SettingsPage> {
     _nameController = TextEditingController(
       text: SyncManager.instance.displayName,
     );
-    _availableDevices = SyncManager.instance.availableDeviceNames;
-    _devicesSubscription = SyncManager.instance.onDevicesChanged.listen((devices) {
+    _availableDevices = SyncManager.instance.availablePeers;
+    _devicesSubscription = SyncManager.instance.onPeersChanged.listen((peers) {
       if (mounted) {
         setState(() {
-          _availableDevices = devices;
+          _availableDevices = peers;
         });
       }
     });
@@ -1225,7 +1229,7 @@ class _SettingsPageState extends State<SettingsPage> {
             )
           else
             ..._availableDevices.map(
-              (deviceName) => LanDeviceActionTile(deviceName: deviceName),
+              (peer) => LanDeviceActionTile(peer: peer),
             ),
           const Divider(),
           ListTile(

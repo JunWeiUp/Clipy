@@ -25,6 +25,12 @@ struct DiscoveredPeer {
     let browseResult: NWBrowser.Result
 }
 
+struct DeviceEntry {
+    let displayName: String   // Disambiguated name (may include short peerId suffix)
+    let peerId: String
+    let originalName: String  // Original display name from mDNS
+}
+
 struct FileChunk: Codable {
     let fileId: String
     let chunkIndex: Int
@@ -103,10 +109,24 @@ class SyncManager: NSObject, NetServiceDelegate {
     /// mDNS does not reliably report abrupt departures (kill, power loss, Wi-Fi
     /// drop), so discovered peers are probed over TCP on this interval and
     /// evicted after peerLivenessMaxMisses consecutive failures.
-    private static let peerLivenessInterval: TimeInterval = 30
-    private static let peerLivenessMaxMisses = 2
+    ///
+    /// 45s × 3 ≈ 2 min 15s grace window. The previous 30s × 2 ≈ 1 min was too
+    /// aggressive: a peer's TCP listener can be briefly unresponsive during
+    /// AppNap / display sleep / Wi-Fi roam, after which it would be evicted and
+    /// only reappear on the next mDNS browse cycle. Keep aligned with Android.
+    private static let peerLivenessInterval: TimeInterval = 45
+    private static let peerLivenessMaxMisses = 3
     private var peerLivenessTimer: DispatchSourceTimer?
     private var peerMissCounts: [String: Int] = [:]
+
+    /// Watches the system network path so a Wi-Fi switch / interface change /
+    /// reconnect triggers an immediate `refreshDiscovery()` instead of relying
+    /// on the wake notification or a manual refresh. Tracks the previous status
+    /// and available interfaces so we only react to meaningful transitions.
+    private var pathMonitor: NWPathMonitor?
+    private let pathMonitorQueue = DispatchQueue(label: "com.clipy.sync.pathmonitor")
+    private var lastPathStatus: NWPath.Status = .requiresConnection
+    private var lastInterfaceTypes: Set<NWInterface.InterfaceType> = []
 
     /// Per-connection reassembly buffer. Network.framework does not guarantee a
     /// single `receive` returns a whole frame; we accumulate until the declared
@@ -398,14 +418,58 @@ class SyncManager: NSObject, NetServiceDelegate {
             self?.refreshDiscovery()
         }
     }
-    
+
+    /// Starts monitoring the system network path so a Wi-Fi switch / interface
+    /// change / reconnect triggers an immediate `refreshDiscovery()`. Without
+    /// this, mDNS advertisement and browsing can stay stale after a network
+    /// change until the next manual refresh or system wake.
+    private func startPathMonitoring() {
+        guard pathMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            let prevStatus = self.lastPathStatus
+            let prevTypes = self.lastInterfaceTypes
+            let curTypes = Set(path.availableInterfaces.map { $0.type })
+            self.lastPathStatus = path.status
+            self.lastInterfaceTypes = curTypes
+
+            guard PreferencesManager.shared.isSyncEnabled else { return }
+            guard path.status == .satisfied else { return }
+            // Refresh on recovery (was not satisfied → now satisfied) or on a
+            // meaningful interface change while staying satisfied (e.g. roaming
+            // between Wi-Fi APs / switching SSID). Same-type/same-status updates
+            // are ignored to avoid flapping. refreshDiscovery() has its own
+            // reentry guard, so concurrent triggers are coalesced.
+            let recovered = prevStatus != .satisfied
+            let interfacesChanged = prevTypes != curTypes
+            guard recovered || interfacesChanged else { return }
+            appLog("Network path changed (status \(prevStatus)→\(path.status), types \(prevTypes)→\(curTypes)); refreshing LAN discovery")
+            self.refreshDiscovery()
+        }
+        monitor.start(queue: pathMonitorQueue)
+        pathMonitor = monitor
+    }
+
+    private func stopPathMonitoring() {
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        lastPathStatus = .requiresConnection
+        lastInterfaceTypes = []
+    }
+
     func start() {
         appLog("SyncManager starting...")
-        guard PreferencesManager.shared.isSyncEnabled else { return }
+        let needListen = PreferencesManager.shared.isSyncEnabled ||
+            NotificationManager.shared.notificationSyncEnabled
+        guard needListen else { return }
 
         startListening()
-        startBrowsing()
-        startPeerLivenessProbing()
+        if PreferencesManager.shared.isSyncEnabled {
+            startBrowsing()
+            startPeerLivenessProbing()
+        }
+        startPathMonitoring()
     }
     
     func stop() {
@@ -440,6 +504,7 @@ class SyncManager: NSObject, NetServiceDelegate {
         peerLivenessTimer?.cancel()
         peerLivenessTimer = nil
         isProbingPeers = false
+        stopPathMonitoring()
 
         // A stop discards queued frames: they were bound to the now-vanished
         // session. On restart, fresh copies will re-broadcast as the user re-copies.
@@ -627,6 +692,27 @@ class SyncManager: NSObject, NetServiceDelegate {
 
     var availableDeviceNames: [String] {
         return availablePeers.map(\.displayName)
+    }
+
+    /// Returns device entries with disambiguated display names. When two or more
+    /// peers share the same original display name, a short peerId suffix is
+    /// appended (e.g. "Mac (a1b2c3)") so the user can distinguish them in the menu.
+    var availableDeviceEntries: [DeviceEntry] {
+        let peers = availablePeers
+        var nameCounts: [String: Int] = [:]
+        for peer in peers {
+            nameCounts[peer.displayName, default: 0] += 1
+        }
+        return peers.map { peer in
+            let display: String
+            if (nameCounts[peer.displayName] ?? 0) > 1 {
+                let suffix = String(peer.peerId.prefix(6))
+                display = "\(peer.displayName) (\(suffix))"
+            } else {
+                display = peer.displayName
+            }
+            return DeviceEntry(displayName: display, peerId: peer.peerId, originalName: peer.displayName)
+        }
     }
 
     // MARK: - Peer Liveness Probing
@@ -939,11 +1025,9 @@ class SyncManager: NSObject, NetServiceDelegate {
     }
 
     private func handleNotificationConfig(_ decrypted: String) {
-        guard let data = decrypted.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let packages = json["allowedPackages"] as? [String] else { return }
-        NotificationManager.shared.allowedPackages = Set(packages)
-        NotificationManager.shared.savePreferences()
+        // 安全加固：不再允许对端远程覆盖本地白名单。
+        // 筛选配置由本机用户自主管理（Android 端两层筛选模型）。
+        appLog("SyncManager: ignored remote notification config (security policy)", level: .warning)
     }
     
     // MARK: - Inbound File Transfers (state confined to syncQueue)
@@ -1030,13 +1114,12 @@ class SyncManager: NSObject, NetServiceDelegate {
             let localURL = pending.localURL
 
             DispatchQueue.main.async {
-                ClipboardManager.shared.addToFileHistory(
-                    fileName: header.fileName,
-                    filePath: localURL.path,
-                    fileSize: header.fileSize,
-                    senderName: senderName
-                )
-                
+                // Record the received file in the MAIN clipboard history so it
+                // appears in the history list, global search, and the Files type
+                // filter — same as locally-copied files. (The legacy standalone
+                // file_history.json store has been removed.)
+                ClipboardManager.shared.addReceivedFileToHistory(localURL, senderName: senderName)
+
                 let notification = NSUserNotification()
                 notification.title = L10n.t(.fileReceived)
                 notification.informativeText = L10n.format(.receivedFileFrom, header.fileName, senderName)
@@ -1102,6 +1185,23 @@ class SyncManager: NSObject, NetServiceDelegate {
         guard let jsonData = try? JSONEncoder().encode(message) else { return }
 
         dispatchBroadcast(jsonData: jsonData, type: type)
+    }
+
+    /// Send ACK for a received notification so Android can remove it from
+    /// its offline delivery queue. Uses dispatchBroadcast directly (no
+    /// isSyncEnabled check) since notification sync operates independently.
+    func sendNotificationAck(hash: String) {
+        appLog("Sending notification ACK for hash: \(hash)")
+        guard let encryptedContent = encrypt("{}") else { return }
+        let message = SyncMessage(
+            deviceId: peerId,
+            timestamp: Date().timeIntervalSince1970,
+            type: "notification/ack",
+            content: encryptedContent,
+            hash: hash
+        )
+        guard let jsonData = try? JSONEncoder().encode(message) else { return }
+        dispatchBroadcast(jsonData: jsonData, type: "notification/ack")
     }
 
     // MARK: - Sending Sync
@@ -1173,6 +1273,38 @@ class SyncManager: NSObject, NetServiceDelegate {
         }
     }
 
+    // MARK: - Peer-targeted sends (resolve by peerId, not displayName)
+
+    @discardableResult
+    func sendTextToPeer(_ content: String, hash: String, peerId: String) -> Bool {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        guard PreferencesManager.shared.isSyncEnabled else { return false }
+
+        guard let peer = availablePeers.first(where: { $0.peerId == peerId }) else {
+            appLog("Could not find peer: \(peerId)", level: .error)
+            return false
+        }
+
+        guard let jsonData = makeTextSyncPayload(content: content, hash: hash) else { return false }
+
+        appLog("Sending text to \(peer.displayName) (peerId=\(peer.peerId))")
+        sendSync(jsonData, to: peer.endpoint, type: "text/plain", targetPeerId: peerId)
+        return true
+    }
+
+    @discardableResult
+    func sendFileToPeer(at url: URL, peerId: String) -> Bool {
+        guard PreferencesManager.shared.isSyncEnabled else { return false }
+        guard let peer = availablePeers.first(where: { $0.peerId == peerId }) else {
+            appLog("Could not find peer: \(peerId)", level: .error)
+            return false
+        }
+        sendFile(at: url, toEndpoint: peer.endpoint, recipientName: peer.displayName,
+                 headerType: "file/header", chunkType: "file/chunk")
+        return true
+    }
+
     func sendText(_ content: String, hash: String, toDevice targetName: String) {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -1204,24 +1336,22 @@ class SyncManager: NSObject, NetServiceDelegate {
     }
     
     func sendFile(at url: URL, toDevice targetName: String) {
-        sendFile(at: url, toDevice: targetName, headerType: "file/header", chunkType: "file/chunk", addToFileHistory: true)
-    }
-
-    private func sendFile(
-        at url: URL,
-        toDevice targetName: String,
-        headerType: String,
-        chunkType: String,
-        addToFileHistory: Bool
-    ) {
-        appLog("Preparing to send file \(url.lastPathComponent) to \(targetName)")
-
         guard let peer = availablePeers.first(where: { $0.displayName == targetName }) else {
             appLog("Could not find endpoint for device: \(targetName)", level: .error)
             return
         }
+        sendFile(at: url, toEndpoint: peer.endpoint, recipientName: targetName,
+                 headerType: "file/header", chunkType: "file/chunk")
+    }
 
-        let endpoint = peer.endpoint
+    private func sendFile(
+        at url: URL,
+        toEndpoint endpoint: NWEndpoint,
+        recipientName: String,
+        headerType: String,
+        chunkType: String
+    ) {
+        appLog("Preparing to send file \(url.lastPathComponent) to \(recipientName)")
         let fileId = UUID().uuidString
         let fileName = url.lastPathComponent
         let fileSize: Int64
@@ -1251,13 +1381,13 @@ class SyncManager: NSObject, NetServiceDelegate {
         // and run everything on the dedicated transfer queue so syncQueue stays responsive.
         fileTransferQueue.async {
             guard let connection = self.openBlockingConnection(to: endpoint) else {
-                appLog("Failed to open connection for file transfer to \(targetName)", level: .error)
+                appLog("Failed to open connection for file transfer to \(recipientName)", level: .error)
                 return
             }
             defer { connection.cancel() }
 
             guard self.sendFrameBlocking(headerJson, over: connection) else {
-                appLog("Failed to send file header to \(targetName)", level: .error)
+                appLog("Failed to send file header to \(recipientName)", level: .error)
                 return
             }
 
@@ -1323,15 +1453,11 @@ class SyncManager: NSObject, NetServiceDelegate {
                 }
                 appLog("File transfer completed for \(fileName) (\(chunkIndex) chunks)")
 
-                if addToFileHistory {
-                    DispatchQueue.main.async {
-                        ClipboardManager.shared.addToFileHistory(
-                            fileName: fileName,
-                            filePath: url.path,
-                            fileSize: fileSize,
-                            senderName: "Me (Sent to \(targetName))"
-                        )
-                    }
+                // Record the sent file in the MAIN clipboard history (same store
+                // as received files and locally-copied files) so it shows up in
+                // the history list, global search, and the Files type filter.
+                DispatchQueue.main.async {
+                    ClipboardManager.shared.addSentFileToHistory(url, recipientName: recipientName)
                 }
             } catch {
                 appLog("Failed to read file: \(error)", level: .error)

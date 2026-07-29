@@ -99,8 +99,12 @@ class MainActivity: FlutterActivity() {
                     val notificationKey = call.argument<String>("notificationKey")
                     val listener = ClipyNotificationListenerService.instance
                     if (listener != null && packageName != null) {
-                        listener.dismissNotification(packageName, notificationKey)
-                        result.success(null)
+                        try {
+                            listener.dismissNotification(packageName, notificationKey)
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("DISMISS_FAILED", e.message, null)
+                        }
                     } else {
                         result.error("NO_LISTENER", "NotificationListenerService not running", null)
                     }
@@ -110,8 +114,12 @@ class MainActivity: FlutterActivity() {
                     val notificationKey = call.argument<String>("notificationKey")
                     val listener = ClipyNotificationListenerService.instance
                     if (listener != null && packageName != null) {
-                        listener.openNotification(packageName, notificationKey)
-                        result.success(null)
+                        try {
+                            listener.openNotification(packageName, notificationKey)
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("OPEN_FAILED", e.message, null)
+                        }
                     } else {
                         result.error("NO_LISTENER", "NotificationListenerService not running", null)
                     }
@@ -119,8 +127,12 @@ class MainActivity: FlutterActivity() {
                 "refreshActiveNotifications" -> {
                     val listener = ClipyNotificationListenerService.instance
                     if (listener != null) {
-                        listener.emitActiveNotifications()
-                        result.success(null)
+                        try {
+                            listener.emitActiveNotifications()
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("REFRESH_FAILED", e.message, null)
+                        }
                     } else if (isNotificationListenerEnabled()) {
                         requestNotificationListenerRebind()
                         result.success(null)
@@ -131,14 +143,27 @@ class MainActivity: FlutterActivity() {
                 "clearAllNotifications" -> {
                     val listener = ClipyNotificationListenerService.instance
                     if (listener != null) {
-                        listener.clearAllNotifications()
-                        result.success(null)
+                        try {
+                            listener.clearAllNotifications()
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("CLEAR_FAILED", e.message, null)
+                        }
                     } else {
                         result.error("NO_LISTENER", "NotificationListenerService not running", null)
                     }
                 }
                 "getInstalledApps" -> {
-                    result.success(getInstalledAppsList())
+                    Thread {
+                        try {
+                            val apps = getInstalledAppsList()
+                            runOnUiThread { result.success(apps) }
+                        } catch (e: Exception) {
+                            runOnUiThread {
+                                result.error("GET_APPS_FAILED", e.message, null)
+                            }
+                        }
+                    }.start()
                 }
                 "getListenerStatus" -> {
                     val permissionGranted = isNotificationListenerEnabled()
@@ -189,6 +214,7 @@ class MainActivity: FlutterActivity() {
     }
 
     override fun onDestroy() {
+        ClipyNotificationListenerService.setMethodChannel(null)
         clipboardChangeListener?.detach()
         clipboardChangeListener = null
         super.onDestroy()

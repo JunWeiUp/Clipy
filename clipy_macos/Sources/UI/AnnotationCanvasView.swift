@@ -644,7 +644,9 @@ final class AnnotationCanvasView: NSView {
         NSGraphicsContext.restoreGraphicsState()
 
         guard let output = context.makeImage() else { return nil }
-        return NSImage(cgImage: output, size: baseImage.size)
+        // Attach a bitmap rep so downstream bestCGImage / pngData get the native
+        // pixel buffer instead of re-rasterizing at the logical point size.
+        return ScreenshotImageProcessor.wrapWithBitmapRep(output, logicalSize: baseImage.size)
     }
 
     static func flatten(baseImage: NSImage, model: AnnotationCanvasModel) -> NSImage? {

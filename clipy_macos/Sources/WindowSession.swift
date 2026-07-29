@@ -14,10 +14,16 @@ final class WindowSession<Content: View> {
         create: () -> HostingWindow<Content>,
         onPrepareForClose: @escaping () -> Void,
         onTeardown: @escaping () -> Void = {},
-        update: ((HostingWindow<Content>) -> Void)? = nil
+        update: ((HostingWindow<Content>) -> Void)? = nil,
+        onShow: (() -> Void)? = nil
     ) {
         cancelTeardown()
         self.onTeardown = onTeardown
+
+        // Track whether this call is reusing an already-cached window so callers
+        // can run "reactivate" logic (reload data, re-register observers) that
+        // SwiftUI's .onAppear would otherwise miss on a reused NSHostingController.
+        let isReusingExistingWindow = window != nil
 
         if window == nil {
             let created = create()
@@ -30,6 +36,13 @@ final class WindowSession<Content: View> {
 
         if let window {
             update?(window)
+            if isReusingExistingWindow {
+                // First-open relies on SwiftUI .onAppear (which fires once when
+                // the view tree is first inserted); subsequent reopens only call
+                // show(), so the view never re-appears — give callers a hook to
+                // refresh state that was cleared on close.
+                onShow?()
+            }
             window.show()
         }
     }

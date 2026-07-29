@@ -85,10 +85,10 @@ class NotificationRepository {
 
     final dupRows = await db.query(
       'notifications',
-      where: 'package_name = ? AND ABS(post_time - ?) <= ?',
-      whereArgs: [entry.packageName, entry.postTime, duplicateWindowMs],
+      where: 'package_name = ?',
+      whereArgs: [entry.packageName],
       orderBy: 'post_time DESC',
-      limit: 20,
+      limit: 50,
     );
     for (final row in dupRows) {
       final existing = _fromRow(row);
@@ -110,14 +110,13 @@ class NotificationRepository {
   }
 
   Future<void> _trimToLimit(Database db) async {
-    await db.rawDelete('''
-      DELETE FROM notifications
-      WHERE id NOT IN (
-        SELECT id FROM notifications
-        ORDER BY post_time DESC
-        LIMIT ?
-      )
-    ''', [maxRows]);
+    final thresholdRow = await db.rawQuery(
+      'SELECT post_time FROM notifications ORDER BY post_time DESC LIMIT 1 OFFSET ?',
+      [maxRows],
+    );
+    if (thresholdRow.isEmpty) return;
+    final threshold = thresholdRow.first['post_time'] as int;
+    await db.delete('notifications', where: 'post_time < ?', whereArgs: [threshold]);
   }
 
   bool _isDuplicate(NotificationEntry existing, NotificationEntry incoming) {
@@ -197,6 +196,11 @@ class NotificationRepository {
     await (await _db).delete('notifications', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<void> removeByNotificationKey(String key) async {
+    await (await _db).delete('notifications',
+        where: 'notification_key = ?', whereArgs: [key]);
+  }
+
   Future<void> clearAll() async {
     await (await _db).delete('notifications');
   }
@@ -205,5 +209,64 @@ class NotificationRepository {
     final rows = await (await _db).rawQuery(
         'SELECT DISTINCT package_name FROM notifications ORDER BY package_name');
     return rows.map((r) => r['package_name'] as String).toList();
+  }
+
+  // ---- Pending notification sync (offline delivery queue) ----
+
+  Future<void> insertPendingSync({
+    required String notificationId,
+    required String content,
+    required String hash,
+  }) async {
+    final db = await _db;
+    await db.insert(
+      'pending_notification_sync',
+      {
+        'notification_id': notificationId,
+        'content': content,
+        'hash': hash,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> removePendingSync(String notificationId) async {
+    await (await _db).delete(
+      'pending_notification_sync',
+      where: 'notification_id = ?',
+      whereArgs: [notificationId],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> fetchAllPendingSync() async {
+    return (await _db).query(
+      'pending_notification_sync',
+      orderBy: 'created_at ASC',
+    );
+  }
+
+  /// Remove entries older than [maxAgeDays] and trim to [maxRows].
+  Future<void> cleanOldPendingSync({
+    int maxAgeDays = 7,
+    int maxRows = 500,
+  }) async {
+    final db = await _db;
+    final cutoff = DateTime.now()
+        .subtract(Duration(days: maxAgeDays))
+        .millisecondsSinceEpoch;
+    await db.delete('pending_notification_sync',
+        where: 'created_at < ?', whereArgs: [cutoff]);
+    final count = Sqflite.firstIntValue(await db
+            .rawQuery('SELECT COUNT(*) FROM pending_notification_sync')) ??
+        0;
+    if (count > maxRows) {
+      await db.rawDelete(
+        'DELETE FROM pending_notification_sync WHERE notification_id IN '
+        '(SELECT notification_id FROM pending_notification_sync '
+        'ORDER BY created_at ASC LIMIT ?)',
+        [count - maxRows],
+      );
+    }
   }
 }
