@@ -281,6 +281,21 @@ class MenuController: NSObject {
             }
         }
 
+        // Always show this device's LAN IP so the user knows which address
+        // peers should connect to (useful for manual peer entry on Android).
+        let localIPs = SyncManager.shared.enumerateLocalIPv4s()
+        if let primaryIP = localIPs.first {
+            let ipTitle: String
+            if localIPs.count > 1 {
+                ipTitle = Self.indentedMenuTitle("\(L10n.format(.myIPAddress, primaryIP))  (\(localIPs.dropFirst().joined(separator: ", ")))")
+            } else {
+                ipTitle = Self.indentedMenuTitle(L10n.format(.myIPAddress, primaryIP))
+            }
+            let ipItem = NSMenuItem(title: ipTitle, action: nil, keyEquivalent: "")
+            ipItem.isEnabled = false
+            menu.addItem(ipItem)
+        }
+
         menu.addItem(NSMenuItem.separator())
 
         // --- Tools / Settings ---

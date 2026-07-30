@@ -117,6 +117,28 @@ class PreferencesManager {
         set { defaults.set(newValue, forKey: authorizedDevicesKey) }
     }
 
+    /// Manually configured peers (format "host:port") for cross-band /
+    /// cross-subnet discovery when mDNS multicast is isolated by the router.
+    private let manualSyncPeersKey = "manualSyncPeers"
+    var manualSyncPeers: [String] {
+        get { defaults.stringArray(forKey: manualSyncPeersKey) ?? [] }
+        set { defaults.set(newValue, forKey: manualSyncPeersKey) }
+    }
+
+    func addManualPeer(_ peer: String) {
+        var peers = manualSyncPeers
+        if !peers.contains(peer) {
+            peers.append(peer)
+            manualSyncPeers = peers
+        }
+    }
+
+    func removeManualPeer(_ peer: String) {
+        var peers = manualSyncPeers
+        peers.removeAll { $0 == peer }
+        manualSyncPeers = peers
+    }
+
     /// Maps legacy display-name authorizations to stable peer IDs when peers are discovered.
     func migrateAuthorizedPeerIds(from peers: [DiscoveredPeer]) {
         guard !defaults.bool(forKey: authorizedPeerIdsMigratedKey) else { return }

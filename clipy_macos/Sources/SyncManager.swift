@@ -22,7 +22,6 @@ struct DiscoveredPeer {
     let peerId: String
     let displayName: String
     let endpoint: NWEndpoint
-    let browseResult: NWBrowser.Result
 }
 
 struct DeviceEntry {
@@ -73,21 +72,32 @@ struct FileChunk: Codable {
     }
 }
 
-class SyncManager: NSObject, NetServiceDelegate {
+class SyncManager: NSObject {
     static let shared = SyncManager()
-    
+
     var onDevicesChanged: (([String]) -> Void)?
     var onPeersChanged: (([DiscoveredPeer]) -> Void)?
-    
-    private var browser: NWBrowser? 
-    private var listener: NWListener? 
-    private var netService: NetService?
+
     private var discoveredPeers: [String: DiscoveredPeer] = [:]
     private let peersLock = NSLock()
     private var activeConnections: [NWConnection] = [] 
     private let syncQueue = DispatchQueue(label: "com.clipy.sync")
     // File transfers run on their own queue so blocking sends never stall message receive.
     private let fileTransferQueue = DispatchQueue(label: "com.clipy.sync.filetransfer")
+    // Cross-band subnet scan uses group.wait() to bound concurrency. It must NOT
+    // run on syncQueue: performHandshake dispatches its NWConnection + completion
+    // onto handshakeQueue, so blocking scanQueue would deadlock the completions.
+    private let scanQueue = DispatchQueue(label: "com.clipy.scan")
+    /// Dedicated queue for outbound handshake NWConnection state callbacks.
+    /// Keeping these off syncQueue prevents 64 concurrent scan handshakes from
+    /// starving the POSIX IPv4 listener's DispatchSourceRead (which services
+    /// inbound connections on syncQueue). Without this, a busy scan can delay
+    /// recv() past the peer's read timeout, causing the peer to RST before its
+    /// hello is ever processed.
+    private let handshakeQueue = DispatchQueue(label: "com.clipy.sync.handshake")
+    /// Pending scan work item for debouncing triggerCrossBandDiscovery so
+    /// rapid UI toggles (e.g. checkbox spam) coalesce into a single sweep.
+    private var pendingScanWorkItem: DispatchWorkItem?
 
     /// Reject any frame larger than this to avoid attacker-controlled allocations.
     private static let maxMessageLength = 2 * 1024 * 1024
@@ -134,6 +144,16 @@ class SyncManager: NSObject, NetServiceDelegate {
     private var receiveBuffers: [ObjectIdentifier: Data] = [:]
     private var isProbingPeers = false
 
+    // MARK: POSIX IPv4 listener state
+    // NWListener on macOS creates an IPv6 socket that remote IPv4 LAN peers
+    // cannot reach; this parallel IPv4 listener accepts those connections.
+    // All access is confined to syncQueue.
+    private var posixListenFD: Int32 = -1
+    private var posixListenSource: DispatchSourceRead?
+    private var posixClientSources: [Int32: DispatchSourceRead] = [:]
+    private var posixClientBuffers: [Int32: Data] = [:]
+    private var posixClientHosts: [Int32: String] = [:]
+
     /// Outbound retry buffer: when an authorized peer is momentarily unreachable
     /// (mDNS flutter, peer asleep, transient connect failure) the frame is kept
     /// here and flushed once the peer reappears. Bounded + TTL'd to avoid leaks.
@@ -149,7 +169,6 @@ class SyncManager: NSObject, NetServiceDelegate {
     private static let pendingQueueTTL: TimeInterval = 30
     private static let sendConnectTimeout: TimeInterval = 5
 
-    private let serviceType = "_clipy-sync._tcp"
     private var displayName: String { PreferencesManager.shared.deviceName }
     private var peerId: String { PreferencesManager.shared.syncPeerId }
      
@@ -466,41 +485,25 @@ class SyncManager: NSObject, NetServiceDelegate {
 
         startListening()
         if PreferencesManager.shared.isSyncEnabled {
-            startBrowsing()
             startPeerLivenessProbing()
+            triggerCrossBandDiscovery()
         }
         startPathMonitoring()
     }
     
     func stop() {
         appLog("SyncManager stopping and cleaning up resources...")
-        
-        browser?.stateUpdateHandler = nil
-        browser?.browseResultsChangedHandler = nil
-        browser?.cancel()
-        browser = nil
-        
-        // Stop and nil NetService advertisement on main thread
-        DispatchQueue.main.async {
-            self.netService?.delegate = nil
-            self.netService?.stop()
-            self.netService = nil
-        }
-        
-        // Explicitly clear service before cancelling listener to help mDNS unregistration
-        listener?.service = nil
-        listener?.stateUpdateHandler = nil
-        listener?.newConnectionHandler = nil
-        listener?.cancel()
-        listener = nil
-        
+
+        // Tear down the POSIX IPv4 listener and all its clients.
+        stopPosixIPv4Listener()
+
         // Cancel all active connections
         for connection in activeConnections {
             connection.stateUpdateHandler = nil
             connection.cancel()
         }
         activeConnections.removeAll()
-        
+
         peerLivenessTimer?.cancel()
         peerLivenessTimer = nil
         isProbingPeers = false
@@ -544,7 +547,7 @@ class SyncManager: NSObject, NetServiceDelegate {
         }
     }
 
-    /// Restart mDNS browse (and re-advertise) so stale/missing peers can reappear.
+    /// Clears discovered peers and re-runs subnet scan + manual peer connect.
     /// Keeps the TCP listener running so inbound messages are not interrupted.
     func refreshDiscovery() {
         guard PreferencesManager.shared.isSyncEnabled else {
@@ -557,11 +560,6 @@ class SyncManager: NSObject, NetServiceDelegate {
         }
         isRefreshingDiscovery = true
         appLog("Refreshing LAN device discovery...")
-
-        browser?.stateUpdateHandler = nil
-        browser?.browseResultsChangedHandler = nil
-        browser?.cancel()
-        browser = nil
 
         peersLock.lock()
         discoveredPeers.removeAll()
@@ -577,113 +575,16 @@ class SyncManager: NSObject, NetServiceDelegate {
                 object: self,
                 userInfo: ["devices": [String](), "peers": [DiscoveredPeer]()]
             )
-            self.republishNetService()
         }
 
-        syncQueue.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+        syncQueue.async { [weak self] in
             guard let self else { return }
-            self.startBrowsing()
+            self.triggerCrossBandDiscovery()
             self.isRefreshingDiscovery = false
             appLog("LAN device discovery refresh completed")
         }
     }
 
-    private func republishNetService() {
-        let currentDisplayName = displayName
-        let currentPeerId = peerId
-        let port = Int32(PreferencesManager.shared.syncPort)
-
-        netService?.delegate = nil
-        netService?.stop()
-        netService = nil
-
-        let ns = NetService(domain: "local.", type: serviceType, name: currentDisplayName, port: port)
-        let txtData = NetService.data(fromTXTRecord: ["peerId": Data(currentPeerId.utf8)])
-        ns.setTXTRecord(txtData)
-        ns.delegate = self
-        ns.schedule(in: .main, forMode: .common)
-        ns.publish()
-        netService = ns
-        appLog("NetService re-published as: \(currentDisplayName) peerId=\(currentPeerId) on port \(port)")
-    }
-    
-    // MARK: - Network Framework Discovery (NWBrowser)
-    private func peerId(from result: NWBrowser.Result, serviceName: String) -> String {
-        if case let .bonjour(txtRecord) = result.metadata,
-           let id = txtRecord["peerId"],
-           !id.isEmpty {
-            return id
-        }
-        return serviceName
-    }
-
-    private func startBrowsing() {
-        appLog("Starting mDNS browsing for \(serviceType)...")
-        let parameters = NWParameters()
-        parameters.includePeerToPeer = true
-        
-        let browser = NWBrowser(for: .bonjour(type: serviceType, domain: "local."), using: parameters)
-        self.browser = browser
-        
-        browser.stateUpdateHandler = { state in
-            appLog("Browser state: \(state)")
-        }
-        
-        browser.browseResultsChangedHandler = { [weak self] results, changes in
-            guard let self = self else { return }
-            
-            appLog("mDNS browse results changed: \(results.count) devices found")
-            
-            var updatedPeers: [String: DiscoveredPeer] = [:]
-            for result in results {
-                if case let .service(name, type, domain, interface) = result.endpoint {
-                    let interfaceName = interface?.name ?? "any"
-                    let remotePeerId = self.peerId(from: result, serviceName: name)
-                    appLog("Discovered service: \(name) peerId=\(remotePeerId) (\(type).\(domain)) on interface \(interfaceName)")
-                    
-                    if name == self.displayName || remotePeerId == self.peerId {
-                        continue
-                    }
-                    updatedPeers[remotePeerId] = DiscoveredPeer(
-                        peerId: remotePeerId,
-                        displayName: name,
-                        endpoint: result.endpoint,
-                        browseResult: result
-                    )
-                }
-            }
-
-            self.peersLock.lock()
-            let previousPeerIds = Set(self.discoveredPeers.keys)
-            self.discoveredPeers = updatedPeers
-            self.peerMissCounts = self.peerMissCounts.filter { updatedPeers[$0.key] != nil }
-            self.peersLock.unlock()
-
-            // Newly (re)appeared peers: deliver anything queued while they were gone.
-            let reappeared = Set(updatedPeers.keys).subtracting(previousPeerIds)
-            for peerId in reappeared where !self.pendingQueue.isEmpty {
-                self.flushPendingQueue(forPeerId: peerId)
-            }
-
-            PreferencesManager.shared.migrateAuthorizedPeerIds(from: self.availablePeers)
-            
-            DispatchQueue.main.async {
-                let names = self.availableDeviceNames
-                let peers = self.availablePeers
-                self.onDevicesChanged?(names)
-                self.onPeersChanged?(peers)
-                NotificationCenter.default.post(
-                    name: .syncAvailableDevicesDidChange,
-                    object: self,
-                    userInfo: ["devices": names, "peers": peers]
-                )
-            }
-        }
-        
-        browser.start(queue: syncQueue)
-        appLog("Network Framework browser started for \(serviceType)")
-    }
-    
     var availablePeers: [DiscoveredPeer] {
         peersLock.lock()
         defer { peersLock.unlock() }
@@ -835,11 +736,11 @@ class SyncManager: NSObject, NetServiceDelegate {
 
     /// Maps a failed send endpoint back to a discovered peer and counts the miss.
     private func recordPeerMiss(forEndpoint endpoint: NWEndpoint) {
-        guard case let .service(name, _, _, _) = endpoint else { return }
+        guard case let .hostPort(host, _) = endpoint else { return }
         peersLock.lock()
         let peerId = discoveredPeers.values.first { peer in
-            if case let .service(peerName, _, _, _) = peer.endpoint {
-                return peerName == name
+            if case let .hostPort(peerHost, _) = peer.endpoint {
+                return peerHost == host
             }
             return false
         }?.peerId
@@ -849,65 +750,205 @@ class SyncManager: NSObject, NetServiceDelegate {
         }
     }
 
-    // MARK: - Network Framework Listener (NWListener)
+    // MARK: - POSIX IPv4 Listener
+    //
+    // mDNS has been removed; NWListener is no longer needed (it was only used
+    // to register a Bonjour service and accept inbound NWConnections). Its
+    // IPv6/dual-stack socket behavior caused port conflicts with the POSIX
+    // IPv4 listener and unreliable IPv4-mapped connection handling (symptom:
+    // "Connection reset by peer" on the Android side). The POSIX listener is
+    // now the sole inbound path: it binds 0.0.0.0 explicitly so IPv4 LAN peers
+    // can reach us, and dispatches into processReceivedData for framing.
     private func startListening() {
         let port = Int32(PreferencesManager.shared.syncPort)
-        appLog("Starting listener on port \(port) as '\(displayName)' (peerId=\(peerId))...")
-        
-        do {
-            let parameters = NWParameters.tcp
-            let nwPort = NWEndpoint.Port(rawValue: UInt16(port))!
-            let listener = try NWListener(using: parameters, on: nwPort)
-            
-            DispatchQueue.main.async {
-                self.republishNetService()
+        appLog("Starting POSIX IPv4 listener on port \(port) as '\(displayName)' (peerId=\(peerId))...")
+        startPosixIPv4Listener()
+    }
+    
+    // MARK: - POSIX IPv4 Listener
+    //
+    // NWListener (Network.framework) on macOS always creates an IPv6 socket
+    // regardless of requiredLocalEndpoint, so remote IPv4 LAN peers time out
+    // connecting to it (the cross-band sync root cause). This POSIX listener
+    // binds 0.0.0.0 explicitly so those peers can reach us. Accepted
+    // connections reuse the same length-prefixed framing and dispatch into
+    // processReceivedData. All handlers run on syncQueue.
+
+    private func startPosixIPv4Listener() {
+        let port = UInt16(PreferencesManager.shared.syncPort)
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            appLog("POSIX IPv4 socket() failed errno=\(errno)", level: .error)
+            return
+        }
+        // Non-blocking so DispatchSourceRead can drive accept/recv.
+        let curFlags = fcntl(fd, F_GETFL, 0)
+        _ = fcntl(fd, F_SETFL, curFlags | O_NONBLOCK)
+        // Allow quick rebind after restart.
+        var reuse: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr.s_addr = 0  // INADDR_ANY (0.0.0.0)
+        let bindOk = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                Darwin.bind(fd, sa, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
-            
-            listener.stateUpdateHandler = { [weak self] state in
-                guard let self = self else { return }
-                switch state {
-                case .ready:
-                    appLog("NWListener ready on port \(port)")
-                case .failed(let error):
-                    appLog("NWListener failed: \(error)", level: .error)
-                    if case .posix(let code) = error, code == .EADDRINUSE {
-                        appLog("Port in use, will retry in 2 seconds...")
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                            self.restartService()
-                        }
-                    }
-                case .cancelled:
-                    appLog("NWListener cancelled")
-                default:
-                    break
+        }
+        guard bindOk == 0 else {
+            appLog("POSIX IPv4 bind failed on 0.0.0.0:\(port) errno=\(errno)", level: .error)
+            close(fd)
+            return
+        }
+        guard listen(fd, 32) == 0 else {
+            appLog("POSIX IPv4 listen failed errno=\(errno)", level: .error)
+            close(fd)
+            return
+        }
+        posixListenFD = fd
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: syncQueue)
+        source.setEventHandler { [weak self] in
+            self?.posixAcceptLoop(listenFD: fd)
+        }
+        source.setCancelHandler {
+            close(fd)
+        }
+        source.resume()
+        posixListenSource = source
+        appLog("POSIX IPv4 listener ready on 0.0.0.0:\(port)")
+    }
+
+    /// Drains the accept queue until EWOULDBLOCK. Each client fd is armed with
+    /// its own read source for length-prefixed frame reassembly.
+    private func posixAcceptLoop(listenFD: Int32) {
+        while true {
+            var addr = sockaddr_in()
+            var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let clientFD = withUnsafeMutablePointer(to: &addr) { ptr in
+                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                    accept(listenFD, sa, &len)
                 }
             }
-            
-            listener.newConnectionHandler = { [weak self] connection in
-                self?.handleIncomingConnection(connection)
+            if clientFD >= 0 {
+                let cflags = fcntl(clientFD, F_GETFL, 0)
+                _ = fcntl(clientFD, F_SETFL, cflags | O_NONBLOCK)
+                var ipBuf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                var sinAddr = addr.sin_addr
+                inet_ntop(AF_INET, &sinAddr, &ipBuf, socklen_t(INET_ADDRSTRLEN))
+                let host = String(cString: ipBuf)
+                posixArmClient(clientFD, host: host)
+            } else if errno == EWOULDBLOCK || errno == EAGAIN {
+                break
+            } else if errno == EINTR {
+                continue
+            } else {
+                appLog("POSIX accept error errno=\(errno)", level: .warning)
+                break
             }
-            
-            self.listener = listener
-            listener.start(queue: syncQueue)
-            appLog("Network Framework listener started on port \(port)")
-        } catch {
-            appLog("Failed to start NWListener: \(error)", level: .error)
         }
     }
-    
-    // MARK: - NetServiceDelegate
-    func netServiceDidPublish(_ sender: NetService) {
-        appLog("NetService successfully published: \(sender.name)")
+
+    private func posixArmClient(_ fd: Int32, host: String) {
+        posixClientBuffers[fd] = Data()
+        posixClientHosts[fd] = host
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: syncQueue)
+        source.setEventHandler { [weak self] in
+            self?.posixHandleClientReadable(fd)
+        }
+        source.setCancelHandler {
+            close(fd)
+        }
+        source.resume()
+        posixClientSources[fd] = source
+        appLog("POSIX client connected fd=\(fd) host=\(host)")
     }
-    
-    func netService(_ sender: NetService, didNotPublish errorDict: [String : NSNumber]) {
-        appLog("NetService failed to publish: \(errorDict)", level: .error)
+
+    /// Loops recv until EWOULDBLOCK so one event handler drains all pending
+    /// bytes (DispatchSourceRead is level-triggered, but this avoids extra
+    /// wakeups on large transfers).
+    private func posixHandleClientReadable(_ fd: Int32) {
+        var chunk = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            // posixIngest may tear down a misbehaving connection mid-frame.
+            guard posixClientSources[fd] != nil else { return }
+            let n = chunk.withUnsafeMutableBytes { buf in
+                recv(fd, buf.baseAddress, buf.count, 0)
+            }
+            if n == 0 {
+                posixCloseClient(fd)
+                return
+            }
+            if n < 0 {
+                if errno == EWOULDBLOCK || errno == EAGAIN || errno == EINTR {
+                    return
+                }
+                posixCloseClient(fd)
+                return
+            }
+            posixIngest(Data(chunk.prefix(n)), fd: fd)
+        }
     }
-    
-    func netServiceDidStop(_ sender: NetService) {
-        appLog("NetService stopped: \(sender.name)")
+
+    /// Length-prefixed frame reassembly for POSIX clients, mirroring
+    /// ingestReceivedData. Dispatches whole frames to processReceivedData with
+    /// a reply closure that writes directly to the client fd.
+    private func posixIngest(_ chunk: Data, fd: Int32) {
+        var buffer = posixClientBuffers[fd] ?? Data()
+        buffer.append(chunk)
+        while true {
+            guard buffer.count >= 4 else { break }
+            let length = Int(buffer.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian })
+            guard length > 0, length <= Self.maxMessageLength else {
+                appLog("POSIX rejecting frame with invalid length \(length)", level: .error)
+                posixCloseClient(fd)
+                return
+            }
+            guard buffer.count >= 4 + length else { break }
+            let frame = buffer.subdata(in: 4..<(4 + length))
+            let host = posixClientHosts[fd]
+            processReceivedData(frame, peerHost: host, reply: { [weak self] replyData in
+                self?.posixSend(fd: fd, data: replyData)
+            })
+            buffer.removeSubrange(0..<(4 + length))
+        }
+        posixClientBuffers[fd] = buffer
     }
-    
+
+    private func posixSend(fd: Int32, data: Data) {
+        data.withUnsafeBytes { rawBuf in
+            guard let base = rawBuf.baseAddress else { return }
+            var sent = 0
+            while sent < data.count {
+                let n = send(fd, base.advanced(by: sent), data.count - sent, 0)
+                if n <= 0 {
+                    if errno == EINTR { continue }
+                    appLog("POSIX send failed fd=\(fd) errno=\(errno)", level: .warning)
+                    return
+                }
+                sent += n
+            }
+        }
+    }
+
+    private func posixCloseClient(_ fd: Int32) {
+        if let source = posixClientSources.removeValue(forKey: fd) {
+            source.cancel()  // cancelHandler closes the fd
+        }
+        posixClientBuffers.removeValue(forKey: fd)
+        posixClientHosts.removeValue(forKey: fd)
+    }
+
+    private func stopPosixIPv4Listener() {
+        posixListenSource?.cancel()  // cancelHandler closes the listen fd
+        posixListenSource = nil
+        posixListenFD = -1
+        for fd in Array(posixClientSources.keys) {
+            posixCloseClient(fd)
+        }
+    }
+
     private func handleIncomingConnection(_ connection: NWConnection) {
         activeConnections.append(connection)
         connection.stateUpdateHandler = { [weak self, weak connection] state in
@@ -926,7 +967,7 @@ class SyncManager: NSObject, NetServiceDelegate {
         }
         connection.start(queue: syncQueue)
     }
-    
+
     private func removeConnection(_ connection: NWConnection) {
         if let index = activeConnections.firstIndex(where: { $0 === connection }) {
             activeConnections.remove(at: index)
@@ -972,7 +1013,9 @@ class SyncManager: NSObject, NetServiceDelegate {
             guard buffer.count >= 4 + length else { break }
 
             let frame = buffer.subdata(in: 4..<(4 + length))
-            processReceivedData(frame)
+            processReceivedData(frame, peerHost: hostString(from: connection.endpoint), reply: { [weak connection] data in
+                connection?.send(content: data, completion: .contentProcessed { _ in })
+            })
 
             buffer.removeSubrange(0..<(4 + length))
         }
@@ -980,7 +1023,7 @@ class SyncManager: NSObject, NetServiceDelegate {
         receiveBuffers[key] = buffer
     }
     
-    private func processReceivedData(_ data: Data) {
+    private func processReceivedData(_ data: Data, peerHost: String? = nil, reply: ((Data) -> Void)? = nil) {
         guard let message = try? JSONDecoder().decode(SyncMessage.self, from: data) else {
             appLog("Failed to decode SyncMessage", level: .error)
             return
@@ -1019,6 +1062,10 @@ class SyncManager: NSObject, NetServiceDelegate {
             DispatchQueue.main.async {
                 self.handleNotificationConfig(decrypted)
             }
+        case "handshake/hello":
+            handleHandshakeHello(decrypted, from: message.deviceId, peerHost: peerHost, reply: reply)
+        case "handshake/hi":
+            handleHandshakeHi(decrypted, from: message.deviceId, peerHost: peerHost)
         default:
             break
         }
@@ -1029,7 +1076,345 @@ class SyncManager: NSObject, NetServiceDelegate {
         // 筛选配置由本机用户自主管理（Android 端两层筛选模型）。
         appLog("SyncManager: ignored remote notification config (security policy)", level: .warning)
     }
-    
+
+    // MARK: - Cross-Band Discovery (subnet scan + manual peers)
+    //
+    // mDNS multicast is often blocked between 2.4G and 5G bands on home routers,
+    // so devices on different bands never discover each other. These paths use
+    // direct unicast TCP connects (which are NOT subject to multicast isolation)
+    // plus an encrypted handshake to exchange peerId/displayName, then inject the
+    // peer into discoveredPeers so all existing fan-out / liveness / queue logic
+    // works unchanged.
+
+    private struct HandshakePayload: Decodable {
+        let name: String
+        let port: Int
+    }
+
+    /// Single entry point invoked from start() / refreshDiscovery(). Runs subnet
+    /// scan and manual-peer connect in parallel on syncQueue, fully decoupled
+    /// from mDNS browsing so neither blocks the other.
+    func triggerCrossBandDiscovery() {
+        guard PreferencesManager.shared.isSyncEnabled else { return }
+        // Debounce: cancel any pending sweep and schedule a fresh one 400ms
+        // later. Coalesces rapid fire from UI toggles / network changes.
+        pendingScanWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.connectManualPeers()
+            self?.scanSubnets()
+        }
+        pendingScanWorkItem = work
+        scanQueue.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    /// Enumerates all non-loopback IPv4 addresses on physical interfaces via
+    /// getifaddrs(). Used to derive the local /24 subnets to scan.
+    /// Non-loopback IPv4 addresses on physical/virtual interfaces, for display.
+    func enumerateLocalIPv4s() -> [String] {
+        var addresses: [String] = []
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return [] }
+        defer { freeifaddrs(ifaddr) }
+
+        var ptr: UnsafeMutablePointer<ifaddrs>? = firstAddr
+        while let cur = ptr {
+            let interface = cur.pointee
+            ptr = interface.ifa_next
+            guard let addrPtr = interface.ifa_addr,
+                  addrPtr.pointee.sa_family == sa_family_t(AF_INET) else { continue }
+            let name = String(cString: interface.ifa_name)
+            guard !name.hasPrefix("lo") else { continue }
+            let addr = addrPtr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+            var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            var sinAddr = addr.sin_addr
+            inet_ntop(AF_INET, &sinAddr, &buf, socklen_t(INET_ADDRSTRLEN))
+            let ip = String(cString: buf)
+            guard !ip.hasPrefix("127."), Self.isLanIPv4(ip) else { continue }
+            addresses.append(ip)
+        }
+        return addresses
+    }
+
+    /// Returns true only for RFC1918 private addresses used on home/office LANs.
+    /// Filters out carrier-grade NAT (e.g. 10.x from mobile data) and public IPs
+    /// so we don't try to sync over a metered connection or display noisy IPs.
+    private static func isLanIPv4(_ ip: String) -> Bool {
+        let parts = ip.split(separator: ".")
+        guard parts.count == 4, let a = Int(parts[0]), let b = Int(parts[1]) else { return false }
+        if a == 192 && b == 168 { return true }
+        if a == 172 && (b >= 16 && b <= 31) { return true }
+        if a == 169 && b == 254 { return true }
+        return false
+    }
+
+    /// Builds the candidate IPv4 list to probe. Prefers ARP-table filtering
+    /// (reads the kernel ARP cache via `arp -a`): on a typical home LAN only
+    /// 5-30 entries are live, drastically reducing the TCP probe set versus a
+    /// blind /24 sweep. Falls back to full /24 enumeration when ARP yields
+    /// nothing (e.g. fresh boot, cross-subnet routing).
+    private func candidateScanIPs() -> [String] {
+        let myIPs = enumerateLocalIPv4s()
+        var seen = Set<String>()
+        // Build the full /24 candidate set for every local subnet.
+        var fullCandidates: [String] = []
+        for ip in myIPs {
+            let parts = ip.split(separator: ".")
+            guard parts.count == 4 else { continue }
+            let prefix = "\(parts[0]).\(parts[1]).\(parts[2])"
+            for i in 1...254 {
+                let candidate = "\(prefix).\(i)"
+                if !myIPs.contains(candidate), !seen.contains(candidate) {
+                    seen.insert(candidate)
+                    fullCandidates.append(candidate)
+                }
+            }
+        }
+        // Try ARP-table filtering: keep only candidates present in the cache.
+        let arpIPs = readArpTable()
+        if !arpIPs.isEmpty {
+            let filtered = fullCandidates.filter { arpIPs.contains($0) }
+            if !filtered.isEmpty {
+                appLog("ARP prefilter: \(fullCandidates.count) → \(filtered.count) candidates")
+                return filtered
+            }
+        }
+        appLog("ARP prefilter unavailable, using full \(fullCandidates.count) candidates")
+        return fullCandidates
+    }
+
+    /// Reads the kernel ARP cache by shelling out to `arp -a -n` and extracting
+    /// the IPv4 addresses. Returns an empty set on any failure so callers can
+    /// transparently fall back to full /24 enumeration.
+    private func readArpTable() -> Set<String> {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/arp")
+        process.arguments = ["-a", "-n"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle(forWritingAtPath: "/dev/null")
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return []
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return [] }
+        var result = Set<String>()
+        // arp -a output: "? (192.168.31.1) at aa:bb:.. on en0 ifscope [ethernet]"
+        let regex = try? NSRegularExpression(pattern: "\\((\\d+\\.\\d+\\.\\d+\\.\\d+)\\)")
+        regex?.enumerateMatches(in: output, range: NSRange(location: 0, length: output.utf16.count)) { match, _, _ in
+            if let match = match, let r = Range(match.range(at: 1), in: output) {
+                result.insert(String(output[r]))
+            }
+        }
+        return result
+    }
+
+    /// Concurrently probes every candidate IP on the sync port; on connect it
+    /// fires an encrypted handshake to learn the peer's identity. Concurrency is
+    /// capped at 16 and each connect has a 300ms establishment timeout so a full
+    /// /24 sweep completes in ~5s without flooding the LAN.
+    private func scanSubnets() {
+        let portValue = UInt16(PreferencesManager.shared.syncPort)
+        guard let nwPort = NWEndpoint.Port(rawValue: portValue) else { return }
+        let candidates = candidateScanIPs()
+        guard !candidates.isEmpty else { return }
+        let scanStart = Date()
+        var hits = 0
+        appLog("Subnet scan: probing \(candidates.count) candidates on port \(portValue)")
+
+        // 64 concurrent connects is well within LAN TCP SYN capacity and cuts
+        // a /24 sweep from ~16s (16-wide) down to ~2s worst case.
+        let semaphore = DispatchSemaphore(value: 64)
+        let group = DispatchGroup()
+        for ip in candidates {
+            semaphore.wait()
+            group.enter()
+            let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(ip), port: nwPort)
+            performHandshake(to: endpoint) { ok in
+                if ok { hits += 1; appLog("Subnet scan: handshake succeeded with \(ip)") }
+                semaphore.signal()
+                group.leave()
+            }
+        }
+        // Bounded wait: don't let a single stuck NWConnection stall the sweep.
+        _ = group.wait(timeout: .now() + 10)
+        let elapsedMs = Int(Date().timeIntervalSince(scanStart) * 1000)
+        appLog("Subnet scan complete: \(candidates.count) probed, \(hits) hits in \(elapsedMs)ms")
+    }
+
+    /// Connects to each manually-configured peer (host:port) and handshakes.
+    /// Covers cross-subnet / strict-isolation cases the /24 scan cannot reach.
+    private func connectManualPeers() {
+        let manualPeers = PreferencesManager.shared.manualSyncPeers
+        guard !manualPeers.isEmpty else { return }
+        let portValue = UInt16(PreferencesManager.shared.syncPort)
+        for entry in manualPeers {
+            let parts = entry.split(separator: ":")
+            guard parts.count == 2, let port = UInt16(parts[1]) else { continue }
+            let host = String(parts[0])
+            let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port) ?? NWEndpoint.Port(rawValue: portValue)!)
+            performHandshake(to: endpoint) { ok in
+                appLog("Manual peer \(entry) handshake: \(ok ? "ok" : "failed")", level: ok ? .info : .warning)
+            }
+        }
+    }
+
+    /// Opens a TCP connection to `endpoint`, sends an encrypted handshake/hello,
+    /// and waits for handshake/hi. On success the peer is recorded via the
+    /// normal receive path (processReceivedData → handleHandshakeHi).
+    private func performHandshake(to endpoint: NWEndpoint, completion: @escaping (Bool) -> Void) {
+        let parameters = NWParameters.tcp
+        parameters.preferNoProxies = true
+        let connection = NWConnection(to: endpoint, using: parameters)
+        var didComplete = false
+
+        // Bounded handshake: 400ms covers LAN RTT (<10ms) plus cross-band
+        // routing latency; anything beyond is almost certainly a dead host.
+        let timeout = DispatchWorkItem { [weak connection] in
+            guard !didComplete else { return }
+            didComplete = true
+            connection?.cancel()
+            completion(false)
+        }
+        handshakeQueue.asyncAfter(deadline: .now() + 0.4, execute: timeout)
+
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                guard let self = self else { return }
+                guard let helloFrame = self.makeHandshakeFrame(type: "handshake/hello") else {
+                    if !didComplete { didComplete = true; timeout.cancel(); connection.cancel(); completion(false) }
+                    return
+                }
+                connection.send(content: helloFrame, completion: .contentProcessed { error in
+                    if let error = error {
+                        appLog("Handshake send failed to \(endpoint): \(error)", level: .warning)
+                        if !didComplete { didComplete = true; timeout.cancel(); connection.cancel(); completion(false) }
+                    }
+                })
+                // Await the hi reply on the same connection. Route through
+                // ingestReceivedData so the 4-byte length prefix is stripped
+                // before JSON decode (processReceivedData expects raw JSON).
+                connection.receive(minimumIncompleteLength: 4, maximumLength: Self.maxMessageLength) { data, _, _, error in
+                    guard !didComplete else { return }
+                    didComplete = true
+                    timeout.cancel()
+                    if let data = data, !data.isEmpty {
+                        self.ingestReceivedData(data, from: connection)
+                        completion(true)
+                    } else {
+                        completion(false)
+                    }
+                    self.receiveBuffers.removeValue(forKey: ObjectIdentifier(connection))
+                    connection.cancel()
+                }
+            case .failed, .cancelled:
+                guard !didComplete else { return }
+                didComplete = true
+                timeout.cancel()
+                completion(false)
+            default:
+                break
+            }
+        }
+        // Run on handshakeQueue (not syncQueue) so 64 concurrent scan
+        // handshakes don't starve the POSIX IPv4 listener on syncQueue.
+        connection.start(queue: handshakeQueue)
+    }
+
+    /// Builds a length-prefixed frame carrying an encrypted handshake message.
+    private func makeHandshakeFrame(type: String) -> Data? {
+        let payload = "{\"name\":\"\(displayName)\",\"port\":\(PreferencesManager.shared.syncPort)}"
+        guard let encryptedContent = encrypt(payload) else { return nil }
+        let message = SyncMessage(
+            deviceId: peerId,
+            timestamp: Date().timeIntervalSince1970,
+            type: type,
+            content: encryptedContent,
+            hash: ""
+        )
+        guard let body = try? JSONEncoder().encode(message) else { return nil }
+        var frame = Data()
+        var length = UInt32(body.count).bigEndian
+        frame.append(Data(bytes: &length, count: 4))
+        frame.append(body)
+        return frame
+    }
+
+    private func handleHandshakeHello(_ decrypted: String, from remotePeerId: String, peerHost: String?, reply: ((Data) -> Void)?) {
+        guard let data = decrypted.data(using: .utf8),
+              let info = try? JSONDecoder().decode(HandshakePayload.self, from: data) else {
+            appLog("Failed to decode handshake/hello payload", level: .warning)
+            return
+        }
+        // The remote's listen port is inside the payload; the remote host is the
+        // connection's peer address (the initiator's source IP).
+        guard let host = peerHost else {
+            appLog("Handshake/hello without resolvable peer host", level: .warning)
+            return
+        }
+        let port = NWEndpoint.Port(rawValue: UInt16(info.port)) ?? NWEndpoint.Port(rawValue: UInt16(PreferencesManager.shared.syncPort))!
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: port)
+        recordDiscoveredPeer(peerId: remotePeerId, name: info.name, endpoint: endpoint)
+        // Reply with hi on the same connection so the initiator learns our identity.
+        if let hiFrame = makeHandshakeFrame(type: "handshake/hi") {
+            reply?(hiFrame)
+        }
+    }
+
+    private func handleHandshakeHi(_ decrypted: String, from remotePeerId: String, peerHost: String?) {
+        guard let data = decrypted.data(using: .utf8),
+              let info = try? JSONDecoder().decode(HandshakePayload.self, from: data) else {
+            appLog("Failed to decode handshake/hi payload", level: .warning)
+            return
+        }
+        guard let host = peerHost else { return }
+        let port = NWEndpoint.Port(rawValue: UInt16(info.port)) ?? NWEndpoint.Port(rawValue: UInt16(PreferencesManager.shared.syncPort))!
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: port)
+        recordDiscoveredPeer(peerId: remotePeerId, name: info.name, endpoint: endpoint)
+    }
+
+    private func hostString(from endpoint: NWEndpoint) -> String? {
+        if case let .hostPort(host, _) = endpoint {
+            return "\(host)"
+        }
+        return nil
+    }
+
+    /// Records a peer discovered via handshake and fires the downstream hooks
+    /// (UI notification, pending-queue flush, notification backfill) that mDNS
+    /// discovery also fires.
+    private func recordDiscoveredPeer(peerId: String, name: String, endpoint: NWEndpoint) {
+        guard peerId != self.peerId else { return }
+        let peer = DiscoveredPeer(peerId: peerId, displayName: name, endpoint: endpoint)
+        peersLock.lock()
+        let isNew = discoveredPeers[peerId] == nil
+        discoveredPeers[peerId] = peer
+        peerMissCounts[peerId] = 0
+        peersLock.unlock()
+        appLog("Discovered peer via handshake: \(name) (peerId=\(peerId)) at \(endpoint)")
+        notifyPeersChanged()
+        if isNew {
+            flushPendingQueue(forPeerId: peerId)
+        }
+    }
+
+    private func notifyPeersChanged() {
+        let peers = availablePeers
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.onDevicesChanged?(peers.map(\.displayName))
+            self.onPeersChanged?(peers)
+            NotificationCenter.default.post(
+                name: .syncAvailableDevicesDidChange,
+                object: self,
+                userInfo: ["devices": peers.map(\.displayName), "peers": peers]
+            )
+        }
+    }
+
     // MARK: - Inbound File Transfers (state confined to syncQueue)
 
     private func handleFileHeader(_ json: String, from sender: String) {

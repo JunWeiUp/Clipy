@@ -9,18 +9,21 @@ enum NotificationHealthIssue {
   none,
   permissionDenied,
   listenerNotConnected,
+  batteryOptimization,
   notReceiving,
 }
 
 class NotificationHealthStatus {
   final NotificationHealthIssue issue;
   final NotificationListenerStatus listenerStatus;
+  final bool batteryOptimizationExempt;
   final DateTime? lastNotificationAt;
   final DateTime checkedAt;
 
   const NotificationHealthStatus({
     required this.issue,
     required this.listenerStatus,
+    required this.batteryOptimizationExempt,
     required this.lastNotificationAt,
     required this.checkedAt,
   });
@@ -30,6 +33,7 @@ class NotificationHealthStatus {
   bool get needsReauthorization =>
       issue == NotificationHealthIssue.permissionDenied ||
       issue == NotificationHealthIssue.listenerNotConnected ||
+      issue == NotificationHealthIssue.batteryOptimization ||
       issue == NotificationHealthIssue.notReceiving;
 }
 
@@ -134,18 +138,27 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
 
     var status = await notificationManager.getListenerStatus();
     if (status.permissionGranted && !status.serviceConnected) {
+      // 尝试一次 rebind（国产 ROM 常忽略此请求，但不影响尝试）
       await notificationManager.requestListenerRebind();
       await Future<void>.delayed(const Duration(seconds: 2));
       status = await notificationManager.getListenerStatus();
-      if (status.permissionGranted && !status.serviceConnected) {
-        await notificationManager.refreshActiveNotifications();
-        await Future<void>.delayed(const Duration(seconds: 1));
-        status = await notificationManager.getListenerStatus();
-      }
+      // 若仍未连接，不再循环——交给用户手动去设置页开关（MIUI/EMUI 上 requestRebind 不可靠）
+    }
+
+    // 检测电池优化白名单——多数国产 ROM 会因省电杀掉后台监听服务
+    final batteryOptimizationExempt =
+        await notificationManager.isBatteryOptimizationExempt();
+    if (!batteryOptimizationExempt) {
+      appLog(
+        'NotificationHealthMonitor: battery optimization NOT exempt, '
+        'listener may be killed by OEM ROM',
+        level: 'warning',
+      );
     }
 
     final issue = _resolveIssue(
       status: status,
+      batteryOptimizationExempt: batteryOptimizationExempt,
       lastNotificationAt: notificationManager.lastNotificationReceivedAt,
       monitoringStartedAt: notificationManager.monitoringStartedAt,
     );
@@ -154,6 +167,7 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
       NotificationHealthStatus(
         issue: issue,
         listenerStatus: status,
+        batteryOptimizationExempt: batteryOptimizationExempt,
         lastNotificationAt: notificationManager.lastNotificationReceivedAt,
         checkedAt: DateTime.now(),
       ),
@@ -162,6 +176,7 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
 
   NotificationHealthIssue _resolveIssue({
     required NotificationListenerStatus status,
+    required bool batteryOptimizationExempt,
     required DateTime? lastNotificationAt,
     required DateTime? monitoringStartedAt,
   }) {
@@ -170,6 +185,9 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
     }
     if (!status.serviceConnected) {
       return NotificationHealthIssue.listenerNotConnected;
+    }
+    if (!batteryOptimizationExempt) {
+      return NotificationHealthIssue.batteryOptimization;
     }
 
     final now = DateTime.now();
@@ -193,6 +211,7 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
     return NotificationHealthStatus(
       issue: NotificationHealthIssue.none,
       listenerStatus: status,
+      batteryOptimizationExempt: true,
       lastNotificationAt: NotificationManager.instance.lastNotificationReceivedAt,
       checkedAt: DateTime.now(),
     );
@@ -209,6 +228,7 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
         'NotificationHealthMonitor: issue=${status.issue.name}, '
         'permission=${status.listenerStatus.permissionGranted}, '
         'connected=${status.listenerStatus.serviceConnected}, '
+        'batteryExempt=${status.batteryOptimizationExempt}, '
         'active=${status.listenerStatus.activeNotificationCount}',
         level: 'warning',
       );

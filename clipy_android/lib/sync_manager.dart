@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
-import 'package:nsd/nsd.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:crypto/crypto.dart';
@@ -125,12 +125,15 @@ class _PendingFile {
 class DiscoveredPeer {
   final String peerId;
   final String displayName;
-  final Service service;
+  /// Direct-connect address.
+  final String host;
+  final int port;
 
   const DiscoveredPeer({
     required this.peerId,
     required this.displayName,
-    required this.service,
+    required this.host,
+    required this.port,
   });
 }
 
@@ -138,8 +141,12 @@ class SyncManager with WidgetsBindingObserver {
   static final SyncManager instance = SyncManager._();
   SyncManager._();
 
-  Registration? _registration;
-  Discovery? _discovery;
+  // Foreground service bridge: keeps the Flutter process alive on Android so
+  // the ServerSocket keeps accepting inbound handshakes after the Activity is
+  // backgrounded. iOS does not need this (background tasks differ).
+  static const MethodChannel _fgsChannel =
+      MethodChannel('com.clipyclone.clipy_android/sync_service');
+
   ServerSocket? _server;
   ServerSocket? _serverV6;
   final Map<String, DiscoveredPeer> _discoveredPeers = {};
@@ -159,15 +166,16 @@ class SyncManager with WidgetsBindingObserver {
   final Map<String, _PendingFile> _pendingFiles = {};
   final Map<String, DateTime> _lastProgressUpdate = {};
   Timer? _pendingFileCleanupTimer;
-  Timer? _discoveryWatchdogTimer;
   Timer? _peerLivenessTimer;
+  /// Debounce timer for triggerCrossBandDiscovery so rapid UI toggles (e.g.
+  /// checkbox spam in the authorization list) coalesce into a single sweep.
+  Timer? _scanDebounceTimer;
   final Map<String, int> _peerMissCounts = {};
   bool _isProbingPeers = false;
   bool _isRefreshingDiscovery = false;
   bool _lifecycleObserverAttached = false;
-  /// Subscribes to OS connectivity changes so we can immediately refresh mDNS
-  /// browsing after a Wi-Fi switch / reconnect, instead of waiting up to the
-  /// 2-minute discovery watchdog. Only refreshes when there is network again.
+  /// Subscribes to OS connectivity changes so we can immediately refresh
+  /// device discovery after a Wi-Fi switch / reconnect.
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   List<ConnectivityResult> _lastConnectivity = [ConnectivityResult.none];
 
@@ -180,21 +188,10 @@ class SyncManager with WidgetsBindingObserver {
 
   /// Incomplete inbound transfers are dropped after this much inactivity.
   static const Duration _pendingFileTimeout = Duration(seconds: 60);
-  /// Android NsdManager often stalls after sleep; refresh when authorized peers vanish.
-  static const Duration _discoveryWatchdogInterval = Duration(minutes: 2);
-  /// mDNS may never report an abrupt departure (kill, power loss, Wi-Fi drop),
-  /// so discovered peers are probed over TCP on this interval and evicted
+  /// Discovered peers are probed over TCP on this interval and evicted
   /// after [_peerLivenessMaxMisses] consecutive failures.
-  ///
-  /// 45s × 3 ≈ 2 min 15s grace window. The previous 30s × 2 ≈ 1 min was too
-  /// aggressive: macOS AppNap / display sleep / a brief Wi-Fi roam can make the
-  /// TCP listener unresponsive for ~1 min, after which the peer would be evicted
-  /// and only reappear on the next mDNS browse cycle — experienced by users as
-  /// "sometimes Android can't see the Mac".
   static const Duration _peerLivenessInterval = Duration(seconds: 45);
   static const int _peerLivenessMaxMisses = 3;
-  /// Wait after stopDiscovery before restart (Android FAILURE_ALREADY_ACTIVE).
-  static const Duration _discoveryRestartDelay = Duration(milliseconds: 400);
   
   List<DiscoveredPeer> get availablePeers {
     final peers = _discoveredPeers.values.toList()
@@ -215,16 +212,6 @@ class SyncManager with WidgetsBindingObserver {
   String get displayName => _deviceName.isEmpty ? _peerId : _deviceName;
   /// SyncMessage.deviceId and legacy call sites.
   String get deviceId => peerId;
-
-  final String _serviceType = '_clipy-sync._tcp';
-
-  static String _peerIdFromService(Service service, String displayName) {
-    final txt = service.txt;
-    if (txt != null && txt['peerId'] != null) {
-      return utf8.decode(txt['peerId']!);
-    }
-    return displayName;
-  }
 
   Future<void> _migrateAuthorizedPeerIds() async {
     final prefs = await SharedPreferences.getInstance();
@@ -281,7 +268,7 @@ class SyncManager with WidgetsBindingObserver {
       final isOffline = results.every((r) => r == ConnectivityResult.none);
       if (isOffline || !isEnabled || _isRefreshingDiscovery) return;
       appLog('Connectivity changed ($results, wasOffline=$wasOffline); refreshing LAN discovery');
-      unawaited(refreshBrowsing());
+      unawaited(refreshDiscovery());
     });
   }
 
@@ -294,8 +281,7 @@ class SyncManager with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && isEnabled) {
-      // NSD browse often stalls after Doze / Wi‑Fi sleep.
-      unawaited(refreshBrowsing());
+      unawaited(refreshDiscovery());
     }
   }
 
@@ -311,7 +297,7 @@ class SyncManager with WidgetsBindingObserver {
   }
 
   /// Snapshot of currently-online authorized peers. Non-blocking by design —
-  /// previously this method would refreshBrowsing() + wait up to 2s, which
+  /// previously this method would refreshDiscovery() + wait up to 2s, which
   /// introduced noticeable latency and still dropped the frame if the peer
   /// didn't reappear in time. The offline-authorize case is now handled by the
   /// pending queue: we send to whoever is online now and queue a copy for the
@@ -336,7 +322,7 @@ class SyncManager with WidgetsBindingObserver {
 
     for (final peer in targets) {
       appLog('Sending $type to ${peer.displayName} (peerId=${peer.peerId})');
-      final ok = await _sendSync(jsonData, peer.service);
+      final ok = await _sendSync(jsonData, peer);
       // Transient failure on an otherwise-online peer: re-queue once so the
       // content is delivered on the next flush instead of being dropped.
       if (!ok) {
@@ -388,7 +374,7 @@ class SyncManager with WidgetsBindingObserver {
     if (peer == null) return;
     appLog('Flushing ${due.length} queued frame(s) to reappeared peer $peerId');
     for (final item in due) {
-      await _sendSync(item.data, peer.service);
+      await _sendSync(item.data, peer);
     }
   }
 
@@ -415,29 +401,17 @@ class SyncManager with WidgetsBindingObserver {
         hash: hash,
       );
       final jsonData = jsonEncode(message.toJson());
-      await _sendSync(jsonData, peer.service);
+      final ok = await _sendSync(jsonData, peer);
+      if (ok) {
+        // 发送成功后立即删除该条记录。app 从后台恢复时会触发设置页刷新设备，
+        // peer 会被重新发现并再次进入 backfill；若仍保留已发条目，Mac 端会
+        // 收到重复通知。此处即“发过的通知不再重发”的关键点。
+        // hash 与 notification_id 相同（均取自 entry.id）。
+        await NotificationRepository.instance.removePendingSync(hash);
+      }
     }
     // Clean up old entries
     await NotificationRepository.instance.cleanOldPendingSync();
-  }
-
-  void _startDiscoveryWatchdog() {
-    _discoveryWatchdogTimer?.cancel();
-    _discoveryWatchdogTimer = Timer.periodic(_discoveryWatchdogInterval, (_) {
-      if (!isEnabled || _isRefreshingDiscovery) return;
-      if (authorizedPeerIds.isNotEmpty && !_hasAuthorizedPeerOnline()) {
-        appLog(
-          'Discovery watchdog: authorized peers missing, refreshing...',
-          level: 'warning',
-        );
-        unawaited(refreshBrowsing());
-      }
-    });
-  }
-
-  void _stopDiscoveryWatchdog() {
-    _discoveryWatchdogTimer?.cancel();
-    _discoveryWatchdogTimer = null;
   }
 
   void _startPeerLivenessProbing() {
@@ -462,7 +436,7 @@ class SyncManager with WidgetsBindingObserver {
     try {
       // Sequential on purpose: Android NsdManager allows one resolve at a time.
       for (final peer in peers) {
-        final socket = await _connectToService(peer.service);
+        final socket = await _connectToPeer(peer);
         if (socket != null) {
           _peerMissCounts.remove(peer.peerId);
           try {
@@ -510,7 +484,10 @@ class SyncManager with WidgetsBindingObserver {
     authorizedPeerIds = updated;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
-    await refreshBrowsing();
+    // Re-probe peers without wiping the discovered list: refreshDiscovery()
+    // clears _discoveredPeers then re-scans, which makes every device briefly
+    // vanish from the authorization UI whenever a checkbox is toggled.
+    triggerCrossBandDiscovery();
   }
 
   Future<void> updateDeviceName(String name) async {
@@ -532,47 +509,56 @@ class SyncManager with WidgetsBindingObserver {
     // Start server first to ensure the port is available
     final serverStarted = await startServer();
     if (serverStarted) {
-      await startPublishing();
-      await startBrowsing();
-      _startDiscoveryWatchdog();
       _startPeerLivenessProbing();
       _startConnectivityMonitoring();
+      // Promote the process to a foreground service on Android so the
+      // ServerSocket keeps accepting connections after backgrounding.
+      // Without this, Doze/App Standby freezes the process network IO and
+      // peers can no longer discover this device.
+      _startForegroundService();
+      triggerCrossBandDiscovery();
     } else {
-      appLog('Skipping mDNS publishing because server failed to start', level: 'error');
+      appLog('Skipping discovery because server failed to start', level: 'error');
     }
   }
 
   Future<void> stop() async {
     appLog('Stopping sync services...');
-    _stopDiscoveryWatchdog();
     _stopPeerLivenessProbing();
     _stopConnectivityMonitoring();
+    _scanDebounceTimer?.cancel();
+    _scanDebounceTimer = null;
     _peerMissCounts.clear();
     _pendingQueue.clear();
-    if (_registration != null) {
-      try {
-        await unregister(_registration!);
-      } catch (e) {
-        appLog('Error unregistering: $e');
-      }
-      _registration = null;
-    }
-    if (_discovery != null) {
-      try {
-        await stopDiscovery(_discovery!);
-      } catch (e) {
-        appLog('Error stopping discovery: $e');
-      }
-      _discovery = null;
-    }
     await _server?.close();
     _server = null;
     await _serverV6?.close();
     _serverV6 = null;
+    _stopForegroundService();
     await _abortAllPendingFiles();
     _discoveredPeers.clear();
     _devicesChangedController.add(availableDeviceNames);
     _peersChangedController.add(availablePeers);
+  }
+
+  /// Starts the Android foreground service that keeps the process alive.
+  /// No-op on non-Android platforms or when the channel is unavailable.
+  Future<void> _startForegroundService() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _fgsChannel.invokeMethod<bool>('startForegroundSync');
+    } catch (e) {
+      appLog('startForegroundSync failed: $e', level: 'warning');
+    }
+  }
+
+  Future<void> _stopForegroundService() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _fgsChannel.invokeMethod<bool>('stopForegroundSync');
+    } catch (e) {
+      appLog('stopForegroundSync failed: $e', level: 'warning');
+    }
   }
 
   Future<void> _abortAllPendingFiles() async {
@@ -629,112 +615,22 @@ class SyncManager with WidgetsBindingObserver {
     });
   }
 
-  // MARK: - mDNS Publishing
-  Future<void> startPublishing() async {
-    appLog('Publishing mDNS service: $displayName (peerId=$peerId) on port $port');
-    try {
-      _registration = await register(Service(
-        name: displayName,
-        type: _serviceType,
-        port: port,
-        txt: {'peerId': Uint8List.fromList(utf8.encode(peerId))},
-      ));
-      appLog('mDNS service published successfully');
-    } catch (e) {
-      appLog('Failed to publish mDNS service: $e', level: 'error');
-    }
-  }
-
-  // MARK: - mDNS Browsing
-  Future<void> startBrowsing() async {
-    if (_discovery != null) return;
-    appLog('Starting mDNS browsing for $_serviceType');
-    try {
-      // Resolve on connect instead of IpLookupType.v4 during browse.
-      // Android NsdManager only allows one resolve at a time; resolving every
-      // found service (plus IPv4 lookup) commonly stalls discovery.
-      _discovery = await startDiscovery(
-        _serviceType,
-        autoResolve: true,
-        ipLookupType: IpLookupType.none,
-      );
-      _discovery!.addListener(() {
-        final previousIds = <String>{..._discoveredPeers.keys};
-        final next = <String, DiscoveredPeer>{};
-        final seenPeerIds = <String>{};
-        for (final service in _discovery!.services) {
-          final name = service.name;
-          if (name == null || name.isEmpty || name == displayName) continue;
-          final remotePeerId = _peerIdFromService(service, name);
-          if (remotePeerId == peerId || seenPeerIds.contains(remotePeerId)) continue;
-          seenPeerIds.add(remotePeerId);
-          next[remotePeerId] = DiscoveredPeer(
-            peerId: remotePeerId,
-            displayName: name,
-            service: service,
-          );
-        }
-        _discoveredPeers
-          ..clear()
-          ..addAll(next);
-        _peerMissCounts.removeWhere((key, _) => !next.containsKey(key));
-        unawaited(_migrateAuthorizedPeerIds());
-        _devicesChangedController.add(availableDeviceNames);
-        _peersChangedController.add(availablePeers);
-        appLog('Discovered peers updated (${availablePeers.length}): ${availablePeers.map((p) => "${p.displayName}:${p.peerId}").join(", ")}');
-
-        // Newly (re)appeared peers: deliver anything queued while they were gone.
-        final reappeared = next.keys.toSet().difference(previousIds);
-        for (final peerId in reappeared) {
-          if (_pendingQueue.any((e) => e.targetPeerId == peerId)) {
-            unawaited(_flushPendingQueue(peerId));
-          }
-          // Backfill persisted pending notifications (offline delivery)
-          unawaited(_backfillPendingNotifications(peerId));
-        }
-      });
-    } catch (e) {
-      appLog('Failed to start mDNS browsing: $e', level: 'error');
-    }
-  }
-
-  Future<void> refreshBrowsing() async {
+  /// Clears discovered peers and re-runs subnet scan + manual peer connect.
+  Future<void> refreshDiscovery() async {
     if (!isEnabled) return;
     if (_isRefreshingDiscovery) {
-      appLog('refreshBrowsing skipped: already in progress');
+      appLog('refreshDiscovery skipped: already in progress');
       return;
     }
     _isRefreshingDiscovery = true;
     appLog('Refreshing LAN device discovery...');
     try {
-      if (_discovery != null) {
-        try {
-          await stopDiscovery(_discovery!);
-        } catch (e) {
-          appLog('Error stopping discovery during refresh: $e', level: 'warning');
-        }
-        _discovery = null;
-      }
-
       _discoveredPeers.clear();
       _peerMissCounts.clear();
       _devicesChangedController.add(availableDeviceNames);
       _peersChangedController.add(availablePeers);
 
-      if (_registration != null) {
-        try {
-          await unregister(_registration!);
-        } catch (e) {
-          appLog('Error unregistering during refresh: $e', level: 'warning');
-        }
-        _registration = null;
-      }
-
-      // Give Android NsdManager time to release the previous discovery session.
-      await Future.delayed(_discoveryRestartDelay);
-
-      await startPublishing();
-      await startBrowsing();
+      triggerCrossBandDiscovery();
       appLog('LAN device discovery refresh completed');
     } finally {
       _isRefreshingDiscovery = false;
@@ -828,7 +724,7 @@ class SyncManager with WidgetsBindingObserver {
               final json = jsonDecode(jsonString);
               final message = SyncMessage.fromJson(json);
               appLog('Parsed SyncMessage from ${message.deviceId}, type: ${message.type}');
-              await _handleSyncMessage(message);
+              await _handleSyncMessage(message, socket: socket);
             } catch (e) {
               appLog('Error parsing sync message: $e', level: 'error');
             }
@@ -846,7 +742,7 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _handleSyncMessage(SyncMessage message) async {
+  Future<void> _handleSyncMessage(SyncMessage message, {Socket? socket}) async {
     // Inbound trust is the shared AES secret. authorizedPeerIds only controls
     // which peers this device pushes clipboard/history to (one-way authorize UX).
 
@@ -880,6 +776,10 @@ class SyncManager with WidgetsBindingObserver {
       NotificationManager.instance.clearAll();
     } else if (message.type == 'notification/config') {
       _handleNotificationConfig(decrypted);
+    } else if (message.type == 'handshake/hello') {
+      _handleHandshakeHello(decrypted, message.deviceId, socket);
+    } else if (message.type == 'handshake/hi') {
+      _handleHandshakeHi(decrypted, message.deviceId, socket);
     }
   }
 
@@ -888,6 +788,283 @@ class SyncManager with WidgetsBindingObserver {
     // 筛选配置由本机用户自主管理（两层筛选模型）。
     appLog('Ignored remote notification config (security policy)',
         level: 'warning');
+  }
+
+  // ------------------------------------------------------------------
+  // Cross-Band Discovery (subnet scan + manual peers)
+  //
+  // mDNS multicast is often blocked between 2.4G and 5G bands on home routers.
+  // These paths use direct unicast TCP connects (not subject to multicast
+  // isolation) plus an encrypted handshake to exchange peerId/displayName,
+  // then inject the peer into _discoveredPeers so all existing fan-out /
+  // liveness / queue logic works unchanged.
+  // ------------------------------------------------------------------
+
+  void _handleHandshakeHello(String decrypted, String remotePeerId, Socket? socket) {
+    try {
+      final info = jsonDecode(decrypted) as Map<String, dynamic>;
+      final name = info['name'] as String? ?? remotePeerId;
+      final portValue = (info['port'] as num?)?.toInt() ?? port;
+      final host = socket?.remoteAddress.address;
+      if (host == null) return;
+      _recordDiscoveredPeer(remotePeerId, name, host, portValue);
+      // Reply with hi on the same connection so the initiator learns our identity.
+      if (socket != null) {
+        final hiJson = _makeHandshakeJson('handshake/hi');
+        if (hiJson.isNotEmpty) {
+          unawaited(_writeFrame(socket, hiJson).then((_) => socket.flush()));
+        }
+      }
+    } catch (e) {
+      appLog('Failed to decode handshake/hello: $e', level: 'warning');
+    }
+  }
+
+  void _handleHandshakeHi(String decrypted, String remotePeerId, Socket? socket) {
+    try {
+      final info = jsonDecode(decrypted) as Map<String, dynamic>;
+      final name = info['name'] as String? ?? remotePeerId;
+      final portValue = (info['port'] as num?)?.toInt() ?? port;
+      final host = socket?.remoteAddress.address;
+      if (host == null) return;
+      _recordDiscoveredPeer(remotePeerId, name, host, portValue);
+    } catch (e) {
+      appLog('Failed to decode handshake/hi: $e', level: 'warning');
+    }
+  }
+
+  void _recordDiscoveredPeer(String peerId, String name, String host, int peerPort) {
+    if (peerId == this.peerId) return;
+    final peer = DiscoveredPeer(
+      peerId: peerId,
+      displayName: name,
+      host: host,
+      port: peerPort,
+    );
+    final isNew = !_discoveredPeers.containsKey(peerId);
+    _discoveredPeers[peerId] = peer;
+    _peerMissCounts.remove(peerId);
+    appLog('Discovered peer via handshake: $name (peerId=$peerId) at $host:$peerPort');
+    _notifyPeersChanged();
+    if (isNew) {
+      if (_pendingQueue.any((e) => e.targetPeerId == peerId)) {
+        unawaited(_flushPendingQueue(peerId));
+      }
+      unawaited(_backfillPendingNotifications(peerId));
+    }
+  }
+
+  void _notifyPeersChanged() {
+    _devicesChangedController.add(availableDeviceNames);
+    _peersChangedController.add(availablePeers);
+  }
+
+  /// Public entry point invoked from start() / refreshDiscovery() and from the
+  /// settings UI after adding/removing a manual peer.
+  /// Public entry point invoked from start() / refreshDiscovery() and from the
+  /// settings UI after adding/removing a manual peer. Debounced by 400ms so
+  /// rapid toggles coalesce into a single sweep.
+  void triggerCrossBandDiscovery() {
+    if (!isEnabled) return;
+    _scanDebounceTimer?.cancel();
+    _scanDebounceTimer = Timer(const Duration(milliseconds: 400), () {
+      unawaited(_connectManualPeers());
+      unawaited(_scanSubnets());
+    });
+  }
+
+  Future<List<String>> _loadManualPeers() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('manualSyncPeers') ?? [];
+  }
+
+  Future<List<String>> _enumerateLocalIPv4s() async {
+    try {
+      final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4);
+      final addresses = <String>[];
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          final ip = addr.address;
+          if (!ip.startsWith('127.') && _isLanIPv4(ip)) addresses.add(ip);
+        }
+      }
+      return addresses;
+    } catch (e) {
+      appLog('Failed to enumerate local IPv4s: $e', level: 'warning');
+      return [];
+    }
+  }
+
+  /// Returns true only for RFC1918 private addresses used on home/office LANs.
+  /// Filters out carrier-grade NAT (e.g. 10.x from mobile data) and public IPs
+  /// so we don't try to sync over a metered connection or display noisy IPs.
+  static bool _isLanIPv4(String ip) {
+    final parts = ip.split('.');
+    if (parts.length != 4) return false;
+    final a = int.tryParse(parts[0]) ?? -1;
+    final b = int.tryParse(parts[1]) ?? -1;
+    // 192.168.x.x
+    if (a == 192 && b == 168) return true;
+    // 172.16.x.x - 172.31.x.x
+    if (a == 172 && (b >= 16 && b <= 31)) return true;
+    // 169.254.x.x (link-local)
+    if (a == 169 && b == 254) return true;
+    return false;
+  }
+
+  /// Public accessor for the settings UI: returns the device's non-loopback
+  /// IPv4 addresses so the user can read them to peers for manual connection.
+  Future<List<String>> localIPv4Addresses() => _enumerateLocalIPv4s();
+
+  Future<List<String>> _candidateScanIPs() async {
+    final myIPs = await _enumerateLocalIPv4s();
+    final seen = <String>{};
+    final candidates = <String>[];
+    for (final ip in myIPs) {
+      final parts = ip.split('.');
+      if (parts.length != 4) continue;
+      final prefix = '${parts[0]}.${parts[1]}.${parts[2]}';
+      for (var i = 1; i <= 254; i++) {
+        final candidate = '$prefix.$i';
+        if (!myIPs.contains(candidate) && !seen.contains(candidate)) {
+          seen.add(candidate);
+          candidates.add(candidate);
+        }
+      }
+    }
+    return candidates;
+  }
+
+  /// Concurrently probes every candidate IP on the sync port with an encrypted
+  /// handshake. Sliding window of 64 with a 400ms connect timeout so a full
+  /// /24 sweep finishes in ~2s without flooding the LAN.
+  Future<void> _scanSubnets() async {
+    final candidates = await _candidateScanIPs();
+    if (candidates.isEmpty) return;
+    final scanStart = DateTime.now();
+    var hits = 0;
+    appLog('Subnet scan: probing ${candidates.length} candidates on port $port');
+    var running = 0;
+    var index = 0;
+    const concurrency = 64;
+    final completer = Completer<void>();
+
+    void tryNext() {
+      while (running < concurrency && index < candidates.length) {
+        final ip = candidates[index++];
+        running++;
+        _performHandshake(ip, port).then((ok) {
+          if (ok) hits++;
+        }).whenComplete(() {
+          running--;
+          if (index >= candidates.length && running == 0) {
+            if (!completer.isCompleted) completer.complete();
+          } else {
+            tryNext();
+          }
+        });
+      }
+    }
+
+    tryNext();
+    await completer.future.timeout(const Duration(seconds: 8), onTimeout: () {});
+    final elapsedMs = DateTime.now().difference(scanStart).inMilliseconds;
+    appLog('Subnet scan complete: ${candidates.length} probed, $hits hits in ${elapsedMs}ms');
+  }
+
+  Future<void> _connectManualPeers() async {
+    final manualPeers = await _loadManualPeers();
+    if (manualPeers.isEmpty) return;
+    for (final entry in manualPeers) {
+      final parts = entry.split(':');
+      if (parts.length != 2) continue;
+      final host = parts[0];
+      final peerPort = int.tryParse(parts[1]) ?? port;
+      final ok = await _performHandshake(host, peerPort);
+      appLog('Manual peer $entry handshake: ${ok ? "ok" : "failed"}',
+          level: ok ? 'info' : 'warning');
+    }
+  }
+
+  /// Opens a TCP connection to host:port, sends handshake/hello, and waits for
+  /// handshake/hi. On success the peer is recorded via _handleSyncMessage.
+  Future<bool> _performHandshake(String host, int targetPort) async {
+    Socket? socket;
+    try {
+      socket = await Socket.connect(host, targetPort,
+          timeout: const Duration(milliseconds: 400));
+    } catch (_) {
+      return false;
+    }
+    try {
+      final json = _makeHandshakeJson('handshake/hello');
+      if (json.isEmpty) {
+        socket.destroy();
+        return false;
+      }
+      await _writeFrame(socket, json);
+      await socket.flush();
+
+      // Bounded read: a slow/dead peer that accepts TCP but never replies
+      // would otherwise stall the concurrency slot until the sweep timeout.
+      final frame = await _readOneFrame(socket).timeout(
+        const Duration(milliseconds: 500),
+        onTimeout: () => null,
+      );
+      if (frame == null || frame.isEmpty) return false;
+      final jsonStr = utf8.decode(frame);
+      final parsed = jsonDecode(jsonStr);
+      final message = SyncMessage.fromJson(parsed);
+      await _handleSyncMessage(message, socket: socket);
+      return true;
+    } catch (e) {
+      appLog('Handshake to $host:$targetPort failed: $e', level: 'warning');
+      return false;
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  /// Reads exactly one length-prefixed frame from the socket.
+  Future<List<int>?> _readOneFrame(Socket socket) async {
+    final buffer = <int>[];
+    int? expectedLength;
+    await for (final data in socket) {
+      buffer.addAll(data);
+      while (true) {
+        if (expectedLength == null) {
+          if (buffer.length >= 4) {
+            final lengthData = buffer.sublist(0, 4);
+            expectedLength = ByteData.sublistView(Uint8List.fromList(lengthData))
+                .getUint32(0, Endian.big);
+            buffer.removeRange(0, 4);
+            if (expectedLength > 2 * 1024 * 1024) return null;
+          } else {
+            break;
+          }
+        }
+        if (buffer.length >= expectedLength) {
+          return buffer.sublist(0, expectedLength);
+        } else {
+          break;
+        }
+      }
+    }
+    return null;
+  }
+
+  String _makeHandshakeJson(String type) {
+    final payload = jsonEncode({'name': displayName, 'port': port});
+    final encrypted = _encrypt(payload);
+    if (encrypted == null) return '';
+    final message = SyncMessage(
+      deviceId: deviceId,
+      timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+      type: type,
+      content: encrypted,
+      hash: '',
+    );
+    return jsonEncode(message.toJson());
   }
 
   Future<void> broadcastNotificationMessage({
@@ -1141,7 +1318,7 @@ class SyncManager with WidgetsBindingObserver {
     if (jsonData == null) return;
 
     appLog('Sending text to ${targets.first.displayName}...');
-    await _sendSync(jsonData, targets.first.service);
+    await _sendSync(jsonData, targets.first);
   }
 
   /// Peer-targeted send: resolves by peerId, returns success/failure.
@@ -1162,7 +1339,7 @@ class SyncManager with WidgetsBindingObserver {
     if (jsonData == null) return false;
 
     appLog('Sending text to ${target.first.displayName} (peerId=$peerId)...');
-    return await _sendSync(jsonData, target.first.service);
+    return await _sendSync(jsonData, target.first);
   }
 
   String _contentHashForPlainText(String text) {
@@ -1197,7 +1374,7 @@ class SyncManager with WidgetsBindingObserver {
     }
     await _sendFile(
       file,
-      service: targets.first.service,
+      peer: targets.first,
       headerType: 'file/header',
       chunkType: 'file/chunk',
       addToFileHistory: true,
@@ -1215,7 +1392,7 @@ class SyncManager with WidgetsBindingObserver {
     appLog('Sending file to ${target.first.displayName} (peerId=$peerId)...');
     await _sendFile(
       file,
-      service: target.first.service,
+      peer: target.first,
       headerType: 'file/header',
       chunkType: 'file/chunk',
       addToFileHistory: true,
@@ -1225,7 +1402,7 @@ class SyncManager with WidgetsBindingObserver {
 
   Future<void> _sendFile(
     File file, {
-    required Service service,
+    required DiscoveredPeer peer,
     required String headerType,
     required String chunkType,
     required bool addToFileHistory,
@@ -1257,7 +1434,7 @@ class SyncManager with WidgetsBindingObserver {
 
       // Send header + all chunks over ONE socket so ordering is guaranteed
       // and we avoid per-chunk connection setup cost.
-      final socket = await _connectToService(service);
+      final socket = await _connectToPeer(peer);
       if (socket == null) return;
 
       var transferFailed = false;
@@ -1323,7 +1500,7 @@ class SyncManager with WidgetsBindingObserver {
           fileName: fileName,
           filePath: file.path,
           fileSize: fileSize,
-          senderName: 'Me (Sent to ${service.name ?? 'Unknown'})',
+          senderName: 'Me (Sent to ${peer.displayName})',
         );
       }
       appLog('File transfer completed for $fileName');
@@ -1332,45 +1509,16 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
-  Future<Socket?> _connectToService(Service service) async {
-    for (var attempt = 0; attempt < 2; attempt++) {
-      try {
-        var target = service;
-        try {
-          target = await resolve(service);
-        } catch (e) {
-          if (attempt == 0) {
-            await Future.delayed(const Duration(milliseconds: 200));
-            continue;
-          }
-          appLog(
-            'Resolve failed for ${service.name}, trying cached endpoint: $e',
-            level: 'warning',
-          );
-        }
-
-        final port = target.port ?? this.port;
-        if (target.addresses != null && target.addresses!.isNotEmpty) {
-          final v4 = target.addresses!
-              .where((a) => a.type == InternetAddressType.IPv4)
-              .toList();
-          final address = v4.isNotEmpty ? v4.first : target.addresses!.first;
-          return await Socket.connect(address, port, timeout: const Duration(seconds: 5));
-        }
-        final host = target.host;
-        if (host == null || host.isEmpty) {
-          appLog('No host/address for ${service.name}', level: 'error');
-          return null;
-        }
-        return await Socket.connect(host, port, timeout: const Duration(seconds: 5));
-      } catch (e) {
-        if (attempt > 0) {
-          appLog('Failed to connect to ${service.name}: $e', level: 'error');
-          return null;
-        }
-      }
+  /// Connects to a peer via direct TCP (host:port).
+  Future<Socket?> _connectToPeer(DiscoveredPeer peer) async {
+    try {
+      return await Socket.connect(peer.host, peer.port,
+          timeout: const Duration(seconds: 5));
+    } catch (e) {
+      appLog('Failed to connect to ${peer.host}:${peer.port}: $e',
+          level: 'error');
+      return null;
     }
-    return null;
   }
 
   /// Writes one length-prefixed frame. Awaits flush so callers can detect a
@@ -1385,13 +1533,10 @@ class SyncManager with WidgetsBindingObserver {
 
   /// Sends one frame. Returns false on any failure (resolve, connect, write) so
   /// the caller can re-queue for later delivery instead of dropping the frame.
-  Future<bool> _sendSync(String jsonData, Service service) async {
-    final socket = await _connectToService(service);
+  Future<bool> _sendSync(String jsonData, DiscoveredPeer peer) async {
+    final socket = await _connectToPeer(peer);
     if (socket == null) {
-      final name = service.name;
-      if (name != null && name.isNotEmpty) {
-        _recordPeerMiss(_peerIdFromService(service, name));
-      }
+      _recordPeerMiss(peer.peerId);
       return false;
     }
     try {
@@ -1400,7 +1545,7 @@ class SyncManager with WidgetsBindingObserver {
       await socket.close();
       return true;
     } catch (e) {
-      appLog('Failed to send sync to ${service.name}: $e', level: 'error');
+      appLog('Failed to send sync to ${peer.displayName}: $e', level: 'error');
       socket.destroy();
       return false;
     }
