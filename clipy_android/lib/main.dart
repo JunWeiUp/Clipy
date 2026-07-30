@@ -159,7 +159,7 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
     if (_isRefreshing || !SyncManager.instance.isEnabled) return;
     setState(() => _isRefreshing = true);
     try {
-      await SyncManager.instance.refreshBrowsing();
+      await SyncManager.instance.refreshDiscovery();
       if (mounted) {
         setState(() => _availablePeers = SyncManager.instance.availablePeers);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -239,6 +239,164 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
               },
             );
           }),
+      ],
+    );
+  }
+}
+
+/// Manually-configured sync peers (host:port) for cross-band / cross-subnet
+/// discovery when mDNS multicast is isolated by the router.
+class ManualPeerSection extends StatefulWidget {
+  const ManualPeerSection({super.key});
+
+  @override
+  State<ManualPeerSection> createState() => _ManualPeerSectionState();
+}
+
+class _ManualPeerSectionState extends State<ManualPeerSection> {
+  List<String> _manualPeers = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadManualPeers();
+  }
+
+  Future<void> _loadManualPeers() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _manualPeers = prefs.getStringList('manualSyncPeers') ?? [];
+      });
+    }
+  }
+
+  bool _isValidIPv4(String s) {
+    final parts = s.split('.');
+    if (parts.length != 4) return false;
+    for (final p in parts) {
+      final v = int.tryParse(p);
+      if (v == null || v < 0 || v > 255) return false;
+    }
+    return true;
+  }
+
+  Future<void> _addPeer() async {
+    final hostController = TextEditingController();
+    final portController = TextEditingController(text: '${SyncManager.instance.port}');
+    final formKey = GlobalKey<FormState>();
+
+    final entry = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('添加设备'),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: hostController,
+                decoration: const InputDecoration(
+                  labelText: 'IP 地址',
+                  hintText: '192.168.1.20',
+                ),
+                validator: (v) {
+                  final s = v?.trim() ?? '';
+                  if (!_isValidIPv4(s)) return '请输入合法 IPv4 地址';
+                  return null;
+                },
+              ),
+              TextFormField(
+                controller: portController,
+                decoration: const InputDecoration(labelText: '端口'),
+                keyboardType: TextInputType.number,
+                validator: (v) {
+                  final p = int.tryParse(v ?? '');
+                  if (p == null || p < 1 || p > 65535) return '端口范围 1-65535';
+                  return null;
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+            onPressed: () {
+              if (formKey.currentState?.validate() ?? false) {
+                Navigator.pop(ctx, '${hostController.text.trim()}:${portController.text.trim()}');
+              }
+            },
+            child: const Text('添加'),
+          ),
+        ],
+      ),
+    );
+
+    if (entry == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList('manualSyncPeers') ?? [];
+    if (!list.contains(entry)) {
+      list.add(entry);
+      await prefs.setStringList('manualSyncPeers', list);
+      setState(() => _manualPeers = list);
+      SyncManager.instance.triggerCrossBandDiscovery();
+    }
+  }
+
+  Future<void> _removePeer(String entry) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList('manualSyncPeers') ?? [];
+    list.remove(entry);
+    await prefs.setStringList('manualSyncPeers', list);
+    setState(() => _manualPeers = list);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  '手动添加设备（跨频段/跨子网）',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: SyncManager.instance.isEnabled ? _addPeer : null,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('添加'),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          child: Text(
+            '当自动发现失效（如 2.4G/5G 隔离）时，在对端查看 IP 后手动添加。',
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+        ),
+        ..._manualPeers.map(
+          (entry) => ListTile(
+            leading: const Icon(Icons.dns, size: 20),
+            title: Text(entry),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_outline, size: 20),
+              onPressed: () => _removePeer(entry),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -651,6 +809,26 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
             setState(() {});
           },
         ),
+        if (SyncManager.instance.isEnabled)
+          FutureBuilder<List<String>>(
+            future: SyncManager.instance.localIPv4Addresses(),
+            builder: (context, snapshot) {
+              final ips = snapshot.data;
+              if (ips == null || ips.isEmpty) {
+                return const SizedBox.shrink();
+              }
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '${l10n.myIPAddress}: ${ips.join(', ')}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              );
+            },
+          ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: TextField(
@@ -1022,6 +1200,26 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
             setState(() {});
           },
         ),
+        if (SyncManager.instance.isEnabled)
+          FutureBuilder<List<String>>(
+            future: SyncManager.instance.localIPv4Addresses(),
+            builder: (context, snapshot) {
+              final ips = snapshot.data;
+              if (ips == null || ips.isEmpty) {
+                return const SizedBox.shrink();
+              }
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '${l10n.myIPAddress}: ${ips.join(', ')}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              );
+            },
+          ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: TextField(
@@ -1194,6 +1392,26 @@ class _SettingsPageState extends State<SettingsPage> {
               setState(() {});
             },
           ),
+          if (SyncManager.instance.isEnabled)
+            FutureBuilder<List<String>>(
+              future: SyncManager.instance.localIPv4Addresses(),
+              builder: (context, snapshot) {
+                final ips = snapshot.data;
+                if (ips == null || ips.isEmpty) {
+                  return const SizedBox.shrink();
+                }
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '${l10n.myIPAddress}: ${ips.join(', ')}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                );
+              },
+            ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: TextField(
@@ -1231,6 +1449,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ..._availableDevices.map(
               (peer) => LanDeviceActionTile(peer: peer),
             ),
+          const ManualPeerSection(),
           const Divider(),
           ListTile(
             leading: const Icon(Icons.list_alt),

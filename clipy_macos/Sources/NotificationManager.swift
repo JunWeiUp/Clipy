@@ -16,8 +16,15 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     var allowedPackages: Set<String> = []
     var notificationSyncEnabled: Bool = true
     var notificationSound: Bool = true
+    var bannerApps: Set<String> = []
+    var bannerKeywords: [String] = []
+    /// 命中即不弹横幅的屏蔽关键字；优先级高于 bannerApps/bannerKeywords。
+    var blockedKeywords: [String] = []
 
     var notificationCount: Int { repository.count() }
+
+    /// Distinct apps observed in received notifications, for the settings picker.
+    var knownApps: [NotificationRepository.AppIdentity] { repository.fetchUniqueApps() }
 
     var onNotificationsChanged: (() -> Void)?
 
@@ -105,6 +112,10 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         repository.fetch(offset: offset, limit: limit)
     }
 
+    func fetchAllNotifications() -> [NotificationEntry] {
+        repository.fetchAll()
+    }
+
     func fetchById(_ id: String) -> NotificationEntry? {
         repository.fetchById(id)
     }
@@ -165,7 +176,9 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
         let accepted = upsertNotification(entry)
         if accepted {
-            showSystemNotification(entry)
+            if shouldShowBanner(entry) {
+                showSystemNotification(entry)
+            }
             // Acknowledge receipt so Android can remove from offline queue
             SyncManager.shared.sendNotificationAck(hash: entry.id)
         }
@@ -214,6 +227,33 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         (entry.subtitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         entry.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         (entry.extras ?? [:]).values.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// 对 title/subtitle/body 做大小写不敏感的子串匹配；空白项被忽略。
+    private func matchesKeyword(_ entry: NotificationEntry, keywords: [String]) -> Bool {
+        let lowered = keywords
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+        guard !lowered.isEmpty else { return false }
+        let title = entry.title.lowercased()
+        let subtitle = (entry.subtitle ?? "").lowercased()
+        let body = entry.body.lowercased()
+        for keyword in lowered {
+            if title.contains(keyword) || subtitle.contains(keyword) || body.contains(keyword) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// 收到的通知是否弹出系统横幅。
+    /// - 屏蔽关键字（blockedKeywords）优先：命中则一律不弹，即便白名单命中。
+    /// - 白名单为空（无应用、无关键字）时不弹任何横幅。
+    func shouldShowBanner(_ entry: NotificationEntry) -> Bool {
+        if matchesKeyword(entry, keywords: blockedKeywords) { return false }
+        if bannerApps.isEmpty && bannerKeywords.isEmpty { return false }
+        if bannerApps.contains(entry.packageName) { return true }
+        return matchesKeyword(entry, keywords: bannerKeywords)
     }
 
     func showSystemNotification(_ entry: NotificationEntry) {
@@ -296,12 +336,38 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         if let packages = defaults.stringArray(forKey: "notificationAllowedPackages") {
             allowedPackages = Set(packages)
         }
+        if let bannerPackageArray = defaults.stringArray(forKey: "notificationBannerApps") {
+            bannerApps = Set(bannerPackageArray)
+        }
+        if let keywords = defaults.stringArray(forKey: "notificationBannerKeywords") {
+            bannerKeywords = keywords
+        }
+        if let blocked = defaults.stringArray(forKey: "notificationBlockedKeywords") {
+            blockedKeywords = blocked
+        }
     }
 
     func savePreferences() {
         UserDefaults.standard.set(notificationSyncEnabled, forKey: "notificationSyncEnabled")
         UserDefaults.standard.set(notificationSound, forKey: "notificationSound")
         UserDefaults.standard.set(Array(allowedPackages), forKey: "notificationAllowedPackages")
+        UserDefaults.standard.set(Array(bannerApps), forKey: "notificationBannerApps")
+        UserDefaults.standard.set(bannerKeywords, forKey: "notificationBannerKeywords")
+        UserDefaults.standard.set(blockedKeywords, forKey: "notificationBlockedKeywords")
+    }
+
+    // MARK: - System Notification Authorization
+
+    func checkNotificationAuthorization(completion: @escaping (UNAuthorizationStatus) -> Void) {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async { completion(settings.authorizationStatus) }
+        }
+    }
+
+    func openSystemNotificationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     // MARK: - UNUserNotificationCenterDelegate

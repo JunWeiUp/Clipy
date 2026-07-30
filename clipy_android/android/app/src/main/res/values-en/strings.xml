@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fgs_notification_title">Clipy LAN Sync</string>
+    <string name="fgs_notification_text">Keeping LAN sync service alive</string>
+    <string name="fgs_channel_name">LAN Sync</string>
+    <string name="fgs_channel_desc">Keeps device sync connections alive when the app is in the background</string>
+</resources>

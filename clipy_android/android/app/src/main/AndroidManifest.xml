@@ -7,6 +7,14 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Foreground service: keeps the Flutter process alive so SyncManager's
+         ServerSocket keeps accepting inbound handshakes while the Activity is
+         backgrounded. Without this, Android freezes the process network IO and
+         peers can no longer discover this device. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14 (API 34) requires declaring the specific FGS type. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:label="Clipy Android"
@@ -55,6 +63,14 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- Foreground service that holds the process alive for LAN sync while
+             the app is backgrounded. Started/stopped by SyncManager via
+             MethodChannel; does not run any business logic itself. -->
+        <service
+            android:name=".ClipySyncForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
     <queries>
         <intent>
