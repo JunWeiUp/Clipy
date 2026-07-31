@@ -232,9 +232,14 @@ class SyncManager with WidgetsBindingObserver {
 
   bool isEnabled = false;
   int port = 5566;
-  List<String> authorizedPeerIds = [];
+  List<String> clipboardSyncPeerIds = [];
+  List<String> notificationSyncPeerIds = [];
   String peerId = '';
   String displayName = 'Android';
+
+  /// Union of clipboard + notification outbound targets.
+  List<String> get authorizedPeerIds =>
+      {...clipboardSyncPeerIds, ...notificationSyncPeerIds}.toList()..sort();
 
   List<DiscoveredPeer> get availablePeers {
     final list = _discoveredPeers.values.toList()
@@ -254,7 +259,6 @@ class SyncManager with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     isEnabled = prefs.getBool('syncEnabled') ?? false;
     port = prefs.getInt('syncPort') ?? 5566;
-    authorizedPeerIds = prefs.getStringList('authorizedPeerIds') ?? [];
     peerId = prefs.getString('peerId') ?? '';
     if (peerId.isEmpty) {
       peerId = const Uuid().v4();
@@ -263,6 +267,11 @@ class SyncManager with WidgetsBindingObserver {
     displayName = prefs.getString('deviceName') ??
         (Platform.isAndroid ? 'Android' : 'Device');
     await _migrateAuthorizedPeerIds(prefs);
+    await _migrateDualSyncAuth(prefs);
+    clipboardSyncPeerIds =
+        prefs.getStringList('clipboardSyncPeerIds') ?? [];
+    notificationSyncPeerIds =
+        prefs.getStringList('notificationSyncPeerIds') ?? [];
     WidgetsBinding.instance.addObserver(this);
     if (isEnabled) {
       await start();
@@ -276,14 +285,27 @@ class SyncManager with WidgetsBindingObserver {
       await prefs.setBool('authorizedPeerIdsMigrated', true);
       return;
     }
-    final peerIds = {...authorizedPeerIds};
+    final peerIds = {...(prefs.getStringList('authorizedPeerIds') ?? [])};
     for (final name in legacy) {
       final match = availablePeers.where((p) => p.displayName == name);
       if (match.isNotEmpty) peerIds.add(match.first.peerId);
     }
-    authorizedPeerIds = peerIds.toList()..sort();
-    await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
+    final sorted = peerIds.toList()..sort();
+    await prefs.setStringList('authorizedPeerIds', sorted);
     await prefs.setBool('authorizedPeerIdsMigrated', true);
+  }
+
+  /// One-shot: copy legacy authorizedPeerIds into both capability lists.
+  Future<void> _migrateDualSyncAuth(SharedPreferences prefs) async {
+    if (prefs.getBool('dualSyncAuthMigrated') ?? false) return;
+    final legacy = prefs.getStringList('authorizedPeerIds') ?? [];
+    if (prefs.getStringList('clipboardSyncPeerIds') == null) {
+      await prefs.setStringList('clipboardSyncPeerIds', legacy);
+    }
+    if (prefs.getStringList('notificationSyncPeerIds') == null) {
+      await prefs.setStringList('notificationSyncPeerIds', legacy);
+    }
+    await prefs.setBool('dualSyncAuthMigrated', true);
   }
 
   @override
@@ -940,7 +962,7 @@ class SyncManager with WidgetsBindingObserver {
       payload: payload,
     );
     await _fanout(env, requireAuth: true);
-    for (final id in authorizedPeerIds) {
+    for (final id in clipboardSyncPeerIds) {
       unawaited(PendingTextSyncRepository.instance.insert(
         hash: hash,
         data: content,
@@ -969,7 +991,9 @@ class SyncManager with WidgetsBindingObserver {
       hash: hash.isEmpty ? null : hash,
       payload: payload,
     );
-    await _fanout(env, requireAuth: true);
+    // notif.ack does not require auth; other notif frames use notification list.
+    final requireAuth = wire != _SyncType.notifAck;
+    await _fanout(env, requireAuth: requireAuth);
   }
 
   String? _mapNotificationType(String apiType) {
@@ -989,19 +1013,34 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
+  List<String> _authIdsForType(String type) {
+    switch (type) {
+      case _SyncType.history:
+        return clipboardSyncPeerIds;
+      case _SyncType.notifPost:
+      case _SyncType.notifDismiss:
+      case _SyncType.notifClear:
+      case _SyncType.notifConfig:
+        return notificationSyncPeerIds;
+      default:
+        return authorizedPeerIds;
+    }
+  }
+
   Future<void> _fanout(_SyncEnvelope env, {required bool requireAuth}) async {
     final data = _encodeFrame(env);
     if (data == null) return;
+    final auth = _authIdsForType(env.type);
     final targets = requireAuth
         ? availablePeers
-            .where((p) => authorizedPeerIds.contains(p.peerId))
+            .where((p) => auth.contains(p.peerId))
             .map((p) => p.peerId)
             .toList()
         : _discoveredPeers.keys.toList();
 
     if (targets.isEmpty) {
       if (env.type == _SyncType.history || env.type == _SyncType.notifPost) {
-        for (final id in authorizedPeerIds) {
+        for (final id in auth) {
           _enqueuePending(data, env.type, id, env.hash);
         }
       }
@@ -1061,9 +1100,22 @@ class SyncManager with WidgetsBindingObserver {
     final session = _sessions[peerId];
     if (session == null) return;
 
+    final allowClipboard = clipboardSyncPeerIds.contains(peerId);
+    final allowNotification = notificationSyncPeerIds.contains(peerId);
+
     final cutoff = DateTime.now().subtract(_pendingTtl);
     final due = _pendingQueue
         .where((f) => f.peerId == peerId && !f.enqueueAt.isBefore(cutoff))
+        .where((f) {
+          if (f.type == _SyncType.history) return allowClipboard;
+          if (f.type == _SyncType.notifPost ||
+              f.type == _SyncType.notifDismiss ||
+              f.type == _SyncType.notifClear ||
+              f.type == _SyncType.notifConfig) {
+            return allowNotification;
+          }
+          return true;
+        })
         .toList();
     if (due.isNotEmpty) {
       appLog('Flushing ${due.length} pending frame(s) to $peerId');
@@ -1080,29 +1132,32 @@ class SyncManager with WidgetsBindingObserver {
       }
     }
 
-    // Persisted text frames (SQLite)
-    final persisted =
-        await PendingTextSyncRepository.instance.fetchByPeer(peerId);
-    for (final entry in persisted) {
-      final payload = _encrypt(entry.data);
-      if (payload == null) continue;
-      final env = _SyncEnvelope.make(
-        type: _SyncType.history,
-        peerId: this.peerId,
-        name: displayName,
-        hash: entry.hash,
-        payload: payload,
-      );
-      final data = _encodeFrame(env);
-      if (data == null) continue;
-      try {
-        session.socket.add(data);
-      } catch (_) {
-        return;
+    // Persisted text frames (SQLite) — clipboard auth only
+    if (allowClipboard) {
+      final persisted =
+          await PendingTextSyncRepository.instance.fetchByPeer(peerId);
+      for (final entry in persisted) {
+        final payload = _encrypt(entry.data);
+        if (payload == null) continue;
+        final env = _SyncEnvelope.make(
+          type: _SyncType.history,
+          peerId: this.peerId,
+          name: displayName,
+          hash: entry.hash,
+          payload: payload,
+        );
+        final data = _encodeFrame(env);
+        if (data == null) continue;
+        try {
+          session.socket.add(data);
+        } catch (_) {
+          return;
+        }
       }
     }
 
-    // Persisted notification posts (SQLite offline queue)
+    // Persisted notification posts (SQLite offline queue) — notification auth only
+    if (!allowNotification) return;
     final notifPending =
         await NotificationRepository.instance.fetchAllPendingSync();
     if (notifPending.isNotEmpty) {
@@ -1166,17 +1221,59 @@ class SyncManager with WidgetsBindingObserver {
     return false;
   }
 
-  Future<void> setSyncTarget(String peerId, {required bool enabled}) async {
-    final updated = List<String>.from(authorizedPeerIds);
+  Future<void> setClipboardSyncTarget(String peerId,
+      {required bool enabled}) async {
+    final updated = List<String>.from(clipboardSyncPeerIds);
     if (enabled) {
       if (!updated.contains(peerId)) updated.add(peerId);
     } else {
       updated.remove(peerId);
     }
-    authorizedPeerIds = updated;
+    clipboardSyncPeerIds = updated;
     final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('clipboardSyncPeerIds', clipboardSyncPeerIds);
     await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
     triggerCrossBandDiscovery();
+    if (enabled && _sessions.containsKey(peerId)) {
+      unawaited(_flushPending(peerId));
+    }
+  }
+
+  Future<void> setNotificationSyncTarget(String peerId,
+      {required bool enabled}) async {
+    final updated = List<String>.from(notificationSyncPeerIds);
+    if (enabled) {
+      if (!updated.contains(peerId)) updated.add(peerId);
+    } else {
+      updated.remove(peerId);
+    }
+    notificationSyncPeerIds = updated;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+        'notificationSyncPeerIds', notificationSyncPeerIds);
+    await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
+    triggerCrossBandDiscovery();
+    if (enabled && _sessions.containsKey(peerId)) {
+      unawaited(_flushPending(peerId));
+    }
+  }
+
+  /// Legacy: toggles both clipboard and notification for [peerId].
+  Future<void> setSyncTarget(String peerId, {required bool enabled}) async {
+    await setClipboardSyncTarget(peerId, enabled: enabled);
+    await setNotificationSyncTarget(peerId, enabled: enabled);
+  }
+
+  Future<void> removeAuthorizedPeer(String peerId) async {
+    clipboardSyncPeerIds =
+        List<String>.from(clipboardSyncPeerIds)..remove(peerId);
+    notificationSyncPeerIds =
+        List<String>.from(notificationSyncPeerIds)..remove(peerId);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('clipboardSyncPeerIds', clipboardSyncPeerIds);
+    await prefs.setStringList(
+        'notificationSyncPeerIds', notificationSyncPeerIds);
+    await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
   }
 
   Future<void> updateDeviceName(String name) async {

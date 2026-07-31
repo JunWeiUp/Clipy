@@ -482,8 +482,20 @@ final class SyncManager: NSObject {
     }
 
     private func flushPending(for peerId: String) {
+        let allowClipboard = clipboardAuthIds().contains(peerId)
+        let allowNotification = notificationAuthIds().contains(peerId)
         let cutoff = Date().addingTimeInterval(-Self.pendingQueueTTL)
-        let due = pendingQueue.filter { $0.peerId == peerId && $0.enqueueAt >= cutoff }
+        let due = pendingQueue.filter { frame in
+            guard frame.peerId == peerId && frame.enqueueAt >= cutoff else { return false }
+            switch frame.type {
+            case SyncType.history:
+                return allowClipboard
+            case SyncType.notifPost, SyncType.notifDismiss, SyncType.notifClear, SyncType.notifConfig:
+                return allowNotification
+            default:
+                return true
+            }
+        }
         guard !due.isEmpty, let session = sessions[peerId] else { return }
         appLog("Flushing \(due.count) pending frame(s) to \(peerId)")
         for frame in due {
@@ -493,6 +505,13 @@ final class SyncManager: NSObject {
                     pendingQueue.removeAll { $0.peerId == peerId && $0.data == frame.data }
                 }
             }
+        }
+    }
+
+    /// Re-flush pending frames after the user toggles outbound auth for a peer.
+    func refreshPendingDelivery(for peerId: String) {
+        syncQueue.async { [weak self] in
+            self?.flushPending(for: peerId)
         }
     }
 
