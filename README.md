@@ -68,10 +68,10 @@ Clipy lives in your menu bar and quietly supercharges your clipboard. Beyond sav
 - **Regex** support, plus filters by **type, source app, and date**.
 - Ranked results, multi-select, copy/paste, and pin straight from results.
 
-### 🔄 Encrypted LAN sync & file transfer
-- **AES-GCM 256-bit** encrypted transport between macOS, Android, and iOS.
-- Devices discover each other via **Bonjour/mDNS** — no cloud, no account.
-- **File transfer** in 128 KB chunks over a single ordered connection with **real-time progress**.
+### 🔄 Encrypted LAN sync
+- **AES-GCM 256-bit** encrypted transport between macOS and Android.
+- Devices discover each other via **/24 subnet scan** and **manual IP:port** (works across 2.4G/5G subnets) — no cloud, no account.
+- Reliable **clipboard history** delivery with ack + offline queue.
 - Resilient: a bounded **offline-peer queue** re-delivers to devices that briefly drop off Wi-Fi.
 - **Loop prevention** via content hashes, so copies never bounce between devices forever.
 
@@ -131,7 +131,7 @@ Release builds produce split APKs for `armeabi-v7a` and `arm64-v8a`.
 - `MenuController` — status-bar menu: history, snippets, devices, and actions.
 - `ClipboardManager` — pasteboard polling, history persistence, dedup, sync dispatch.
 - `SnippetManager` — folders, snippets, hotkeys, import/export.
-- `SyncManager` — Bonjour discovery, length-prefixed TCP sync, AES-GCM encryption, hashing, file transfer.
+- `SyncManager` — subnet/manual discovery, length-prefixed TCP sync (protocol v2), AES-GCM encryption, reliable history + notification delivery.
 - `ScreenshotCaptureService` / `CaptureOverlayWindow` — capture, annotation, pin, OCR.
 - `SearchWindow` — global search with filters and ranking.
 - `NotificationManager` — phone-notification mirror.
@@ -140,20 +140,20 @@ Release builds produce split APKs for `armeabi-v7a` and `arm64-v8a`.
 **Android/iOS app** — Flutter/Dart:
 - `lib/main.dart` — tabbed UI (history, settings, logs, notifications, transfer).
 - `lib/clipboard_manager.dart` — clipboard monitoring, history, sync coordination.
-- `lib/sync_manager.dart` — service registration, discovery, TCP sync, encryption, file transfer, dedup.
+- `lib/sync_manager.dart` — subnet/manual discovery, TCP sync v2, encryption, history + notification delivery.
 - `lib/notification_manager.dart` — `NotificationListenerService` integration.
 
 ## 🔁 Sync protocol
 
-Clipy uses a LAN-first protocol for clipboard and file data:
+Clipy uses a LAN-first protocol v2 for clipboard history and notifications:
 
-- **Discovery** — Bonjour/mDNS service `_clipy-sync._tcp`.
-- **Transport** — raw TCP with a 4-byte big-endian length prefix per JSON frame (max 2 MB/frame).
-- **File transfer** — 128 KB chunks over a single ordered connection, with metadata and real-time progress.
-- **Compression** — gzip on text-like chunks when beneficial (identical rules on both ends).
-- **Encryption** — AES-GCM 256-bit.
-- **Authorization** — inbound accepted only from peers in each device's authorized list.
-- **Loop prevention** — content hashes (`lastSyncHash`) prevent rebroadcast loops.
+- **Discovery** — `/24` TCP port scan + manual `IP:port` peers (cross-subnet / dual-band).
+- **Transport** — raw TCP with a 4-byte big-endian length prefix per JSON envelope (`v: 2`, max 2 MB/frame).
+- **Messages** — `history`, `notif.post` / `dismiss` / `clear` / `ack`, `hello` / `welcome`, `ping` / `pong`, `ack`.
+- **Encryption** — AES-GCM 256-bit on payloads.
+- **Authorization** — outbound clipboard/notification push only to peers in each device's authorized list.
+- **Reliability** — history frames require `ack`; bounded offline queue + endpoint cache for reconnect.
+- **Loop prevention** — content hashes prevent rebroadcast loops.
 
 ## 📁 Project structure
 

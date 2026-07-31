@@ -14,6 +14,8 @@ class NotificationManager {
   static const _channel =
       MethodChannel('com.clipyclone.clipy_android/notifications');
   static const _selfPackageName = 'com.clipyclone.clipy_android';
+  static const _permissionsChannel =
+      MethodChannel('com.clipyclone.clipy_android/permissions');
 
   List<String> collectedPackages = []; // 收集白名单：空 = 收集全部
   List<String> syncedPackages = []; // 同步白名单：空 = 同步全部已收集
@@ -95,6 +97,18 @@ class NotificationManager {
           final Map<dynamic, dynamic> removedArgs = call.arguments;
           await _handleNotificationRemoved(
               Map<String, dynamic>.from(removedArgs));
+          break;
+        case 'onListenerConnected':
+          final Map<dynamic, dynamic> args = call.arguments;
+          final connected = args['connected'] as bool? ?? true;
+          appLog('NotificationManager: listener connection state changed: $connected');
+          if (connected) {
+            lastNotificationReceivedAt ??= DateTime.now();
+            if (isEnabled) {
+              unawaited(refreshActiveNotifications());
+            }
+          }
+          _notificationsChangedController.add(null);
           break;
       }
     } catch (e) {
@@ -223,6 +237,28 @@ class NotificationManager {
     return status.permissionGranted;
   }
 
+  Future<bool> isBatteryOptimizationExempt() async {
+    try {
+      final result = await _permissionsChannel
+          .invokeMethod<bool>('isBatteryOptimizationExempt');
+      return result ?? false;
+    } catch (e) {
+      appLog('NotificationManager: error checking battery optimization: $e',
+          level: 'warning');
+      return true; // Don't block on error
+    }
+  }
+
+  Future<void> requestBatteryOptimizationExemption() async {
+    try {
+      await _permissionsChannel
+          .invokeMethod<void>('requestBatteryOptimizationExemption');
+    } catch (e) {
+      appLog('NotificationManager: error requesting battery optimization: $e',
+          level: 'warning');
+    }
+  }
+
   Future<NotificationListenerStatus> getListenerStatus() async {
     try {
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
@@ -260,11 +296,22 @@ class NotificationManager {
     }
   }
 
+  /// Pull currently-active status-bar notifications into local history.
+  ///
+  /// Never syncs to peers: refresh is for UI/DB catch-up only. Real-time
+  /// `onNotificationPosted` events still broadcast when appropriate.
   Future<void> refreshActiveNotifications() async {
     if (!isEnabled) return;
     _suppressBroadcast = true;
     try {
-      await _channel.invokeMethod('refreshActiveNotifications');
+      final result =
+          await _channel.invokeMethod<List<dynamic>>('refreshActiveNotifications');
+      if (result == null) return;
+      for (final item in result) {
+        if (item is Map) {
+          await _handleNotificationPosted(Map<String, dynamic>.from(item));
+        }
+      }
     } catch (e) {
       appLog('NotificationManager: error refreshing active notifications: $e',
           level: 'warning');

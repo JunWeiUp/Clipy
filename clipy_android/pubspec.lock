@@ -253,14 +253,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.17.0"
-  nested:
-    dependency: transitive
-    description:
-      name: nested
-      sha256: "03bac4c528c64c95c722ec99280375a6f2fc708eec17c7b3f07253b626cd2a20"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.0"
   nm:
     dependency: transitive
     description:
@@ -269,46 +261,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.5.0"
-  nsd:
-    dependency: "direct main"
-    description:
-      name: nsd
-      sha256: e1319b09620229c06003b297ea607e1c66c7de62f52168b5603bfa02bbf12f8f
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.5.6"
-  nsd_android:
-    dependency: transitive
-    description:
-      name: nsd_android
-      sha256: "7a38d0b2d21f1e578cd3020940b95b22d5260413dc0c8cf30a987a4e410b166d"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.2.2"
-  nsd_ios:
-    dependency: transitive
-    description:
-      name: nsd_ios
-      sha256: "7034134dd89595362d5e464030081b0d542120a558ab7fe6227df44365df3e8a"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.3"
-  nsd_macos:
-    dependency: transitive
-    description:
-      name: nsd_macos
-      sha256: "2403b8d599f50fc9179db1420a0ffc25bfa8bbeb814aa31ca0a71f804fc938da"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.3"
-  nsd_platform_interface:
-    dependency: transitive
-    description:
-      name: nsd_platform_interface
-      sha256: "2f4033fa13cc45375253bf348abdb9712004e656462205543ec9506b43c67bb2"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.6.0"
   path:
     dependency: "direct main"
     description:
@@ -373,14 +325,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.9.1"
-  provider:
-    dependency: transitive
-    description:
-      name: provider
-      sha256: "4e82183fa20e5ca25703ead7e05de9e4cceed1fbd1eadc1ac3cb6f565a09f272"
-      url: "https://pub.dev"
-    source: hosted
-    version: "6.1.5+1"
   shared_preferences:
     dependency: "direct main"
     description:

@@ -40,6 +40,8 @@ enum L10nKey: String {
     case syncPort
     case authorizedDevicesComma
     case syncTargetsHint
+    case syncClipboardToDevice
+    case syncNotificationsToDevice
     case close
     case history
     case noHistory
@@ -51,6 +53,7 @@ enum L10nKey: String {
     case noDevicesFound
     case refreshDevices
     case refreshingDevices
+    case myIPAddress
     case staleAuthorizedDevicesWarning
     case syncLocalNameHint
     case authorized
@@ -139,6 +142,19 @@ enum L10nKey: String {
     case notificationFilter
     case notificationSound
     case clearNotifications
+    case bannerRules
+    case bannerRulesHint
+    case bannerKeywords
+    case bannerKeywordsHint
+    case blockedKeywords
+    case blockedKeywordsHint
+    case noReceivedApps
+    case searchApps
+    case notificationSettings
+    case macNotificationPermission
+    case macNotificationGranted
+    case macNotificationDenied
+    case openNotificationSettings
     case launchAtLogin
     case launchAtLoginFailed
     case accessibilityPermission
@@ -296,7 +312,9 @@ struct L10n {
             .enableLanSync: "启用局域网同步",
             .syncPort: "同步端口：",
             .authorizedDevicesComma: "授权设备（用逗号分隔）：",
-            .syncTargetsHint: "勾选需要同步剪贴板的设备。仅需在本机授权，对方无需勾选即可接收。",
+            .syncTargetsHint: "分别勾选要同步剪贴板 / 通知的设备。仅需在本机授权，对方无需勾选即可接收。",
+            .syncClipboardToDevice: "同步剪贴板",
+            .syncNotificationsToDevice: "同步通知",
             .close: "关闭",
             .history: "历史记录",
             .noHistory: "暂无历史记录",
@@ -308,8 +326,9 @@ struct L10n {
             .noDevicesFound: "未发现设备",
             .refreshDevices: "刷新设备",
             .refreshingDevices: "正在刷新…",
+            .myIPAddress: "本机 IP：%@",
             .staleAuthorizedDevicesWarning: "已授权但未在线：%@。请在下方列表勾选当前显示的设备名称（如 Android-redmi）。",
-            .syncLocalNameHint: "本机名称：%@，设备 ID：%@…。对方勾选本机即可向本机发送剪贴板，本机无需勾选对方即可接收。",
+            .syncLocalNameHint: "本机名称：%@，设备 ID：%@…。勾选剪贴板/通知后向该设备推送，对方无需勾选即可接收。",
             .authorized: "已授权",
             .sendFile: "发送文件...",
             .sendText: "发送文本...",
@@ -396,6 +415,19 @@ struct L10n {
             .notificationFilter: "通知过滤",
             .notificationSound: "通知声音",
             .clearNotifications: "清空通知",
+            .bannerRules: "弹横幅规则",
+            .bannerRulesHint: "未配置时不弹横幅；勾选应用或填写关键字后，命中才弹",
+            .bannerKeywords: "关键字",
+            .bannerKeywordsHint: "逗号分隔，匹配通知标题/副标题/正文",
+            .blockedKeywords: "屏蔽关键字",
+            .blockedKeywordsHint: "逗号分隔，命中则不弹横幅（优先于上方关键字）",
+            .noReceivedApps: "暂无已接收应用，收到手机通知后会在此显示",
+            .searchApps: "搜索应用或内容",
+            .notificationSettings: "通知设置",
+            .macNotificationPermission: "Mac 通知权限",
+            .macNotificationGranted: "已授权",
+            .macNotificationDenied: "已拒绝，请在系统设置中允许",
+            .openNotificationSettings: "前往系统设置",
             .launchAtLogin: "登录时启动",
             .launchAtLoginFailed: "无法更新登录时启动设置，请重试。",
             .accessibilityPermission: "辅助功能权限（自动粘贴需要）：",
@@ -542,7 +574,9 @@ struct L10n {
             .enableLanSync: "Enable LAN Sync",
             .syncPort: "Sync Port:",
             .authorizedDevicesComma: "Authorized Devices (comma separated):",
-            .syncTargetsHint: "Select devices to sync clipboard to. Only this device needs to authorize; the other side can receive without checking you.",
+            .syncTargetsHint: "Choose which devices receive clipboard and/or notifications. Only this device needs to authorize; the other side can receive without checking you.",
+            .syncClipboardToDevice: "Sync clipboard",
+            .syncNotificationsToDevice: "Sync notifications",
             .close: "Close",
             .history: "History",
             .noHistory: "No History",
@@ -554,8 +588,9 @@ struct L10n {
             .noDevicesFound: "No Devices Found",
             .refreshDevices: "Refresh Devices",
             .refreshingDevices: "Refreshing…",
+            .myIPAddress: "My IP: %@",
             .staleAuthorizedDevicesWarning: "Authorized but offline: %@. Select the name shown in the list below (e.g. Android-redmi).",
-            .syncLocalNameHint: "This device: %@ (ID: %@…). Others must check this device to send clipboard here; you can receive without checking them.",
+            .syncLocalNameHint: "This device: %@ (ID: %@…). Check clipboard/notifications to push; they can receive without checking you.",
             .authorized: "Authorized",
             .sendFile: "Send File...",
             .sendText: "Send Text...",
@@ -642,6 +677,19 @@ struct L10n {
             .notificationFilter: "Notification Filter",
             .notificationSound: "Notification Sound",
             .clearNotifications: "Clear Notifications",
+            .bannerRules: "Banner Rules",
+            .bannerRulesHint: "No banner without rules; tick apps or add keywords to show banners on match",
+            .bannerKeywords: "Keywords",
+            .bannerKeywordsHint: "Comma-separated; matches title/subtitle/body",
+            .blockedKeywords: "Blocked Keywords",
+            .blockedKeywordsHint: "Comma-separated; matched entries never show a banner (overrides above)",
+            .noReceivedApps: "No received apps yet; they appear after phone notifications arrive",
+            .searchApps: "Search apps or content",
+            .notificationSettings: "Notification Settings",
+            .macNotificationPermission: "Mac Notification Permission",
+            .macNotificationGranted: "Granted",
+            .macNotificationDenied: "Denied; please allow in System Settings",
+            .openNotificationSettings: "Open System Settings",
             .launchAtLogin: "Launch at Login",
             .launchAtLoginFailed: "Unable to update launch at login settings. Please try again.",
             .accessibilityPermission: "Accessibility Permission (required for auto-paste):",

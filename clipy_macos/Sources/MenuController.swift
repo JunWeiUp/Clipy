@@ -143,6 +143,11 @@ class MenuController: NSObject {
         clipboardManager.refreshFromPasteboardIfNeeded()
         clipboardManager.ensureMenuSummariesLoaded()
         rebuildMenuContents(menu, with: clipboardManager.recentSummaries)
+        // On-demand device discovery: the menu is the primary place users view
+        // the device list, so a single subnet scan is triggered here (async,
+        // non-blocking). Results refresh the menu via onPeersChanged. This
+        // replaces the old 30s periodic rescan to save power.
+        SyncManager.shared.triggerCrossBandDiscovery()
     }
 
     private func rebuildMenuContents(_ menu: NSMenu, with summaries: [HistorySummary]) {
@@ -279,6 +284,21 @@ class MenuController: NSObject {
                 deviceItem.submenu = deviceSubmenu
                 menu.addItem(deviceItem)
             }
+        }
+
+        // Always show this device's LAN IP so the user knows which address
+        // peers should connect to (useful for manual peer entry on Android).
+        let localIPs = SyncManager.shared.enumerateLocalIPv4s()
+        if let primaryIP = localIPs.first {
+            let ipTitle: String
+            if localIPs.count > 1 {
+                ipTitle = Self.indentedMenuTitle("\(L10n.format(.myIPAddress, primaryIP))  (\(localIPs.dropFirst().joined(separator: ", ")))")
+            } else {
+                ipTitle = Self.indentedMenuTitle(L10n.format(.myIPAddress, primaryIP))
+            }
+            let ipItem = NSMenuItem(title: ipTitle, action: nil, keyEquivalent: "")
+            ipItem.isEnabled = false
+            menu.addItem(ipItem)
         }
 
         menu.addItem(NSMenuItem.separator())

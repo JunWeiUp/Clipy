@@ -1,99 +1,30 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart';
+import 'dart:typed_data';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
-import 'package:nsd/nsd.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
-import 'package:crypto/crypto.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
-import 'log_manager.dart';
+
 import 'clipboard_manager.dart';
-import 'notification_manager.dart';
-import 'compression_utils.dart';
-import 'storage_paths.dart';
-import 'database/file_transfer_repository.dart';
 import 'database/notification_repository.dart';
+import 'database/pending_text_sync_repository.dart';
+import 'log_manager.dart';
+import 'notification_manager.dart';
 
-class SyncMessage {
-  final String deviceId;
-  final double timestamp;
-  final String type;
-  final String content;
-  final String hash;
-
-  SyncMessage({
-    required this.deviceId,
-    required this.timestamp,
-    required this.type,
-    required this.content,
-    required this.hash,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'deviceId': deviceId,
-        'timestamp': timestamp,
-        'type': type,
-        'content': content,
-        'hash': hash,
-      };
-
-  factory SyncMessage.fromJson(Map<String, dynamic> json) => SyncMessage(
-        deviceId: json['deviceId'],
-        timestamp: json['timestamp'],
-        type: json['type'],
-        content: json['content'],
-        hash: json['hash'],
-      );
-}
-
-class FileHeader {
-  final String fileId;
-  final String fileName;
-  final int fileSize;
-
-  FileHeader({required this.fileId, required this.fileName, required this.fileSize});
-
-  factory FileHeader.fromJson(Map<String, dynamic> json) => FileHeader(
-        fileId: json['fileId'],
-        fileName: json['fileName'],
-        fileSize: json['fileSize'],
-      );
-}
-
-class FileChunk {
-  final String fileId;
-  final int chunkIndex;
-  final String data;
-  final bool isLast;
-  final bool isCompressed;
-  final int? originalSize;
-
-  FileChunk({
-    required this.fileId, 
-    required this.chunkIndex, 
-    required this.data, 
-    required this.isLast,
-    this.isCompressed = false,
-    this.originalSize,
-  });
-
-  factory FileChunk.fromJson(Map<String, dynamic> json) => FileChunk(
-        fileId: json['fileId'],
-        chunkIndex: json['chunkIndex'],
-        data: json['data'],
-        isLast: json['isLast'],
-        isCompressed: json['isCompressed'] ?? false,
-        originalSize: json['originalSize'],
-      );
-}
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
 
 class FileProgress {
   final String fileId;
   final String fileName;
-  final double progress; // 0.0 to 1.0
+  final double progress;
   final int receivedBytes;
   final int totalBytes;
   final bool isCompleted;
@@ -110,414 +41,1245 @@ class FileProgress {
   });
 }
 
-class _PendingFile {
-  final FileHeader header;
-  final String senderName;
-  final File file;
-  final IOSink sink;
-  int receivedBytes = 0;
-  int expectedChunkIndex = 0;
-  DateTime lastActivity = DateTime.now();
-
-  _PendingFile({required this.header, required this.senderName, required this.file, required this.sink});
-}
-
 class DiscoveredPeer {
   final String peerId;
   final String displayName;
-  final Service service;
+  final String host;
+  final int port;
 
   const DiscoveredPeer({
     required this.peerId,
     required this.displayName,
-    required this.service,
+    required this.host,
+    required this.port,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Protocol v2
+// ---------------------------------------------------------------------------
+
+class _SyncEnvelope {
+  static const int version = 2;
+
+  final int v;
+  final String type;
+  final String msgId;
+  final String peerId;
+  final String? name;
+  final int? port;
+  final double ts;
+  final String? hash;
+  final String? payload;
+
+  _SyncEnvelope({
+    required this.v,
+    required this.type,
+    required this.msgId,
+    required this.peerId,
+    this.name,
+    this.port,
+    required this.ts,
+    this.hash,
+    this.payload,
+  });
+
+  factory _SyncEnvelope.make({
+    required String type,
+    required String peerId,
+    String? name,
+    int? port,
+    String? hash,
+    String? payload,
+  }) {
+    return _SyncEnvelope(
+      v: version,
+      type: type,
+      msgId: const Uuid().v4(),
+      peerId: peerId,
+      name: name,
+      port: port,
+      ts: DateTime.now().millisecondsSinceEpoch / 1000.0,
+      hash: hash,
+      payload: payload,
+    );
+  }
+
+  factory _SyncEnvelope.fromJson(Map<String, dynamic> json) {
+    return _SyncEnvelope(
+      v: json['v'] as int? ?? 0,
+      type: json['type'] as String? ?? '',
+      msgId: json['msgId'] as String? ?? '',
+      peerId: json['peerId'] as String? ?? '',
+      name: json['name'] as String?,
+      port: json['port'] as int?,
+      ts: (json['ts'] as num?)?.toDouble() ?? 0,
+      hash: json['hash'] as String?,
+      payload: json['payload'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'v': v,
+        'type': type,
+        'msgId': msgId,
+        'peerId': peerId,
+        if (name != null) 'name': name,
+        if (port != null) 'port': port,
+        'ts': ts,
+        if (hash != null) 'hash': hash,
+        if (payload != null) 'payload': payload,
+      };
+}
+
+class _SyncType {
+  static const hello = 'hello';
+  static const welcome = 'welcome';
+  static const history = 'history';
+  static const notifPost = 'notif.post';
+  static const notifDismiss = 'notif.dismiss';
+  static const notifClear = 'notif.clear';
+  static const notifAck = 'notif.ack';
+  static const notifConfig = 'notif.config';
+  static const ping = 'ping';
+  static const pong = 'pong';
+  static const ack = 'ack';
+}
+
+class _PendingFrame {
+  final String peerId;
+  final List<int> data;
+  final String type;
+  final String? hash;
+  final DateTime enqueueAt;
+
+  _PendingFrame({
+    required this.peerId,
+    required this.data,
+    required this.type,
+    this.hash,
+    required this.enqueueAt,
+  });
+}
+
+class _Session {
+  final String peerId;
+  final String host;
+  final int port;
+  final Socket socket;
+  final BytesBuilder buffer = BytesBuilder(copy: false);
+  DateTime lastPong = DateTime.now();
+  StreamSubscription<List<int>>? subscription;
+
+  _Session({
+    required this.peerId,
+    required this.host,
+    required this.port,
+    required this.socket,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// SyncManager
+// ---------------------------------------------------------------------------
 
 class SyncManager with WidgetsBindingObserver {
   static final SyncManager instance = SyncManager._();
   SyncManager._();
 
-  Registration? _registration;
-  Discovery? _discovery;
-  ServerSocket? _server;
-  ServerSocket? _serverV6;
+  static const MethodChannel _fgsChannel =
+      MethodChannel('com.clipyclone.clipy_android/sync_service');
+
+  static const int _maxFrameLength = 2 * 1024 * 1024;
+  static const String _hardcodedSecret = 'ClipySyncSecret2026';
+  static const String _endpointCacheKey = 'clipy.peerEndpoints.v2';
+  static const Duration _endpointCacheTtl = Duration(hours: 24);
+  static const Duration _discoveryDebounce = Duration(milliseconds: 600);
+  static const Duration _handshakeTimeout = Duration(seconds: 2);
+  static const Duration _connectTimeout = Duration(seconds: 3);
+  static const Duration _scanConnectTimeout = Duration(milliseconds: 350);
+  static const Duration _pingInterval = Duration(seconds: 30);
+  static const Duration _pendingTtl = Duration(hours: 24);
+  static const int _pendingMax = 80;
+  static const int _scanConcurrency = 48;
+  static const Duration _dialDedupTtl = Duration(seconds: 4);
+
   final Map<String, DiscoveredPeer> _discoveredPeers = {};
-  
   final _devicesChangedController = StreamController<List<String>>.broadcast();
-  Stream<List<String>> get onDevicesChanged => _devicesChangedController.stream;
-
-  final _peersChangedController = StreamController<List<DiscoveredPeer>>.broadcast();
-  Stream<List<DiscoveredPeer>> get onPeersChanged => _peersChangedController.stream;
-  
+  final _peersChangedController =
+      StreamController<List<DiscoveredPeer>>.broadcast();
   final _fileReceivedController = StreamController<String>.broadcast();
-  Stream<String> get onFileReceived => _fileReceivedController.stream;
-
   final _fileProgressController = StreamController<FileProgress>.broadcast();
+
+  Stream<List<String>> get onDevicesChanged => _devicesChangedController.stream;
+  Stream<List<DiscoveredPeer>> get onPeersChanged =>
+      _peersChangedController.stream;
+  Stream<String> get onFileReceived => _fileReceivedController.stream;
   Stream<FileProgress> get onFileProgress => _fileProgressController.stream;
 
-  final Map<String, _PendingFile> _pendingFiles = {};
-  final Map<String, DateTime> _lastProgressUpdate = {};
-  Timer? _pendingFileCleanupTimer;
-  Timer? _discoveryWatchdogTimer;
-  Timer? _peerLivenessTimer;
-  final Map<String, int> _peerMissCounts = {};
-  bool _isProbingPeers = false;
-  bool _isRefreshingDiscovery = false;
-  bool _lifecycleObserverAttached = false;
-  /// Subscribes to OS connectivity changes so we can immediately refresh mDNS
-  /// browsing after a Wi-Fi switch / reconnect, instead of waiting up to the
-  /// 2-minute discovery watchdog. Only refreshes when there is network again.
+  ServerSocket? _server;
+  final Map<String, _Session> _sessions = {};
+  final List<_PendingFrame> _pendingQueue = [];
+  final Map<String, double> _reconnectBackoffSec = {};
+  final Map<String, Timer> _reconnectTimers = {};
+  final Map<String, DateTime> _lastDialAt = {};
+
+  Timer? _scanDebounceTimer;
+  Timer? _pingTimer;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
-  List<ConnectivityResult> _lastConnectivity = [ConnectivityResult.none];
-
-  /// Outbound retry buffer: when an authorized peer is momentarily unreachable
-  /// the frame is kept here and flushed once the peer reappears. Bounded + TTL'd.
-  /// Keep aligned with the macOS side's pendingQueue.
-  final List<_PendingSync> _pendingQueue = [];
-  static const int _pendingQueueMax = 50;
-  static const Duration _pendingQueueTtl = Duration(seconds: 30);
-
-  /// Incomplete inbound transfers are dropped after this much inactivity.
-  static const Duration _pendingFileTimeout = Duration(seconds: 60);
-  /// Android NsdManager often stalls after sleep; refresh when authorized peers vanish.
-  static const Duration _discoveryWatchdogInterval = Duration(minutes: 2);
-  /// mDNS may never report an abrupt departure (kill, power loss, Wi-Fi drop),
-  /// so discovered peers are probed over TCP on this interval and evicted
-  /// after [_peerLivenessMaxMisses] consecutive failures.
-  ///
-  /// 45s × 3 ≈ 2 min 15s grace window. The previous 30s × 2 ≈ 1 min was too
-  /// aggressive: macOS AppNap / display sleep / a brief Wi-Fi roam can make the
-  /// TCP listener unresponsive for ~1 min, after which the peer would be evicted
-  /// and only reappear on the next mDNS browse cycle — experienced by users as
-  /// "sometimes Android can't see the Mac".
-  static const Duration _peerLivenessInterval = Duration(seconds: 45);
-  static const int _peerLivenessMaxMisses = 3;
-  /// Wait after stopDiscovery before restart (Android FAILURE_ALREADY_ACTIVE).
-  static const Duration _discoveryRestartDelay = Duration(milliseconds: 400);
-  
-  List<DiscoveredPeer> get availablePeers {
-    final peers = _discoveredPeers.values.toList()
-      ..sort((a, b) => a.displayName.compareTo(b.displayName));
-    return peers;
-  }
-
-  List<String> get availableDeviceNames => availablePeers.map((p) => p.displayName).toList();
+  bool _isRefreshingDiscovery = false;
+  bool _discoveryRunning = false;
 
   bool isEnabled = false;
   int port = 5566;
-  List<String> authorizedPeerIds = [];
+  List<String> clipboardSyncPeerIds = [];
+  List<String> notificationSyncPeerIds = [];
+  String peerId = '';
+  String displayName = 'Android';
 
-  String _deviceName = '';
-  String _peerId = '';
+  /// Union of clipboard + notification outbound targets.
+  List<String> get authorizedPeerIds =>
+      {...clipboardSyncPeerIds, ...notificationSyncPeerIds}.toList()..sort();
 
-  String get peerId => _peerId;
-  String get displayName => _deviceName.isEmpty ? _peerId : _deviceName;
-  /// SyncMessage.deviceId and legacy call sites.
-  String get deviceId => peerId;
-
-  final String _serviceType = '_clipy-sync._tcp';
-
-  static String _peerIdFromService(Service service, String displayName) {
-    final txt = service.txt;
-    if (txt != null && txt['peerId'] != null) {
-      return utf8.decode(txt['peerId']!);
-    }
-    return displayName;
+  List<DiscoveredPeer> get availablePeers {
+    final list = _discoveredPeers.values.toList()
+      ..sort((a, b) =>
+          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
+    return list;
   }
 
-  Future<void> _migrateAuthorizedPeerIds() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool('authorizedPeerIdsMigrated') ?? false) return;
+  List<String> get availableDeviceNames =>
+      availablePeers.map((p) => p.displayName).toList();
 
-    final legacyNames = prefs.getStringList('authorizedDevices') ?? [];
-    final peerIds = {...authorizedPeerIds};
-    for (final legacyName in legacyNames) {
-      final match = availablePeers.where((p) => p.displayName == legacyName);
-      if (match.isNotEmpty) {
-        peerIds.add(match.first.peerId);
-      } else {
-        peerIds.add(legacyName);
-      }
-    }
-    authorizedPeerIds = peerIds.toList()..sort();
-    await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
-    await prefs.setBool('authorizedPeerIdsMigrated', true);
-  }
+  // -----------------------------------------------------------------------
+  // Init / lifecycle
+  // -----------------------------------------------------------------------
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     isEnabled = prefs.getBool('syncEnabled') ?? false;
     port = prefs.getInt('syncPort') ?? 5566;
-    authorizedPeerIds = prefs.getStringList('authorizedPeerIds') ?? [];
-    _deviceName = (prefs.getString('deviceName') ?? '').trim();
-    _peerId = (prefs.getString('peerId') ?? prefs.getString('deviceId') ?? '').trim();
-    if (_peerId.isEmpty) {
-      _peerId = '${Platform.isIOS ? 'iOS' : 'Android'}-${const Uuid().v4().substring(0, 8)}';
-      await prefs.setString('peerId', _peerId);
-      await prefs.setString('deviceId', _peerId);
+    peerId = prefs.getString('peerId') ?? '';
+    if (peerId.isEmpty) {
+      peerId = const Uuid().v4();
+      await prefs.setString('peerId', peerId);
     }
-
-    if (!_lifecycleObserverAttached) {
-      WidgetsBinding.instance.addObserver(this);
-      _lifecycleObserverAttached = true;
-    }
-
+    displayName = prefs.getString('deviceName') ??
+        (Platform.isAndroid ? 'Android' : 'Device');
+    await _migrateAuthorizedPeerIds(prefs);
+    await _migrateDualSyncAuth(prefs);
+    clipboardSyncPeerIds =
+        prefs.getStringList('clipboardSyncPeerIds') ?? [];
+    notificationSyncPeerIds =
+        prefs.getStringList('notificationSyncPeerIds') ?? [];
+    WidgetsBinding.instance.addObserver(this);
     if (isEnabled) {
-      start();
+      await start();
     }
   }
 
-  void _startConnectivityMonitoring() {
-    _connectivitySub?.cancel();
-    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
-      final wasOffline = _lastConnectivity.every(
-        (r) => r == ConnectivityResult.none,
-      );
-      _lastConnectivity = results;
-      // This stream only fires on an actual connectivity change, so any event
-      // while we have network and sync is on is worth a refresh — it covers
-      // Wi-Fi roaming, AP handoff, and reconnecting after airplane mode.
-      final isOffline = results.every((r) => r == ConnectivityResult.none);
-      if (isOffline || !isEnabled || _isRefreshingDiscovery) return;
-      appLog('Connectivity changed ($results, wasOffline=$wasOffline); refreshing LAN discovery');
-      unawaited(refreshBrowsing());
-    });
+  Future<void> _migrateAuthorizedPeerIds(SharedPreferences prefs) async {
+    if (prefs.getBool('authorizedPeerIdsMigrated') ?? false) return;
+    final legacy = prefs.getStringList('authorizedDevices') ?? [];
+    if (legacy.isEmpty) {
+      await prefs.setBool('authorizedPeerIdsMigrated', true);
+      return;
+    }
+    final peerIds = {...(prefs.getStringList('authorizedPeerIds') ?? [])};
+    for (final name in legacy) {
+      final match = availablePeers.where((p) => p.displayName == name);
+      if (match.isNotEmpty) peerIds.add(match.first.peerId);
+    }
+    final sorted = peerIds.toList()..sort();
+    await prefs.setStringList('authorizedPeerIds', sorted);
+    await prefs.setBool('authorizedPeerIdsMigrated', true);
   }
 
-  void _stopConnectivityMonitoring() {
-    _connectivitySub?.cancel();
-    _connectivitySub = null;
-    _lastConnectivity = [ConnectivityResult.none];
+  /// One-shot: copy legacy authorizedPeerIds into both capability lists.
+  Future<void> _migrateDualSyncAuth(SharedPreferences prefs) async {
+    if (prefs.getBool('dualSyncAuthMigrated') ?? false) return;
+    final legacy = prefs.getStringList('authorizedPeerIds') ?? [];
+    if (prefs.getStringList('clipboardSyncPeerIds') == null) {
+      await prefs.setStringList('clipboardSyncPeerIds', legacy);
+    }
+    if (prefs.getStringList('notificationSyncPeerIds') == null) {
+      await prefs.setStringList('notificationSyncPeerIds', legacy);
+    }
+    await prefs.setBool('dualSyncAuthMigrated', true);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && isEnabled) {
-      // NSD browse often stalls after Doze / Wi‑Fi sleep.
-      unawaited(refreshBrowsing());
+      triggerCrossBandDiscovery();
     }
   }
 
-  bool _hasAuthorizedPeerOnline() {
-    if (authorizedPeerIds.isEmpty) return false;
-    return authorizedPeerIds.any(_discoveredPeers.containsKey);
-  }
-
-  List<DiscoveredPeer> _authorizedOnlinePeers() {
-    return availablePeers
-        .where((p) => authorizedPeerIds.contains(p.peerId))
-        .toList();
-  }
-
-  /// Snapshot of currently-online authorized peers. Non-blocking by design —
-  /// previously this method would refreshBrowsing() + wait up to 2s, which
-  /// introduced noticeable latency and still dropped the frame if the peer
-  /// didn't reappear in time. The offline-authorize case is now handled by the
-  /// pending queue: we send to whoever is online now and queue a copy for the
-  /// rest, flushed when they reappear.
-  List<DiscoveredPeer> _ensureAuthorizedPeersForSend() {
-    return _authorizedOnlinePeers();
-  }
-
-  /// Shared fan-out: sends to authorized peers that are online now, and queues
-  /// a copy for each authorized peer that is momentarily offline so it can be
-  /// flushed when the peer reappears. Eliminates the "copy during a flutter =
-  /// content lost forever" failure mode.
-  /// Keep aligned with the macOS side's dispatchBroadcast.
-  Future<void> _dispatchBroadcast({
-    required String jsonData,
-    required String type,
-  }) async {
-    if (authorizedPeerIds.isEmpty) return;
-
-    final targets = _ensureAuthorizedPeersForSend();
-    final onlineIds = targets.map((p) => p.peerId).toSet();
-
-    for (final peer in targets) {
-      appLog('Sending $type to ${peer.displayName} (peerId=${peer.peerId})');
-      final ok = await _sendSync(jsonData, peer.service);
-      // Transient failure on an otherwise-online peer: re-queue once so the
-      // content is delivered on the next flush instead of being dropped.
-      if (!ok) {
-        _enqueuePendingSync(data: jsonData, type: type, targetPeerId: peer.peerId);
-      }
-    }
-
-    final offlineAuthorized = authorizedPeerIds.where((id) => !onlineIds.contains(id)).toList();
-    if (offlineAuthorized.isNotEmpty) {
-      appLog(
-        'Queuing $type for offline authorized peers: ${offlineAuthorized.join(", ")}',
-        level: 'warning',
-      );
-      for (final peerId in offlineAuthorized) {
-        _enqueuePendingSync(data: jsonData, type: type, targetPeerId: peerId);
-      }
-    }
-  }
-
-  void _enqueuePendingSync({
-    required String data,
-    required String type,
-    required String targetPeerId,
-  }) {
-    final cutoff = DateTime.now().subtract(_pendingQueueTtl);
-    _pendingQueue.removeWhere(
-      (e) => e.enqueueAt.isBefore(cutoff) || (e.targetPeerId == targetPeerId && e.data == data),
-    );
-    final perPeerCount = _pendingQueue.where((e) => e.targetPeerId == targetPeerId).length;
-    if (perPeerCount >= _pendingQueueMax) return;
-    _pendingQueue.add(_PendingSync(
-      data: data,
-      type: type,
-      targetPeerId: targetPeerId,
-      enqueueAt: DateTime.now(),
-    ));
-  }
-
-  /// Called when a peer (re)appears in discovery: deliver anything queued for it
-  /// while it was offline, oldest first.
-  Future<void> _flushPendingQueue(String peerId) async {
-    final cutoff = DateTime.now().subtract(_pendingQueueTtl);
-    final due = _pendingQueue.where((e) => e.targetPeerId == peerId && e.enqueueAt.isAfter(cutoff)).toList()
-      ..sort((a, b) => a.enqueueAt.compareTo(b.enqueueAt));
-    if (due.isEmpty) return;
-    _pendingQueue.removeWhere((e) => e.targetPeerId == peerId);
-
-    final peer = _discoveredPeers[peerId];
-    if (peer == null) return;
-    appLog('Flushing ${due.length} queued frame(s) to reappeared peer $peerId');
-    for (final item in due) {
-      await _sendSync(item.data, peer.service);
-    }
-  }
-
-  /// Backfill persisted pending notifications to a reconnected peer.
-  /// These are notifications collected while the peer was offline.
-  Future<void> _backfillPendingNotifications(String peerId) async {
-    final peer = _discoveredPeers[peerId];
-    if (peer == null) return;
-
-    final pending = await NotificationRepository.instance.fetchAllPendingSync();
-    if (pending.isEmpty) return;
-
-    appLog('Backfilling ${pending.length} pending notification(s) to $peerId');
-    for (final row in pending) {
-      final content = row['content'] as String;
-      final hash = row['hash'] as String;
-      final encrypted = _encrypt(content);
-      if (encrypted == null) continue;
-      final message = SyncMessage(
-        deviceId: deviceId,
-        timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
-        type: 'notification/post',
-        content: encrypted,
-        hash: hash,
-      );
-      final jsonData = jsonEncode(message.toJson());
-      await _sendSync(jsonData, peer.service);
-    }
-    // Clean up old entries
-    await NotificationRepository.instance.cleanOldPendingSync();
-  }
-
-  void _startDiscoveryWatchdog() {
-    _discoveryWatchdogTimer?.cancel();
-    _discoveryWatchdogTimer = Timer.periodic(_discoveryWatchdogInterval, (_) {
-      if (!isEnabled || _isRefreshingDiscovery) return;
-      if (authorizedPeerIds.isNotEmpty && !_hasAuthorizedPeerOnline()) {
-        appLog(
-          'Discovery watchdog: authorized peers missing, refreshing...',
-          level: 'warning',
-        );
-        unawaited(refreshBrowsing());
-      }
-    });
-  }
-
-  void _stopDiscoveryWatchdog() {
-    _discoveryWatchdogTimer?.cancel();
-    _discoveryWatchdogTimer = null;
-  }
-
-  void _startPeerLivenessProbing() {
-    _peerLivenessTimer?.cancel();
-    _peerLivenessTimer = Timer.periodic(_peerLivenessInterval, (_) {
-      unawaited(_probeDiscoveredPeers());
-    });
-  }
-
-  void _stopPeerLivenessProbing() {
-    _peerLivenessTimer?.cancel();
-    _peerLivenessTimer = null;
-  }
-
-  /// Browse results alone cannot be trusted because mDNS may never report an
-  /// abrupt departure; probe each peer's TCP server and evict repeated failures.
-  Future<void> _probeDiscoveredPeers() async {
-    if (!isEnabled || _isRefreshingDiscovery || _isProbingPeers) return;
-    final peers = availablePeers;
-    if (peers.isEmpty) return;
-    _isProbingPeers = true;
-    try {
-      // Sequential on purpose: Android NsdManager allows one resolve at a time.
-      for (final peer in peers) {
-        final socket = await _connectToService(peer.service);
-        if (socket != null) {
-          _peerMissCounts.remove(peer.peerId);
-          try {
-            await socket.close();
-          } catch (_) {}
-        } else {
-          _recordPeerMiss(peer.peerId);
-        }
-      }
-    } finally {
-      _isProbingPeers = false;
-    }
-  }
-
-  /// Counts a failed connection attempt; evicts the peer after repeated failures.
-  void _recordPeerMiss(String peerId) {
-    final peer = _discoveredPeers[peerId];
-    if (peer == null) {
-      _peerMissCounts.remove(peerId);
+  Future<void> start() async {
+    appLog('SyncManager v2 starting...');
+    unawaited(PendingTextSyncRepository.instance.cleanOld());
+    unawaited(NotificationRepository.instance.cleanOldPendingSync());
+    final ok = await _startServer();
+    if (!ok) {
+      appLog('Server failed to start', level: 'error');
       return;
     }
-    final misses = (_peerMissCounts[peerId] ?? 0) + 1;
-    _peerMissCounts[peerId] = misses;
-    if (misses < _peerLivenessMaxMisses) return;
-    _discoveredPeers.remove(peerId);
-    _peerMissCounts.remove(peerId);
-    appLog(
-      'Evicting unreachable peer ${peer.displayName} ($peerId) after $misses failed probes',
-      level: 'warning',
+    _startConnectivityMonitoring();
+    await _startForegroundService();
+    _startPingTimer();
+    await _loadEndpointCache();
+    triggerCrossBandDiscovery();
+  }
+
+  Future<void> stop() async {
+    appLog('SyncManager v2 stopping...');
+    _connectivitySub?.cancel();
+    _connectivitySub = null;
+    _scanDebounceTimer?.cancel();
+    _scanDebounceTimer = null;
+    _pingTimer?.cancel();
+    _pingTimer = null;
+    for (final t in _reconnectTimers.values) {
+      t.cancel();
+    }
+    _reconnectTimers.clear();
+    _reconnectBackoffSec.clear();
+    for (final s in _sessions.values) {
+      await s.subscription?.cancel();
+      try {
+        await s.socket.close();
+      } catch (_) {}
+    }
+    _sessions.clear();
+    _pendingQueue.clear();
+    await _server?.close();
+    _server = null;
+    await _stopForegroundService();
+    _discoveredPeers.clear();
+    _emitPeers();
+  }
+
+  Future<void> _startForegroundService() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _fgsChannel.invokeMethod<bool>('startForegroundSync');
+    } catch (e) {
+      appLog('startForegroundSync failed: $e', level: 'warning');
+    }
+  }
+
+  Future<void> _stopForegroundService() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _fgsChannel.invokeMethod<bool>('stopForegroundSync');
+    } catch (e) {
+      appLog('stopForegroundSync failed: $e', level: 'warning');
+    }
+  }
+
+  void _startConnectivityMonitoring() {
+    _connectivitySub?.cancel();
+    var wasOffline = false;
+    _connectivitySub =
+        Connectivity().onConnectivityChanged.listen((results) {
+      final offline = results.every((r) => r == ConnectivityResult.none);
+      if (offline) {
+        wasOffline = true;
+        return;
+      }
+      if (wasOffline && isEnabled) {
+        wasOffline = false;
+        appLog('Network restored; rediscovering');
+        unawaited(refreshDiscovery());
+      }
+    });
+  }
+
+  void _startPingTimer() {
+    _pingTimer?.cancel();
+    _pingTimer = Timer.periodic(_pingInterval, (_) => _sendPings());
+  }
+
+  Future<void> _sendPings() async {
+    final env = _SyncEnvelope.make(type: _SyncType.ping, peerId: peerId);
+    final data = _encodeFrame(env);
+    if (data == null) return;
+    final stale = DateTime.now().subtract(_pingInterval * 3);
+    final ids = _sessions.keys.toList();
+    for (final id in ids) {
+      final session = _sessions[id];
+      if (session == null) continue;
+      if (session.lastPong.isBefore(stale)) {
+        await _closeSession(id, scheduleReconnect: true);
+        continue;
+      }
+      try {
+        session.socket.add(data);
+      } catch (_) {
+        await _closeSession(id, scheduleReconnect: true);
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Server
+  // -----------------------------------------------------------------------
+
+  Future<bool> _startServer() async {
+    try {
+      await _server?.close();
+      _server = await ServerSocket.bind(InternetAddress.anyIPv4, port);
+      appLog('Listening on 0.0.0.0:$port');
+      _server!.listen(_onInbound, onError: (e) {
+        appLog('Server error: $e', level: 'error');
+      });
+      return true;
+    } catch (e) {
+      appLog('Failed to bind :$port — $e', level: 'error');
+      return false;
+    }
+  }
+
+  void _onInbound(Socket socket) {
+    final host = socket.remoteAddress.address;
+    appLog('Inbound from $host');
+    unawaited(_performHandshake(socket, host: host, inbound: true));
+  }
+
+  // -----------------------------------------------------------------------
+  // Discovery
+  // -----------------------------------------------------------------------
+
+  Future<void> refreshDiscovery() async {
+    if (!isEnabled) return;
+    if (_isRefreshingDiscovery) return;
+    _isRefreshingDiscovery = true;
+    // Keep peers that still have a live session. Clearing them would hide
+    // connected devices forever: rediscovery skips already-connected hosts,
+    // so _recordPeer is never called again for those sessions.
+    final cache = await _readEndpointCache();
+    final cacheById = <String, Map<String, dynamic>>{
+      for (final e in cache)
+        if (e['peerId'] is String) e['peerId'] as String: e,
+    };
+    final kept = <String, DiscoveredPeer>{};
+    for (final entry in _sessions.entries) {
+      final id = entry.key;
+      final session = entry.value;
+      final existing = _discoveredPeers[id];
+      if (existing != null) {
+        kept[id] = existing;
+      } else {
+        final name = (cacheById[id]?['name'] as String?) ?? id;
+        kept[id] = DiscoveredPeer(
+          peerId: id,
+          displayName: name,
+          host: session.host,
+          port: session.port,
+        );
+      }
+    }
+    _discoveredPeers
+      ..clear()
+      ..addAll(kept);
+    _emitPeers();
+    triggerCrossBandDiscovery();
+    _isRefreshingDiscovery = false;
+  }
+
+  void triggerCrossBandDiscovery() {
+    if (!isEnabled) return;
+    _scanDebounceTimer?.cancel();
+    _scanDebounceTimer = Timer(_discoveryDebounce, () {
+      unawaited(_runDiscovery());
+    });
+  }
+
+  Future<void> _runDiscovery() async {
+    if (!isEnabled || _discoveryRunning) return;
+    _discoveryRunning = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final manual = prefs.getStringList('manualSyncPeers') ?? [];
+      for (final entry in manual) {
+        final parts = entry.split(':');
+        if (parts.isEmpty || parts.first.isEmpty) continue;
+        final host = parts.first;
+        final p = parts.length >= 2 ? int.tryParse(parts[1]) ?? port : port;
+        unawaited(_dial(host, p, reason: 'manual'));
+      }
+
+      final cached = await _readEndpointCache();
+      for (final e in cached) {
+        if (e['peerId'] == peerId) continue;
+        final host = e['host'] as String?;
+        final p = e['port'] as int?;
+        if (host == null || p == null) continue;
+        unawaited(_dial(host, p, reason: 'cache'));
+      }
+
+      final myIPs = await _enumerateLocalIPv4s();
+      final connectedHosts = _sessions.values.map((s) => s.host).toSet();
+      final candidates = <String>{};
+      for (final ip in myIPs) {
+        final parts = ip.split('.');
+        if (parts.length != 4) continue;
+        final a = int.tryParse(parts[0]);
+        final b = int.tryParse(parts[1]);
+        final c = int.tryParse(parts[2]);
+        if (a == null || b == null || c == null) continue;
+        if (!_isLanIPv4(a, b)) continue;
+        for (var d = 1; d <= 254; d++) {
+          final candidate = '$a.$b.$c.$d';
+          if (myIPs.contains(candidate)) continue;
+          if (connectedHosts.contains(candidate)) continue;
+          candidates.add(candidate);
+        }
+      }
+
+      final list = candidates.toList()..sort();
+      appLog('Subnet scan: ${list.length} hosts on :$port');
+      var index = 0;
+      Future<void> worker() async {
+        while (true) {
+          if (index >= list.length) return;
+          final host = list[index++];
+          await _dial(host, port,
+              reason: 'scan', timeout: _scanConnectTimeout);
+        }
+      }
+
+      await Future.wait(
+          List.generate(_scanConcurrency, (_) => worker()));
+      appLog('Subnet scan finished');
+    } finally {
+      _discoveryRunning = false;
+    }
+  }
+
+  Future<List<String>> _enumerateLocalIPv4s() async {
+    final result = <String>[];
+    try {
+      for (final iface in await NetworkInterface.list(
+          type: InternetAddressType.IPv4, includeLinkLocal: false)) {
+        for (final addr in iface.addresses) {
+          final ip = addr.address;
+          final parts = ip.split('.').map(int.tryParse).toList();
+          if (parts.length != 4 || parts.any((p) => p == null)) continue;
+          if (!_isLanIPv4(parts[0]!, parts[1]!)) continue;
+          result.add(ip);
+        }
+      }
+    } catch (e) {
+      appLog('enumerate IPv4 failed: $e', level: 'warning');
+    }
+    return result.toSet().toList()..sort();
+  }
+
+  Future<List<String>> localIPv4Addresses() => _enumerateLocalIPv4s();
+
+  bool _isLanIPv4(int a, int b) {
+    if (a == 10) return true;
+    if (a == 192 && b == 168) return true;
+    if (a == 172 && b >= 16 && b <= 31) return true;
+    if (a == 169 && b == 254) return true;
+    return false;
+  }
+
+  // -----------------------------------------------------------------------
+  // Dial / handshake / session
+  // -----------------------------------------------------------------------
+
+  Future<void> _dial(String host, int peerPort,
+      {required String reason, Duration? timeout}) async {
+    final key = '$host:$peerPort';
+    final now = DateTime.now();
+    final last = _lastDialAt[key];
+    if (last != null &&
+        now.difference(last) < _dialDedupTtl &&
+        reason == 'scan') {
+      return;
+    }
+    _lastDialAt[key] = now;
+
+    if (_sessions.values.any((s) => s.host == host)) return;
+
+    Socket? socket;
+    try {
+      socket = await Socket.connect(
+        host,
+        peerPort,
+        timeout: timeout ?? _connectTimeout,
+      );
+    } catch (_) {
+      return;
+    }
+    await _performHandshake(socket, host: host, inbound: false);
+  }
+
+  Future<void> _performHandshake(Socket socket,
+      {required String host, required bool inbound}) async {
+    final hello = _SyncEnvelope.make(
+      type: _SyncType.hello,
+      peerId: peerId,
+      name: displayName,
+      port: port,
     );
+    final helloData = _encodeFrame(hello);
+    if (helloData == null) {
+      await socket.close();
+      return;
+    }
+
+    // Socket is single-subscription: attach one listener for handshake + session.
+    final buffer = BytesBuilder(copy: false);
+    final firstFrame = Completer<List<int>?>();
+    var handshakeDone = false;
+    String? adoptedPeerId;
+
+    late final StreamSubscription<List<int>> subscription;
+    subscription = socket.listen(
+      (chunk) {
+        if (!handshakeDone) {
+          buffer.add(chunk);
+          final frame = _tryTakeFrame(buffer);
+          if (frame != null && !firstFrame.isCompleted) {
+            firstFrame.complete(frame);
+          }
+          return;
+        }
+        final id = adoptedPeerId;
+        if (id == null) return;
+        final session = _sessions[id];
+        if (session == null) return;
+        session.buffer.add(chunk);
+        _drainBuffer(id);
+      },
+      onError: (_) {
+        if (!firstFrame.isCompleted) firstFrame.complete(null);
+        final id = adoptedPeerId;
+        if (id != null) {
+          unawaited(_closeSession(id, scheduleReconnect: true));
+        }
+      },
+      onDone: () {
+        if (!firstFrame.isCompleted) firstFrame.complete(null);
+        final id = adoptedPeerId;
+        if (id != null) {
+          unawaited(_closeSession(id, scheduleReconnect: false));
+        }
+      },
+      cancelOnError: true,
+    );
+
+    try {
+      socket.add(helloData);
+      await socket.flush();
+    } catch (_) {
+      await subscription.cancel();
+      try {
+        await socket.close();
+      } catch (_) {}
+      return;
+    }
+
+    final frame = await firstFrame.future.timeout(
+      _handshakeTimeout,
+      onTimeout: () => null,
+    );
+    if (frame == null) {
+      await subscription.cancel();
+      try {
+        await socket.close();
+      } catch (_) {}
+      return;
+    }
+
+    final env = _decodeEnvelope(frame);
+    if (env == null ||
+        env.v != _SyncEnvelope.version ||
+        (env.type != _SyncType.hello && env.type != _SyncType.welcome) ||
+        env.peerId.isEmpty ||
+        env.peerId == peerId) {
+      await subscription.cancel();
+      try {
+        await socket.close();
+      } catch (_) {}
+      return;
+    }
+
+    if (env.type == _SyncType.hello) {
+      final welcome = _SyncEnvelope.make(
+        type: _SyncType.welcome,
+        peerId: peerId,
+        name: displayName,
+        port: port,
+      );
+      final data = _encodeFrame(welcome);
+      if (data != null) {
+        try {
+          socket.add(data);
+          await socket.flush();
+        } catch (_) {}
+      }
+    }
+
+    final existing = _sessions[env.peerId];
+    if (existing != null) {
+      await subscription.cancel();
+      try {
+        await socket.close();
+      } catch (_) {}
+      _recordPeer(env.peerId, env.name ?? env.peerId, existing.host, existing.port);
+      return;
+    }
+
+    final name = env.name ?? env.peerId;
+    final peerPort = env.port ?? port;
+    final session = _Session(
+      peerId: env.peerId,
+      host: host,
+      port: peerPort,
+      socket: socket,
+    );
+    session.subscription = subscription;
+    // Any leftover bytes after the handshake frame belong to the session.
+    if (buffer.length > 0) {
+      session.buffer.add(buffer.takeBytes());
+    }
+    _sessions[env.peerId] = session;
+    adoptedPeerId = env.peerId;
+    handshakeDone = true;
+
+    _reconnectBackoffSec[env.peerId] = 1;
+    _reconnectTimers.remove(env.peerId)?.cancel();
+    _recordPeer(env.peerId, name, host, peerPort);
+    await _persistEndpoint(env.peerId, name, host, peerPort);
+    if (session.buffer.length > 0) {
+      _drainBuffer(env.peerId);
+    }
+    await _flushPending(env.peerId);
+    appLog(
+        'Session up with $name (${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}) @ $host:$peerPort');
+  }
+
+  List<int>? _tryTakeFrame(BytesBuilder buffer) {
+    final bytes = buffer.toBytes();
+    if (bytes.length < 4) {
+      buffer.clear();
+      buffer.add(bytes);
+      return null;
+    }
+    final length = ByteData.sublistView(Uint8List.fromList(bytes.sublist(0, 4)))
+        .getUint32(0, Endian.big);
+    if (length <= 0 || length > _maxFrameLength) {
+      buffer.clear();
+      return null;
+    }
+    if (bytes.length < 4 + length) {
+      buffer.clear();
+      buffer.add(bytes);
+      return null;
+    }
+    final frame = bytes.sublist(4, 4 + length);
+    final rest = bytes.sublist(4 + length);
+    buffer.clear();
+    if (rest.isNotEmpty) buffer.add(rest);
+    return frame;
+  }
+
+  void _recordPeer(String id, String name, String host, int peerPort) {
+    _discoveredPeers[id] = DiscoveredPeer(
+      peerId: id,
+      displayName: name,
+      host: host,
+      port: peerPort,
+    );
+    _emitPeers();
+  }
+
+  void _emitPeers() {
     _devicesChangedController.add(availableDeviceNames);
     _peersChangedController.add(availablePeers);
   }
 
-  Future<void> setSyncTarget(String peerId, {required bool enabled}) async {
-    final updated = List<String>.from(authorizedPeerIds);
-    if (enabled) {
-      if (!updated.contains(peerId)) {
-        updated.add(peerId);
+  void _drainBuffer(String peerId) {
+    final session = _sessions[peerId];
+    if (session == null) return;
+    final bytes = session.buffer.takeBytes();
+    var offset = 0;
+    final remaining = BytesBuilder(copy: false);
+
+    while (true) {
+      if (bytes.length - offset < 4) {
+        remaining.add(bytes.sublist(offset));
+        break;
       }
+      final length = ByteData.sublistView(
+              Uint8List.fromList(bytes.sublist(offset, offset + 4)))
+          .getUint32(0, Endian.big);
+      if (length <= 0 || length > _maxFrameLength) {
+        unawaited(_closeSession(peerId, scheduleReconnect: true));
+        return;
+      }
+      if (bytes.length - offset < 4 + length) {
+        remaining.add(bytes.sublist(offset));
+        break;
+      }
+      final frame = bytes.sublist(offset + 4, offset + 4 + length);
+      offset += 4 + length;
+      _handleFrame(frame, from: peerId, host: session.host);
+    }
+    if (remaining.length > 0) {
+      session.buffer.add(remaining.takeBytes());
+    }
+  }
+
+  void _handleFrame(List<int> data,
+      {required String from, required String host}) {
+    final env = _decodeEnvelope(data);
+    if (env == null || env.v != _SyncEnvelope.version) return;
+
+    switch (env.type) {
+      case _SyncType.ping:
+        final pong =
+            _SyncEnvelope.make(type: _SyncType.pong, peerId: peerId);
+        final d = _encodeFrame(pong);
+        final session = _sessions[from];
+        if (d != null && session != null) {
+          try {
+            session.socket.add(d);
+          } catch (_) {}
+        }
+        break;
+      case _SyncType.pong:
+        final session = _sessions[from];
+        if (session != null) session.lastPong = DateTime.now();
+        break;
+      case _SyncType.ack:
+        if (env.hash != null) _handleAck(env.hash!);
+        break;
+      case _SyncType.history:
+        final payload = env.payload;
+        if (payload == null) return;
+        final text = _decrypt(payload);
+        if (text == null) return;
+        unawaited(
+            ClipboardManager.instance.handleRemoteSync(text, env.hash ?? ''));
+        _replyAck(from, env.hash);
+        break;
+      case _SyncType.notifPost:
+        final payload = env.payload;
+        if (payload == null) return;
+        final text = _decrypt(payload);
+        if (text == null) return;
+        NotificationManager.instance
+            .handleRemoteNotification(text, env.peerId);
+        break;
+      case _SyncType.notifDismiss:
+        final payload = env.payload;
+        if (payload == null) return;
+        final text = _decrypt(payload);
+        if (text == null) return;
+        NotificationManager.instance.handleRemoteDismiss(text);
+        break;
+      case _SyncType.notifClear:
+        NotificationManager.instance.clearAll();
+        break;
+      case _SyncType.notifAck:
+        if (env.hash != null) {
+          _handleAck(env.hash!);
+          NotificationManager.instance.handleAck(env.hash!);
+        }
+        break;
+      case _SyncType.notifConfig:
+        appLog('Ignored remote notification config', level: 'warning');
+        break;
+      case _SyncType.hello:
+      case _SyncType.welcome:
+        if (env.name != null && env.port != null) {
+          _recordPeer(env.peerId, env.name!, host, env.port!);
+        }
+        break;
+    }
+  }
+
+  void _replyAck(String peerId, String? hash) {
+    if (hash == null || hash.isEmpty) return;
+    final env =
+        _SyncEnvelope.make(type: _SyncType.ack, peerId: this.peerId, hash: hash);
+    final data = _encodeFrame(env);
+    final session = _sessions[peerId];
+    if (data == null || session == null) return;
+    try {
+      session.socket.add(data);
+    } catch (_) {}
+  }
+
+  Future<void> _closeSession(String peerId,
+      {required bool scheduleReconnect}) async {
+    final session = _sessions.remove(peerId);
+    if (session == null) return;
+    await session.subscription?.cancel();
+    try {
+      await session.socket.close();
+    } catch (_) {}
+    appLog('Session closed with ${peerId.substring(0, peerId.length.clamp(0, 8))}');
+    if (scheduleReconnect) _scheduleReconnect(peerId);
+  }
+
+  void _scheduleReconnect(String peerId) {
+    if (!isEnabled) return;
+    if (_reconnectTimers.containsKey(peerId)) return;
+    final delay = _reconnectBackoffSec[peerId] ?? 1.0;
+    _reconnectBackoffSec[peerId] =
+        (delay * 2).clamp(1, 30).toDouble();
+    _reconnectTimers[peerId] = Timer(Duration(seconds: delay.round()), () {
+      _reconnectTimers.remove(peerId);
+      if (_sessions.containsKey(peerId)) return;
+      final peer = _discoveredPeers[peerId];
+      if (peer != null) {
+        unawaited(_dial(peer.host, peer.port, reason: 'reconnect'));
+      } else {
+        triggerCrossBandDiscovery();
+      }
+    });
+  }
+
+  // -----------------------------------------------------------------------
+  // Broadcast APIs
+  // -----------------------------------------------------------------------
+
+  Future<void> broadcastSync(String content, String hash) async {
+    if (!isEnabled) return;
+    final payload = _encrypt(content);
+    if (payload == null) return;
+    final env = _SyncEnvelope.make(
+      type: _SyncType.history,
+      peerId: peerId,
+      name: displayName,
+      hash: hash,
+      payload: payload,
+    );
+    await _fanout(env, requireAuth: true);
+    for (final id in clipboardSyncPeerIds) {
+      unawaited(PendingTextSyncRepository.instance.insert(
+        hash: hash,
+        data: content,
+        type: _SyncType.history,
+        targetPeerId: id,
+      ));
+    }
+  }
+
+  Future<void> broadcastNotificationMessage({
+    required String type,
+    required String content,
+    required String hash,
+  }) async {
+    final wire = _mapNotificationType(type) ?? type;
+    final payload = _encrypt(content);
+    if (payload == null &&
+        wire != _SyncType.notifAck &&
+        wire != _SyncType.notifClear) {
+      return;
+    }
+    final env = _SyncEnvelope.make(
+      type: wire,
+      peerId: peerId,
+      name: displayName,
+      hash: hash.isEmpty ? null : hash,
+      payload: payload,
+    );
+    // notif.ack does not require auth; other notif frames use notification list.
+    final requireAuth = wire != _SyncType.notifAck;
+    await _fanout(env, requireAuth: requireAuth);
+  }
+
+  String? _mapNotificationType(String apiType) {
+    switch (apiType) {
+      case 'notification/post':
+        return _SyncType.notifPost;
+      case 'notification/dismiss':
+        return _SyncType.notifDismiss;
+      case 'notification/clear_all':
+        return _SyncType.notifClear;
+      case 'notification/ack':
+        return _SyncType.notifAck;
+      case 'notification/config':
+        return _SyncType.notifConfig;
+      default:
+        return null;
+    }
+  }
+
+  List<String> _authIdsForType(String type) {
+    switch (type) {
+      case _SyncType.history:
+        return clipboardSyncPeerIds;
+      case _SyncType.notifPost:
+      case _SyncType.notifDismiss:
+      case _SyncType.notifClear:
+      case _SyncType.notifConfig:
+        return notificationSyncPeerIds;
+      default:
+        return authorizedPeerIds;
+    }
+  }
+
+  Future<void> _fanout(_SyncEnvelope env, {required bool requireAuth}) async {
+    final data = _encodeFrame(env);
+    if (data == null) return;
+    final auth = _authIdsForType(env.type);
+    final targets = requireAuth
+        ? availablePeers
+            .where((p) => auth.contains(p.peerId))
+            .map((p) => p.peerId)
+            .toList()
+        : _discoveredPeers.keys.toList();
+
+    if (targets.isEmpty) {
+      if (env.type == _SyncType.history || env.type == _SyncType.notifPost) {
+        for (final id in auth) {
+          _enqueuePending(data, env.type, id, env.hash);
+        }
+      }
+      triggerCrossBandDiscovery();
+      return;
+    }
+
+    for (final id in targets) {
+      await _deliver(data, type: env.type, peerId: id, hash: env.hash);
+    }
+  }
+
+  Future<bool> _deliver(List<int> data,
+      {required String type,
+      required String peerId,
+      String? hash}) async {
+    final session = _sessions[peerId];
+    if (session != null) {
+      try {
+        session.socket.add(data);
+        await session.socket.flush();
+        return true;
+      } catch (_) {
+        await _closeSession(peerId, scheduleReconnect: true);
+      }
+    }
+    _enqueuePending(data, type, peerId, hash);
+    final peer = _discoveredPeers[peerId];
+    if (peer != null) {
+      unawaited(_dial(peer.host, peer.port, reason: 'deliver'));
+    } else {
+      triggerCrossBandDiscovery();
+    }
+    _scheduleReconnect(peerId);
+    return false;
+  }
+
+  void _enqueuePending(
+      List<int> data, String type, String peerId, String? hash) {
+    final cutoff = DateTime.now().subtract(_pendingTtl);
+    _pendingQueue.removeWhere((f) => f.enqueueAt.isBefore(cutoff));
+    if (hash != null && hash.isNotEmpty) {
+      _pendingQueue.removeWhere((f) => f.peerId == peerId && f.hash == hash);
+    }
+    final perPeer = _pendingQueue.where((f) => f.peerId == peerId).length;
+    if (perPeer >= _pendingMax) return;
+    _pendingQueue.add(_PendingFrame(
+      peerId: peerId,
+      data: data,
+      type: type,
+      hash: hash,
+      enqueueAt: DateTime.now(),
+    ));
+  }
+
+  Future<void> _flushPending(String peerId) async {
+    final session = _sessions[peerId];
+    if (session == null) return;
+
+    final allowClipboard = clipboardSyncPeerIds.contains(peerId);
+    final allowNotification = notificationSyncPeerIds.contains(peerId);
+
+    final cutoff = DateTime.now().subtract(_pendingTtl);
+    final due = _pendingQueue
+        .where((f) => f.peerId == peerId && !f.enqueueAt.isBefore(cutoff))
+        .where((f) {
+          if (f.type == _SyncType.history) return allowClipboard;
+          if (f.type == _SyncType.notifPost ||
+              f.type == _SyncType.notifDismiss ||
+              f.type == _SyncType.notifClear ||
+              f.type == _SyncType.notifConfig) {
+            return allowNotification;
+          }
+          return true;
+        })
+        .toList();
+    if (due.isNotEmpty) {
+      appLog('Flushing ${due.length} pending frame(s) to $peerId');
+      for (final frame in due) {
+        try {
+          session.socket.add(frame.data);
+          if (frame.type != _SyncType.history &&
+              frame.type != _SyncType.notifPost) {
+            _pendingQueue.remove(frame);
+          }
+        } catch (_) {
+          return;
+        }
+      }
+    }
+
+    // Persisted text frames (SQLite) — clipboard auth only
+    if (allowClipboard) {
+      final persisted =
+          await PendingTextSyncRepository.instance.fetchByPeer(peerId);
+      for (final entry in persisted) {
+        final payload = _encrypt(entry.data);
+        if (payload == null) continue;
+        final env = _SyncEnvelope.make(
+          type: _SyncType.history,
+          peerId: this.peerId,
+          name: displayName,
+          hash: entry.hash,
+          payload: payload,
+        );
+        final data = _encodeFrame(env);
+        if (data == null) continue;
+        try {
+          session.socket.add(data);
+        } catch (_) {
+          return;
+        }
+      }
+    }
+
+    // Persisted notification posts (SQLite offline queue) — notification auth only
+    if (!allowNotification) return;
+    final notifPending =
+        await NotificationRepository.instance.fetchAllPendingSync();
+    if (notifPending.isNotEmpty) {
+      appLog(
+          'Flushing ${notifPending.length} pending notification(s) to $peerId');
+    }
+    for (final row in notifPending) {
+      final content = row['content'] as String? ?? '';
+      final hash = (row['hash'] as String?) ??
+          (row['notification_id'] as String?) ??
+          '';
+      if (content.isEmpty || hash.isEmpty) continue;
+      final payload = _encrypt(content);
+      if (payload == null) continue;
+      final env = _SyncEnvelope.make(
+        type: _SyncType.notifPost,
+        peerId: this.peerId,
+        name: displayName,
+        hash: hash,
+        payload: payload,
+      );
+      final data = _encodeFrame(env);
+      if (data == null) continue;
+      try {
+        session.socket.add(data);
+      } catch (_) {
+        return;
+      }
+    }
+  }
+
+  void _handleAck(String hash) {
+    if (hash.isEmpty) return;
+    final before = _pendingQueue.length;
+    _pendingQueue.removeWhere((f) => f.hash == hash);
+    if (_pendingQueue.length != before) {
+      appLog('ACK cleared pending for hash ${hash.substring(0, hash.length.clamp(0, 8))}');
+    }
+    unawaited(PendingTextSyncRepository.instance.removeByHash(hash));
+  }
+
+  Future<bool> sendTextToPeer(String content, {required String peerId}) async {
+    if (!isEnabled) return false;
+    final hash = sha256.convert(utf8.encode(content)).toString();
+    final payload = _encrypt(content);
+    if (payload == null) return false;
+    final env = _SyncEnvelope.make(
+      type: _SyncType.history,
+      peerId: this.peerId,
+      name: displayName,
+      hash: hash,
+      payload: payload,
+    );
+    final data = _encodeFrame(env);
+    if (data == null) return false;
+    return _deliver(data, type: env.type, peerId: peerId, hash: hash);
+  }
+
+  Future<bool> sendFileToPeer(File file, {required String peerId}) async {
+    appLog('sendFileToPeer stubbed in sync v2', level: 'warning');
+    return false;
+  }
+
+  Future<void> setClipboardSyncTarget(String peerId,
+      {required bool enabled}) async {
+    final updated = List<String>.from(clipboardSyncPeerIds);
+    if (enabled) {
+      if (!updated.contains(peerId)) updated.add(peerId);
     } else {
       updated.remove(peerId);
     }
-    updated.sort();
-    authorizedPeerIds = updated;
+    clipboardSyncPeerIds = updated;
     final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('clipboardSyncPeerIds', clipboardSyncPeerIds);
     await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
-    await refreshBrowsing();
+    triggerCrossBandDiscovery();
+    if (enabled && _sessions.containsKey(peerId)) {
+      unawaited(_flushPending(peerId));
+    }
+  }
+
+  Future<void> setNotificationSyncTarget(String peerId,
+      {required bool enabled}) async {
+    final updated = List<String>.from(notificationSyncPeerIds);
+    if (enabled) {
+      if (!updated.contains(peerId)) updated.add(peerId);
+    } else {
+      updated.remove(peerId);
+    }
+    notificationSyncPeerIds = updated;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+        'notificationSyncPeerIds', notificationSyncPeerIds);
+    await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
+    triggerCrossBandDiscovery();
+    if (enabled && _sessions.containsKey(peerId)) {
+      unawaited(_flushPending(peerId));
+    }
+  }
+
+  /// Legacy: toggles both clipboard and notification for [peerId].
+  Future<void> setSyncTarget(String peerId, {required bool enabled}) async {
+    await setClipboardSyncTarget(peerId, enabled: enabled);
+    await setNotificationSyncTarget(peerId, enabled: enabled);
+  }
+
+  Future<void> removeAuthorizedPeer(String peerId) async {
+    clipboardSyncPeerIds =
+        List<String>.from(clipboardSyncPeerIds)..remove(peerId);
+    notificationSyncPeerIds =
+        List<String>.from(notificationSyncPeerIds)..remove(peerId);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('clipboardSyncPeerIds', clipboardSyncPeerIds);
+    await prefs.setStringList(
+        'notificationSyncPeerIds', notificationSyncPeerIds);
+    await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
   }
 
   Future<void> updateDeviceName(String name) async {
     final newName = name.trim();
     if (newName.isEmpty || newName == displayName) return;
-
-    _deviceName = newName;
+    displayName = newName;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('deviceName', newName);
     if (isEnabled) {
@@ -527,952 +1289,112 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
-  Future<void> start() async {
-    appLog('Starting sync services...');
-    // Start server first to ensure the port is available
-    final serverStarted = await startServer();
-    if (serverStarted) {
-      await startPublishing();
-      await startBrowsing();
-      _startDiscoveryWatchdog();
-      _startPeerLivenessProbing();
-      _startConnectivityMonitoring();
-    } else {
-      appLog('Skipping mDNS publishing because server failed to start', level: 'error');
-    }
-  }
+  // -----------------------------------------------------------------------
+  // Codec / crypto
+  // -----------------------------------------------------------------------
 
-  Future<void> stop() async {
-    appLog('Stopping sync services...');
-    _stopDiscoveryWatchdog();
-    _stopPeerLivenessProbing();
-    _stopConnectivityMonitoring();
-    _peerMissCounts.clear();
-    _pendingQueue.clear();
-    if (_registration != null) {
-      try {
-        await unregister(_registration!);
-      } catch (e) {
-        appLog('Error unregistering: $e');
-      }
-      _registration = null;
-    }
-    if (_discovery != null) {
-      try {
-        await stopDiscovery(_discovery!);
-      } catch (e) {
-        appLog('Error stopping discovery: $e');
-      }
-      _discovery = null;
-    }
-    await _server?.close();
-    _server = null;
-    await _serverV6?.close();
-    _serverV6 = null;
-    await _abortAllPendingFiles();
-    _discoveredPeers.clear();
-    _devicesChangedController.add(availableDeviceNames);
-    _peersChangedController.add(availablePeers);
-  }
-
-  Future<void> _abortAllPendingFiles() async {
-    _pendingFileCleanupTimer?.cancel();
-    _pendingFileCleanupTimer = null;
-    final fileIds = _pendingFiles.keys.toList();
-    for (final fileId in fileIds) {
-      await _abortPendingFile(fileId);
-    }
-  }
-
-  Future<void> _abortPendingFile(String fileId) async {
-    final pending = _pendingFiles.remove(fileId);
-    if (pending == null) return;
-    _lastProgressUpdate.remove(fileId);
+  List<int>? _encodeFrame(_SyncEnvelope env) {
     try {
-      await pending.sink.close();
-    } catch (_) {}
-    try {
-      if (await pending.file.exists()) {
-        await pending.file.delete();
-      }
-    } catch (_) {}
-    _fileProgressController.add(FileProgress(
-      fileId: pending.header.fileId,
-      fileName: pending.header.fileName,
-      progress: 0,
-      receivedBytes: pending.receivedBytes,
-      totalBytes: pending.header.fileSize,
-      isFailed: true,
-    ));
-    if (_pendingFiles.isEmpty) {
-      _pendingFileCleanupTimer?.cancel();
-      _pendingFileCleanupTimer = null;
-    }
-  }
-
-  void _schedulePendingFileCleanup() {
-    _pendingFileCleanupTimer ??=
-        Timer.periodic(const Duration(seconds: 30), (_) async {
-      final cutoff = DateTime.now().subtract(_pendingFileTimeout);
-      final stale = _pendingFiles.entries
-          .where((e) => e.value.lastActivity.isBefore(cutoff))
-          .map((e) => e.key)
-          .toList();
-      for (final fileId in stale) {
-        appLog('File transfer timed out: ${_pendingFiles[fileId]?.header.fileName}', level: 'warning');
-        await _abortPendingFile(fileId);
-      }
-      if (_pendingFiles.isEmpty) {
-        _pendingFileCleanupTimer?.cancel();
-        _pendingFileCleanupTimer = null;
-      }
-    });
-  }
-
-  // MARK: - mDNS Publishing
-  Future<void> startPublishing() async {
-    appLog('Publishing mDNS service: $displayName (peerId=$peerId) on port $port');
-    try {
-      _registration = await register(Service(
-        name: displayName,
-        type: _serviceType,
-        port: port,
-        txt: {'peerId': Uint8List.fromList(utf8.encode(peerId))},
-      ));
-      appLog('mDNS service published successfully');
-    } catch (e) {
-      appLog('Failed to publish mDNS service: $e', level: 'error');
-    }
-  }
-
-  // MARK: - mDNS Browsing
-  Future<void> startBrowsing() async {
-    if (_discovery != null) return;
-    appLog('Starting mDNS browsing for $_serviceType');
-    try {
-      // Resolve on connect instead of IpLookupType.v4 during browse.
-      // Android NsdManager only allows one resolve at a time; resolving every
-      // found service (plus IPv4 lookup) commonly stalls discovery.
-      _discovery = await startDiscovery(
-        _serviceType,
-        autoResolve: true,
-        ipLookupType: IpLookupType.none,
-      );
-      _discovery!.addListener(() {
-        final previousIds = <String>{..._discoveredPeers.keys};
-        final next = <String, DiscoveredPeer>{};
-        final seenPeerIds = <String>{};
-        for (final service in _discovery!.services) {
-          final name = service.name;
-          if (name == null || name.isEmpty || name == displayName) continue;
-          final remotePeerId = _peerIdFromService(service, name);
-          if (remotePeerId == peerId || seenPeerIds.contains(remotePeerId)) continue;
-          seenPeerIds.add(remotePeerId);
-          next[remotePeerId] = DiscoveredPeer(
-            peerId: remotePeerId,
-            displayName: name,
-            service: service,
-          );
-        }
-        _discoveredPeers
-          ..clear()
-          ..addAll(next);
-        _peerMissCounts.removeWhere((key, _) => !next.containsKey(key));
-        unawaited(_migrateAuthorizedPeerIds());
-        _devicesChangedController.add(availableDeviceNames);
-        _peersChangedController.add(availablePeers);
-        appLog('Discovered peers updated (${availablePeers.length}): ${availablePeers.map((p) => "${p.displayName}:${p.peerId}").join(", ")}');
-
-        // Newly (re)appeared peers: deliver anything queued while they were gone.
-        final reappeared = next.keys.toSet().difference(previousIds);
-        for (final peerId in reappeared) {
-          if (_pendingQueue.any((e) => e.targetPeerId == peerId)) {
-            unawaited(_flushPendingQueue(peerId));
-          }
-          // Backfill persisted pending notifications (offline delivery)
-          unawaited(_backfillPendingNotifications(peerId));
-        }
-      });
-    } catch (e) {
-      appLog('Failed to start mDNS browsing: $e', level: 'error');
-    }
-  }
-
-  Future<void> refreshBrowsing() async {
-    if (!isEnabled) return;
-    if (_isRefreshingDiscovery) {
-      appLog('refreshBrowsing skipped: already in progress');
-      return;
-    }
-    _isRefreshingDiscovery = true;
-    appLog('Refreshing LAN device discovery...');
-    try {
-      if (_discovery != null) {
-        try {
-          await stopDiscovery(_discovery!);
-        } catch (e) {
-          appLog('Error stopping discovery during refresh: $e', level: 'warning');
-        }
-        _discovery = null;
-      }
-
-      _discoveredPeers.clear();
-      _peerMissCounts.clear();
-      _devicesChangedController.add(availableDeviceNames);
-      _peersChangedController.add(availablePeers);
-
-      if (_registration != null) {
-        try {
-          await unregister(_registration!);
-        } catch (e) {
-          appLog('Error unregistering during refresh: $e', level: 'warning');
-        }
-        _registration = null;
-      }
-
-      // Give Android NsdManager time to release the previous discovery session.
-      await Future.delayed(_discoveryRestartDelay);
-
-      await startPublishing();
-      await startBrowsing();
-      appLog('LAN device discovery refresh completed');
-    } finally {
-      _isRefreshingDiscovery = false;
-    }
-  }
-
-  // MARK: - Server (TCP Socket)
-  Future<bool> startServer() async {
-    try {
-      // Prioritize IPv4 for better compatibility on Android LAN
-      appLog('Attempting to bind TCP server to IPv4 any (0.0.0.0) on port $port');
-      _server = await ServerSocket.bind(InternetAddress.anyIPv4, port, shared: true);
-      _server!.listen(_handleConnection);
-      
-      appLog('SUCCESS: Sync TCP server listening on IPv4: ${_server!.address.address}:${_server!.port}');
-      
-      // Also try to bind to IPv6 if possible, but don't fail if it's already handled by IPv4 or port busy
-      try {
-        _serverV6 = await ServerSocket.bind(InternetAddress.anyIPv6, port, v6Only: true, shared: true);
-        _serverV6!.listen(_handleConnection);
-        if (kDebugMode) {
-          appLog('SUCCESS: Sync TCP server also listening on IPv6: ${_serverV6!.address.address}:${_serverV6!.port}');
-        }
-      } catch (e) {
-        if (kDebugMode) {
-          appLog('Note: IPv6 bind skipped (already handled or port busy): $e');
-        }
-      }
-      
-      if (kDebugMode) {
-        final interfaces = await NetworkInterface.list();
-        for (var interface in interfaces) {
-          for (var addr in interface.addresses) {
-            appLog('Local Network Interface: ${interface.name} (${addr.type.name}) - ${addr.address}');
-          }
-        }
-      }
-      return true;
-    } catch (e) {
-      appLog('CRITICAL: Failed to start server: $e', level: 'error');
-      return false;
-    }
-  }
-
-  Future<void> _handleConnection(Socket socket) async {
-    appLog('New incoming connection from ${socket.remoteAddress.address}:${socket.remotePort}');
-
-    final buffer = <int>[];
-    int? expectedLength;
-
-    try {
-      await for (var data in socket) {
-        buffer.addAll(data);
-
-        while (true) {
-          if (buffer.length >= 4 && expectedLength == null) {
-            final firstFour = String.fromCharCodes(buffer.sublist(0, 4));
-            if (firstFour == 'GET ' || firstFour == 'POST' || firstFour == 'HEAD') {
-              appLog('Detected incoming HTTP request instead of TCP packet. Closing connection.', level: 'warn');
-              socket.destroy();
-              return;
-            }
-          }
-
-          if (expectedLength == null) {
-            if (buffer.length >= 4) {
-              final lengthData = buffer.sublist(0, 4);
-              final length = ByteData.sublistView(Uint8List.fromList(lengthData)).getUint32(0, Endian.big);
-
-              // Keep aligned with the other side: macOS SyncManager.maxMessageLength.
-              if (length > 2 * 1024 * 1024) {
-                appLog('Invalid packet length: $length (too large). Potential protocol mismatch.', level: 'error');
-                socket.destroy();
-                return;
-              }
-
-              expectedLength = length;
-              buffer.removeRange(0, 4);
-            } else {
-              break;
-            }
-          }
-
-          final messageLength = expectedLength;
-          if (buffer.length >= messageLength) {
-            final messageData = buffer.sublist(0, messageLength);
-            buffer.removeRange(0, messageLength);
-
-            try {
-              final jsonString = utf8.decode(messageData);
-              final json = jsonDecode(jsonString);
-              final message = SyncMessage.fromJson(json);
-              appLog('Parsed SyncMessage from ${message.deviceId}, type: ${message.type}');
-              await _handleSyncMessage(message);
-            } catch (e) {
-              appLog('Error parsing sync message: $e', level: 'error');
-            }
-
-            expectedLength = null;
-          } else {
-            break;
-          }
-        }
-      }
-    } catch (e) {
-      appLog('Socket error: $e', level: 'error');
-    } finally {
-      socket.destroy();
-    }
-  }
-
-  Future<void> _handleSyncMessage(SyncMessage message) async {
-    // Inbound trust is the shared AES secret. authorizedPeerIds only controls
-    // which peers this device pushes clipboard/history to (one-way authorize UX).
-
-    // Use compute for decryption of large content to avoid UI freeze
-    String? decrypted;
-    if (message.content.length > 1024 * 10) { // More than 10KB
-      decrypted = await compute(_decryptStatic, message.content);
-    } else {
-      decrypted = _decrypt(message.content);
-    }
-    
-    if (decrypted == null) {
-      appLog('Failed to decrypt message from ${message.deviceId}, type: ${message.type}', level: 'error');
-      return;
-    }
-
-    if (message.type == 'text/plain') {
-      appLog('Received sync from ${message.deviceId}: ${decrypted.length > 20 ? '${decrypted.substring(0, 20)}...' : decrypted}');
-      await ClipboardManager.instance.handleRemoteSync(decrypted, message.hash);
-    } else if (message.type == 'file/header') {
-      await _handleFileHeader(decrypted, message.deviceId);
-    } else if (message.type == 'file/chunk') {
-      await _handleFileChunk(decrypted, message.deviceId);
-    } else if (message.type == 'notification/post') {
-      NotificationManager.instance.handleRemoteNotification(decrypted, message.deviceId);
-    } else if (message.type == 'notification/ack') {
-      NotificationManager.instance.handleAck(message.hash);
-    } else if (message.type == 'notification/dismiss') {
-      NotificationManager.instance.handleRemoteDismiss(decrypted);
-    } else if (message.type == 'notification/clear_all') {
-      NotificationManager.instance.clearAll();
-    } else if (message.type == 'notification/config') {
-      _handleNotificationConfig(decrypted);
-    }
-  }
-
-  void _handleNotificationConfig(String decrypted) {
-    // 安全加固：不再允许对端远程覆盖本地白名单。
-    // 筛选配置由本机用户自主管理（两层筛选模型）。
-    appLog('Ignored remote notification config (security policy)',
-        level: 'warning');
-  }
-
-  Future<void> broadcastNotificationMessage({
-    required String type,
-    required String content,
-    required String hash,
-  }) async {
-    if (!isEnabled) return;
-
-    appLog('Broadcasting notification message: $type');
-    final encrypted = _encrypt(content);
-    if (encrypted == null) return;
-
-    final message = SyncMessage(
-      deviceId: deviceId,
-      timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
-      type: type,
-      content: encrypted,
-      hash: hash,
-    );
-
-    final jsonData = jsonEncode(message.toJson());
-    await _dispatchBroadcast(jsonData: jsonData, type: type);
-  }
-
-  Future<void> _handleFileHeader(String json, String sender) async {
-    try {
-      final header = FileHeader.fromJson(jsonDecode(json));
-      appLog('Received FileHeader for ${header.fileName} (${header.fileSize} bytes) from $sender');
-
-      final appDir = await StoragePaths.appStorageDirectory();
-      final targetDirectory = Directory('${appDir.path}/Clipy');
-      if (!await targetDirectory.exists()) {
-        await targetDirectory.create(recursive: true);
-      }
-
-      final uniqueFileName = await _getUniqueFileName(targetDirectory.path, header.fileName);
-      final file = File(uniqueFileName);
-      
-      final sink = file.openWrite();
-      _pendingFiles[header.fileId] = _PendingFile(
-        header: header,
-        senderName: sender,
-        file: file,
-        sink: sink,
-      );
-      _schedulePendingFileCleanup();
-      
-      appLog('File will be saved to: ${file.path}');
-    } catch (e) {
-      appLog('Error handling file header: $e', level: 'error');
-    }
-  }
-
-  Future<String> _getUniqueFileName(String directoryPath, String originalFileName) async {
-    final file = File('$directoryPath/$originalFileName');
-    if (!await file.exists()) {
-      return file.path;
-    }
-    
-    // Add timestamp to avoid conflicts
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final lastDotIndex = originalFileName.lastIndexOf('.');
-    if (lastDotIndex > 0 && lastDotIndex < originalFileName.length - 1) {
-      // Has extension
-      final nameWithoutExt = originalFileName.substring(0, lastDotIndex);
-      final ext = originalFileName.substring(lastDotIndex);
-      final newFileName = '$nameWithoutExt-$timestamp$ext';
-      return '$directoryPath/$newFileName';
-    } else {
-      // No extension or dot at the end
-      final newFileName = '$originalFileName-$timestamp';
-      return '$directoryPath/$newFileName';
-    }
-  }
-
-  Future<void> _handleFileChunk(String json, String sender) async {
-    try {
-      final chunk = FileChunk.fromJson(jsonDecode(json));
-      final pending = _pendingFiles[chunk.fileId];
-      
-      if (pending == null) {
-        appLog('Received chunk for unknown fileId: ${chunk.fileId}', level: 'error');
-        return;
-      }
-
-      if (chunk.chunkIndex != pending.expectedChunkIndex) {
-        appLog(
-          'Out-of-order chunk for ${pending.header.fileName}: got ${chunk.chunkIndex}, expected ${pending.expectedChunkIndex}. Aborting transfer.',
-          level: 'error',
-        );
-        await _abortPendingFile(chunk.fileId);
-        return;
-      }
-
-      var data = base64Decode(chunk.data);
-
-      // Handle decompression if needed. A corrupt chunk must abort the transfer:
-      // writing compressed bytes as-is would silently produce a broken file.
-      if (chunk.isCompressed && chunk.originalSize != null) {
-        final decompressed = CompressionUtils.decompressData(data);
-        if (decompressed == null || decompressed.length != chunk.originalSize) {
-          appLog('Decompression failed for chunk ${chunk.chunkIndex} of ${pending.header.fileName}. Aborting transfer.', level: 'error');
-          await _abortPendingFile(chunk.fileId);
-          return;
-        }
-        data = decompressed;
-      }
-      
-      pending.sink.add(data);
-      pending.receivedBytes += data.length;
-      pending.expectedChunkIndex += 1;
-      pending.lastActivity = DateTime.now();
-
-      // Broadcast progress with throttling (max once every 100ms per file)
-      final now = DateTime.now();
-      final lastUpdate = _lastProgressUpdate[chunk.fileId];
-      if (chunk.isLast || lastUpdate == null || now.difference(lastUpdate).inMilliseconds > 100) {
-        _lastProgressUpdate[chunk.fileId] = now;
-        _fileProgressController.add(FileProgress(
-          fileId: pending.header.fileId,
-          fileName: pending.header.fileName,
-          progress: pending.header.fileSize > 0 ? pending.receivedBytes / pending.header.fileSize : 1.0,
-          receivedBytes: pending.receivedBytes,
-          totalBytes: pending.header.fileSize,
-          isCompleted: chunk.isLast,
-        ));
-      }
-
-      if (chunk.isLast) {
-        _lastProgressUpdate.remove(chunk.fileId);
-        appLog('File transfer completed: ${pending.header.fileName}');
-        await pending.sink.flush();
-        await pending.sink.close();
-        
-        // Add to history
-        await _addToFileHistory(
-          fileName: pending.header.fileName,
-          filePath: pending.file.path,
-          fileSize: pending.header.fileSize,
-          senderName: pending.senderName,
-        );
-
-        _pendingFiles.remove(chunk.fileId);
-        _fileReceivedController.add(pending.header.fileName);
-      }
-    } catch (e) {
-      appLog('Error handling file chunk: $e', level: 'error');
-    }
-  }
-
-  Future<void> _addToFileHistory({
-    required String fileName,
-    required String filePath,
-    required int fileSize,
-    required String senderName,
-  }) async {
-    await FileTransferRepository.instance.insert(
-      fileName: fileName,
-      filePath: filePath,
-      fileSize: fileSize,
-      senderName: senderName,
-    );
-  }
-
-  // MARK: - Encryption
-  static const String _hardcodedSecret = "ClipySyncSecret2026";
-
-  static encrypt.Key _getEncryptionKeyStatic() {
-    final bytes = utf8.encode(_hardcodedSecret);
-    final hash = sha256.convert(bytes);
-    return encrypt.Key(hash.bytes as dynamic);
-  }
-
-  static String? _decryptStatic(String base64String) {
-    try {
-      final key = _getEncryptionKeyStatic();
-      final data = base64Decode(base64String);
-      
-      // Try 12 bytes IV first (new format)
-      if (data.length > 28) {
-        try {
-          final iv = encrypt.IV(data.sublist(0, 12));
-          final encryptedBytes = data.sublist(12);
-          final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.gcm));
-          return encrypter.decrypt(encrypt.Encrypted(encryptedBytes), iv: iv);
-        } catch (e) {
-          // Fallback to 16 bytes IV (old format)
-          final iv = encrypt.IV(data.sublist(0, 16));
-          final encryptedBytes = data.sublist(16);
-          final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.gcm));
-          return encrypter.decrypt(encrypt.Encrypted(encryptedBytes), iv: iv);
-        }
-      } else if (data.length > 16) {
-        // Must be old format
-        final iv = encrypt.IV(data.sublist(0, 16));
-        final encryptedBytes = data.sublist(16);
-        final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.gcm));
-        return encrypter.decrypt(encrypt.Encrypted(encryptedBytes), iv: iv);
-      }
-      return null;
-    } catch (e) {
+      final jsonBytes = utf8.encode(jsonEncode(env.toJson()));
+      final header = ByteData(4)..setUint32(0, jsonBytes.length, Endian.big);
+      return [...header.buffer.asUint8List(), ...jsonBytes];
+    } catch (_) {
       return null;
     }
   }
 
-  static String? encryptStatic(String text) {
+  _SyncEnvelope? _decodeEnvelope(List<int> data) {
     try {
-      final key = _getEncryptionKeyStatic();
-      final iv = encrypt.IV.fromLength(12); // Use 12 bytes for GCM
-      final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.gcm));
+      final map = jsonDecode(utf8.decode(data)) as Map<String, dynamic>;
+      return _SyncEnvelope.fromJson(map);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static encrypt.Key _key() {
+    final hash = sha256.convert(utf8.encode(_hardcodedSecret));
+    return encrypt.Key(Uint8List.fromList(hash.bytes));
+  }
+
+  String? _encrypt(String text) {
+    try {
+      final key = _key();
+      final iv = encrypt.IV.fromLength(12);
+      final encrypter =
+          encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.gcm));
       final encrypted = encrypter.encrypt(text, iv: iv);
-      // Format: IV(12) + Ciphertext + Tag(16)
-      // The 'encrypt' package for GCM includes the tag at the end of encrypted.bytes
-      return base64Encode(iv.bytes + encrypted.bytes);
-    } catch (e) {
+      final combined = Uint8List.fromList([...iv.bytes, ...encrypted.bytes]);
+      return base64Encode(combined);
+    } catch (_) {
       return null;
     }
   }
 
-  String? _encrypt(String text) => encryptStatic(text);
-
-  String? _decrypt(String base64String) => _decryptStatic(base64String);
-
-  // MARK: - Sending
-  Future<void> broadcastSync(String content, String hash) async {
-    if (!isEnabled) return;
-
-    appLog('Broadcasting sync to authorized devices...');
-    final jsonData = _makeTextSyncPayload(content, hash);
-    if (jsonData == null) return;
-
-    await _dispatchBroadcast(jsonData: jsonData, type: 'text/plain');
-  }
-
-  Future<void> sendText(String content, {required String targetDevice}) async {
-    if (!isEnabled) return;
-
-    final trimmed = content.trim();
-    if (trimmed.isEmpty) return;
-
-    final targets =
-        availablePeers.where((p) => p.displayName == targetDevice).toList();
-    if (targets.isEmpty) {
-      appLog('Could not find endpoint for device: $targetDevice', level: 'error');
-      return;
-    }
-
-    final hash = _contentHashForPlainText(content);
-    final jsonData = _makeTextSyncPayload(content, hash);
-    if (jsonData == null) return;
-
-    appLog('Sending text to ${targets.first.displayName}...');
-    await _sendSync(jsonData, targets.first.service);
-  }
-
-  /// Peer-targeted send: resolves by peerId, returns success/failure.
-  Future<bool> sendTextToPeer(String content, {required String peerId}) async {
-    if (!isEnabled) return false;
-
-    final trimmed = content.trim();
-    if (trimmed.isEmpty) return false;
-
-    final target = availablePeers.where((p) => p.peerId == peerId).toList();
-    if (target.isEmpty) {
-      appLog('Could not find peer: $peerId', level: 'error');
-      return false;
-    }
-
-    final hash = _contentHashForPlainText(content);
-    final jsonData = _makeTextSyncPayload(content, hash);
-    if (jsonData == null) return false;
-
-    appLog('Sending text to ${target.first.displayName} (peerId=$peerId)...');
-    return await _sendSync(jsonData, target.first.service);
-  }
-
-  String _contentHashForPlainText(String text) {
-    final normalized = text
-        .trim()
-        .replaceAll('\r\n', '\n')
-        .replaceAll('\r', '\n');
-    return sha256.convert(utf8.encode(normalized)).toString();
-  }
-
-  String? _makeTextSyncPayload(String content, String hash) {
-    final encrypted = _encrypt(content);
-    if (encrypted == null) return null;
-
-    final message = SyncMessage(
-      deviceId: deviceId,
-      timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
-      type: 'text/plain',
-      content: encrypted,
-      hash: hash,
-    );
-
-    return jsonEncode(message.toJson());
-  }
-
-  Future<void> sendFile(File file, {required String targetDevice}) async {
-    if (!isEnabled) return;
-    final targets = availablePeers.where((p) => p.displayName == targetDevice).toList();
-    if (targets.isEmpty) {
-      appLog('Could not find endpoint for device: $targetDevice', level: 'error');
-      return;
-    }
-    await _sendFile(
-      file,
-      service: targets.first.service,
-      headerType: 'file/header',
-      chunkType: 'file/chunk',
-      addToFileHistory: true,
-    );
-  }
-
-  /// Peer-targeted send: resolves by peerId, returns success/failure.
-  Future<bool> sendFileToPeer(File file, {required String peerId}) async {
-    if (!isEnabled) return false;
-    final target = availablePeers.where((p) => p.peerId == peerId).toList();
-    if (target.isEmpty) {
-      appLog('Could not find peer: $peerId', level: 'error');
-      return false;
-    }
-    appLog('Sending file to ${target.first.displayName} (peerId=$peerId)...');
-    await _sendFile(
-      file,
-      service: target.first.service,
-      headerType: 'file/header',
-      chunkType: 'file/chunk',
-      addToFileHistory: true,
-    );
-    return true;
-  }
-
-  Future<void> _sendFile(
-    File file, {
-    required Service service,
-    required String headerType,
-    required String chunkType,
-    required bool addToFileHistory,
-  }) async {
+  String? _decrypt(String base64String) {
     try {
-      if (!await file.exists()) {
-        appLog('File does not exist: ${file.path}', level: 'error');
-        return;
-      }
-
-      final fileId = const Uuid().v4();
-      final fileName = file.uri.pathSegments.last;
-      final fileSize = await file.length();
-      final headerJson = jsonEncode({
-        'fileId': fileId,
-        'fileName': fileName,
-        'fileSize': fileSize,
-      });
-
-      final encryptedHeader = _encrypt(headerJson);
-      if (encryptedHeader == null) return;
-      final headerMessage = SyncMessage(
-        deviceId: deviceId,
-        timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
-        type: headerType,
-        content: encryptedHeader,
-        hash: '',
-      );
-
-      // Send header + all chunks over ONE socket so ordering is guaranteed
-      // and we avoid per-chunk connection setup cost.
-      final socket = await _connectToService(service);
-      if (socket == null) return;
-
-      var transferFailed = false;
-      try {
-        await _writeFrame(socket, jsonEncode(headerMessage.toJson()));
-
-        final shouldCompress = await CompressionUtils.shouldCompressFile(file.path);
-        const chunkSize = 128 * 1024;
-        final raf = await file.open();
-        try {
-          var chunkIndex = 0;
-          var bytesRead = 0;
-          while (bytesRead < fileSize) {
-            final rawData = await raf.read(chunkSize);
-            if (rawData.isEmpty) break;
-
-            bytesRead += rawData.length;
-
-            // gzip + AES on 128KB blocks is heavy enough to jank the UI isolate.
-            final frameJson = await compute(_prepareChunkFrame, _ChunkFramePayload(
-              rawData: Uint8List.fromList(rawData),
-              fileId: fileId,
-              chunkIndex: chunkIndex,
-              isLast: bytesRead >= fileSize,
-              shouldCompress: shouldCompress,
-              deviceId: deviceId,
-              chunkType: chunkType,
-            ));
-            if (frameJson == null) break;
-
-            // Awaits flush so a broken socket (peer gone, network drop) surfaces
-            // here instead of silently letting us claim success below.
-            try {
-              await _writeFrame(socket, frameJson);
-            } catch (e) {
-              appLog(
-                'File transfer aborted at chunk $chunkIndex of $fileName: $e',
-                level: 'error',
-              );
-              transferFailed = true;
-              break;
-            }
-            chunkIndex += 1;
-          }
-        } finally {
-          await raf.close();
-        }
-
-        if (!transferFailed) {
-          await socket.flush();
-        }
-      } finally {
-        await socket.close();
-      }
-
-      if (transferFailed) {
-        // Do not record a "sent" file history entry when the peer never got it.
-        return;
-      }
-
-      if (addToFileHistory) {
-        await _addToFileHistory(
-          fileName: fileName,
-          filePath: file.path,
-          fileSize: fileSize,
-          senderName: 'Me (Sent to ${service.name ?? 'Unknown'})',
-        );
-      }
-      appLog('File transfer completed for $fileName');
-    } catch (e) {
-      appLog('Failed to send file: $e', level: 'error');
+      final key = _key();
+      final data = base64Decode(base64String);
+      if (data.length <= 28) return null;
+      final iv = encrypt.IV(data.sublist(0, 12));
+      final encryptedBytes = data.sublist(12);
+      final encrypter =
+          encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.gcm));
+      return encrypter.decrypt(encrypt.Encrypted(encryptedBytes), iv: iv);
+    } catch (_) {
+      return null;
     }
   }
 
-  Future<Socket?> _connectToService(Service service) async {
-    for (var attempt = 0; attempt < 2; attempt++) {
-      try {
-        var target = service;
-        try {
-          target = await resolve(service);
-        } catch (e) {
-          if (attempt == 0) {
-            await Future.delayed(const Duration(milliseconds: 200));
-            continue;
-          }
-          appLog(
-            'Resolve failed for ${service.name}, trying cached endpoint: $e',
-            level: 'warning',
-          );
-        }
+  // Kept for any external callers that used the old static helpers.
+  static String? encryptStatic(String text) => instance._encrypt(text);
+  static String? decryptStatic(String text) => instance._decrypt(text);
 
-        final port = target.port ?? this.port;
-        if (target.addresses != null && target.addresses!.isNotEmpty) {
-          final v4 = target.addresses!
-              .where((a) => a.type == InternetAddressType.IPv4)
-              .toList();
-          final address = v4.isNotEmpty ? v4.first : target.addresses!.first;
-          return await Socket.connect(address, port, timeout: const Duration(seconds: 5));
-        }
-        final host = target.host;
-        if (host == null || host.isEmpty) {
-          appLog('No host/address for ${service.name}', level: 'error');
-          return null;
-        }
-        return await Socket.connect(host, port, timeout: const Duration(seconds: 5));
-      } catch (e) {
-        if (attempt > 0) {
-          appLog('Failed to connect to ${service.name}: $e', level: 'error');
-          return null;
-        }
-      }
-    }
-    return null;
+  // -----------------------------------------------------------------------
+  // Endpoint cache
+  // -----------------------------------------------------------------------
+
+  Future<void> _persistEndpoint(
+      String peerId, String name, String host, int port) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = await _readEndpointCache();
+    list.removeWhere((e) => e['peerId'] == peerId);
+    list.add({
+      'peerId': peerId,
+      'name': name,
+      'host': host,
+      'port': port,
+      'ts': DateTime.now().millisecondsSinceEpoch / 1000.0,
+    });
+    await prefs.setString(_endpointCacheKey, jsonEncode(list));
   }
 
-  /// Writes one length-prefixed frame. Awaits flush so callers can detect a
-  /// broken socket mid-transfer instead of silently reporting success.
-  Future<void> _writeFrame(Socket socket, String jsonData) async {
-    final messageBytes = utf8.encode(jsonData);
-    final lengthHeader = ByteData(4)..setUint32(0, messageBytes.length, Endian.big);
-    socket.add(lengthHeader.buffer.asUint8List());
-    socket.add(messageBytes);
-    await socket.flush();
-  }
-
-  /// Sends one frame. Returns false on any failure (resolve, connect, write) so
-  /// the caller can re-queue for later delivery instead of dropping the frame.
-  Future<bool> _sendSync(String jsonData, Service service) async {
-    final socket = await _connectToService(service);
-    if (socket == null) {
-      final name = service.name;
-      if (name != null && name.isNotEmpty) {
-        _recordPeerMiss(_peerIdFromService(service, name));
-      }
-      return false;
-    }
+  Future<List<Map<String, dynamic>>> _readEndpointCache() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_endpointCacheKey);
+    if (raw == null) return [];
     try {
-      await _writeFrame(socket, jsonData);
-      await socket.flush();
-      await socket.close();
-      return true;
-    } catch (e) {
-      appLog('Failed to send sync to ${service.name}: $e', level: 'error');
-      socket.destroy();
-      return false;
-    }
-  }
-}
-
-class _PendingSync {
-  final String data;
-  final String type;
-  final String targetPeerId;
-  final DateTime enqueueAt;
-
-  const _PendingSync({
-    required this.data,
-    required this.type,
-    required this.targetPeerId,
-    required this.enqueueAt,
-  });
-}
-
-class _ChunkFramePayload {
-  final Uint8List rawData;
-  final String fileId;
-  final int chunkIndex;
-  final bool isLast;
-  final bool shouldCompress;
-  final String deviceId;
-  final String chunkType;
-
-  const _ChunkFramePayload({
-    required this.rawData,
-    required this.fileId,
-    required this.chunkIndex,
-    required this.isLast,
-    required this.shouldCompress,
-    required this.deviceId,
-    required this.chunkType,
-  });
-}
-
-/// Runs in a background isolate: gzip + base64 + AES-GCM for one file chunk.
-String? _prepareChunkFrame(_ChunkFramePayload payload) {
-  var processedData = payload.rawData;
-  var isCompressed = false;
-  int? originalSize;
-
-  if (payload.shouldCompress) {
-    final compressed = CompressionUtils.compressData(processedData);
-    if (compressed != null && compressed.length < processedData.length) {
-      originalSize = processedData.length;
-      processedData = compressed;
-      isCompressed = true;
+      final list = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+      final cutoff = DateTime.now()
+          .subtract(_endpointCacheTtl)
+          .millisecondsSinceEpoch /
+          1000.0;
+      return list.where((e) => ((e['ts'] as num?)?.toDouble() ?? 0) >= cutoff).toList();
+    } catch (_) {
+      return [];
     }
   }
 
-  final chunkJson = jsonEncode({
-    'fileId': payload.fileId,
-    'chunkIndex': payload.chunkIndex,
-    'data': base64Encode(processedData),
-    'isLast': payload.isLast,
-    'isCompressed': isCompressed,
-    if (originalSize != null) 'originalSize': originalSize,
-  });
-
-  final encryptedChunk = SyncManager.encryptStatic(chunkJson);
-  if (encryptedChunk == null) return null;
-
-  return jsonEncode(SyncMessage(
-    deviceId: payload.deviceId,
-    timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
-    type: payload.chunkType,
-    content: encryptedChunk,
-    hash: '',
-  ).toJson());
+  Future<void> _loadEndpointCache() async {
+    for (final e in await _readEndpointCache()) {
+      final id = e['peerId'] as String?;
+      final name = e['name'] as String?;
+      final host = e['host'] as String?;
+      final p = e['port'] as int?;
+      if (id == null || name == null || host == null || p == null) continue;
+      if (id == peerId) continue;
+      _recordPeer(id, name, host, p);
+      unawaited(_dial(host, p, reason: 'cache'));
+    }
+  }
 }

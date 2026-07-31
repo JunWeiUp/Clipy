@@ -16,10 +16,14 @@ struct SettingsView: View {
     @State private var syncEnabled: Bool
     @State private var syncPort: String
     @State private var availablePeers: [DiscoveredPeer] = []
-    @State private var selectedSyncTargets: Set<String> = Set(PreferencesManager.shared.authorizedPeerIds)
+    @State private var clipboardSyncTargets: Set<String> = Set(PreferencesManager.shared.clipboardSyncPeerIds)
+    @State private var notificationSyncTargets: Set<String> = Set(PreferencesManager.shared.notificationSyncPeerIds)
     @State private var isRefreshingDevices = false
-    @State private var notificationSyncEnabled: Bool
-    @State private var notificationSound: Bool
+    // Manual peers (host:port) for cross-band / cross-subnet discovery.
+    @State private var manualPeers: [String] = PreferencesManager.shared.manualSyncPeers
+    @State private var showAddManualPeer = false
+    @State private var manualPeerHost = ""
+    @State private var manualPeerPort = "5566"
     @State private var accessibilityGranted: Bool
 
     init() {
@@ -37,8 +41,6 @@ struct SettingsView: View {
         _searchHistoryShortcut = State(initialValue: prefs.searchHistoryShortcut)
         _syncEnabled = State(initialValue: prefs.isSyncEnabled)
         _syncPort = State(initialValue: "\(prefs.syncPort)")
-        _notificationSyncEnabled = State(initialValue: NotificationManager.shared.notificationSyncEnabled)
-        _notificationSound = State(initialValue: NotificationManager.shared.notificationSound)
         _accessibilityGranted = State(initialValue: AccessibilityManager.isTrusted)
     }
 
@@ -203,11 +205,29 @@ struct SettingsView: View {
                 }
                 .disabled(!syncEnabled || isRefreshingDevices)
 
-                let staleAuthorized = selectedSyncTargets.subtracting(Set(availablePeers.map(\.peerId)))
+                let unionAuthorized = clipboardSyncTargets.union(notificationSyncTargets)
+                let staleAuthorized = unionAuthorized.subtracting(Set(availablePeers.map(\.peerId)))
                 if !staleAuthorized.isEmpty {
-                    Text(L10n.format(.staleAuthorizedDevicesWarning, staleAuthorized.sorted().joined(separator: ", ")))
+                    Text("离线已授权设备（可删除）")
                         .font(AppFont.caption)
                         .foregroundStyle(.orange)
+                    ForEach(staleAuthorized.sorted(), id: \.self) { peerId in
+                        HStack {
+                            Text(peerId)
+                                .font(AppFont.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button {
+                                clipboardSyncTargets.remove(peerId)
+                                notificationSyncTargets.remove(peerId)
+                                PreferencesManager.shared.removeAuthorizedPeer(peerId)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
 
                 if availablePeers.isEmpty {
@@ -215,35 +235,83 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(availablePeers, id: \.peerId) { peer in
-                        Toggle(isOn: Binding(
-                            get: { selectedSyncTargets.contains(peer.peerId) },
-                            set: { enabled in
-                                if enabled {
-                                    selectedSyncTargets.insert(peer.peerId)
-                                } else {
-                                    selectedSyncTargets.remove(peer.peerId)
-                                }
-                                PreferencesManager.shared.authorizedPeerIds = selectedSyncTargets.sorted()
-                            }
-                        )) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(peer.displayName)
+                            Toggle(isOn: Binding(
+                                get: { clipboardSyncTargets.contains(peer.peerId) },
+                                set: { enabled in
+                                    if enabled {
+                                        clipboardSyncTargets.insert(peer.peerId)
+                                    } else {
+                                        clipboardSyncTargets.remove(peer.peerId)
+                                    }
+                                    PreferencesManager.shared.setClipboardSync(
+                                        peerId: peer.peerId, enabled: enabled)
+                                    if enabled {
+                                        SyncManager.shared.refreshPendingDelivery(for: peer.peerId)
+                                    }
+                                }
+                            )) {
+                                Text(L10n.t(.syncClipboardToDevice))
+                                    .font(AppFont.caption)
+                            }
+                            Toggle(isOn: Binding(
+                                get: { notificationSyncTargets.contains(peer.peerId) },
+                                set: { enabled in
+                                    if enabled {
+                                        notificationSyncTargets.insert(peer.peerId)
+                                    } else {
+                                        notificationSyncTargets.remove(peer.peerId)
+                                    }
+                                    PreferencesManager.shared.setNotificationSync(
+                                        peerId: peer.peerId, enabled: enabled)
+                                    if enabled {
+                                        SyncManager.shared.refreshPendingDelivery(for: peer.peerId)
+                                    }
+                                }
+                            )) {
+                                Text(L10n.t(.syncNotificationsToDevice))
+                                    .font(AppFont.caption)
+                            }
                         }
+                        .padding(.vertical, 2)
                     }
                 }
-            }
 
-            Section {
-                Toggle(L10n.t(.enableNotificationSync), isOn: $notificationSyncEnabled)
-                    .onChange(of: notificationSyncEnabled) { newValue in
-                        NotificationManager.shared.notificationSyncEnabled = newValue
-                        NotificationManager.shared.savePreferences()
-                    }
+                Divider()
+                Text("手动添加设备（跨频段/跨子网兜底）")
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+                Text("当自动发现失效（如 2.4G/5G 隔离）时，在对端查看 IP 后在此手动添加。")
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
 
-                Toggle(L10n.t(.notificationSound), isOn: $notificationSound)
-                    .onChange(of: notificationSound) { newValue in
-                        NotificationManager.shared.notificationSound = newValue
-                        NotificationManager.shared.savePreferences()
+                Button {
+                    manualPeerHost = ""
+                    manualPeerPort = "\(PreferencesManager.shared.syncPort)"
+                    showAddManualPeer = true
+                } label: {
+                    Label("添加设备", systemImage: "plus")
+                }
+                .disabled(!syncEnabled)
+
+                ForEach(manualPeers, id: \.self) { entry in
+                    HStack {
+                        Text(entry)
+                            .font(AppFont.caption)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button(role: .destructive) {
+                            PreferencesManager.shared.removeManualPeer(entry)
+                            manualPeers = PreferencesManager.shared.manualSyncPeers
+                            SyncManager.shared.triggerCrossBandDiscovery()
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
                     }
+                }
             }
 
             Section {
@@ -274,7 +342,55 @@ struct SettingsView: View {
         }
         .onAppear {
             availablePeers = SyncManager.shared.availablePeers
-            selectedSyncTargets = Set(PreferencesManager.shared.authorizedPeerIds)
+            clipboardSyncTargets = Set(PreferencesManager.shared.clipboardSyncPeerIds)
+            notificationSyncTargets = Set(PreferencesManager.shared.notificationSyncPeerIds)
+            manualPeers = PreferencesManager.shared.manualSyncPeers
+            // On-demand device discovery (per sync power plan v2): no periodic
+            // timer drives the list — refresh once when the user opens this
+            // page. Subsequent updates arrive via .syncAvailableDevicesDidChange.
+            if PreferencesManager.shared.isSyncEnabled && !isRefreshingDevices {
+                isRefreshingDevices = true
+                SyncManager.shared.refreshDiscovery()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    availablePeers = SyncManager.shared.availablePeers
+                    isRefreshingDevices = false
+                }
+            }
+        }
+        .sheet(isPresented: $showAddManualPeer) {
+            VStack(spacing: 16) {
+                Text("添加设备").font(.headline)
+                TextField("IP 地址（如 192.168.1.20）", text: $manualPeerHost)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Text("端口")
+                    TextField("5566", text: $manualPeerPort)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 100)
+                }
+                HStack {
+                    Button("取消") { showAddManualPeer = false }
+                        .keyboardShortcut(.cancelAction)
+                    Spacer()
+                    Button("添加") {
+                        let host = manualPeerHost.trimmingCharacters(in: .whitespaces)
+                        let port = Int(manualPeerPort) ?? PreferencesManager.shared.syncPort
+                        guard Self.isValidIPv4(host), (1...65535).contains(port) else { return }
+                        let entry = "\(host):\(port)"
+                        guard !PreferencesManager.shared.manualSyncPeers.contains(entry) else {
+                            showAddManualPeer = false
+                            return
+                        }
+                        PreferencesManager.shared.addManualPeer(entry)
+                        manualPeers = PreferencesManager.shared.manualSyncPeers
+                        showAddManualPeer = false
+                        SyncManager.shared.triggerCrossBandDiscovery()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(20)
+            .frame(width: 340)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             accessibilityGranted = AccessibilityManager.isTrusted
@@ -305,6 +421,15 @@ struct SettingsView: View {
     private func saveHistoryLimit(_ limit: Int) {
         PreferencesManager.shared.historyLimit = limit
         ClipboardManager.shared.applyHistoryLimit()
+    }
+
+    private static func isValidIPv4(_ string: String) -> Bool {
+        let parts = string.split(separator: ".")
+        guard parts.count == 4 else { return false }
+        for part in parts {
+            guard let value = Int(part), (0...255).contains(value) else { return false }
+        }
+        return true
     }
 
     private func saveDeviceName() {

@@ -1,22 +1,23 @@
 import SwiftUI
+import UserNotifications
 
 struct NotificationGroup: Identifiable {
     let id: String
     let packageName: String
     let appName: String
-    let items: [NotificationManager.NotificationEntry]
+    var items: [NotificationManager.NotificationEntry]
 }
 
 final class NotificationViewModel: ObservableObject {
     @Published var groups: [NotificationGroup] = []
     @Published var expandedPackages = Set<String>()
     @Published var selectedIDs = Set<String>()
+    @Published var searchText = ""
+    @Published var bannerKeywordsText: String
+    @Published var blockedKeywordsText: String
+    @Published var notificationAuthorized: UNAuthorizationStatus = .notDetermined
 
     private let manager = NotificationManager.shared
-    private let pageSize = NotificationManager.pageSize
-    private var loadedEntries: [NotificationManager.NotificationEntry] = []
-    private var loadedOffset = 0
-    private var isLoadingMore = false
     private var isActive = false
     /// Tracks the last full reload so the window can refresh on (re)show when
     /// notifications arrived while it was closed. SwiftUI's `onAppear` does not
@@ -33,6 +34,8 @@ final class NotificationViewModel: ObservableObject {
     }()
 
     init() {
+        bannerKeywordsText = NotificationManager.shared.bannerKeywords.joined(separator: ", ")
+        blockedKeywordsText = NotificationManager.shared.blockedKeywords.joined(separator: ", ")
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(notificationsDidChange),
@@ -48,6 +51,7 @@ final class NotificationViewModel: ObservableObject {
     func onAppear() {
         isActive = true
         reload()
+        refreshAuthorization()
     }
 
     func onDisappear() {
@@ -56,21 +60,16 @@ final class NotificationViewModel: ObservableObject {
 
     func prepareForClose() {
         isActive = false
-        loadedEntries = []
-        loadedOffset = 0
-        isLoadingMore = false
+        // Release all notification data immediately to minimize memory footprint.
         groups = []
         expandedPackages.removeAll()
         selectedIDs.removeAll()
+        searchText = ""
+        bannerKeywordsText = ""
     }
 
     @objc private func notificationsDidChange() {
         DispatchQueue.main.async { [weak self] in
-            // Refresh unconditionally. The DB read is a cheap indexed query and
-            // the previous `isActive` gate caused notifications that arrived
-            // while the window was closed to be dropped — since a reused
-            // NSWindow does not re-fire SwiftUI `onAppear`, reload was never
-            // triggered again on reopen.
             self?.reload()
         }
     }
@@ -88,38 +87,18 @@ final class NotificationViewModel: ObservableObject {
         return count == 0 ? L10n.t(.noNotifications) : "\(L10n.t(.phoneNotifications)): \(count)"
     }
 
-    var canLoadMore: Bool {
-        loadedEntries.count < manager.notificationCount
-    }
+    // MARK: - Data loading (full load, no pagination)
 
     func reload() {
-        loadedEntries = []
-        loadedOffset = 0
-        isLoadingMore = false
         lastReloadAt = Date()
-        loadNextPage()
+        let entries = manager.fetchAllNotifications()
+        groups = Self.buildGroups(from: entries)
     }
 
-    func loadMoreIfNeeded() {
-        guard canLoadMore, !isLoadingMore else { return }
-        loadNextPage()
-    }
-
-    private func loadNextPage() {
-        guard !isLoadingMore else { return }
-        isLoadingMore = true
-        let page = manager.fetchPage(offset: loadedOffset, limit: pageSize)
-        loadedOffset += page.count
-        loadedEntries.append(contentsOf: page)
-        rebuildGroups()
-        isLoadingMore = false
-    }
-
-    private func rebuildGroups() {
+    private static func buildGroups(from entries: [NotificationManager.NotificationEntry]) -> [NotificationGroup] {
         var grouped: [String: NotificationGroup] = [:]
         var order: [String] = []
-
-        for entry in loadedEntries {
+        for entry in entries {
             if grouped[entry.packageName] == nil {
                 order.append(entry.packageName)
                 grouped[entry.packageName] = NotificationGroup(
@@ -129,26 +108,100 @@ final class NotificationViewModel: ObservableObject {
                     items: []
                 )
             }
-            var group = grouped[entry.packageName]!
-            group = NotificationGroup(
+            grouped[entry.packageName]!.items.append(entry)
+        }
+        return order.compactMap { grouped[$0] }
+    }
+
+    var filteredGroups: [NotificationGroup] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return groups }
+        return groups.compactMap { group -> NotificationGroup? in
+            // App/package match keeps the whole group; otherwise filter down to
+            // only entries whose content (title/subtitle/body) matches the query.
+            if group.appName.localizedCaseInsensitiveContains(trimmed) ||
+                group.packageName.localizedCaseInsensitiveContains(trimmed) {
+                return group
+            }
+            let matched = group.items.filter { entry in
+                entry.title.localizedCaseInsensitiveContains(trimmed) ||
+                entry.body.localizedCaseInsensitiveContains(trimmed) ||
+                (entry.subtitle?.localizedCaseInsensitiveContains(trimmed) ?? false)
+            }
+            guard !matched.isEmpty else { return nil }
+            return NotificationGroup(
                 id: group.id,
                 packageName: group.packageName,
                 appName: group.appName,
-                items: group.items + [entry]
+                items: matched
             )
-            grouped[entry.packageName] = group
         }
-
-        groups = order.compactMap { grouped[$0] }
     }
 
-    func toggleGroup(_ packageName: String) {
-        if expandedPackages.contains(packageName) {
-            expandedPackages.remove(packageName)
+    // MARK: - Banner toggles per app
+
+    func toggleBanner(for packageName: String) {
+        if manager.bannerApps.contains(packageName) {
+            manager.bannerApps.remove(packageName)
         } else {
-            expandedPackages.insert(packageName)
+            manager.bannerApps.insert(packageName)
+        }
+        manager.savePreferences()
+        // bannerApps lives on the manager (not @Published), so without an
+        // explicit change signal SwiftUI never re-renders the bell icon and
+        // the toggle looks stuck until the next unrelated reload.
+        objectWillChange.send()
+    }
+
+    func isBannerEnabled(for packageName: String) -> Bool {
+        manager.bannerApps.contains(packageName)
+    }
+
+    // MARK: - Preferences (mirrored for popover binding)
+
+    var notificationSyncEnabled: Bool {
+        get { manager.notificationSyncEnabled }
+        set { manager.notificationSyncEnabled = newValue; manager.savePreferences() }
+    }
+
+    var notificationSound: Bool {
+        get { manager.notificationSound }
+        set { manager.notificationSound = newValue; manager.savePreferences() }
+    }
+
+    func commitBannerKeywords() {
+        let keywords = bannerKeywordsText
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        manager.bannerKeywords = keywords
+        manager.savePreferences()
+        bannerKeywordsText = keywords.joined(separator: ", ")
+    }
+
+    func commitBlockedKeywords() {
+        let keywords = blockedKeywordsText
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        manager.blockedKeywords = keywords
+        manager.savePreferences()
+        blockedKeywordsText = keywords.joined(separator: ", ")
+    }
+
+    // MARK: - System notification authorization
+
+    func refreshAuthorization() {
+        manager.checkNotificationAuthorization { [weak self] status in
+            self?.notificationAuthorized = status
         }
     }
+
+    func openSystemNotificationSettings() {
+        manager.openSystemNotificationSettings()
+    }
+
+    // MARK: - Helpers
 
     func formattedTime(for entry: NotificationManager.NotificationEntry) -> String {
         dateFormatter.string(from: date(from: entry.postTime))
@@ -208,7 +261,7 @@ final class NotificationViewModel: ObservableObject {
         panel.nameFieldStringValue = "notifications_\(exportTimestamp()).json"
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        let allEntries = loadedEntries
+        let allEntries = groups.flatMap { $0.items }
         let jsonArray = allEntries.map { entry -> [String: Any] in
             var dict: [String: Any] = [
                 "id": entry.id,
@@ -289,79 +342,18 @@ final class NotificationViewModel: ObservableObject {
 struct NotificationView: View {
     @EnvironmentObject private var languageObserver: AppLanguageObserver
     @ObservedObject var viewModel: NotificationViewModel
+    @State private var showSettingsPopover = false
 
     var body: some View {
         let _ = languageObserver.revision
 
         AppListWindowLayout(statusText: viewModel.statusText) {
-            AppToolbar(
-                leading: [
-                    AppToolbarButton(title: L10n.t(.clearNotifications), systemImage: "trash", action: viewModel.clearLocal),
-                    AppToolbarButton(title: L10n.t(.clearAllOnPhone), systemImage: "iphone.and.arrow.forward", action: viewModel.clearPhone),
-                ],
-                trailing: [
-                    AppToolbarButton(title: L10n.t(.copyContent), systemImage: "doc.on.doc", action: viewModel.copySelected),
-                    AppToolbarButton(title: "Export JSON", systemImage: "square.and.arrow.up", action: viewModel.exportJSON),
-                ]
-            )
+            NotificationToolbar(viewModel: viewModel, showSettingsPopover: $showSettingsPopover)
         } content: {
-            ZStack {
-                if viewModel.groups.isEmpty {
-                    EmptyStateView(message: L10n.t(.noNotifications))
-                } else {
-                    List(selection: $viewModel.selectedIDs) {
-                        ForEach(viewModel.groups) { group in
-                            DisclosureGroup(
-                                isExpanded: Binding(
-                                    get: { viewModel.expandedPackages.contains(group.packageName) },
-                                    set: { expanded in
-                                        if expanded {
-                                            viewModel.expandedPackages.insert(group.packageName)
-                                        } else {
-                                            viewModel.expandedPackages.remove(group.packageName)
-                                        }
-                                    }
-                                )
-                            ) {
-                                ForEach(group.items, id: \.id) { entry in
-                                    notificationDetailRow(entry)
-                                        .tag(entry.id)
-                                        .contextMenu {
-                                            notificationContextMenu()
-                                        }
-                                }
-                            } label: {
-                                HStack {
-                                    Text(group.appName)
-                                        .font(AppFont.body.weight(.semibold))
-                                    Spacer()
-                                    CountBadge(count: group.items.count)
-                                    Text(viewModel.latestTime(for: group))
-                                        .font(AppFont.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(height: AppRowHeight.group)
-                                .tag(group.packageName)
-                                .contextMenu {
-                                    notificationContextMenu()
-                                }
-                            }
-                        }
-
-                        if viewModel.canLoadMore {
-                            HStack {
-                                Spacer()
-                                ProgressView()
-                                    .controlSize(.small)
-                                Spacer()
-                            }
-                            .listRowSeparator(.hidden)
-                            .onAppear {
-                                viewModel.loadMoreIfNeeded()
-                            }
-                        }
-                    }
-                }
+            VStack(spacing: 0) {
+                searchField
+                Divider()
+                notificationList
             }
         }
         .onAppear {
@@ -371,6 +363,75 @@ struct NotificationView: View {
             viewModel.onDisappear()
         }
         .frame(minWidth: AppWindowSize.notificationMin.width, minHeight: AppWindowSize.notificationMin.height)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: AppSpacing.xs) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField(L10n.t(.searchApps), text: $viewModel.searchText)
+                .textFieldStyle(.plain)
+        }
+        .padding(.horizontal, AppSpacing.sm)
+        .padding(.vertical, AppSpacing.xs)
+    }
+
+    private var notificationList: some View {
+        ZStack {
+            if viewModel.filteredGroups.isEmpty {
+                EmptyStateView(message: viewModel.groups.isEmpty ? L10n.t(.noNotifications) : L10n.t(.noSearchResults))
+            } else {
+                List(selection: $viewModel.selectedIDs) {
+                    ForEach(viewModel.filteredGroups) { group in
+                        DisclosureGroup(
+                            isExpanded: Binding(
+                                get: { viewModel.expandedPackages.contains(group.packageName) },
+                                set: { expanded in
+                                    if expanded {
+                                        viewModel.expandedPackages.insert(group.packageName)
+                                    } else {
+                                        viewModel.expandedPackages.remove(group.packageName)
+                                    }
+                                }
+                            )
+                        ) {
+                            ForEach(group.items, id: \.id) { entry in
+                                notificationDetailRow(entry)
+                                    .tag(entry.id)
+                                    .contextMenu {
+                                        notificationContextMenu()
+                                    }
+                            }
+                        } label: {
+                            groupLabel(group)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func groupLabel(_ group: NotificationGroup) -> some View {
+        HStack {
+            Text(group.appName)
+                .font(AppFont.body.weight(.semibold))
+            Spacer()
+            Button(action: { viewModel.toggleBanner(for: group.packageName) }) {
+                Image(systemName: viewModel.isBannerEnabled(for: group.packageName) ? "bell.badge.fill" : "bell.slash")
+                    .foregroundStyle(viewModel.isBannerEnabled(for: group.packageName) ? AppColor.accent : .secondary)
+            }
+            .buttonStyle(.borderless)
+            CountBadge(count: group.items.count)
+            Text(viewModel.latestTime(for: group))
+                .font(AppFont.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(height: AppRowHeight.group)
+        .tag(group.packageName)
+        .contextMenu {
+            notificationContextMenu()
+        }
     }
 
     @ViewBuilder
@@ -399,5 +460,96 @@ struct NotificationView: View {
         Button(L10n.t(.dismissOnPhone)) { viewModel.dismissSelectedOnPhone() }
         Divider()
         Button(L10n.t(.delete), role: .destructive) { viewModel.deleteSelected() }
+    }
+}
+
+// MARK: - Toolbar
+
+private struct NotificationToolbar: View {
+    @ObservedObject var viewModel: NotificationViewModel
+    @Binding var showSettingsPopover: Bool
+
+    var body: some View {
+        HStack(spacing: AppSpacing.xs) {
+            toolbarButton(title: L10n.t(.clearNotifications), systemImage: "trash", action: viewModel.clearLocal)
+            toolbarButton(title: L10n.t(.clearAllOnPhone), systemImage: "iphone.and.arrow.forward", action: viewModel.clearPhone)
+            Spacer(minLength: 0)
+            toolbarButton(title: L10n.t(.notificationSettings), systemImage: "gearshape") {
+                showSettingsPopover = true
+            }
+            .popover(isPresented: $showSettingsPopover, arrowEdge: .top) {
+                settingsPopover
+            }
+            toolbarButton(
+                title: permissionLabel,
+                systemImage: permissionIcon
+            ) {
+                viewModel.openSystemNotificationSettings()
+            }
+            toolbarButton(title: L10n.t(.copyContent), systemImage: "doc.on.doc", action: viewModel.copySelected)
+            toolbarButton(title: "Export JSON", systemImage: "square.and.arrow.up", action: viewModel.exportJSON)
+        }
+        .padding(.horizontal, AppSpacing.sm)
+        .padding(.top, AppTitleBar.height)
+        .padding(.bottom, AppSpacing.xs)
+        .background(.thinMaterial)
+    }
+
+    private var permissionLabel: String {
+        switch viewModel.notificationAuthorized {
+        case .authorized: return L10n.t(.macNotificationGranted)
+        case .denied: return L10n.t(.macNotificationDenied)
+        default: return L10n.t(.openNotificationSettings)
+        }
+    }
+
+    private var permissionIcon: String {
+        switch viewModel.notificationAuthorized {
+        case .authorized: return "bell.badge.fill"
+        default: return "bell.slash"
+        }
+    }
+
+    @ViewBuilder
+    private func toolbarButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+        }
+        .buttonStyle(.bordered)
+    }
+
+    private var settingsPopover: some View {
+        VStack(alignment: .leading, spacing: AppSpacing.sm) {
+            Toggle(L10n.t(.enableNotificationSync), isOn: $viewModel.notificationSyncEnabled)
+            Toggle(L10n.t(.notificationSound), isOn: $viewModel.notificationSound)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: AppSpacing.xs) {
+                Text(L10n.t(.bannerKeywords))
+                    .font(AppFont.body.weight(.medium))
+                TextField(L10n.t(.bannerKeywords), text: $viewModel.bannerKeywordsText)
+                    .onSubmit {
+                        viewModel.commitBannerKeywords()
+                    }
+                Text(L10n.t(.bannerKeywordsHint))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: AppSpacing.xs) {
+                Text(L10n.t(.blockedKeywords))
+                    .font(AppFont.body.weight(.medium))
+                TextField(L10n.t(.blockedKeywords), text: $viewModel.blockedKeywordsText)
+                    .onSubmit {
+                        viewModel.commitBlockedKeywords()
+                    }
+                Text(L10n.t(.blockedKeywordsHint))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(AppSpacing.md)
+        .frame(width: 280)
     }
 }

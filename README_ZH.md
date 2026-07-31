@@ -68,10 +68,10 @@ Clipy 常驻菜单栏，悄悄增强你的剪贴板。除了保存你复制的�
 - 支持**正则**，并可按**类型、来源 App、日期**筛选。
 - 结果排序、多选、复制/粘贴，搜索结果中即可置顶。
 
-### 🔄 加密局域网同步与文件传输
-- macOS、Android、iOS 之间全程 **AES-GCM 256 位**加密传输。
-- 设备通过 **Bonjour/mDNS** 互相发现 —— 无需云端、无需账号。
-- **文件传输**按 128 KB 分块，通过单条有序连接发送，带**实时进度**。
+### 🔄 加密局域网同步
+- macOS 与 Android 之间全程 **AES-GCM 256 位**加密传输。
+- 设备通过 **/24 子网扫描** 与 **手动 IP:端口** 互相发现（可跨 2.4G/5G 子网）—— 无需云端、无需账号。
+- 剪贴板历史可靠投递（ack + 离线队列）。
 - 稳健可靠：**离线对端队列**会在设备短暂断网后自动重投。
 - 通过内容哈希**防止环路**，复制内容不会在设备间无限弹跳。
 
@@ -131,7 +131,7 @@ Release 构建会生成 `armeabi-v7a` 与 `arm64-v8a` 两个分 ABI 的 APK。
 - `MenuController` —— 状态栏菜单：历史、片段、设备与各项操作。
 - `ClipboardManager` —— 剪贴板轮询、历史持久化、去重、同步分发。
 - `SnippetManager` —— 文件夹、片段、快捷键、导入导出。
-- `SyncManager` —— Bonjour 发现、带长度前缀的 TCP 同步、AES-GCM 加密、哈希、文件传输。
+- `SyncManager` —— 子网/手动发现、带长度前缀的 TCP 同步（协议 v2）、AES-GCM 加密、可靠历史与通知投递。
 - `ScreenshotCaptureService` / `CaptureOverlayWindow` —— 截图、标注、贴图、OCR。
 - `SearchWindow` —— 带筛选与排序的全局搜索。
 - `NotificationManager` —— 手机通知镜像。
@@ -140,20 +140,20 @@ Release 构建会生成 `armeabi-v7a` 与 `arm64-v8a` 两个分 ABI 的 APK。
 **Android/iOS 应用** —— Flutter/Dart：
 - `lib/main.dart` —— Tab 化界面（历史、设置、日志、通知、传输）。
 - `lib/clipboard_manager.dart` —— 剪贴板监听、历史、同步协调。
-- `lib/sync_manager.dart` —— 服务注册、设备发现、TCP 同步、加密、文件传输、去重。
+- `lib/sync_manager.dart` —— 子网/手动发现、TCP 同步 v2、加密、历史与通知投递。
 - `lib/notification_manager.dart` —— `NotificationListenerService` 集成。
 
 ## 🔁 同步协议
 
-Clipy 使用面向局域网的协议处理剪贴板与文件数据：
+Clipy 使用面向局域网的协议 v2 处理剪贴板历史与通知：
 
-- **设备发现** —— Bonjour/mDNS 服务 `_clipy-sync._tcp`。
-- **传输方式** —— 原生 TCP，每条 JSON 消息带 4 字节大端长度前缀（单帧上限 2 MB）。
-- **文件传输** —— 按 128 KB 分块，通过单条有序连接发送，带元数据与实时进度。
-- **压缩** —— 文本类分块在有收益时使用 gzip（两端规则一致）。
-- **加密** —— AES-GCM 256 位。
-- **入站鉴权** —— 仅接受各设备授权列表中已勾选设备的入站消息。
-- **环路防止** —— 使用 `lastSyncHash` 等内容哈希避免重复广播。
+- **设备发现** —— `/24` TCP 端口扫描 + 手动 `IP:端口`（可跨子网 / 双频段）。
+- **传输方式** —— 原生 TCP，每条 JSON 信封带 4 字节大端长度前缀（`v: 2`，单帧上限 2 MB）。
+- **消息类型** —— `history`、`notif.post` / `dismiss` / `clear` / `ack`、`hello` / `welcome`、`ping` / `pong`、`ack`。
+- **加密** —— AES-GCM 256 位（payload）。
+- **授权** —— 仅向本机授权列表中的设备推送剪贴板/通知。
+- **可靠投递** —— 历史帧需 `ack`；有界离线队列 + 端点缓存用于重连。
+- **环路防止** —— 内容哈希避免重复广播。
 
 ## 📁 项目结构
 

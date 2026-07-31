@@ -9,7 +9,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'clipy.db';
-  static const schemaVersion = 2;
+  static const schemaVersion = 3;
 
   Database? _db;
 
@@ -37,6 +37,25 @@ class AppDatabase {
               created_at INTEGER NOT NULL
             )
           ''');
+        }
+        if (oldVersion < 3) {
+          // Reliable delivery queue for text/plain (clipboard) frames awaiting
+          // ACK. Per sync power plan v2 — survives restart so content copied
+          // just before a crash/quit still reaches the peer on next reappearance.
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS pending_text_sync (
+              hash TEXT NOT NULL,
+              data TEXT NOT NULL,
+              type TEXT NOT NULL,
+              target_peer_id TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              UNIQUE(target_peer_id, hash)
+            )
+          ''');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_peer ON pending_text_sync(target_peer_id)');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_hash ON pending_text_sync(hash)');
         }
       },
     );
@@ -111,5 +130,20 @@ class AppDatabase {
         created_at INTEGER NOT NULL
       )
     ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pending_text_sync (
+        hash TEXT NOT NULL,
+        data TEXT NOT NULL,
+        type TEXT NOT NULL,
+        target_peer_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(target_peer_id, hash)
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_peer ON pending_text_sync(target_peer_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_hash ON pending_text_sync(hash)');
   }
 }
