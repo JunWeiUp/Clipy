@@ -40,6 +40,8 @@ enum L10nKey: String {
     case syncPort
     case authorizedDevicesComma
     case syncTargetsHint
+    case syncClipboardToDevice
+    case syncNotificationsToDevice
     case close
     case history
     case noHistory
@@ -310,7 +312,9 @@ struct L10n {
             .enableLanSync: "启用局域网同步",
             .syncPort: "同步端口：",
             .authorizedDevicesComma: "授权设备（用逗号分隔）：",
-            .syncTargetsHint: "勾选需要同步剪贴板的设备。仅需在本机授权，对方无需勾选即可接收。",
+            .syncTargetsHint: "分别勾选要同步剪贴板 / 通知的设备。仅需在本机授权，对方无需勾选即可接收。",
+            .syncClipboardToDevice: "同步剪贴板",
+            .syncNotificationsToDevice: "同步通知",
             .close: "关闭",
             .history: "历史记录",
             .noHistory: "暂无历史记录",
@@ -570,7 +574,9 @@ struct L10n {
             .enableLanSync: "Enable LAN Sync",
             .syncPort: "Sync Port:",
             .authorizedDevicesComma: "Authorized Devices (comma separated):",
-            .syncTargetsHint: "Select devices to sync clipboard to. Only this device needs to authorize; the other side can receive without checking you.",
+            .syncTargetsHint: "Choose which devices receive clipboard and/or notifications. Only this device needs to authorize; the other side can receive without checking you.",
+            .syncClipboardToDevice: "Sync clipboard",
+            .syncNotificationsToDevice: "Sync notifications",
             .close: "Close",
             .history: "History",
             .noHistory: "No History",

@@ -13,8 +13,11 @@ class PreferencesManager {
     private let syncSecretKey = "syncSecret"
     private let authorizedDevicesKey = "authorizedDevices"
     private let authorizedPeerIdsKey = "authorizedPeerIds"
+    private let clipboardSyncPeerIdsKey = "clipboardSyncPeerIds"
+    private let notificationSyncPeerIdsKey = "notificationSyncPeerIds"
     private let syncPeerIdKey = "syncPeerId"
     private let authorizedPeerIdsMigratedKey = "authorizedPeerIdsMigrated"
+    private let dualSyncAuthMigratedKey = "dualSyncAuthMigrated"
     private let deviceNameKey = "deviceName"
     private let appLanguageKey = "appLanguage"
     private let launchAtLoginKey = "launchAtLogin"
@@ -107,14 +110,91 @@ class PreferencesManager {
         }
     }
 
+    /// Union of clipboard + notification outbound targets (stale UI / discovery hints).
     var authorizedPeerIds: [String] {
-        get { defaults.stringArray(forKey: authorizedPeerIdsKey) ?? [] }
-        set { defaults.set(newValue, forKey: authorizedPeerIdsKey) }
+        get {
+            migrateDualSyncAuthIfNeeded()
+            return Array(Set(clipboardSyncPeerIds).union(notificationSyncPeerIds)).sorted()
+        }
+        set {
+            // Legacy single-list writes apply to both capabilities.
+            clipboardSyncPeerIds = newValue
+            notificationSyncPeerIds = newValue
+            defaults.set(newValue, forKey: authorizedPeerIdsKey)
+        }
+    }
+
+    /// Peers this device may push clipboard/history to (outbound only).
+    var clipboardSyncPeerIds: [String] {
+        get {
+            migrateDualSyncAuthIfNeeded()
+            return defaults.stringArray(forKey: clipboardSyncPeerIdsKey) ?? []
+        }
+        set {
+            defaults.set(newValue, forKey: clipboardSyncPeerIdsKey)
+            syncAuthorizedPeerIdsUnion()
+        }
+    }
+
+    /// Peers this device may push notifications to (outbound only).
+    var notificationSyncPeerIds: [String] {
+        get {
+            migrateDualSyncAuthIfNeeded()
+            return defaults.stringArray(forKey: notificationSyncPeerIdsKey) ?? []
+        }
+        set {
+            defaults.set(newValue, forKey: notificationSyncPeerIdsKey)
+            syncAuthorizedPeerIdsUnion()
+        }
     }
 
     var authorizedDevices: [String] {
         get { defaults.stringArray(forKey: authorizedDevicesKey) ?? [] }
         set { defaults.set(newValue, forKey: authorizedDevicesKey) }
+    }
+
+    /// One-shot: copy legacy `authorizedPeerIds` into both capability lists (both on).
+    private func migrateDualSyncAuthIfNeeded() {
+        guard !defaults.bool(forKey: dualSyncAuthMigratedKey) else { return }
+        let legacy = defaults.stringArray(forKey: authorizedPeerIdsKey) ?? []
+        if defaults.object(forKey: clipboardSyncPeerIdsKey) == nil {
+            defaults.set(legacy, forKey: clipboardSyncPeerIdsKey)
+        }
+        if defaults.object(forKey: notificationSyncPeerIdsKey) == nil {
+            defaults.set(legacy, forKey: notificationSyncPeerIdsKey)
+        }
+        defaults.set(true, forKey: dualSyncAuthMigratedKey)
+        syncAuthorizedPeerIdsUnion()
+    }
+
+    private func syncAuthorizedPeerIdsUnion() {
+        let union = Array(
+            Set(defaults.stringArray(forKey: clipboardSyncPeerIdsKey) ?? [])
+                .union(defaults.stringArray(forKey: notificationSyncPeerIdsKey) ?? [])
+        ).sorted()
+        defaults.set(union, forKey: authorizedPeerIdsKey)
+    }
+
+    func setClipboardSync(peerId: String, enabled: Bool) {
+        var ids = Set(clipboardSyncPeerIds)
+        if enabled { ids.insert(peerId) } else { ids.remove(peerId) }
+        clipboardSyncPeerIds = ids.sorted()
+    }
+
+    func setNotificationSync(peerId: String, enabled: Bool) {
+        var ids = Set(notificationSyncPeerIds)
+        if enabled { ids.insert(peerId) } else { ids.remove(peerId) }
+        notificationSyncPeerIds = ids.sorted()
+    }
+
+    /// Remove a peer from both capability lists (stale offline row delete).
+    func removeAuthorizedPeer(_ peerId: String) {
+        var clip = Set(clipboardSyncPeerIds)
+        var notif = Set(notificationSyncPeerIds)
+        clip.remove(peerId)
+        notif.remove(peerId)
+        clipboardSyncPeerIds = clip.sorted()
+        notificationSyncPeerIds = notif.sorted()
     }
 
     /// Manually configured peers (format "host:port") for cross-band /
