@@ -221,6 +221,7 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
             style: TextStyle(fontSize: 12, color: Colors.grey[600]),
           ),
         ),
+        ..._buildStaleAuthorizedSection(l10n),
         if (_availablePeers.isEmpty)
           ListTile(
             title: Text(l10n.noDevicesFound),
@@ -228,24 +229,95 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
           )
         else
           ..._availablePeers.map((peer) {
-            final checked =
-                SyncManager.instance.authorizedPeerIds.contains(peer.peerId);
-            return CheckboxListTile(
-              title: Text(peer.displayName),
-              subtitle: Text(peer.peerId, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-              value: checked,
-              controlAffinity: ListTileControlAffinity.leading,
-              onChanged: (value) async {
-                await SyncManager.instance.setSyncTarget(
-                  peer.peerId,
-                  enabled: value ?? false,
-                );
-                if (mounted) setState(() {});
-              },
+            final clipOn = SyncManager.instance.clipboardSyncPeerIds
+                .contains(peer.peerId);
+            final notifOn = SyncManager.instance.notificationSyncPeerIds
+                .contains(peer.peerId);
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    title: Text(peer.displayName),
+                    subtitle: Text(
+                      peer.peerId,
+                      style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                    ),
+                  ),
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    title: Text(l10n.syncClipboardToDevice),
+                    value: clipOn,
+                    onChanged: (value) async {
+                      await SyncManager.instance.setClipboardSyncTarget(
+                        peer.peerId,
+                        enabled: value,
+                      );
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    title: Text(l10n.syncNotificationsToDevice),
+                    value: notifOn,
+                    onChanged: (value) async {
+                      await SyncManager.instance.setNotificationSyncTarget(
+                        peer.peerId,
+                        enabled: value,
+                      );
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                  const Divider(height: 1),
+                ],
+              ),
             );
           }),
       ],
     );
+  }
+
+  List<Widget> _buildStaleAuthorizedSection(AppStrings l10n) {
+    final online = _availablePeers.map((p) => p.peerId).toSet();
+    final stale = SyncManager.instance.authorizedPeerIds
+        .where((id) => !online.contains(id))
+        .toList()
+      ..sort();
+    if (stale.isEmpty) return const [];
+    return [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        child: Text(
+          l10n.offlineAuthorizedDevices,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: Colors.orange[800],
+          ),
+        ),
+      ),
+      ...stale.map(
+        (peerId) => ListTile(
+          title: Text(
+            peerId,
+            style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+          ),
+          trailing: IconButton(
+            icon: const Icon(Icons.delete_outline, color: Colors.red),
+            tooltip: l10n.delete,
+            onPressed: () async {
+              await SyncManager.instance.removeAuthorizedPeer(peerId);
+              if (mounted) setState(() {});
+            },
+          ),
+        ),
+      ),
+    ];
   }
 }
 

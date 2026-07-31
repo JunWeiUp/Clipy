@@ -146,12 +146,16 @@ class AppStrings {
   String get deviceNameUpdated => _t('设备名称已更新，同步已重启', 'Device name updated and sync restarted');
   String get authorizedDevices => _t('授权设备', 'Authorized Devices');
   String get syncTargetsHint => _t(
-        '勾选需要同步剪贴板的设备。仅需在本机授权，对方无需勾选即可接收。',
-        'Select devices to sync clipboard to. Only this device needs to authorize; the other side can receive without checking you.',
+        '分别勾选要同步剪贴板 / 通知的设备。仅需在本机授权，对方无需勾选即可接收。',
+        'Choose which devices receive clipboard and/or notifications. Only this device needs to authorize; the other side can receive without checking you.',
       );
+  String get syncClipboardToDevice => _t('同步剪贴板', 'Sync clipboard');
+  String get syncNotificationsToDevice => _t('同步通知', 'Sync notifications');
+  String get offlineAuthorizedDevices =>
+      _t('离线已授权设备（可删除）', 'Offline authorized devices (tap to remove)');
   String get syncLocalNameHint => _t(
-        '本机名称：%s，设备 ID：%s…。勾选设备后复制即同步，对方无需勾选即可接收。',
-        'Device: %s (ID: %s…). Check devices to sync on copy; they can receive without checking you.',
+        '本机名称：%s，设备 ID：%s…。勾选后即向该设备推送对应内容，对方无需勾选即可接收。',
+        'Device: %s (ID: %s…). Check a capability to push; they can receive without checking you.',
       );
   String syncLocalNameHintFor(String displayName, String peerIdShort) =>
       syncLocalNameHint.replaceFirst('%s', displayName).replaceFirst('%s', peerIdShort);

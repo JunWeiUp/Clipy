@@ -247,6 +247,9 @@ struct SettingsView: View {
                                     }
                                     PreferencesManager.shared.setClipboardSync(
                                         peerId: peer.peerId, enabled: enabled)
+                                    if enabled {
+                                        SyncManager.shared.refreshPendingDelivery(for: peer.peerId)
+                                    }
                                 }
                             )) {
                                 Text(L10n.t(.syncClipboardToDevice))
@@ -262,6 +265,9 @@ struct SettingsView: View {
                                     }
                                     PreferencesManager.shared.setNotificationSync(
                                         peerId: peer.peerId, enabled: enabled)
+                                    if enabled {
+                                        SyncManager.shared.refreshPendingDelivery(for: peer.peerId)
+                                    }
                                 }
                             )) {
                                 Text(L10n.t(.syncNotificationsToDevice))
