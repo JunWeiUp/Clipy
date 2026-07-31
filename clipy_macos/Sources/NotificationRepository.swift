@@ -4,6 +4,11 @@ import SQLite3
 final class NotificationRepository {
     static let shared = NotificationRepository()
 
+    struct AppIdentity: Equatable {
+        let packageName: String
+        let appName: String
+    }
+
     enum UpsertResult {
         case inserted
         case updated
@@ -31,8 +36,58 @@ final class NotificationRepository {
         queue.sync { fetchLocked(offset: offset, limit: limit) }
     }
 
+    /// Full table scan, ordered by post_time DESC. Used by the notification
+    /// window which loads everything at once (no pagination).
+    func fetchAll() -> [NotificationManager.NotificationEntry] {
+        queue.sync { fetchAllLocked() }
+    }
+
+    private func fetchAllLocked() -> [NotificationManager.NotificationEntry] {
+        guard let db else { return [] }
+        let sql = """
+        SELECT id, notification_key, package_name, app_name, title, subtitle, body,
+               post_time, group_key, is_clearable, extras_json
+        FROM phone_notifications
+        ORDER BY post_time DESC
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+
+        var entries: [NotificationManager.NotificationEntry] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let entry = entryFromStatement(stmt) {
+                entries.append(entry)
+            }
+        }
+        return entries
+    }
+
     func fetchById(_ id: String) -> NotificationManager.NotificationEntry? {
         queue.sync { fetchByIdLocked(id) }
+    }
+
+    /// Distinct (packageName, appName) of all received notifications, ordered by
+    /// most recent arrival. Used by Settings to render the app picker.
+    func fetchUniqueApps() -> [AppIdentity] {
+        queue.sync {
+            guard let db else { return [] }
+            let sql = """
+            SELECT package_name, app_name FROM phone_notifications
+            GROUP BY package_name
+            ORDER BY MAX(post_time) DESC
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            var apps: [AppIdentity] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let pkg = optionalString(stmt, 0), let name = optionalString(stmt, 1) {
+                    apps.append(AppIdentity(packageName: pkg, appName: name))
+                }
+            }
+            return apps
+        }
     }
 
     @discardableResult

@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Log
 import android.util.LruCache
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -12,7 +13,12 @@ import java.util.concurrent.ConcurrentLinkedQueue
 class ClipyNotificationListenerService : NotificationListenerService() {
 
     companion object {
+        private const val TAG = "ClipyNLS"
+
         var instance: ClipyNotificationListenerService? = null
+        @Volatile
+        var listenerConnected: Boolean = false
+            private set
         private var methodChannel: MethodChannel? = null
         private val pendingPostedNotifications = ConcurrentLinkedQueue<Map<String, Any?>>()
         private val appNameCache = LruCache<String, String>(128)
@@ -20,8 +26,10 @@ class ClipyNotificationListenerService : NotificationListenerService() {
         fun setMethodChannel(channel: MethodChannel?) {
             methodChannel = channel
             if (channel != null) {
+                // Only flush events that arrived before the channel was ready.
+                // Do NOT dump all active notifications here — Flutter refreshes
+                // under suppressBroadcast via refreshActiveNotifications.
                 flushPendingPostedNotifications()
-                instance?.emitActiveNotifications()
             }
         }
 
@@ -55,6 +63,7 @@ class ClipyNotificationListenerService : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        Log.i(TAG, "Service created")
     }
 
     override fun onDestroy() {
@@ -62,6 +71,32 @@ class ClipyNotificationListenerService : NotificationListenerService() {
         if (instance == this) {
             instance = null
         }
+        listenerConnected = false
+        Log.w(TAG, "Service destroyed")
+    }
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        listenerConnected = true
+        Log.i(TAG, "Listener connected")
+        // Notify Flutter; Dart will refresh active notifications under
+        // suppressBroadcast. Emitting here would race and re-broadcast to Mac.
+        try {
+            methodChannel?.invokeMethod("onListenerConnected", mapOf("connected" to true))
+        } catch (e: Exception) {
+            // Flutter engine may not be ready
+        }
+    }
+
+    override fun onListenerDisconnected() {
+        listenerConnected = false
+        Log.w(TAG, "Listener disconnected")
+        try {
+            methodChannel?.invokeMethod("onListenerConnected", mapOf("connected" to false))
+        } catch (e: Exception) {
+            // Flutter engine may not be ready
+        }
+        super.onListenerDisconnected()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -78,13 +113,28 @@ class ClipyNotificationListenerService : NotificationListenerService() {
         }
     }
 
+    /** Snapshot of currently active notifications for a synchronous Flutter refresh. */
+    fun collectActiveNotifications(): List<Map<String, Any?>> {
+        return try {
+            activeNotifications.mapNotNull { statusBarNotificationToMap(it) }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
     private fun emitStatusBarNotification(sbn: StatusBarNotification?) {
-        if (sbn == null) return
+        val data = statusBarNotificationToMap(sbn) ?: return
+        Log.d(TAG, "Forwarding notification: pkg=${data["packageName"]} title=${data["title"]}")
+        emitNotificationPosted(data)
+    }
+
+    private fun statusBarNotificationToMap(sbn: StatusBarNotification?): Map<String, Any?>? {
+        if (sbn == null) return null
 
         try {
-            val notification = sbn.notification ?: return
+            val notification = sbn.notification ?: return null
             val extras = notification.extras ?: Bundle.EMPTY
-            val packageName = sbn.packageName ?: return
+            val packageName = sbn.packageName ?: return null
             val appName = getAppName(packageName)
             val allExtras = extrasToMap(extras)
             val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
@@ -97,9 +147,12 @@ class ClipyNotificationListenerService : NotificationListenerService() {
                 ?: allExtras[Notification.EXTRA_BIG_TEXT]
                 ?: allExtras[Notification.EXTRA_TEXT]
                 ?: ""
-            if (title.isBlank() && subtitle.isNullOrBlank() && body.isBlank() && allExtras.values.none { it.isNotBlank() }) return
+            if (title.isBlank() && subtitle.isNullOrBlank() && body.isBlank() && allExtras.values.none { it.isNotBlank() }) {
+                Log.d(TAG, "Skipping blank notification from $packageName")
+                return null
+            }
 
-            val data = mapOf(
+            return mapOf(
                 "key" to sbn.key,
                 "packageName" to packageName,
                 "appName" to appName,
@@ -111,10 +164,9 @@ class ClipyNotificationListenerService : NotificationListenerService() {
                 "isClearable" to ((notification.flags and Notification.FLAG_NO_CLEAR) == 0),
                 "extras" to allExtras,
             )
-
-            emitNotificationPosted(data)
         } catch (e: Exception) {
-            // Never let a malformed notification break future collection.
+            Log.e(TAG, "Error processing notification from ${sbn.packageName}", e)
+            return null
         }
     }
 

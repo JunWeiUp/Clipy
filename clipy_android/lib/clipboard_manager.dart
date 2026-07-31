@@ -137,21 +137,22 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
       if (Platform.isAndroid && !_monitoring) {
         unawaited(startMonitoring());
       }
+      // Catch up on anything copied while we were backgrounded. Android 10+
+      // blocks background clipboard reads, so this resume poll is the
+      // reliable path (per sync power plan v2 — no background polling).
+      unawaited(_pollClipboardOnce());
     }
 
     _updateBackgroundPoll();
   }
 
   void _updateBackgroundPoll() {
-    if (!Platform.isAndroid || !_monitoring) return;
-    // The native OnPrimaryClipChangedListener is the primary capture path.
-    // On Android 10+ background clipboard reads fail anyway, so polling in the
-    // background mostly burns battery; keep only a very sparse fallback for
-    // older devices where background reads still work.
-    final needsFallback = _inBackground && SyncManager.instance.isEnabled;
-    if (needsFallback) {
-      _startPolling(const Duration(minutes: 5));
-    } else {
+    // Foreground-only (per sync power plan v2): the native
+    // OnPrimaryClipChangedListener is the primary capture path while visible.
+    // Background polling is removed — Android 10+ blocks background clipboard
+    // reads, so the 5min wake was pure battery cost with no real benefit.
+    if (!Platform.isAndroid) return;
+    if (_inBackground) {
       _stopPolling();
     }
   }

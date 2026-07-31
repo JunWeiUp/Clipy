@@ -44,7 +44,11 @@ class _NotificationHealthBannerState extends State<NotificationHealthBanner> {
 
     final l10n = context.l10n;
     final message = _messageForIssue(l10n, status.issue);
-    final actionLabel = l10n.reauthorizeNotificationListener;
+    final isBatteryIssue =
+        status.issue == NotificationHealthIssue.batteryOptimization;
+    final actionLabel = isBatteryIssue
+        ? l10n.requestBatteryOptimizationExemption
+        : l10n.reauthorizeNotificationListener;
 
     return Material(
       color: Colors.orange.shade50,
@@ -76,7 +80,8 @@ class _NotificationHealthBannerState extends State<NotificationHealthBanner> {
             ),
             const SizedBox(width: 8),
             FilledButton.tonal(
-              onPressed: () => _handleReauthorize(context),
+              onPressed: () =>
+                  _handleReauthorize(context, isBatteryIssue),
               child: Text(actionLabel),
             ),
           ],
@@ -91,6 +96,8 @@ class _NotificationHealthBannerState extends State<NotificationHealthBanner> {
         return l10n.notificationListenerPermissionDenied;
       case NotificationHealthIssue.listenerNotConnected:
         return l10n.notificationListenerNotConnected;
+      case NotificationHealthIssue.batteryOptimization:
+        return l10n.notificationListenerBatteryOptimization;
       case NotificationHealthIssue.notReceiving:
         return l10n.notificationListenerNotReceiving;
       case NotificationHealthIssue.none:
@@ -98,11 +105,15 @@ class _NotificationHealthBannerState extends State<NotificationHealthBanner> {
     }
   }
 
-  Future<void> _handleReauthorize(BuildContext context) async {
+  Future<void> _handleReauthorize(BuildContext context, bool isBatteryIssue) async {
     final l10n = context.l10n;
     final messenger = ScaffoldMessenger.of(context);
-    await NotificationManager.instance.requestListenerRebind();
-    await NotificationManager.instance.openListenerSettings();
+    if (isBatteryIssue) {
+      await NotificationManager.instance.requestBatteryOptimizationExemption();
+    } else {
+      await NotificationManager.instance.requestListenerRebind();
+      await NotificationManager.instance.openListenerSettings();
+    }
     await Future<void>.delayed(const Duration(seconds: 1));
     final status = await NotificationHealthMonitor.instance.checkHealth();
     if (!context.mounted) return;

@@ -68,6 +68,14 @@ class NotificationRepository {
         entry.extras.values.every((v) => v.toString().trim().isEmpty);
   }
 
+  /// Upserts a notification entry.
+  ///
+  /// Returns `false` (don't broadcast) when the entry is an exact re-send of a
+  /// notification we already have — same id or same `notificationKey` with
+  /// identical content. This happens whenever the Android
+  /// `NotificationListenerService` re-emits active notifications (app resume,
+  /// listener reconnect, process recreation); without this guard the peer would
+  /// show a duplicate banner on every foreground.
   Future<bool> upsert(NotificationEntry entry) async {
     if (_isEmpty(entry)) return false;
     final db = await _db;
@@ -79,8 +87,39 @@ class NotificationRepository {
       limit: 1,
     );
     if (byId.isNotEmpty) {
+      final existing = _fromRow(byId.first);
+      if (_isDuplicate(existing, entry)) {
+        return false;
+      }
       await db.update('notifications', _toRow(entry), where: 'id = ?', whereArgs: [entry.id]);
       return true;
+    }
+
+    // Same notification slot (stable Android sbn.key). A re-emitted active
+    // notification lands here: same key, identical content → suppress broadcast.
+    final key = entry.notificationKey;
+    if (key != null && key.isNotEmpty) {
+      final byKey = await db.query(
+        'notifications',
+        where: 'notification_key = ?',
+        whereArgs: [key],
+        limit: 1,
+      );
+      if (byKey.isNotEmpty) {
+        final existing = _fromRow(byKey.first);
+        if (_isDuplicate(existing, entry)) {
+          return false;
+        }
+        await db.delete('notifications', where: 'id = ?', whereArgs: [existing.id]);
+        await db.insert('notifications', _toRow(entry),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+        _insertsSinceTrim++;
+        if (_insertsSinceTrim >= 50) {
+          _insertsSinceTrim = 0;
+          await _trimToLimit(db);
+        }
+        return true;
+      }
     }
 
     final dupRows = await db.query(
@@ -100,7 +139,6 @@ class NotificationRepository {
 
     await db.insert('notifications', _toRow(entry),
         conflictAlgorithm: ConflictAlgorithm.replace);
-    // Trim in batches: an exact-count check per insert would double the writes.
     _insertsSinceTrim++;
     if (_insertsSinceTrim >= 50) {
       _insertsSinceTrim = 0;

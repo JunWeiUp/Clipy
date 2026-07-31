@@ -90,13 +90,19 @@ class AppStrings {
         'Notification listener permission is missing. Re-authorize Clipy Android to sync notifications.',
       );
   String get notificationListenerNotConnected => _t(
-        '通知监听服务未连接。请点击重新授权，并在系统设置中确认 Clipy Android 的通知使用权已开启。',
-        'The notification listener service is not connected. Tap Re-authorize and ensure Clipy Android notification access is enabled.',
+        '通知监听服务未连接。请在系统设置中先关闭、再重新开启 Clipy Android 的通知使用权。',
+        'The notification listener service is not connected. Please turn Clipy Android notification access OFF, then back ON in system settings.',
       );
   String get notificationListenerNotReceiving => _t(
         '手机上有通知但长时间未同步到数据。请重新授权通知监听权限。',
         'Notifications are present on the phone but none have been synced recently. Re-authorize notification access.',
       );
+  String get notificationListenerBatteryOptimization => _t(
+        '系统省电策略可能已限制后台通知监听。请允许 Clipy Android 后台运行（电池优化白名单）以保证持续同步。',
+        'Battery optimization may be killing the background notification listener. Allow Clipy Android to run unrestricted to keep syncing.',
+      );
+  String get requestBatteryOptimizationExemption =>
+      _t('允许后台运行', 'Allow Background');
   String get reauthorizeNotificationListener => _t('重新授权', 'Re-authorize');
   String get notificationListenerRecovered =>
       _t('通知监听已恢复', 'Notification listener recovered');
@@ -124,6 +130,7 @@ class AppStrings {
   String get excludedApps => _t('排除的应用（Bundle ID，每行一个）', 'Excluded Apps (bundle IDs, one per line)');
   String get saveExcludedApps => _t('保存排除应用', 'Save Excluded Apps');
   String get enableLanSync => _t('启用局域网同步', 'Enable LAN Sync');
+  String get myIPAddress => _t('本机 IP', 'My IP');
   String get syncPort => _t('同步端口', 'Sync Port');
   String get authorizedDevicesComma => _t('授权设备（用逗号分隔）', 'Authorized Devices (comma separated)');
   String get about => _t('关于', 'About');
@@ -139,12 +146,16 @@ class AppStrings {
   String get deviceNameUpdated => _t('设备名称已更新，同步已重启', 'Device name updated and sync restarted');
   String get authorizedDevices => _t('授权设备', 'Authorized Devices');
   String get syncTargetsHint => _t(
-        '勾选需要同步剪贴板的设备。仅需在本机授权，对方无需勾选即可接收。',
-        'Select devices to sync clipboard to. Only this device needs to authorize; the other side can receive without checking you.',
+        '分别勾选要同步剪贴板 / 通知的设备。仅需在本机授权，对方无需勾选即可接收。',
+        'Choose which devices receive clipboard and/or notifications. Only this device needs to authorize; the other side can receive without checking you.',
       );
+  String get syncClipboardToDevice => _t('同步剪贴板', 'Sync clipboard');
+  String get syncNotificationsToDevice => _t('同步通知', 'Sync notifications');
+  String get offlineAuthorizedDevices =>
+      _t('离线已授权设备（可删除）', 'Offline authorized devices (tap to remove)');
   String get syncLocalNameHint => _t(
-        '本机名称：%s，设备 ID：%s…。勾选设备后复制即同步，对方无需勾选即可接收。',
-        'Device: %s (ID: %s…). Check devices to sync on copy; they can receive without checking you.',
+        '本机名称：%s，设备 ID：%s…。勾选后即向该设备推送对应内容，对方无需勾选即可接收。',
+        'Device: %s (ID: %s…). Check a capability to push; they can receive without checking you.',
       );
   String syncLocalNameHintFor(String displayName, String peerIdShort) =>
       syncLocalNameHint.replaceFirst('%s', displayName).replaceFirst('%s', peerIdShort);

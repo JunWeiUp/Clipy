@@ -35,6 +35,8 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   final Map<String, List<NotificationEntry>> _packageNotificationsCache = {};
   bool _appsLoaded = false;
   bool _appsLoading = false;
+  /// Distinguishes first permission probe from a real denied→granted transition.
+  bool _permissionStatusLoaded = false;
   static const _packageGroupPageSize = 20;
   static const _notificationsPerPackage = 50;
 
@@ -249,12 +251,20 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   Future<void> _loadPermissionStatus() async {
     final granted =
         await NotificationManager.instance.isListenerPermissionGranted();
-    if (mounted) {
-      final wasGranted = _permissionGranted;
-      setState(() => _permissionGranted = granted);
-      if (!wasGranted && granted && NotificationManager.instance.isEnabled) {
-        await NotificationManager.instance.refreshActiveNotifications();
-      }
+    if (!mounted) return;
+    final wasGranted = _permissionGranted;
+    final isInitialLoad = !_permissionStatusLoaded;
+    _permissionStatusLoaded = true;
+    setState(() => _permissionGranted = granted);
+    // Only refresh after a real denied→granted transition (e.g. user returned
+    // from system settings). The initial open must not treat the default
+    // `_permissionGranted == false` as "just granted", or every visit to this
+    // page re-ingests active notifications and can re-broadcast them to Mac.
+    if (!isInitialLoad &&
+        !wasGranted &&
+        granted &&
+        NotificationManager.instance.isEnabled) {
+      await NotificationManager.instance.refreshActiveNotifications();
     }
   }
 
