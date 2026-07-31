@@ -140,14 +140,15 @@ class MainActivity: FlutterActivity() {
                     val listener = ClipyNotificationListenerService.instance
                     if (listener != null) {
                         try {
-                            listener.emitActiveNotifications()
-                            result.success(null)
+                            // Return the snapshot to Dart so it can ingest under
+                            // suppressBroadcast without racing async onNotificationPosted.
+                            result.success(listener.collectActiveNotifications())
                         } catch (e: Exception) {
                             result.error("REFRESH_FAILED", e.message, null)
                         }
                     } else if (isNotificationListenerEnabled()) {
                         requestNotificationListenerRebind()
-                        result.success(null)
+                        result.success(emptyList<Map<String, Any?>>())
                     } else {
                         result.error("NO_LISTENER", "NotificationListenerService not running", null)
                     }

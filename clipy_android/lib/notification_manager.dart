@@ -104,6 +104,9 @@ class NotificationManager {
           appLog('NotificationManager: listener connection state changed: $connected');
           if (connected) {
             lastNotificationReceivedAt ??= DateTime.now();
+            if (isEnabled) {
+              unawaited(refreshActiveNotifications());
+            }
           }
           _notificationsChangedController.add(null);
           break;
@@ -293,11 +296,22 @@ class NotificationManager {
     }
   }
 
+  /// Pull currently-active status-bar notifications into local history.
+  ///
+  /// Never syncs to peers: refresh is for UI/DB catch-up only. Real-time
+  /// `onNotificationPosted` events still broadcast when appropriate.
   Future<void> refreshActiveNotifications() async {
     if (!isEnabled) return;
     _suppressBroadcast = true;
     try {
-      await _channel.invokeMethod('refreshActiveNotifications');
+      final result =
+          await _channel.invokeMethod<List<dynamic>>('refreshActiveNotifications');
+      if (result == null) return;
+      for (final item in result) {
+        if (item is Map) {
+          await _handleNotificationPosted(Map<String, dynamic>.from(item));
+        }
+      }
     } catch (e) {
       appLog('NotificationManager: error refreshing active notifications: $e',
           level: 'warning');

@@ -159,28 +159,28 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // MARK: - Handle Remote Notifications
 
     func handleRemoteNotification(_ decrypted: String, from senderDevice: String) {
-        guard notificationSyncEnabled else {
-            appLog("NotificationManager: dropped incoming notification, sync disabled", level: .warning)
-            return
-        }
-
         guard let data = decrypted.data(using: .utf8),
               let entry = try? JSONDecoder().decode(NotificationEntry.self, from: data) else {
             appLog("NotificationManager: failed to decode remote notification", level: .error)
             return
         }
 
+        // Always ACK after a successful decode so the sender can clear its
+        // pending queue — even when we drop/dedupe and do not show a banner.
+        defer { SyncManager.shared.sendNotificationAck(hash: entry.id) }
+
         if isEmptyNotification(entry) {
             return
         }
 
-        let accepted = upsertNotification(entry)
-        if accepted {
-            if shouldShowBanner(entry) {
-                showSystemNotification(entry)
-            }
-            // Acknowledge receipt so Android can remove from offline queue
-            SyncManager.shared.sendNotificationAck(hash: entry.id)
+        guard notificationSyncEnabled else {
+            appLog("NotificationManager: dropped incoming notification, sync disabled", level: .warning)
+            return
+        }
+
+        let isNew = upsertNotification(entry)
+        if isNew && shouldShowBanner(entry) {
+            showSystemNotification(entry)
         }
         appLog("NotificationManager: received from \(senderDevice): \(entry.title)")
     }
@@ -212,9 +212,11 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             notifyNotificationsChanged()
             return true
         case .replacedDuplicate(let removedId):
+            // Same content / notificationKey under a new id (re-send). Update
+            // storage but do not show the system banner again.
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [removedId])
             notifyNotificationsChanged()
-            return true
+            return false
         case .updated:
             // Same id already exists — this is a re-send (backfill). Don't show banner again.
             notifyNotificationsChanged()
