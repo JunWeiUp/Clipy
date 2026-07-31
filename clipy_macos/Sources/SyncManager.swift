@@ -116,18 +116,34 @@ class SyncManager: NSObject {
     private var pendingFileCleanupTimer: DispatchSourceTimer?
     private var isRefreshingDiscovery = false
 
-    /// mDNS does not reliably report abrupt departures (kill, power loss, Wi-Fi
-    /// drop), so discovered peers are probed over TCP on this interval and
-    /// evicted after peerLivenessMaxMisses consecutive failures.
-    ///
-    /// 45s × 3 ≈ 2 min 15s grace window. The previous 30s × 2 ≈ 1 min was too
-    /// aggressive: a peer's TCP listener can be briefly unresponsive during
-    /// AppNap / display sleep / Wi-Fi roam, after which it would be evicted and
-    /// only reappear on the next mDNS browse cycle. Keep aligned with Android.
-    private static let peerLivenessInterval: TimeInterval = 45
+    /// Low-frequency UI presence refresh: every `peerPresenceInterval` we probe
+    /// discovered peers only to keep the device list / menu accurate and evict
+    /// dead ones after peerLivenessMaxMisses consecutive failures. This is a UI
+    /// concern only — actual delivery does NOT depend on it: `sendSync` connects
+    /// directly (probe folded into the send path) and a failed send triggers an
+    /// on-demand rescan. The previous 120s steady-state probe was lifted to 300s
+    /// to drop idle power. 300s × 3 ≈ 15 min grace window. Keep aligned with Android.
+    private static let peerPresenceInterval: TimeInterval = 300
     private static let peerLivenessMaxMisses = 3
     private var peerLivenessTimer: DispatchSourceTimer?
     private var peerMissCounts: [String: Int] = [:]
+
+    /// Remembers the last-known endpoint of recently-evicted peers so an
+    /// on-demand rescan can re-probe them directly, bypassing ARP-cache
+    /// filtering. macOS ARP entries expire (~20 min); once expired the
+    /// ARP-filtered /24 scan would never try that IP again, so a phone that
+    /// went backgrounded → evicted → ARP-expired → thawed would stay
+    /// invisible indefinitely. Entries are pruned after evictedPeerRetention.
+    private var evictedPeerEndpoints: [String: (endpoint: NWEndpoint, evictedAt: Date)] = [:]
+    private static let evictedPeerRetention: TimeInterval = 600
+
+    /// Persisted cache of discovered peer endpoints (peerId → host/port/name/ts).
+    /// Loaded at start() so data transfer works immediately after launch without
+    /// waiting for a subnet scan. The full /24 rescan was removed to save power;
+    /// instead discovery is on-demand (UI open / endpoint-failure fallback).
+    /// Entries expire after endpointCacheTTL. Keep aligned with Android.
+    private static let endpointCacheKey = "clipy.peerEndpoints"
+    private static let endpointCacheTTL: TimeInterval = 86400 // 24h
 
     /// Watches the system network path so a Wi-Fi switch / interface change /
     /// reconnect triggers an immediate `refreshDiscovery()` instead of relying
@@ -143,6 +159,23 @@ class SyncManager: NSObject {
     /// length is available, mirroring the Android side's buffer loop.
     private var receiveBuffers: [ObjectIdentifier: Data] = [:]
     private var isProbingPeers = false
+
+    // MARK: - Persistent outbound connections
+    //
+    // Paired devices keep a long-lived outbound TCP connection (with kernel
+    // keepalive) so (a) each message skips a fresh connect/handshake, (b) the
+    // presence of a live connection IS the online state (no periodic probe
+    // needed), and (c) idle traffic collapses to a 60s keepalive ack.
+    // Topology is bidirectional independent-outbound: each side maintains its
+    // own outbound link for sending; the peer's outbound link lands on our
+    // listener for receiving. A pair has at most 2 connections (one per
+    // direction); dedup is unnecessary on a LAN.
+    private var persistentConnections: [String: NWConnection] = [:]   // peerId -> outbound
+    private var reconnectBackoffs: [String: TimeInterval] = [:]       // peerId -> next delay
+    private let connectionLock = NSLock()
+    private static let keepaliveIdle: TimeInterval = 60
+    private static let keepaliveInterval: TimeInterval = 60
+    private static let maxReconnectBackoff: TimeInterval = 30
 
     // MARK: POSIX IPv4 listener state
     // NWListener on macOS creates an IPv6 socket that remote IPv4 LAN peers
@@ -163,11 +196,98 @@ class SyncManager: NSObject {
         let type: String
         let targetPeerId: String
         let enqueueAt: Date
+        /// Content hash for text/plain frames; used to match an incoming
+        /// `message/ack` back to the queued frame so it can be dropped. nil for
+        /// types that don't participate in reliable delivery (notification/* etc.).
+        let hash: String?
     }
     private var pendingQueue: [PendingSync] = []
     private static let pendingQueueMax = 50
     private static let pendingQueueTTL: TimeInterval = 30
     private static let sendConnectTimeout: TimeInterval = 5
+
+    /// Persistent store for text/plain frames awaiting ACK. Survives restarts
+    /// so clipboard content copied just before a quit/crash still reaches the
+    /// peer when it reappears (24h window). Bounded (50/peer) + 24h TTL.
+    /// All access is syncQueue-confined (callers hop).
+    private final class PendingSyncStore {
+        // Entry is not `private`: flushPendingQueue (in the enclosing
+        // SyncManager) reads its fields (enqueueAt/hash) to merge persisted
+        // frames with in-memory ones. PendingSyncStore itself is private to
+        // SyncManager, so Entry is never reachable outside this file.
+        struct Entry: Codable {
+            let data: Data
+            let type: String
+            let targetPeerId: String
+            let hash: String
+            let enqueueAt: Date
+        }
+        static let ttl: TimeInterval = 24 * 60 * 60
+        static let maxPerPeer = 50
+
+        private let fileURL: URL
+        private var entries: [Entry] = []
+
+        init() {
+            let appSupport = FileManager.default.urls(
+                for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            fileURL = appSupport.appendingPathComponent("clipy_pending_sync.json")
+            load()
+        }
+
+        private func load() {
+            guard let raw = try? Data(contentsOf: fileURL),
+                  let decoded = try? JSONDecoder().decode([Entry].self, from: raw)
+            else { return }
+            let cutoff = Date().addingTimeInterval(-Self.ttl)
+            entries = decoded.filter { $0.enqueueAt >= cutoff }
+        }
+
+        private func persist() {
+            let dir = fileURL.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(
+                at: dir, withIntermediateDirectories: true)
+            do {
+                let encoded = try JSONEncoder().encode(entries)
+                try encoded.write(to: fileURL, options: .atomic)
+            } catch {
+                appLog("PendingSyncStore: failed to persist (\(error))", level: .error)
+            }
+        }
+
+        func add(data: Data, type: String, targetPeerId: String, hash: String) {
+            let cutoff = Date().addingTimeInterval(-Self.ttl)
+            entries.removeAll { $0.enqueueAt < cutoff }
+            // Replace any prior entry for the same (peer, hash) — latest copy wins.
+            entries.removeAll { $0.targetPeerId == targetPeerId && $0.hash == hash }
+            let perPeer = entries.filter { $0.targetPeerId == targetPeerId }.count
+            guard perPeer < Self.maxPerPeer else { return }
+            entries.append(Entry(
+                data: data, type: type, targetPeerId: targetPeerId,
+                hash: hash, enqueueAt: Date()))
+            persist()
+        }
+
+        func remove(hash: String) {
+            let before = entries.count
+            entries.removeAll { $0.hash == hash }
+            if entries.count != before { persist() }
+        }
+
+        func entries(forPeerId peerId: String) -> [Entry] {
+            let cutoff = Date().addingTimeInterval(-Self.ttl)
+            return entries.filter {
+                $0.targetPeerId == peerId && $0.enqueueAt >= cutoff
+            }
+        }
+
+        func clearAll() {
+            guard !entries.isEmpty else { return }
+            entries.removeAll()
+            persist()
+        }
+    }
+    private let pendingSyncStore = PendingSyncStore()
 
     private var displayName: String { PreferencesManager.shared.deviceName }
     private var peerId: String { PreferencesManager.shared.syncPeerId }
@@ -485,7 +605,10 @@ class SyncManager: NSObject {
 
         startListening()
         if PreferencesManager.shared.isSyncEnabled {
-            startPeerLivenessProbing()
+            loadPersistedPeerEndpoints()
+            // Periodic peer probing removed: a live persistent connection now
+            // implies online. Discovery runs on demand (refreshDiscovery) and
+            // on network-path changes instead of a 300s timer.
             triggerCrossBandDiscovery()
         }
         startPathMonitoring()
@@ -504,6 +627,17 @@ class SyncManager: NSObject {
         }
         activeConnections.removeAll()
 
+        // Tear down persistent outbound connections and cancel pending reconnects.
+        connectionLock.lock()
+        let persistent = persistentConnections
+        persistentConnections.removeAll()
+        reconnectBackoffs.removeAll()
+        connectionLock.unlock()
+        for connection in persistent.values {
+            connection.stateUpdateHandler = nil
+            connection.cancel()
+        }
+
         peerLivenessTimer?.cancel()
         peerLivenessTimer = nil
         isProbingPeers = false
@@ -517,6 +651,7 @@ class SyncManager: NSObject {
         peersLock.lock()
         discoveredPeers.removeAll()
         peerMissCounts.removeAll()
+        evictedPeerEndpoints.removeAll()
         peersLock.unlock()
 
         // Notify UI so stale device snapshots do not linger after sync stops.
@@ -616,16 +751,77 @@ class SyncManager: NSObject {
         }
     }
 
-    // MARK: - Peer Liveness Probing
-    private func startPeerLivenessProbing() {
+    // MARK: - Peer Presence Refresh (UI only)
+    private func startPeerPresenceProbing() {
         peerLivenessTimer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: syncQueue)
-        timer.schedule(deadline: .now() + Self.peerLivenessInterval, repeating: Self.peerLivenessInterval)
+        timer.schedule(deadline: .now() + Self.peerPresenceInterval, repeating: Self.peerPresenceInterval)
         timer.setEventHandler { [weak self] in
             self?.probeDiscoveredPeers()
         }
         peerLivenessTimer = timer
         timer.resume()
+    }
+
+    /// Extracts host string + port from an NWEndpoint for (de)serialization.
+    private func endpointComponents(_ endpoint: NWEndpoint) -> (host: String, port: Int)? {
+        guard case let .hostPort(host, port) = endpoint else { return nil }
+        let hostString: String
+        switch host {
+        case .name(let name, _): hostString = name
+        case .ipv4(let addr): hostString = "\(addr)"
+        case .ipv6(let addr): hostString = "\(addr)"
+        default: hostString = "\(host)"
+        }
+        return (hostString, Int(port.rawValue))
+    }
+
+    /// Loads cached peer endpoints from UserDefaults at launch so data transfer
+    /// works immediately without a subnet scan. Stale entries (>endpointCacheTTL)
+    /// are discarded. The liveness probe / on-demand scan will validate them.
+    private func loadPersistedPeerEndpoints() {
+        guard let raw = UserDefaults.standard.dictionary(forKey: Self.endpointCacheKey) as? [String: [String: Any]] else { return }
+        let cutoff = Date().addingTimeInterval(-Self.endpointCacheTTL)
+        var loaded = 0
+        peersLock.lock()
+        for (pid, info) in raw {
+            guard let host = info["host"] as? String,
+                  let port = info["port"] as? Int,
+                  let ts = info["ts"] as? Date, ts > cutoff,
+                  let name = info["name"] as? String,
+                  let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else { continue }
+            let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: nwPort)
+            if discoveredPeers[pid] == nil {
+                discoveredPeers[pid] = DiscoveredPeer(peerId: pid, displayName: name, endpoint: endpoint)
+                peerMissCounts[pid] = 0
+                loaded += 1
+            }
+        }
+        peersLock.unlock()
+        if loaded > 0 {
+            appLog("Loaded \(loaded) cached peer endpoint(s) from disk")
+            notifyPeersChanged()
+        }
+    }
+
+    /// Persists current discovered peer endpoints to UserDefaults (debounced by
+    /// coalescing on each call). Called after a successful discovery.
+    private func persistPeerEndpoints() {
+        let peers = availablePeers
+        var dict: [String: [String: Any]] = [:]
+        let now = Date()
+        for peer in peers {
+            guard let comps = endpointComponents(peer.endpoint) else { continue }
+            dict[peer.peerId] = ["host": comps.host, "port": comps.port, "name": peer.displayName, "ts": now]
+        }
+        UserDefaults.standard.set(dict, forKey: Self.endpointCacheKey)
+    }
+
+    /// Removes a single peer's endpoint from the persisted cache (on eviction).
+    private func removePersistedPeerEndpoint(peerId: String) {
+        guard var dict = UserDefaults.standard.dictionary(forKey: Self.endpointCacheKey) as? [String: [String: Any]] else { return }
+        dict.removeValue(forKey: peerId)
+        UserDefaults.standard.set(dict, forKey: Self.endpointCacheKey)
     }
 
     /// Probes every discovered peer's TCP server; browse results alone cannot be
@@ -714,13 +910,19 @@ class SyncManager: NSObject {
         peerMissCounts[peerId] = misses
         let shouldEvict = misses >= Self.peerLivenessMaxMisses
         if shouldEvict {
+            if let endpoint = discoveredPeers[peerId]?.endpoint {
+                evictedPeerEndpoints[peerId] = (endpoint, Date())
+            }
             discoveredPeers.removeValue(forKey: peerId)
             peerMissCounts.removeValue(forKey: peerId)
         }
         peersLock.unlock()
-
         guard shouldEvict else { return }
         appLog("Evicting unreachable peer \(peerId) after \(misses) failed probes", level: .warning)
+        removePersistedPeerEndpoint(peerId: peerId)
+        // On-demand fallback: a failed endpoint (DHCP renewal, Wi-Fi roam) is
+        // re-discovered by a single subnet scan instead of the old 30s timer.
+        triggerCrossBandDiscovery()
         DispatchQueue.main.async {
             let names = self.availableDeviceNames
             let peers = self.availablePeers
@@ -834,6 +1036,12 @@ class SyncManager: NSObject {
             if clientFD >= 0 {
                 let cflags = fcntl(clientFD, F_GETFL, 0)
                 _ = fcntl(clientFD, F_SETFL, cflags | O_NONBLOCK)
+                // Enable TCP keepalive on the accepted inbound socket so the
+                // server side of a persistent link also detects half-open peers
+                // within the keepalive window. Inbound persistent connections
+                // (the peer's outbound) are drained by posixHandleClientReadable.
+                var keepalive: Int32 = 1
+                _ = setsockopt(clientFD, SOL_SOCKET, SO_KEEPALIVE, &keepalive, socklen_t(MemoryLayout<Int32>.size))
                 var ipBuf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
                 var sinAddr = addr.sin_addr
                 inet_ntop(AF_INET, &sinAddr, &ipBuf, socklen_t(INET_ADDRSTRLEN))
@@ -1042,6 +1250,12 @@ class SyncManager: NSObject {
             DispatchQueue.main.async {
                 ClipboardManager.shared.handleRemoteSync(content: decrypted, hash: message.hash)
             }
+            // Reliable delivery: ACK the frame on the inbound socket so the
+            // sender can drop it from its persistent queue. Unknown to legacy
+            // peers (they fall through to `default` and ignore).
+            if let ackFrame = makeMessageAckFrame(hash: message.hash) {
+                reply?(ackFrame)
+            }
         case "file/header":
             handleFileHeader(decrypted, from: message.deviceId)
         case "file/chunk":
@@ -1066,6 +1280,10 @@ class SyncManager: NSObject {
             handleHandshakeHello(decrypted, from: message.deviceId, peerHost: peerHost, reply: reply)
         case "handshake/hi":
             handleHandshakeHi(decrypted, from: message.deviceId, peerHost: peerHost)
+        case "message/ack":
+            // Sender confirms it processed a text/plain frame we queued; drop
+            // the matching entry from the in-memory + persistent queues.
+            handleMessageAck(message.hash)
         default:
             break
         }
@@ -1102,9 +1320,33 @@ class SyncManager: NSObject {
         let work = DispatchWorkItem { [weak self] in
             self?.connectManualPeers()
             self?.scanSubnets()
+            self?.reprobeEvictedPeers()
         }
         pendingScanWorkItem = work
         scanQueue.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    /// Re-probes peers that were recently evicted (e.g. a phone backgrounded →
+    /// Doze froze its socket → later thawed). The ARP-filtered subnet scan
+    /// misses these IPs once the kernel ARP cache expires, so we probe the
+    /// last-known endpoint directly. Entries expire after evictedPeerRetention.
+    private func reprobeEvictedPeers() {
+        let now = Date()
+        let cutoff = now.addingTimeInterval(-Self.evictedPeerRetention)
+        peersLock.lock()
+        evictedPeerEndpoints = evictedPeerEndpoints.filter { _, entry in
+            entry.evictedAt > cutoff
+        }
+        let toProbe = evictedPeerEndpoints
+        peersLock.unlock()
+        guard !toProbe.isEmpty else { return }
+        for (peerId, info) in toProbe {
+            performHandshake(to: info.endpoint) { ok in
+                if ok {
+                    appLog("Evicted-peer re-probe succeeded: \(peerId) at \(info.endpoint)")
+                }
+            }
+        }
     }
 
     /// Enumerates all non-loopback IPv4 addresses on physical interfaces via
@@ -1261,12 +1503,144 @@ class SyncManager: NSObject {
         }
     }
 
-    /// Opens a TCP connection to `endpoint`, sends an encrypted handshake/hello,
-    /// and waits for handshake/hi. On success the peer is recorded via the
-    /// normal receive path (processReceivedData → handleHandshakeHi).
-    private func performHandshake(to endpoint: NWEndpoint, completion: @escaping (Bool) -> Void) {
-        let parameters = NWParameters.tcp
+    // MARK: - Persistent connection lifecycle
+
+    /// Builds NWParameters with TCP keepalive enabled so half-open links are
+    /// detected within the keepalive window instead of lingering indefinitely.
+    private static func makeKeepaliveParameters() -> NWParameters {
+        let tcp = NWProtocolTCP.Options()
+        tcp.enableKeepalive = true
+        tcp.keepaliveIdle = Int(keepaliveIdle)
+        tcp.keepaliveInterval = Int(keepaliveInterval)
+        let parameters = NWParameters(tls: nil, tcp: tcp)
         parameters.preferNoProxies = true
+        return parameters
+    }
+
+    /// Thread-safe lookup of the live outbound connection for a peer.
+    private func persistentConnection(for peerId: String) -> NWConnection? {
+        connectionLock.lock()
+        defer { connectionLock.unlock() }
+        return persistentConnections[peerId]
+    }
+
+    /// Writes a length-prefixed frame on an existing connection.
+    private func sendFrame(_ connection: NWConnection, data: Data, completion: @escaping (Error?) -> Void) {
+        var messageData = Data()
+        var length = UInt32(data.count).bigEndian
+        messageData.append(withUnsafeBytes(of: &length) { Data($0) })
+        messageData.append(data)
+        connection.send(content: messageData, completion: .contentProcessed { error in
+            completion(error)
+        })
+    }
+
+    /// Extracts the sender peerId from the first length-prefixed frame in a
+    /// raw byte buffer (the handshake/hi reply). Used by the handshake path to
+    /// key the resulting persistent connection before promoting it.
+    private func extractPeerId(fromLengthPrefixedFrame data: Data) -> String? {
+        guard data.count >= 4 else { return nil }
+        let length = Int(data.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian })
+        guard length > 0, length <= Self.maxMessageLength, data.count >= 4 + length else { return nil }
+        let body = data.subdata(in: 4..<(4 + length))
+        guard let message = try? JSONDecoder().decode(SyncMessage.self, from: body) else { return nil }
+        return message.deviceId
+    }
+
+    /// Promotes a freshly established connection to a persistent outbound link
+    /// keyed by peerId, replacing any prior link, then starts the inbound drain
+    /// loop and flushes frames queued while the peer was offline.
+    private func promotePersistentConnection(_ connection: NWConnection, peerId: String) {
+        connectionLock.lock()
+        let existing = persistentConnections.removeValue(forKey: peerId)
+        persistentConnections[peerId] = connection
+        reconnectBackoffs[peerId] = 0
+        connectionLock.unlock()
+        existing?.stateUpdateHandler = nil
+        existing?.cancel()
+        appLog("Promoted persistent outbound connection to peer \(peerId)")
+        receiveMessagePersistent(from: connection, peerId: peerId)
+        flushPendingQueue(forPeerId: peerId)
+    }
+
+    /// Perpetual receive loop bound to a persistent connection. Drains inbound
+    /// frames (acks, peer-originated replies) and tears down on EOF/error.
+    private func receiveMessagePersistent(from connection: NWConnection, peerId: String) {
+        connection.receive(minimumIncompleteLength: 4, maximumLength: Self.maxMessageLength) { [weak self, weak connection] data, _, isComplete, error in
+            guard let self = self, let connection = connection else { return }
+            if let data = data, !data.isEmpty {
+                self.ingestReceivedData(data, from: connection)
+            }
+            if error != nil || isComplete {
+                self.receiveBuffers.removeValue(forKey: ObjectIdentifier(connection))
+                connection.cancel()
+                self.teardownPersistentConnection(peerId: peerId)
+            } else {
+                self.receiveMessagePersistent(from: connection, peerId: peerId)
+            }
+        }
+    }
+
+    /// Tears down a peer's persistent link, marks the peer offline in the UI,
+    /// remembers its last endpoint for reconnect, and schedules a backoff retry.
+    private func teardownPersistentConnection(peerId: String) {
+        connectionLock.lock()
+        let conn = persistentConnections.removeValue(forKey: peerId)
+        connectionLock.unlock()
+        conn?.cancel()
+
+        peersLock.lock()
+        if let endpoint = discoveredPeers[peerId]?.endpoint {
+            evictedPeerEndpoints[peerId] = (endpoint, Date())
+        }
+        let didEvict = discoveredPeers.removeValue(forKey: peerId) != nil
+        peerMissCounts.removeValue(forKey: peerId)
+        peersLock.unlock()
+        if didEvict {
+            appLog("Persistent link to \(peerId) dropped; marking offline", level: .warning)
+            notifyPeersChanged()
+        }
+        scheduleReconnect(forPeerId: peerId)
+    }
+
+    /// Exponential-backoff reconnect (1s→2s→…→30s). Uses the cached evicted
+    /// endpoint directly; falls back to the next discovery sweep otherwise.
+    /// Cleared on success (promotePersistentConnection resets the backoff).
+    private func scheduleReconnect(forPeerId peerId: String) {
+        connectionLock.lock()
+        let alreadyConnected = persistentConnections[peerId] != nil
+        let prev = reconnectBackoffs[peerId] ?? 1
+        let backoff = min(prev, Self.maxReconnectBackoff)
+        reconnectBackoffs[peerId] = min(prev * 2, Self.maxReconnectBackoff)
+        connectionLock.unlock()
+        guard !alreadyConnected else { return }
+
+        syncQueue.asyncAfter(deadline: .now() + backoff) { [weak self] in
+            guard let self = self else { return }
+            self.connectionLock.lock()
+            let connected = self.persistentConnections[peerId] != nil
+            self.connectionLock.unlock()
+            guard !connected else { return }
+            self.peersLock.lock()
+            let endpoint = self.evictedPeerEndpoints[peerId]?.endpoint
+            self.peersLock.unlock()
+            guard let endpoint = endpoint else {
+                // No cached endpoint; the next refreshDiscovery() sweep will retry.
+                return
+            }
+            self.performHandshake(to: endpoint) { ok in
+                if !ok {
+                    self.scheduleReconnect(forPeerId: peerId)
+                }
+            }
+        }
+    }
+
+    /// Opens a TCP connection to `endpoint`, sends an encrypted handshake/hello,
+    /// and waits for handshake/hi. On success the link is promoted to a
+    /// persistent outbound connection keyed by the peerId in the hi reply.
+    private func performHandshake(to endpoint: NWEndpoint, completion: @escaping (Bool) -> Void) {
+        let parameters = Self.makeKeepaliveParameters()
         let connection = NWConnection(to: endpoint, using: parameters)
         var didComplete = false
 
@@ -1296,19 +1670,26 @@ class SyncManager: NSObject {
                 })
                 // Await the hi reply on the same connection. Route through
                 // ingestReceivedData so the 4-byte length prefix is stripped
-                // before JSON decode (processReceivedData expects raw JSON).
+                // before JSON decode (processReceivedData expects raw JSON),
+                // then promote the link to a persistent outbound connection.
                 connection.receive(minimumIncompleteLength: 4, maximumLength: Self.maxMessageLength) { data, _, _, error in
                     guard !didComplete else { return }
                     didComplete = true
                     timeout.cancel()
-                    if let data = data, !data.isEmpty {
-                        self.ingestReceivedData(data, from: connection)
+                    guard let data = data, !data.isEmpty, error == nil else {
+                        connection.cancel()
+                        completion(false)
+                        return
+                    }
+                    self.ingestReceivedData(data, from: connection)
+                    if let peerId = self.extractPeerId(fromLengthPrefixedFrame: data) {
+                        self.promotePersistentConnection(connection, peerId: peerId)
                         completion(true)
                     } else {
+                        self.receiveBuffers.removeValue(forKey: ObjectIdentifier(connection))
+                        connection.cancel()
                         completion(false)
                     }
-                    self.receiveBuffers.removeValue(forKey: ObjectIdentifier(connection))
-                    connection.cancel()
                 }
             case .failed, .cancelled:
                 guard !didComplete else { return }
@@ -1393,8 +1774,10 @@ class SyncManager: NSObject {
         let isNew = discoveredPeers[peerId] == nil
         discoveredPeers[peerId] = peer
         peerMissCounts[peerId] = 0
+        evictedPeerEndpoints.removeValue(forKey: peerId)
         peersLock.unlock()
         appLog("Discovered peer via handshake: \(name) (peerId=\(peerId)) at \(endpoint)")
+        persistPeerEndpoints()
         notifyPeersChanged()
         if isNew {
             flushPendingQueue(forPeerId: peerId)
@@ -1635,26 +2018,126 @@ class SyncManager: NSObject {
         let perPeerCount = pendingQueue.filter { $0.targetPeerId == targetPeerId }.count
         guard perPeerCount < Self.pendingQueueMax else { return }
 
+        // text/plain participates in reliable delivery (ack + persistence);
+        // other types use the in-memory buffer only.
+        let hash = (type == "text/plain") ? extractHash(from: data) : nil
+
         pendingQueue.append(PendingSync(
             data: data,
             type: type,
             targetPeerId: targetPeerId,
-            enqueueAt: Date()
+            enqueueAt: Date(),
+            hash: hash
         ))
+
+        if let hash = hash {
+            pendingSyncStore.add(
+                data: data, type: type, targetPeerId: targetPeerId, hash: hash)
+        }
+    }
+
+    /// Best-effort extraction of the content hash from a serialized SyncMessage.
+    /// Used to key reliable-delivery entries without changing every enqueue
+    /// call site to thread the hash through.
+    private func extractHash(from data: Data) -> String? {
+        return (try? JSONDecoder().decode(SyncMessage.self, from: data))?.hash
+    }
+
+    /// Build a `message/ack` frame acknowledging the given content hash. The
+    /// receiver of a text/plain frame replies with this on the inbound socket
+    /// so the sender can drop the frame from its persistent delivery queue.
+    private func makeMessageAckFrame(hash: String) -> Data? {
+        guard let encryptedContent = encrypt("{}") else { return nil }
+        let message = SyncMessage(
+            deviceId: peerId,
+            timestamp: Date().timeIntervalSince1970,
+            type: "message/ack",
+            content: encryptedContent,
+            hash: hash
+        )
+        return try? JSONEncoder().encode(message)
+    }
+
+    /// Handle an inbound ACK: drop the matching text/plain frame from both the
+    /// in-memory retry buffer and the persistent store. Hops to syncQueue since
+    /// pendingQueue/pendingSyncStore are syncQueue-confined.
+    private func handleMessageAck(_ hash: String) {
+        syncQueue.async {
+            let before = self.pendingQueue.count
+            self.pendingQueue.removeAll { $0.hash == hash }
+            self.pendingSyncStore.remove(hash: hash)
+            if self.pendingQueue.count != before {
+                appLog("ACK for hash \(hash) cleared pending frame(s)")
+            }
+        }
     }
 
     /// Called from the browse-results callback when a peer (re)appears: deliver
-    /// any frames queued for it while it was offline, oldest first.
+    /// any frames queued for it while it was offline, oldest first. Pulls from
+    /// both the in-memory retry buffer and the persistent text/plain store;
+    /// dedupes by hash so a frame present in both is sent once. Persisted
+    /// entries are NOT removed here — only an ACK retires them.
     private func flushPendingQueue(forPeerId peerId: String) {
         let cutoff = Date().addingTimeInterval(-Self.pendingQueueTTL)
         let due = pendingQueue.filter { $0.targetPeerId == peerId && $0.enqueueAt >= cutoff }
-        guard !due.isEmpty else { return }
         pendingQueue.removeAll { $0.targetPeerId == peerId }
 
-        guard let endpoint = availablePeers.first(where: { $0.peerId == peerId })?.endpoint else { return }
-        appLog("Flushing \(due.count) queued frame(s) to reappeared peer \(peerId)")
+        // Merge persisted text/plain frames awaiting ACK, deduped by hash.
+        var seenHashes = Set<String>()
+        var frames: [(Data, String)] = []
         for item in due.sorted(by: { $0.enqueueAt < $1.enqueueAt }) {
-            sendSync(item.data, to: endpoint, type: item.type, targetPeerId: peerId)
+            if let h = item.hash { seenHashes.insert(h) }
+            frames.append((item.data, item.type))
+        }
+        let persisted = pendingSyncStore.entries(forPeerId: peerId)
+        for item in persisted.sorted(by: { $0.enqueueAt < $1.enqueueAt }) where !seenHashes.contains(item.hash) {
+            frames.append((item.data, item.type))
+        }
+
+        guard !frames.isEmpty else { return }
+        guard let endpoint = availablePeers.first(where: { $0.peerId == peerId })?.endpoint else { return }
+        appLog("Flushing \(frames.count) frame(s) to reappeared peer \(peerId) (\(due.count) queued + \(persisted.count) persisted)")
+        for frame in frames {
+            sendSync(frame.0, to: endpoint, type: frame.1, targetPeerId: peerId)
+        }
+    }
+
+    /// Handles a send that never established a connection. With periodic
+    /// probing removed, a peer may be momentarily absent from the discovered
+    /// set (IP change, just-woke-from-sleep, cross-band roam). Before giving
+    /// up to the pending queue, do ONE on-demand rescan + retry so a fresh
+    /// send reaches the peer in ~1–2s instead of waiting for the next
+    /// presence refresh. The retry is bounded (`allowRetry`) to prevent loops.
+    private func handleSendEstablishmentFailure(
+        data: Data, type: String, peerId: String, allowRetry: Bool
+    ) {
+        if allowRetry {
+            rescanThenRetry(data: data, type: type, peerId: peerId)
+        } else {
+            enqueuePendingSync(data: data, type: type, targetPeerId: peerId)
+        }
+    }
+
+    /// Runs an on-demand cross-band rediscovery on scanQueue, then retries the
+    /// send once on syncQueue against the peer's (possibly new) endpoint. If
+    /// the peer is still unreachable, the frame is handed to the pending queue
+    /// for delivery on its next reappearance.
+    private func rescanThenRetry(data: Data, type: String, peerId: String) {
+        scanQueue.async { [weak self] in
+            guard let self = self else { return }
+            appLog("On-demand rescan before retrying \(type) send to \(peerId)")
+            self.connectManualPeers()
+            self.scanSubnets()
+            self.reprobeEvictedPeers()
+            self.syncQueue.async {
+                if let endpoint = self.availablePeers.first(where: { $0.peerId == peerId })?.endpoint {
+                    appLog("Rescan rediscovered peer \(peerId); retrying send")
+                    self.sendSync(data, to: endpoint, type: type, targetPeerId: peerId, allowRescanRetry: false)
+                } else {
+                    appLog("Rescan did not rediscover peer \(peerId); queueing", level: .warning)
+                    self.enqueuePendingSync(data: data, type: type, targetPeerId: peerId)
+                }
+            }
         }
     }
 
@@ -1905,8 +2388,58 @@ class SyncManager: NSObject {
         _ data: Data,
         to endpoint: NWEndpoint,
         type: String? = nil,
-        targetPeerId: String? = nil
+        targetPeerId: String? = nil,
+        allowRescanRetry: Bool = true
     ) {
+        // Fast path: reuse a live persistent outbound connection instead of
+        // establishing a new TCP connection for every send. The persistent link
+        // is keyed by peerId; on send error we tear it down and re-queue the
+        // frame so the next attempt goes through the establishment path.
+        if let targetPeerId = targetPeerId, let conn = persistentConnection(for: targetPeerId) {
+            sendFrame(conn, data: data) { [weak self] error in
+                guard let self = self, let error = error else { return }
+                appLog("Persistent send to \(targetPeerId) failed: \(error); tearing down", level: .error)
+                // The persistent connection runs on handshakeQueue, but
+                // pendingQueue is confined to syncQueue. Hop queues to keep
+                // pendingQueue access single-threaded.
+                self.syncQueue.async {
+                    self.teardownPersistentConnection(peerId: targetPeerId)
+                    if let type = type {
+                        self.enqueuePendingSync(data: data, type: type, targetPeerId: targetPeerId)
+                    }
+                }
+            }
+            return
+        }
+
+        // Establishment path: for routed sends (targetPeerId + type) with no
+        // live persistent link, establish one via handshake and send on it.
+        // This replaces the old one-shot connection so a successful send also
+        // (re)promotes the persistent link for subsequent reuse. The handshake
+        // completion fires on handshakeQueue; pendingQueue is syncQueue-confined
+        // so all failure handling hops back to syncQueue.
+        if let targetPeerId = targetPeerId, let type = type {
+            performHandshake(to: endpoint) { [weak self] ok in
+                guard let self = self else { return }
+                guard ok, let conn = self.persistentConnection(for: targetPeerId) else {
+                    self.syncQueue.async {
+                        self.handleSendEstablishmentFailure(
+                            data: data, type: type, peerId: targetPeerId, allowRetry: allowRescanRetry)
+                    }
+                    return
+                }
+                self.sendFrame(conn, data: data) { [weak self] error in
+                    guard let self = self, let error = error else { return }
+                    appLog("Post-handshake send to \(targetPeerId) failed: \(error)", level: .error)
+                    self.syncQueue.async {
+                        self.teardownPersistentConnection(peerId: targetPeerId)
+                        self.enqueuePendingSync(data: data, type: type, targetPeerId: targetPeerId)
+                    }
+                }
+            }
+            return
+        }
+
         let parameters = NWParameters.tcp
         // Bypass system proxies to avoid 127.0.0.1 redirection from tools like Clash/Surge
         parameters.preferNoProxies = true
@@ -1927,8 +2460,10 @@ class SyncManager: NSObject {
             timeoutWork = DispatchWorkItem { [weak self] in
                 guard !didConnect else { return }
                 connection.cancel()
-                // Transient failure before establishment: re-queue if still fresh.
-                self?.enqueuePendingSync(data: data, type: type, targetPeerId: targetPeerId)
+                // Transient failure before establishment: rediscover then retry
+                // once before falling back to the pending queue.
+                self?.handleSendEstablishmentFailure(
+                    data: data, type: type, peerId: targetPeerId, allowRetry: allowRescanRetry)
             }
         } else {
             timeoutWork = DispatchWorkItem {
@@ -1969,7 +2504,8 @@ class SyncManager: NSObject {
                 appLog("Connection failed to \(endpoint): \(error)", level: .error)
                 self?.recordPeerMiss(forEndpoint: endpoint)
                 if let targetPeerId = targetPeerId, let type = type, let self = self {
-                    self.enqueuePendingSync(data: data, type: type, targetPeerId: targetPeerId)
+                    self.handleSendEstablishmentFailure(
+                        data: data, type: type, peerId: targetPeerId, allowRetry: allowRescanRetry)
                 }
             default:
                 break

@@ -42,7 +42,6 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
   static final NotificationHealthMonitor instance = NotificationHealthMonitor._();
 
   static const _foregroundInterval = Duration(seconds: 45);
-  static const _backgroundInterval = Duration(minutes: 5);
   static const _notReceivingGracePeriod = Duration(minutes: 3);
   static const _notReceivingStalePeriod = Duration(minutes: 15);
 
@@ -96,9 +95,7 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
 
   void _restartTimer() {
     _timer?.cancel();
-    final interval =
-        _inBackground ? _backgroundInterval : _foregroundInterval;
-    _timer = Timer.periodic(interval, (_) {
+    _timer = Timer.periodic(_foregroundInterval, (_) {
       unawaited(checkHealth());
     });
   }
@@ -111,10 +108,14 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
 
     if (state == AppLifecycleState.resumed) {
       unawaited(checkHealth());
-    }
-
-    if (_timer != null) {
+      // Resume periodic checks (foreground interval).
       _restartTimer();
+    } else if (_timer != null) {
+      // Foreground-only (per sync power plan v2): stop periodic health checks
+      // while backgrounded — there's no UI to surface issues and the 5min
+      // wake burned battery. Health is re-checked on the next resume/page open.
+      _timer?.cancel();
+      _timer = null;
     }
   }
 
