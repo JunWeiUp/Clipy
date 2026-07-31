@@ -143,6 +143,11 @@ class MenuController: NSObject {
         clipboardManager.refreshFromPasteboardIfNeeded()
         clipboardManager.ensureMenuSummariesLoaded()
         rebuildMenuContents(menu, with: clipboardManager.recentSummaries)
+        // On-demand device discovery: the menu is the primary place users view
+        // the device list, so a single subnet scan is triggered here (async,
+        // non-blocking). Results refresh the menu via onPeersChanged. This
+        // replaces the old 30s periodic rescan to save power.
+        SyncManager.shared.triggerCrossBandDiscovery()
     }
 
     private func rebuildMenuContents(_ menu: NSMenu, with summaries: [HistorySummary]) {

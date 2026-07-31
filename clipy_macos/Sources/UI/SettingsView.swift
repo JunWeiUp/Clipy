@@ -314,6 +314,17 @@ struct SettingsView: View {
             availablePeers = SyncManager.shared.availablePeers
             selectedSyncTargets = Set(PreferencesManager.shared.authorizedPeerIds)
             manualPeers = PreferencesManager.shared.manualSyncPeers
+            // On-demand device discovery (per sync power plan v2): no periodic
+            // timer drives the list — refresh once when the user opens this
+            // page. Subsequent updates arrive via .syncAvailableDevicesDidChange.
+            if PreferencesManager.shared.isSyncEnabled && !isRefreshingDevices {
+                isRefreshingDevices = true
+                SyncManager.shared.refreshDiscovery()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    availablePeers = SyncManager.shared.availablePeers
+                    isRefreshingDevices = false
+                }
+            }
         }
         .sheet(isPresented: $showAddManualPeer) {
             VStack(spacing: 16) {

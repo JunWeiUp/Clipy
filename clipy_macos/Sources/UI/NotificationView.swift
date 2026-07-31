@@ -116,9 +116,25 @@ final class NotificationViewModel: ObservableObject {
     var filteredGroups: [NotificationGroup] {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return groups }
-        return groups.filter {
-            $0.appName.localizedCaseInsensitiveContains(trimmed) ||
-            $0.packageName.localizedCaseInsensitiveContains(trimmed)
+        return groups.compactMap { group -> NotificationGroup? in
+            // App/package match keeps the whole group; otherwise filter down to
+            // only entries whose content (title/subtitle/body) matches the query.
+            if group.appName.localizedCaseInsensitiveContains(trimmed) ||
+                group.packageName.localizedCaseInsensitiveContains(trimmed) {
+                return group
+            }
+            let matched = group.items.filter { entry in
+                entry.title.localizedCaseInsensitiveContains(trimmed) ||
+                entry.body.localizedCaseInsensitiveContains(trimmed) ||
+                (entry.subtitle?.localizedCaseInsensitiveContains(trimmed) ?? false)
+            }
+            guard !matched.isEmpty else { return nil }
+            return NotificationGroup(
+                id: group.id,
+                packageName: group.packageName,
+                appName: group.appName,
+                items: matched
+            )
         }
     }
 

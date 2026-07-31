@@ -147,6 +147,11 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
         setState(() => _availablePeers = peers);
       }
     });
+    // On-demand device discovery: this list is the primary place users view
+    // the device list, so a single subnet scan is triggered here. Results
+    // refresh the list via onPeersChanged. Replaces the old periodic rescan
+    // to save power.
+    SyncManager.instance.triggerCrossBandDiscovery();
   }
 
   @override
@@ -704,6 +709,9 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
         });
       }
     });
+    // On-demand device discovery: this tab shows the device list, so trigger
+    // a single subnet scan here. Results refresh via onPeersChanged.
+    SyncManager.instance.triggerCrossBandDiscovery();
   }
 
   @override
@@ -1105,6 +1113,9 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
         });
       }
     });
+    // On-demand device discovery: this page shows the device list, so trigger
+    // a single subnet scan here. Results refresh via onPeersChanged.
+    SyncManager.instance.triggerCrossBandDiscovery();
   }
 
   @override

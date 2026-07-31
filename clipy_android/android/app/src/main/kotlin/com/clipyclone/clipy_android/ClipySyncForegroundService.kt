@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 
@@ -25,13 +26,42 @@ class ClipySyncForegroundService : Service() {
         private const val NOTIFICATION_ID = 0x7101
     }
 
+    /// Partial wake lock: the FGS keeps the *process* alive but the CPU can
+    /// still suspend in Doze, causing the Dart event loop (and thus the
+    /// ServerSocket accept loop) to stall — peers can no longer connect.
+    /// Holding a PARTIAL_WAKE_LOCK ensures the CPU stays awake to process
+    /// inbound TCP handshakes while the Activity is backgrounded.
+    /// Released in onDestroy / stopForegroundSync to avoid battery drain
+    /// when sync is off.
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundCompat()
+        acquireWakeLock()
         // START_STICKY: 进程被回收后系统会尝试重建并重新投递空 Intent，
         // 让 SyncManager 在 Flutter 引擎重启时能再次拉起本服务。
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        releaseWakeLock()
+        super.onDestroy()
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Clipy:SyncWakeLock").apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
     }
 
     private fun startForegroundCompat() {

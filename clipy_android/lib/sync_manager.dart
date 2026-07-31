@@ -16,6 +16,7 @@ import 'compression_utils.dart';
 import 'storage_paths.dart';
 import 'database/file_transfer_repository.dart';
 import 'database/notification_repository.dart';
+import 'database/pending_text_sync_repository.dart';
 
 class SyncMessage {
   final String deviceId;
@@ -166,7 +167,6 @@ class SyncManager with WidgetsBindingObserver {
   final Map<String, _PendingFile> _pendingFiles = {};
   final Map<String, DateTime> _lastProgressUpdate = {};
   Timer? _pendingFileCleanupTimer;
-  Timer? _peerLivenessTimer;
   /// Debounce timer for triggerCrossBandDiscovery so rapid UI toggles (e.g.
   /// checkbox spam in the authorization list) coalesce into a single sweep.
   Timer? _scanDebounceTimer;
@@ -188,11 +188,32 @@ class SyncManager with WidgetsBindingObserver {
 
   /// Incomplete inbound transfers are dropped after this much inactivity.
   static const Duration _pendingFileTimeout = Duration(seconds: 60);
-  /// Discovered peers are probed over TCP on this interval and evicted
-  /// after [_peerLivenessMaxMisses] consecutive failures.
-  static const Duration _peerLivenessInterval = Duration(seconds: 45);
+  /// Discovered peers are evicted after this many consecutive on-demand probe
+  /// failures (probes now run on UI open / lifecycle resume instead of a
+  /// periodic timer). Keep aligned with macOS.
   static const int _peerLivenessMaxMisses = 3;
-  
+
+  /// Persisted cache of discovered peer endpoints (peerId → {host,port,name,ts}).
+  /// Loaded in init() so data transfer works immediately after launch without
+  /// waiting for a subnet scan. The full /24 rescan was removed to save power;
+  /// discovery is on-demand (UI open / endpoint-failure fallback). Entries
+  /// expire after [_endpointCacheTtl]. Keep aligned with the macOS side.
+  static const String _endpointCacheKey = 'peerEndpoints';
+  static const Duration _endpointCacheTtl = Duration(hours: 24);
+
+  /// Persistent outbound connections (peerId -> socket). A live entry implies
+  /// the peer is online; sends reuse it instead of opening a fresh connection
+  /// per message. Keep aligned with the macOS side's persistentConnections.
+  /// Dart is single-threaded so these maps need no locking (unlike macOS).
+  final Map<String, Socket> _persistentConnections = {};
+  /// peerId -> current reconnect backoff in seconds (reset to 0 on success).
+  final Map<String, int> _reconnectBackoffSec = {};
+  /// peerId -> in-flight reconnect future, to avoid stacking reconnect attempts.
+  final Map<String, Future<void>> _activeReconnects = {};
+  static const int _keepaliveIdleSec = 60;
+  static const int _keepaliveIntervalSec = 30;
+  static const int _maxReconnectBackoffSec = 30;
+
   List<DiscoveredPeer> get availablePeers {
     final peers = _discoveredPeers.values.toList()
       ..sort((a, b) => a.displayName.compareTo(b.displayName));
@@ -250,6 +271,11 @@ class SyncManager with WidgetsBindingObserver {
       _lifecycleObserverAttached = true;
     }
 
+    // Hydrate cached peer endpoints before start() so data transfer and the
+    // initial UI render work without waiting for a subnet scan. The full /24
+    // rescan was removed to save power; discovery is on-demand.
+    await _loadPersistedPeerEndpoints();
+
     if (isEnabled) {
       start();
     }
@@ -269,6 +295,14 @@ class SyncManager with WidgetsBindingObserver {
       if (isOffline || !isEnabled || _isRefreshingDiscovery) return;
       appLog('Connectivity changed ($results, wasOffline=$wasOffline); refreshing LAN discovery');
       unawaited(refreshDiscovery());
+      // Also kick reconnects for peers whose endpoint is cached but whose
+      // persistent link dropped (e.g. during the network outage). refreshDiscovery
+      // covers most cases via subnet scans; this is a fast direct-endpoint path.
+      for (final peerId in _discoveredPeers.keys.toList()) {
+        if (!_persistentConnections.containsKey(peerId)) {
+          _scheduleReconnect(peerId);
+        }
+      }
     });
   }
 
@@ -282,6 +316,15 @@ class SyncManager with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && isEnabled) {
       unawaited(refreshDiscovery());
+      // On return to foreground, re-establish any persistent links that
+      // dropped while backgrounded, and probe peers to evict stale entries
+      // (the periodic probe was removed; this is its on-demand replacement).
+      for (final peerId in _discoveredPeers.keys.toList()) {
+        if (!_persistentConnections.containsKey(peerId)) {
+          _scheduleReconnect(peerId);
+        }
+      }
+      unawaited(_probeDiscoveredPeers());
     }
   }
 
@@ -323,10 +366,12 @@ class SyncManager with WidgetsBindingObserver {
     for (final peer in targets) {
       appLog('Sending $type to ${peer.displayName} (peerId=${peer.peerId})');
       final ok = await _sendSync(jsonData, peer);
-      // Transient failure on an otherwise-online peer: re-queue once so the
-      // content is delivered on the next flush instead of being dropped.
+      // Transient failure on an otherwise-online peer: with periodic probing
+      // removed the peer may be momentarily absent (IP change, just-woke,
+      // cross-band roam). Do one on-demand rescan + retry so a fresh send
+      // reaches it in ~1–2s; only if that also fails do we queue for later.
       if (!ok) {
-        _enqueuePendingSync(data: jsonData, type: type, targetPeerId: peer.peerId);
+        await _rescanThenRetry(data: jsonData, type: type, peerId: peer.peerId);
       }
     }
 
@@ -353,28 +398,108 @@ class SyncManager with WidgetsBindingObserver {
     );
     final perPeerCount = _pendingQueue.where((e) => e.targetPeerId == targetPeerId).length;
     if (perPeerCount >= _pendingQueueMax) return;
+
+    // text/plain participates in reliable delivery (ack + persistence);
+    // other types use the in-memory buffer only.
+    final hash = (type == 'text/plain') ? _extractHash(data) : null;
+
     _pendingQueue.add(_PendingSync(
       data: data,
       type: type,
       targetPeerId: targetPeerId,
       enqueueAt: DateTime.now(),
+      hash: hash,
     ));
+
+    if (hash != null) {
+      // Fire-and-forget: persistence must not block the send path. The entry
+      // is retried on next peer reappearance until an ACK retires it.
+      unawaited(PendingTextSyncRepository.instance.insert(
+        hash: hash,
+        data: data,
+        type: type,
+        targetPeerId: targetPeerId,
+      ));
+    }
+  }
+
+  /// Best-effort extraction of the content hash from a serialized SyncMessage
+  /// JSON string, without forcing every enqueue call site to thread the hash
+  /// through.
+  String? _extractHash(String data) {
+    try {
+      final decoded = jsonDecode(data) as Map<String, dynamic>;
+      return decoded['hash'] as String?;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Called when a peer (re)appears in discovery: deliver anything queued for it
-  /// while it was offline, oldest first.
+  /// while it was offline, oldest first. Pulls from both the in-memory retry
+  /// buffer and the persistent text/plain store; dedupes by hash so a frame
+  /// present in both is sent once. Persisted entries are NOT removed here —
+  /// only an ACK retires them.
   Future<void> _flushPendingQueue(String peerId) async {
     final cutoff = DateTime.now().subtract(_pendingQueueTtl);
-    final due = _pendingQueue.where((e) => e.targetPeerId == peerId && e.enqueueAt.isAfter(cutoff)).toList()
-      ..sort((a, b) => a.enqueueAt.compareTo(b.enqueueAt));
-    if (due.isEmpty) return;
+    final due = _pendingQueue.where((e) => e.targetPeerId == peerId && e.enqueueAt.isAfter(cutoff)).toList();
     _pendingQueue.removeWhere((e) => e.targetPeerId == peerId);
+
+    // Also pull persisted text/plain frames awaiting ACK (survives restart).
+    final persisted = await PendingTextSyncRepository.instance.fetchByPeer(peerId);
 
     final peer = _discoveredPeers[peerId];
     if (peer == null) return;
-    appLog('Flushing ${due.length} queued frame(s) to reappeared peer $peerId');
+
+    // Dedup by hash so a frame present in both buffers is sent once.
+    final seenHashes = <String>{};
+    final frames = <_PendingSync>[];
     for (final item in due) {
+      if (item.hash != null) seenHashes.add(item.hash!);
+      frames.add(item);
+    }
+    for (final item in persisted) {
+      if (seenHashes.contains(item.hash)) continue;
+      seenHashes.add(item.hash);
+      frames.add(_PendingSync(
+        data: item.data,
+        type: item.type,
+        targetPeerId: peerId,
+        enqueueAt: item.createdAt,
+        hash: item.hash,
+      ));
+    }
+
+    if (frames.isEmpty) return;
+    frames.sort((a, b) => a.enqueueAt.compareTo(b.enqueueAt));
+    appLog('Flushing ${frames.length} frame(s) to reappeared peer $peerId (${due.length} queued + ${persisted.length} persisted)');
+    for (final item in frames) {
       await _sendSync(item.data, peer);
+    }
+  }
+
+  /// Runs an on-demand cross-band rediscovery, then retries the send once
+  /// against the peer's (possibly new) endpoint. If the peer is still
+  /// unreachable, the frame is handed to the pending queue for delivery on its
+  /// next reappearance. Aligned with the macOS side's rescanThenRetry.
+  Future<void> _rescanThenRetry({
+    required String data,
+    required String type,
+    required String peerId,
+  }) async {
+    appLog('On-demand rescan before retrying $type send to $peerId');
+    await _connectManualPeers();
+    await _scanSubnets();
+    final peer = _discoveredPeers[peerId];
+    if (peer != null) {
+      appLog('Rescan rediscovered peer $peerId; retrying send');
+      final ok = await _sendSync(data, peer);
+      if (!ok) {
+        _enqueuePendingSync(data: data, type: type, targetPeerId: peerId);
+      }
+    } else {
+      appLog('Rescan did not rediscover peer $peerId; queueing', level: 'warning');
+      _enqueuePendingSync(data: data, type: type, targetPeerId: peerId);
     }
   }
 
@@ -412,18 +537,6 @@ class SyncManager with WidgetsBindingObserver {
     }
     // Clean up old entries
     await NotificationRepository.instance.cleanOldPendingSync();
-  }
-
-  void _startPeerLivenessProbing() {
-    _peerLivenessTimer?.cancel();
-    _peerLivenessTimer = Timer.periodic(_peerLivenessInterval, (_) {
-      unawaited(_probeDiscoveredPeers());
-    });
-  }
-
-  void _stopPeerLivenessProbing() {
-    _peerLivenessTimer?.cancel();
-    _peerLivenessTimer = null;
   }
 
   /// Browse results alone cannot be trusted because mDNS may never report an
@@ -467,6 +580,11 @@ class SyncManager with WidgetsBindingObserver {
       'Evicting unreachable peer ${peer.displayName} ($peerId) after $misses failed probes',
       level: 'warning',
     );
+    unawaited(_removePersistedPeerEndpoint(peerId));
+    // On-demand fallback: a failed endpoint (DHCP renewal, Wi-Fi roam) is
+    // re-discovered by a single subnet scan. triggerCrossBandDiscovery is
+    // debounced, so multiple evictions in one probe sweep coalesce safely.
+    triggerCrossBandDiscovery();
     _devicesChangedController.add(availableDeviceNames);
     _peersChangedController.add(availablePeers);
   }
@@ -506,10 +624,16 @@ class SyncManager with WidgetsBindingObserver {
 
   Future<void> start() async {
     appLog('Starting sync services...');
+    // Sweep expired/over-cap pending text frames left from a previous run so
+    // the persistent queue can't grow unbounded across restarts.
+    unawaited(PendingTextSyncRepository.instance.cleanOld());
     // Start server first to ensure the port is available
     final serverStarted = await startServer();
     if (serverStarted) {
-      _startPeerLivenessProbing();
+      // Periodic peer presence probing removed: a live persistent connection
+      // now implies online, and dead links are detected by the persistent
+      // receive loop / send failures + scheduled reconnects. Discovery is
+      // on-demand (UI open / endpoint-failure fallback / connectivity change).
       _startConnectivityMonitoring();
       // Promote the process to a foreground service on Android so the
       // ServerSocket keeps accepting connections after backgrounding.
@@ -524,12 +648,20 @@ class SyncManager with WidgetsBindingObserver {
 
   Future<void> stop() async {
     appLog('Stopping sync services...');
-    _stopPeerLivenessProbing();
     _stopConnectivityMonitoring();
     _scanDebounceTimer?.cancel();
     _scanDebounceTimer = null;
     _peerMissCounts.clear();
     _pendingQueue.clear();
+    // Tear down persistent outbound links and cancel any pending reconnects.
+    for (final s in _persistentConnections.values) {
+      try {
+        s.destroy();
+      } catch (_) {}
+    }
+    _persistentConnections.clear();
+    _reconnectBackoffSec.clear();
+    _activeReconnects.clear();
     await _server?.close();
     _server = null;
     await _serverV6?.close();
@@ -762,6 +894,17 @@ class SyncManager with WidgetsBindingObserver {
     if (message.type == 'text/plain') {
       appLog('Received sync from ${message.deviceId}: ${decrypted.length > 20 ? '${decrypted.substring(0, 20)}...' : decrypted}');
       await ClipboardManager.instance.handleRemoteSync(decrypted, message.hash);
+      // Reliable delivery: ACK the frame on the inbound socket so the
+      // sender can drop it from its persistent queue.
+      final ackJson = _makeMessageAckFrame(message.hash);
+      if (ackJson != null && socket != null) {
+        try {
+          await _writeFrame(socket, ackJson);
+        } catch (e) {
+          appLog('Failed to send message/ack to ${message.deviceId}: $e',
+              level: 'warn');
+        }
+      }
     } else if (message.type == 'file/header') {
       await _handleFileHeader(decrypted, message.deviceId);
     } else if (message.type == 'file/chunk') {
@@ -780,6 +923,8 @@ class SyncManager with WidgetsBindingObserver {
       _handleHandshakeHello(decrypted, message.deviceId, socket);
     } else if (message.type == 'handshake/hi') {
       _handleHandshakeHi(decrypted, message.deviceId, socket);
+    } else if (message.type == 'message/ack') {
+      _handleMessageAck(message.hash);
     }
   }
 
@@ -846,6 +991,7 @@ class SyncManager with WidgetsBindingObserver {
     _peerMissCounts.remove(peerId);
     appLog('Discovered peer via handshake: $name (peerId=$peerId) at $host:$peerPort');
     _notifyPeersChanged();
+    unawaited(_persistPeerEndpoints());
     if (isNew) {
       if (_pendingQueue.any((e) => e.targetPeerId == peerId)) {
         unawaited(_flushPendingQueue(peerId));
@@ -857,6 +1003,102 @@ class SyncManager with WidgetsBindingObserver {
   void _notifyPeersChanged() {
     _devicesChangedController.add(availableDeviceNames);
     _peersChangedController.add(availablePeers);
+  }
+
+  /// Loads persisted peer endpoints from SharedPreferences into
+  /// [_discoveredPeers]. Called in init() so data transfer works immediately
+  /// after launch without waiting for a subnet scan. Skips entries older than
+  /// [_endpointCacheTtl] and never overwrites a peer already in memory.
+  Future<void> _loadPersistedPeerEndpoints() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_endpointCacheKey);
+    if (raw == null || raw.isEmpty) return;
+    Map<String, dynamic> decoded;
+    try {
+      decoded = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (e) {
+      appLog('Failed to decode persisted peer endpoints: $e', level: 'warning');
+      return;
+    }
+    final cutoff = DateTime.now().subtract(_endpointCacheTtl);
+    var loaded = 0;
+    for (final entry in decoded.entries) {
+      final pid = entry.key;
+      final info = entry.value;
+      if (info is! Map<String, dynamic>) continue;
+      final host = info['host'];
+      final port = info['port'];
+      final name = info['name'];
+      final ts = info['ts'];
+      if (host is! String || port is! int || name is! String || ts is! String) {
+        continue;
+      }
+      DateTime tsTime;
+      try {
+        tsTime = DateTime.parse(ts);
+      } catch (_) {
+        continue;
+      }
+      if (tsTime.isBefore(cutoff)) continue;
+      if (_discoveredPeers.containsKey(pid)) continue;
+      _discoveredPeers[pid] = DiscoveredPeer(
+        peerId: pid,
+        displayName: name,
+        host: host,
+        port: port,
+      );
+      _peerMissCounts[pid] = 0;
+      loaded++;
+    }
+    if (loaded > 0) {
+      appLog('Loaded $loaded cached peer endpoint(s) from disk');
+      _notifyPeersChanged();
+    }
+  }
+
+  /// Snapshots the currently-online peers and persists their endpoints to
+  /// SharedPreferences so a subsequent cold start can reach them without a
+  /// scan. Fire-and-forget from [_recordDiscoveredPeer].
+  Future<void> _persistPeerEndpoints() async {
+    final peers = availablePeers;
+    if (peers.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_endpointCacheKey);
+      return;
+    }
+    final now = DateTime.now().toIso8601String();
+    final dict = <String, Map<String, dynamic>>{};
+    for (final peer in peers) {
+      dict[peer.peerId] = {
+        'host': peer.host,
+        'port': peer.port,
+        'name': peer.displayName,
+        'ts': now,
+      };
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_endpointCacheKey, jsonEncode(dict));
+  }
+
+  /// Removes a single peer's endpoint from the persisted cache. Called when a
+  /// peer is evicted by [_recordPeerMiss] so we don't rehydrate a known-dead
+  /// endpoint on the next launch.
+  Future<void> _removePersistedPeerEndpoint(String peerId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_endpointCacheKey);
+    if (raw == null || raw.isEmpty) return;
+    Map<String, dynamic> decoded;
+    try {
+      decoded = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return;
+    }
+    if (decoded.remove(peerId) == null) return;
+    if (decoded.isEmpty) {
+      await prefs.remove(_endpointCacheKey);
+    } else {
+      await prefs.setString(_endpointCacheKey, jsonEncode(decoded));
+    }
   }
 
   /// Public entry point invoked from start() / refreshDiscovery() and from the
@@ -1011,19 +1253,176 @@ class SyncManager with WidgetsBindingObserver {
         const Duration(milliseconds: 500),
         onTimeout: () => null,
       );
-      if (frame == null || frame.isEmpty) return false;
+      if (frame == null || frame.isEmpty) {
+        socket.destroy();
+        return false;
+      }
       final jsonStr = utf8.decode(frame);
       final parsed = jsonDecode(jsonStr);
       final message = SyncMessage.fromJson(parsed);
+      // Dispatch the handshake/hi reply. This records the peer via
+      // _handleHandshakeHi -> _recordDiscoveredPeer (and, when first seen,
+      // kicks the queue flushes). The socket is then promoted below to a
+      // persistent outbound link keyed by the now-known peerId.
       await _handleSyncMessage(message, socket: socket);
+      final peerId = message.deviceId;
+      if (peerId.isEmpty || peerId == this.peerId) {
+        socket.destroy();
+        return true;
+      }
+      _promotePersistentConnection(peerId, socket);
       return true;
     } catch (e) {
       appLog('Handshake to $host:$targetPort failed: $e', level: 'warning');
-      return false;
-    } finally {
       socket.destroy();
+      return false;
+    }
+    // No finally destroy: the success path promotes the socket, every failure
+    // path above destroys it explicitly.
+  }
+
+  /// Promotes a freshly-handshaked socket to the persistent outbound link for
+  /// [peerId]. Idempotent: a duplicate (e.g. concurrent subnet scan hits) drops
+  /// the new socket and keeps the existing live one.
+  void _promotePersistentConnection(String peerId, Socket socket) {
+    final existing = _persistentConnections[peerId];
+    if (existing != null) {
+      appLog('Persistent link to $peerId already live; dropping duplicate');
+      socket.destroy();
+      return;
+    }
+    _tryEnableKeepalive(socket);
+    _persistentConnections[peerId] = socket;
+    _reconnectBackoffSec[peerId] = 0;
+    _activeReconnects.remove(peerId);
+    appLog('Promoted persistent outbound connection to $peerId');
+    unawaited(_runPersistentReceive(peerId, socket));
+    // Flush anything queued while the peer was away. _recordDiscoveredPeer may
+    // already have triggered these on first discovery; both paths are
+    // idempotent (queue drains, pending rows are removed on successful send
+    // and the remote upsert is idempotent on notification id).
+    if (_pendingQueue.any((e) => e.targetPeerId == peerId)) {
+      unawaited(_flushPendingQueue(peerId));
+    }
+    unawaited(_backfillPendingNotifications(peerId));
+  }
+
+  /// Persistent receive loop for an outbound link. Mostly idle (data from the
+  /// peer arrives on our ServerSocket via its own outbound); its job is to
+  /// detect a dead/half-open peer (TCP close/reset/keepalive failure) and tear
+  /// the link down so a reconnect can be scheduled.
+  Future<void> _runPersistentReceive(String peerId, Socket socket) async {
+    final buffer = <int>[];
+    int? expectedLength;
+    try {
+      await for (var data in socket) {
+        buffer.addAll(data);
+        while (true) {
+          if (expectedLength == null) {
+            if (buffer.length >= 4) {
+              final firstFour = String.fromCharCodes(buffer.sublist(0, 4));
+              if (firstFour == 'GET ' || firstFour == 'POST' || firstFour == 'HEAD') {
+                appLog('Persistent link saw HTTP; closing', level: 'warn');
+                break;
+              }
+              final lengthData = buffer.sublist(0, 4);
+              final length = ByteData.sublistView(Uint8List.fromList(lengthData))
+                  .getUint32(0, Endian.big);
+              if (length > 2 * 1024 * 1024) {
+                appLog('Invalid persistent frame length: $length', level: 'error');
+                break;
+              }
+              expectedLength = length;
+              buffer.removeRange(0, 4);
+            } else {
+              break;
+            }
+          }
+          final messageLength = expectedLength;
+          if (buffer.length >= messageLength) {
+            final messageData = buffer.sublist(0, messageLength);
+            buffer.removeRange(0, messageLength);
+            try {
+              final jsonString = utf8.decode(messageData);
+              final json = jsonDecode(jsonString);
+              final message = SyncMessage.fromJson(json);
+              await _handleSyncMessage(message, socket: socket);
+            } catch (e) {
+              appLog('Error parsing persistent frame from $peerId: $e',
+                  level: 'error');
+            }
+            expectedLength = null;
+          } else {
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      appLog('Persistent receive loop for $peerId ended: $e', level: 'warning');
+    }
+    if (_persistentConnections[peerId] == socket) {
+      _onPersistentSocketDown(peerId);
     }
   }
+
+  void _onPersistentSocketDown(String peerId) {
+    _teardownPersistentConnection(peerId);
+    _scheduleReconnect(peerId);
+  }
+
+  void _teardownPersistentConnection(String peerId) {
+    final s = _persistentConnections.remove(peerId);
+    if (s != null) {
+      try {
+        s.destroy();
+      } catch (_) {}
+    }
+  }
+
+  /// Schedules an exponential-backoff reconnect to [peerId]. Skips if sync is
+  /// off, a live link already exists, or a reconnect is already pending.
+  void _scheduleReconnect(String peerId) {
+    if (!isEnabled) return;
+    if (_persistentConnections[peerId] != null) return;
+    if (_activeReconnects.containsKey(peerId)) return;
+    final backoff = (_reconnectBackoffSec[peerId] ?? 1);
+    final delay = backoff > _maxReconnectBackoffSec ? _maxReconnectBackoffSec : backoff;
+    final peer = _discoveredPeers[peerId];
+    appLog('Scheduling reconnect to $peerId in ${delay}s');
+    final fut = Future.delayed(Duration(seconds: delay), () async {
+      _activeReconnects.remove(peerId);
+      if (!isEnabled) return;
+      if (_persistentConnections[peerId] != null) return; // healed already
+      if (peer != null) {
+        final ok = await _performHandshake(peer.host, peer.port);
+        if (ok) return; // promotion resets backoff
+      } else {
+        // Endpoint unknown: a broad scan is the only way to find the peer.
+        triggerCrossBandDiscovery();
+      }
+      // Still not connected: increase backoff and try again.
+      final next = (_reconnectBackoffSec[peerId] ?? 1) * 2;
+      _reconnectBackoffSec[peerId] =
+          next > _maxReconnectBackoffSec ? _maxReconnectBackoffSec : next;
+      _scheduleReconnect(peerId);
+    });
+    _activeReconnects[peerId] = fut;
+  }
+
+  /// Best-effort TCP keepalive on Android (Linux constants). Degrades silently
+  /// on other platforms / unsupported API levels; liveness is additionally
+  /// covered by send-failure detection and the receive-loop EOF path.
+  void _tryEnableKeepalive(Socket socket) {
+    if (!Platform.isAndroid) return;
+    try {
+      // SOL_SOCKET=1, SO_KEEPALIVE=9, IPPROTO_TCP=6,
+      // TCP_KEEPIDLE=4, TCP_KEEPINTVL=5
+      socket.setRawOption(RawSocketOption.fromInt(1, 9, 1));
+      socket.setRawOption(RawSocketOption.fromInt(6, 4, _keepaliveIdleSec));
+      socket.setRawOption(RawSocketOption.fromInt(6, 5, _keepaliveIntervalSec));
+    } catch (_) {}
+  }
+
 
   /// Reads exactly one length-prefixed frame from the socket.
   Future<List<int>?> _readOneFrame(Socket socket) async {
@@ -1365,6 +1764,36 @@ class SyncManager with WidgetsBindingObserver {
     return jsonEncode(message.toJson());
   }
 
+  /// Build a `message/ack` frame confirming receipt of a text/plain frame.
+  /// The `hash` mirrors the acknowledged frame's content hash so the sender
+  /// can match and retire it. Payload content is an empty JSON object.
+  String? _makeMessageAckFrame(String hash) {
+    final encrypted = _encrypt('{}');
+    if (encrypted == null) return null;
+
+    final message = SyncMessage(
+      deviceId: deviceId,
+      timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+      type: 'message/ack',
+      content: encrypted,
+      hash: hash,
+    );
+
+    return jsonEncode(message.toJson());
+  }
+
+  /// Drop a pending text/plain frame from both the in-memory queue and the
+  /// persistent store once its ACK arrives.
+  void _handleMessageAck(String hash) {
+    if (hash.isEmpty) return;
+    final before = _pendingQueue.length;
+    _pendingQueue.removeWhere((e) => e.hash == hash);
+    final removed = _pendingQueue.length != before;
+    unawaited(PendingTextSyncRepository.instance.removeByHash(hash).then((_) {
+      if (removed) appLog('ACK for hash $hash cleared pending frame(s)');
+    }));
+  }
+
   Future<void> sendFile(File file, {required String targetDevice}) async {
     if (!isEnabled) return;
     final targets = availablePeers.where((p) => p.displayName == targetDevice).toList();
@@ -1534,6 +1963,21 @@ class SyncManager with WidgetsBindingObserver {
   /// Sends one frame. Returns false on any failure (resolve, connect, write) so
   /// the caller can re-queue for later delivery instead of dropping the frame.
   Future<bool> _sendSync(String jsonData, DiscoveredPeer peer) async {
+    // Fast path: reuse a live persistent outbound link instead of opening a
+    // fresh TCP connection for every send. A write failure tears the link down
+    // and schedules a reconnect; the caller falls back to rescan/queue.
+    final live = _persistentConnections[peer.peerId];
+    if (live != null) {
+      try {
+        await _writeFrame(live, jsonData);
+        return true;
+      } catch (e) {
+        appLog('Persistent send to ${peer.displayName} failed: $e; tearing down',
+            level: 'error');
+        _onPersistentSocketDown(peer.peerId);
+        return false;
+      }
+    }
     final socket = await _connectToPeer(peer);
     if (socket == null) {
       _recordPeerMiss(peer.peerId);
@@ -1557,12 +2001,17 @@ class _PendingSync {
   final String type;
   final String targetPeerId;
   final DateTime enqueueAt;
+  /// Content hash for text/plain frames; matches an incoming `message/ack`
+  /// back to the queued frame so it can be retired. null for types that don't
+  /// participate in reliable delivery (notification/* etc.).
+  final String? hash;
 
   const _PendingSync({
     required this.data,
     required this.type,
     required this.targetPeerId,
     required this.enqueueAt,
+    this.hash,
   });
 }
 
