@@ -213,13 +213,43 @@ final class SyncManager: NSObject {
         guard PreferencesManager.shared.isSyncEnabled else { return }
         guard !isRefreshingDiscovery else { return }
         isRefreshingDiscovery = true
-        peersLock.lock()
-        discoveredPeers.removeAll()
-        peersLock.unlock()
-        notifyPeersChanged()
-        scheduleDiscovery(immediate: true)
-        syncQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.isRefreshingDiscovery = false
+        // Keep peers that still have a live session. Clearing them would hide
+        // connected devices forever: rediscovery skips already-connected hosts,
+        // so recordPeer is never called again for those sessions.
+        syncQueue.async { [weak self] in
+            guard let self else { return }
+            let liveSessions = self.sessions
+            var cacheById: [String: CachedEndpoint] = [:]
+            for entry in self.loadEndpointCacheEntries() {
+                cacheById[entry.peerId] = entry
+            }
+            self.peersLock.lock()
+            var kept: [String: DiscoveredPeer] = [:]
+            for (id, session) in liveSessions {
+                if let existing = self.discoveredPeers[id] {
+                    kept[id] = existing
+                } else {
+                    let name = cacheById[id]?.name ?? id
+                    let endpoint = NWEndpoint.hostPort(
+                        host: NWEndpoint.Host(session.host),
+                        port: NWEndpoint.Port(rawValue: session.port) ?? 5566
+                    )
+                    kept[id] = DiscoveredPeer(
+                        peerId: id,
+                        displayName: name,
+                        endpoint: endpoint,
+                        host: session.host,
+                        port: session.port
+                    )
+                }
+            }
+            self.discoveredPeers = kept
+            self.peersLock.unlock()
+            self.notifyPeersChanged()
+            self.scheduleDiscovery(immediate: true)
+            self.syncQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.isRefreshingDiscovery = false
+            }
         }
     }
 
@@ -351,8 +381,23 @@ final class SyncManager: NSObject {
 
     // MARK: - Fanout / send
 
-    private func authorizedIds() -> Set<String> {
-        Set(PreferencesManager.shared.authorizedPeerIds)
+    private func clipboardAuthIds() -> Set<String> {
+        Set(PreferencesManager.shared.clipboardSyncPeerIds)
+    }
+
+    private func notificationAuthIds() -> Set<String> {
+        Set(PreferencesManager.shared.notificationSyncPeerIds)
+    }
+
+    private func authIds(for env: SyncEnvelope) -> Set<String> {
+        switch env.type {
+        case SyncType.history:
+            return clipboardAuthIds()
+        case SyncType.notifPost, SyncType.notifDismiss, SyncType.notifClear, SyncType.notifConfig:
+            return notificationAuthIds()
+        default:
+            return Set(PreferencesManager.shared.authorizedPeerIds)
+        }
     }
 
     private func fanoutReliable(
@@ -365,7 +410,7 @@ final class SyncManager: NSObject {
         let targets: [String]
         peersLock.lock()
         if requireAuth {
-            let auth = authorizedIds()
+            let auth = authIds(for: env)
             targets = discoveredPeers.keys.filter { auth.contains($0) }
         } else {
             targets = Array(discoveredPeers.keys)
@@ -375,7 +420,7 @@ final class SyncManager: NSObject {
         if targets.isEmpty {
             // Queue for when peers appear (history / notif with hash)
             if env.type == SyncType.history || env.type == SyncType.notifPost {
-                for peerId in authorizedIds() {
+                for peerId in authIds(for: env) {
                     enqueuePending(data: data, type: env.type, peerId: peerId, hash: env.hash)
                 }
             }

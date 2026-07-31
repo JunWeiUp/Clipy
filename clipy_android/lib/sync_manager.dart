@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'clipboard_manager.dart';
+import 'database/notification_repository.dart';
 import 'database/pending_text_sync_repository.dart';
 import 'log_manager.dart';
 import 'notification_manager.dart';
@@ -295,6 +296,7 @@ class SyncManager with WidgetsBindingObserver {
   Future<void> start() async {
     appLog('SyncManager v2 starting...');
     unawaited(PendingTextSyncRepository.instance.cleanOld());
+    unawaited(NotificationRepository.instance.cleanOldPendingSync());
     final ok = await _startServer();
     if (!ok) {
       appLog('Server failed to start', level: 'error');
@@ -430,7 +432,34 @@ class SyncManager with WidgetsBindingObserver {
     if (!isEnabled) return;
     if (_isRefreshingDiscovery) return;
     _isRefreshingDiscovery = true;
-    _discoveredPeers.clear();
+    // Keep peers that still have a live session. Clearing them would hide
+    // connected devices forever: rediscovery skips already-connected hosts,
+    // so _recordPeer is never called again for those sessions.
+    final cache = await _readEndpointCache();
+    final cacheById = <String, Map<String, dynamic>>{
+      for (final e in cache)
+        if (e['peerId'] is String) e['peerId'] as String: e,
+    };
+    final kept = <String, DiscoveredPeer>{};
+    for (final entry in _sessions.entries) {
+      final id = entry.key;
+      final session = entry.value;
+      final existing = _discoveredPeers[id];
+      if (existing != null) {
+        kept[id] = existing;
+      } else {
+        final name = (cacheById[id]?['name'] as String?) ?? id;
+        kept[id] = DiscoveredPeer(
+          peerId: id,
+          displayName: name,
+          host: session.host,
+          port: session.port,
+        );
+      }
+    }
+    _discoveredPeers
+      ..clear()
+      ..addAll(kept);
     _emitPeers();
     triggerCrossBandDiscovery();
     _isRefreshingDiscovery = false;
@@ -1029,25 +1058,29 @@ class SyncManager with WidgetsBindingObserver {
   }
 
   Future<void> _flushPending(String peerId) async {
+    final session = _sessions[peerId];
+    if (session == null) return;
+
     final cutoff = DateTime.now().subtract(_pendingTtl);
     final due = _pendingQueue
         .where((f) => f.peerId == peerId && !f.enqueueAt.isBefore(cutoff))
         .toList();
-    final session = _sessions[peerId];
-    if (due.isEmpty || session == null) return;
-    appLog('Flushing ${due.length} pending frame(s) to $peerId');
-    for (final frame in due) {
-      try {
-        session.socket.add(frame.data);
-        if (frame.type != _SyncType.history &&
-            frame.type != _SyncType.notifPost) {
-          _pendingQueue.remove(frame);
+    if (due.isNotEmpty) {
+      appLog('Flushing ${due.length} pending frame(s) to $peerId');
+      for (final frame in due) {
+        try {
+          session.socket.add(frame.data);
+          if (frame.type != _SyncType.history &&
+              frame.type != _SyncType.notifPost) {
+            _pendingQueue.remove(frame);
+          }
+        } catch (_) {
+          return;
         }
-      } catch (_) {
-        break;
       }
     }
-    // Also flush persisted text frames
+
+    // Persisted text frames (SQLite)
     final persisted =
         await PendingTextSyncRepository.instance.fetchByPeer(peerId);
     for (final entry in persisted) {
@@ -1065,7 +1098,38 @@ class SyncManager with WidgetsBindingObserver {
       try {
         session.socket.add(data);
       } catch (_) {
-        break;
+        return;
+      }
+    }
+
+    // Persisted notification posts (SQLite offline queue)
+    final notifPending =
+        await NotificationRepository.instance.fetchAllPendingSync();
+    if (notifPending.isNotEmpty) {
+      appLog(
+          'Flushing ${notifPending.length} pending notification(s) to $peerId');
+    }
+    for (final row in notifPending) {
+      final content = row['content'] as String? ?? '';
+      final hash = (row['hash'] as String?) ??
+          (row['notification_id'] as String?) ??
+          '';
+      if (content.isEmpty || hash.isEmpty) continue;
+      final payload = _encrypt(content);
+      if (payload == null) continue;
+      final env = _SyncEnvelope.make(
+        type: _SyncType.notifPost,
+        peerId: this.peerId,
+        name: displayName,
+        hash: hash,
+        payload: payload,
+      );
+      final data = _encodeFrame(env);
+      if (data == null) continue;
+      try {
+        session.socket.add(data);
+      } catch (_) {
+        return;
       }
     }
   }

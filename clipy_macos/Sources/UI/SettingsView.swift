@@ -16,7 +16,8 @@ struct SettingsView: View {
     @State private var syncEnabled: Bool
     @State private var syncPort: String
     @State private var availablePeers: [DiscoveredPeer] = []
-    @State private var selectedSyncTargets: Set<String> = Set(PreferencesManager.shared.authorizedPeerIds)
+    @State private var clipboardSyncTargets: Set<String> = Set(PreferencesManager.shared.clipboardSyncPeerIds)
+    @State private var notificationSyncTargets: Set<String> = Set(PreferencesManager.shared.notificationSyncPeerIds)
     @State private var isRefreshingDevices = false
     // Manual peers (host:port) for cross-band / cross-subnet discovery.
     @State private var manualPeers: [String] = PreferencesManager.shared.manualSyncPeers
@@ -204,7 +205,8 @@ struct SettingsView: View {
                 }
                 .disabled(!syncEnabled || isRefreshingDevices)
 
-                let staleAuthorized = selectedSyncTargets.subtracting(Set(availablePeers.map(\.peerId)))
+                let unionAuthorized = clipboardSyncTargets.union(notificationSyncTargets)
+                let staleAuthorized = unionAuthorized.subtracting(Set(availablePeers.map(\.peerId)))
                 if !staleAuthorized.isEmpty {
                     Text("离线已授权设备（可删除）")
                         .font(AppFont.caption)
@@ -216,8 +218,9 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                             Spacer()
                             Button {
-                                selectedSyncTargets.remove(peerId)
-                                PreferencesManager.shared.authorizedPeerIds = selectedSyncTargets.sorted()
+                                clipboardSyncTargets.remove(peerId)
+                                notificationSyncTargets.remove(peerId)
+                                PreferencesManager.shared.removeAuthorizedPeer(peerId)
                             } label: {
                                 Image(systemName: "trash")
                                     .foregroundStyle(.red)
@@ -232,19 +235,40 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(availablePeers, id: \.peerId) { peer in
-                        Toggle(isOn: Binding(
-                            get: { selectedSyncTargets.contains(peer.peerId) },
-                            set: { enabled in
-                                if enabled {
-                                    selectedSyncTargets.insert(peer.peerId)
-                                } else {
-                                    selectedSyncTargets.remove(peer.peerId)
-                                }
-                                PreferencesManager.shared.authorizedPeerIds = selectedSyncTargets.sorted()
-                            }
-                        )) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(peer.displayName)
+                            Toggle(isOn: Binding(
+                                get: { clipboardSyncTargets.contains(peer.peerId) },
+                                set: { enabled in
+                                    if enabled {
+                                        clipboardSyncTargets.insert(peer.peerId)
+                                    } else {
+                                        clipboardSyncTargets.remove(peer.peerId)
+                                    }
+                                    PreferencesManager.shared.setClipboardSync(
+                                        peerId: peer.peerId, enabled: enabled)
+                                }
+                            )) {
+                                Text(L10n.t(.syncClipboardToDevice))
+                                    .font(AppFont.caption)
+                            }
+                            Toggle(isOn: Binding(
+                                get: { notificationSyncTargets.contains(peer.peerId) },
+                                set: { enabled in
+                                    if enabled {
+                                        notificationSyncTargets.insert(peer.peerId)
+                                    } else {
+                                        notificationSyncTargets.remove(peer.peerId)
+                                    }
+                                    PreferencesManager.shared.setNotificationSync(
+                                        peerId: peer.peerId, enabled: enabled)
+                                }
+                            )) {
+                                Text(L10n.t(.syncNotificationsToDevice))
+                                    .font(AppFont.caption)
+                            }
                         }
+                        .padding(.vertical, 2)
                     }
                 }
 
@@ -312,7 +336,8 @@ struct SettingsView: View {
         }
         .onAppear {
             availablePeers = SyncManager.shared.availablePeers
-            selectedSyncTargets = Set(PreferencesManager.shared.authorizedPeerIds)
+            clipboardSyncTargets = Set(PreferencesManager.shared.clipboardSyncPeerIds)
+            notificationSyncTargets = Set(PreferencesManager.shared.notificationSyncPeerIds)
             manualPeers = PreferencesManager.shared.manualSyncPeers
             // On-demand device discovery (per sync power plan v2): no periodic
             // timer drives the list — refresh once when the user opens this
