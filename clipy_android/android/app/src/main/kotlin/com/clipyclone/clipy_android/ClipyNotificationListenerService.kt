@@ -2,7 +2,11 @@ package com.clipyclone.clipy_android
 
 import android.app.Notification
 import android.app.PendingIntent
+import android.content.ComponentName
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -14,12 +18,15 @@ class ClipyNotificationListenerService : NotificationListenerService() {
 
     companion object {
         private const val TAG = "ClipyNLS"
+        private const val MAX_PENDING_POSTED = 64
+        private const val REBIND_RETRY_MS = 5_000L
 
         var instance: ClipyNotificationListenerService? = null
         @Volatile
         var listenerConnected: Boolean = false
             private set
         private var methodChannel: MethodChannel? = null
+        private val mainHandler = Handler(Looper.getMainLooper())
         private val pendingPostedNotifications = ConcurrentLinkedQueue<Map<String, Any?>>()
         private val appNameCache = LruCache<String, String>(128)
 
@@ -33,30 +40,120 @@ class ClipyNotificationListenerService : NotificationListenerService() {
             }
         }
 
-        private fun emitNotificationPosted(data: Map<String, Any?>) {
-            val channel = methodChannel
-            if (channel == null) {
-                pendingPostedNotifications.add(data)
-                return
+        /** Clear only if [channel] is still the active one (avoids Activity recreate race). */
+        fun clearMethodChannelIf(channel: MethodChannel?) {
+            if (channel != null && methodChannel === channel) {
+                methodChannel = null
+                Log.i(TAG, "MethodChannel cleared (Activity destroyed)")
             }
-            try {
-                channel.invokeMethod("onNotificationPosted", data)
-            } catch (e: Exception) {
-                pendingPostedNotifications.add(data)
+        }
+
+        private fun enqueuePending(data: Map<String, Any?>) {
+            pendingPostedNotifications.add(data)
+            while (pendingPostedNotifications.size > MAX_PENDING_POSTED) {
+                pendingPostedNotifications.poll()
+            }
+        }
+
+        private fun emitNotificationPosted(data: Map<String, Any?>) {
+            runOnMainThread {
+                val channel = methodChannel
+                if (channel == null) {
+                    Log.w(
+                        TAG,
+                        "MethodChannel null; queueing pkg=${data["packageName"]} " +
+                            "(queue=${pendingPostedNotifications.size + 1})",
+                    )
+                    enqueuePending(data)
+                    return@runOnMainThread
+                }
+                try {
+                    channel.invokeMethod("onNotificationPosted", data)
+                } catch (e: Exception) {
+                    Log.w(TAG, "invokeMethod failed; queueing", e)
+                    enqueuePending(data)
+                }
             }
         }
 
         private fun flushPendingPostedNotifications() {
-            val channel = methodChannel ?: return
-            while (true) {
-                val data = pendingPostedNotifications.poll() ?: return
-                try {
-                    channel.invokeMethod("onNotificationPosted", data)
-                } catch (e: Exception) {
-                    pendingPostedNotifications.add(data)
-                    return
+            runOnMainThread {
+                val channel = methodChannel ?: return@runOnMainThread
+                while (true) {
+                    val data = pendingPostedNotifications.poll() ?: return@runOnMainThread
+                    try {
+                        channel.invokeMethod("onNotificationPosted", data)
+                    } catch (e: Exception) {
+                        enqueuePending(data)
+                        return@runOnMainThread
+                    }
                 }
             }
+        }
+
+        private fun notifyListenerConnection(connected: Boolean) {
+            runOnMainThread {
+                try {
+                    methodChannel?.invokeMethod(
+                        "onListenerConnected",
+                        mapOf("connected" to connected),
+                    )
+                } catch (e: Exception) {
+                    // Flutter engine may not be ready
+                }
+            }
+        }
+
+        private fun runOnMainThread(block: () -> Unit) {
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                block()
+            } else {
+                mainHandler.post(block)
+            }
+        }
+
+        /** Soft rebind — often ignored on Xiaomi/MIUI/HyperOS. */
+        fun softRebind(context: android.content.Context, reason: String = "soft") {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+            try {
+                val cn = ComponentName(context, ClipyNotificationListenerService::class.java)
+                requestRebind(cn)
+                Log.i(TAG, "softRebind($reason) issued")
+            } catch (e: Exception) {
+                Log.e(TAG, "softRebind($reason) failed", e)
+            }
+        }
+
+        /**
+         * Force reconnect by toggling the service component.
+         * This is the reliable recovery path on Xiaomi when soft requestRebind is ignored.
+         */
+        fun forceReconnect(context: android.content.Context, reason: String = "force") {
+            val cn = ComponentName(context, ClipyNotificationListenerService::class.java)
+            val pm = context.packageManager
+            try {
+                pm.setComponentEnabledSetting(
+                    cn,
+                    android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    android.content.pm.PackageManager.DONT_KILL_APP,
+                )
+                pm.setComponentEnabledSetting(
+                    cn,
+                    android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    android.content.pm.PackageManager.DONT_KILL_APP,
+                )
+                Log.i(TAG, "forceReconnect($reason): component toggled")
+            } catch (e: Exception) {
+                Log.e(TAG, "forceReconnect($reason): component toggle failed", e)
+            }
+            softRebind(context, reason = "after-force-$reason")
+        }
+    }
+
+    private val rebindRetryRunnable = Runnable {
+        if (!listenerConnected) {
+            Log.w(TAG, "Still disconnected after soft rebind; forcing component reconnect")
+            forceReconnect(applicationContext, reason = "retry")
         }
     }
 
@@ -67,6 +164,7 @@ class ClipyNotificationListenerService : NotificationListenerService() {
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacks(rebindRetryRunnable)
         super.onDestroy()
         if (instance == this) {
             instance = null
@@ -77,25 +175,24 @@ class ClipyNotificationListenerService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        mainHandler.removeCallbacks(rebindRetryRunnable)
         listenerConnected = true
         Log.i(TAG, "Listener connected")
         // Notify Flutter; Dart will refresh active notifications under
         // suppressBroadcast. Emitting here would race and re-broadcast to Mac.
-        try {
-            methodChannel?.invokeMethod("onListenerConnected", mapOf("connected" to true))
-        } catch (e: Exception) {
-            // Flutter engine may not be ready
-        }
+        notifyListenerConnection(true)
     }
 
     override fun onListenerDisconnected() {
         listenerConnected = false
-        Log.w(TAG, "Listener disconnected")
-        try {
-            methodChannel?.invokeMethod("onListenerConnected", mapOf("connected" to false))
-        } catch (e: Exception) {
-            // Flutter engine may not be ready
-        }
+        Log.w(TAG, "Listener disconnected — soft rebind (MIUI often ignores this)")
+        notifyListenerConnection(false)
+        // OEM ROMs (esp. Xiaomi/MIUI/HyperOS) often unbind NLS while the process
+        // stays alive. Soft requestRebind alone is unreliable — retry escalates
+        // to component disable/enable force reconnect.
+        softRebind(applicationContext, reason = "disconnect")
+        mainHandler.removeCallbacks(rebindRetryRunnable)
+        mainHandler.postDelayed(rebindRetryRunnable, REBIND_RETRY_MS)
         super.onListenerDisconnected()
     }
 
@@ -176,10 +273,12 @@ class ClipyNotificationListenerService : NotificationListenerService() {
             "key" to sbn.key,
             "packageName" to (sbn.packageName ?: ""),
         )
-        try {
-            methodChannel?.invokeMethod("onNotificationRemoved", data)
-        } catch (e: Exception) {
-            // Flutter engine may not be ready
+        runOnMainThread {
+            try {
+                methodChannel?.invokeMethod("onNotificationRemoved", data)
+            } catch (e: Exception) {
+                // Flutter engine may not be ready
+            }
         }
     }
 

@@ -9,7 +9,6 @@ import android.os.Build
 import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
-import android.service.notification.NotificationListenerService
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -28,6 +27,7 @@ class MainActivity: FlutterActivity() {
     private val SYNC_SERVICE_CHANNEL = "com.clipyclone.clipy_android/sync_service"
     private val STORAGE_PERMISSION_REQUEST_CODE = 1001
     private var clipboardChangeListener: ClipboardChangeListener? = null
+    private var notificationsMethodChannel: MethodChannel? = null
 
     companion object {
         private const val REBIND_THROTTLE_MS = 30_000L
@@ -94,6 +94,7 @@ class MainActivity: FlutterActivity() {
         }
 
         val notificationsChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NOTIFICATIONS_CHANNEL)
+        notificationsMethodChannel = notificationsChannel
         ClipyNotificationListenerService.setMethodChannel(notificationsChannel)
         notificationsChannel.setMethodCallHandler { call, result ->
             when (call.method) {
@@ -196,10 +197,18 @@ class MainActivity: FlutterActivity() {
                     )
                 }
                 "requestListenerRebind" -> {
+                    val force = call.argument<Boolean>("force") ?: false
                     if (isNotificationListenerEnabled()) {
-                        requestNotificationListenerRebind()
+                        if (force) {
+                            ClipyNotificationListenerService.forceReconnect(this, reason = "flutter")
+                        } else {
+                            requestNotificationListenerRebind()
+                        }
                     }
                     result.success(null)
+                }
+                "openOemAutostartSettings" -> {
+                    result.success(openOemAutostartSettings())
                 }
                 else -> {
                     result.notImplemented()
@@ -257,7 +266,10 @@ class MainActivity: FlutterActivity() {
     }
 
     override fun onDestroy() {
-        ClipyNotificationListenerService.setMethodChannel(null)
+        // Only clear if this Activity still owns the channel — a newer Activity may
+        // have already registered its own channel during recreate.
+        ClipyNotificationListenerService.clearMethodChannelIf(notificationsMethodChannel)
+        notificationsMethodChannel = null
         clipboardChangeListener?.detach()
         clipboardChangeListener = null
         super.onDestroy()
@@ -267,27 +279,51 @@ class MainActivity: FlutterActivity() {
         val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
         if (flat.isNullOrEmpty()) return false
         val cn = ComponentName(this, ClipyNotificationListenerService::class.java)
-        return flat.contains(cn.flattenToString())
+        // MIUI may store either flattenToString or flattenToShortString.
+        return flat.contains(cn.flattenToString()) || flat.contains(cn.flattenToShortString())
     }
 
     private fun requestNotificationListenerRebind() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
-
         val now = System.currentTimeMillis()
         val elapsed = now - lastRebindTimeMs
         if (elapsed < REBIND_THROTTLE_MS) {
-            Log.d("ClipyMain", "Skipping rebind (throttled, ${elapsed}ms since last call)")
+            Log.d("ClipyMain", "Skipping soft rebind (throttled, ${elapsed}ms since last call)")
             return
         }
         lastRebindTimeMs = now
+        ClipyNotificationListenerService.softRebind(this, reason = "activity")
+    }
 
-        try {
-            val cn = ComponentName(this, ClipyNotificationListenerService::class.java)
-            NotificationListenerService.requestRebind(cn)
-            Log.i("ClipyMain", "Requested listener rebind")
-        } catch (e: Exception) {
-            Log.e("ClipyMain", "requestRebind failed", e)
+    /** Try Xiaomi/HyperOS autostart page; returns true if an activity was launched. */
+    private fun openOemAutostartSettings(): Boolean {
+        val candidates = listOf(
+            Intent("miui.intent.action.OP_AUTO_START").setPackage("com.miui.securitycenter"),
+            Intent().setComponent(
+                ComponentName(
+                    "com.miui.securitycenter",
+                    "com.miui.permcenter.autostart.AutoStartManagementActivity",
+                ),
+            ),
+            Intent().setComponent(
+                ComponentName(
+                    "com.miui.securitycenter",
+                    "com.miui.permcenter.permissions.PermissionsEditorActivity",
+                ),
+            ).putExtra("extra_pkgname", packageName),
+        )
+        for (intent in candidates) {
+            try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (intent.resolveActivity(packageManager) != null) {
+                    startActivity(intent)
+                    Log.i("ClipyMain", "Opened OEM autostart settings: $intent")
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.w("ClipyMain", "OEM autostart intent failed: $intent", e)
+            }
         }
+        return false
     }
 
     private fun isBatteryOptimizationExempt(): Boolean {

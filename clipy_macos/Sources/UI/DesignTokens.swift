@@ -44,10 +44,12 @@ enum AppCornerRadius {
 enum ScreenshotChrome {
     static let toolbarHeight: CGFloat = 44
     static let barHeight: CGFloat = 40
+    static let secondaryBarHeight: CGFloat = 32
     static let floatingRadius: CGFloat = 12
     static let magnifierSize: CGFloat = 120
     static let snapThreshold: CGFloat = 8
     static let presetColors: [NSColor] = [.systemRed, .systemOrange, .systemYellow, .systemGreen, .systemBlue]
+    static let scrollingMaxPixelHeight: CGFloat = 16_384
 }
 
 enum AppWindowSize {

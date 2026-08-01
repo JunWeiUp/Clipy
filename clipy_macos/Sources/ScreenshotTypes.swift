@@ -6,6 +6,7 @@ enum ScreenshotCaptureMode: String, Codable, CaseIterable, Identifiable {
     case region
     case window
     case fullscreen
+    case scrolling
 
     var id: String { rawValue }
 }

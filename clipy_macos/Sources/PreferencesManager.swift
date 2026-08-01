@@ -34,6 +34,11 @@ class PreferencesManager {
     private let screenshotResolutionKey = "screenshotResolution"
     private let screenshotPostCaptureActionKey = "screenshotPostCaptureAction"
     private let screenshotOCRLanguageKey = "screenshotOCRLanguage"
+    private let screenshotTextFontSizeKey = "screenshotTextFontSize"
+    private let screenshotTextBoldKey = "screenshotTextBold"
+    private let screenshotTextItalicKey = "screenshotTextItalic"
+    private let screenshotTextUnderlineKey = "screenshotTextUnderline"
+    private let screenshotTextBackgroundEnabledKey = "screenshotTextBackgroundEnabled"
     
     var deviceName: String {
         get { defaults.string(forKey: deviceNameKey) ?? Host.current().localizedName ?? "Mac" }
@@ -376,6 +381,34 @@ class PreferencesManager {
             return language
         }
         set { defaults.set(newValue.rawValue, forKey: screenshotOCRLanguageKey) }
+    }
+
+    var screenshotTextFontSize: CGFloat {
+        get {
+            let value = defaults.object(forKey: screenshotTextFontSizeKey) as? Double
+            return CGFloat(min(96, max(12, value ?? 18)))
+        }
+        set { defaults.set(Double(min(96, max(12, newValue))), forKey: screenshotTextFontSizeKey) }
+    }
+
+    var screenshotTextBold: Bool {
+        get { defaults.bool(forKey: screenshotTextBoldKey) }
+        set { defaults.set(newValue, forKey: screenshotTextBoldKey) }
+    }
+
+    var screenshotTextItalic: Bool {
+        get { defaults.bool(forKey: screenshotTextItalicKey) }
+        set { defaults.set(newValue, forKey: screenshotTextItalicKey) }
+    }
+
+    var screenshotTextUnderline: Bool {
+        get { defaults.bool(forKey: screenshotTextUnderlineKey) }
+        set { defaults.set(newValue, forKey: screenshotTextUnderlineKey) }
+    }
+
+    var screenshotTextBackgroundEnabled: Bool {
+        get { defaults.bool(forKey: screenshotTextBackgroundEnabledKey) }
+        set { defaults.set(newValue, forKey: screenshotTextBackgroundEnabledKey) }
     }
 
     static var defaultScreenshotSaveDirectoryPath: String {
