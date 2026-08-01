@@ -107,6 +107,10 @@ class NotificationManager {
             if (isEnabled) {
               unawaited(refreshActiveNotifications());
             }
+          } else if (isEnabled) {
+            // Defense in depth: native already requestRebinds on disconnect;
+            // also nudge from Dart in case OEM ignored the first request.
+            unawaited(requestListenerRebind());
           }
           _notificationsChangedController.add(null);
           break;
@@ -281,10 +285,28 @@ class NotificationManager {
     }
   }
 
-  Future<void> requestListenerRebind() async {
+  Future<void> requestListenerRebind({bool force = false}) async {
     try {
-      await _channel.invokeMethod('requestListenerRebind');
+      await _channel.invokeMethod('requestListenerRebind', {'force': force});
+      appLog(
+        force
+            ? 'NotificationManager: force reconnect (component toggle) requested'
+            : 'NotificationManager: soft rebind requested',
+      );
     } catch (_) {}
+  }
+
+  /// Opens Xiaomi/HyperOS autostart settings when available.
+  Future<bool> openOemAutostartSettings() async {
+    try {
+      final result =
+          await _channel.invokeMethod<bool>('openOemAutostartSettings');
+      return result ?? false;
+    } catch (e) {
+      appLog('NotificationManager: openOemAutostartSettings failed: $e',
+          level: 'warning');
+      return false;
+    }
   }
 
   Future<void> openListenerSettings() async {

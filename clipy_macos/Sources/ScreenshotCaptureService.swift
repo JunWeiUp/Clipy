@@ -3,7 +3,7 @@ import CoreGraphics
 import ScreenCaptureKit
 
 enum ScreenshotCaptureService {
-    static func capture(rect: NSRect, forMagnifier: Bool = false, completion: @escaping (NSImage?) -> Void) {
+    static func capture(rect: NSRect, forMagnifier: Bool = false, showsCursor: Bool = true, completion: @escaping (NSImage?) -> Void) {
         guard #available(macOS 14.0, *) else {
             appLog("Screenshot capture requires macOS 14 or later", level: .warning)
             completion(nil)
@@ -26,7 +26,8 @@ enum ScreenshotCaptureService {
                     rect,
                     screenFrame: screenFrame,
                     displayID: displayID,
-                    forMagnifier: forMagnifier
+                    forMagnifier: forMagnifier,
+                    showsCursor: showsCursor
                 ) {
                     image = ScreenshotImageProcessor.fromCapture(
                         capture.image,
@@ -178,7 +179,8 @@ enum ScreenshotCaptureService {
         _ rect: NSRect,
         screenFrame: NSRect,
         displayID: CGDirectDisplayID?,
-        forMagnifier: Bool = false
+        forMagnifier: Bool = false,
+        showsCursor: Bool = true
     ) async throws -> CapturedImage? {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = displayMatching(displayID: displayID, fallbackRect: rect, displays: content.displays) else {
@@ -206,7 +208,8 @@ enum ScreenshotCaptureService {
                 nativeScale: nativeScale,
                 resolution: resolution,
                 filter: filter,
-                pixelScaleOverride: magnifierScale
+                pixelScaleOverride: magnifierScale,
+                showsCursor: showsCursor
             )
         }
 
@@ -217,7 +220,8 @@ enum ScreenshotCaptureService {
             display: display,
             nativeScale: nativeScale,
             resolution: resolution,
-            filter: filter
+            filter: filter,
+            showsCursor: showsCursor
         )
     }
 
@@ -227,7 +231,8 @@ enum ScreenshotCaptureService {
         display: SCDisplay,
         nativeScale: CGFloat,
         resolution: ScreenshotResolution,
-        filter: SCContentFilter
+        filter: SCContentFilter,
+        showsCursor: Bool = true
     ) async throws -> CapturedImage? {
         // `display.width/height` can be the *logical* resolution on HiDPI scaled
         // modes; multiply by nativeScale (backingScaleFactor) to get real backing
@@ -237,7 +242,8 @@ enum ScreenshotCaptureService {
         let configuration = makeStreamConfiguration(
             width: capturePixelWidth,
             height: capturePixelHeight,
-            resolution: resolution
+            resolution: resolution,
+            showsCursor: showsCursor
         )
 
         appLog("Screenshot: capturing full display \(capturePixelWidth)x\(capturePixelHeight) (scale \(nativeScale)) then cropping")
@@ -273,7 +279,8 @@ enum ScreenshotCaptureService {
         nativeScale: CGFloat,
         resolution: ScreenshotResolution,
         filter: SCContentFilter,
-        pixelScaleOverride: CGFloat? = nil
+        pixelScaleOverride: CGFloat? = nil,
+        showsCursor: Bool = true
     ) async throws -> CapturedImage? {
         let cgSelection = ScreenshotCoordinateConverter.cgRect(from: rect)
         let relativeRect = ScreenshotCoordinateConverter.displayRelativeRect(
@@ -293,7 +300,8 @@ enum ScreenshotCaptureService {
         let configuration = makeStreamConfiguration(
             width: Int(targetPixelSize.width),
             height: Int(targetPixelSize.height),
-            resolution: resolution
+            resolution: resolution,
+            showsCursor: showsCursor
         )
         configuration.sourceRect = relativeRect
 
@@ -347,11 +355,16 @@ enum ScreenshotCaptureService {
     }
 
     @available(macOS 14.0, *)
-    private static func makeStreamConfiguration(width: Int, height: Int, resolution: ScreenshotResolution) -> SCStreamConfiguration {
+    private static func makeStreamConfiguration(
+        width: Int,
+        height: Int,
+        resolution: ScreenshotResolution,
+        showsCursor: Bool = true
+    ) -> SCStreamConfiguration {
         let configuration = SCStreamConfiguration()
         configuration.width = max(1, width)
         configuration.height = max(1, height)
-        configuration.showsCursor = true
+        configuration.showsCursor = showsCursor
         configuration.captureResolution = resolution.prefersNominalCapture ? .nominal : .best
         configuration.colorSpaceName = CGColorSpace.sRGB
         configuration.scalesToFit = false

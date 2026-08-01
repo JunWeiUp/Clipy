@@ -48,6 +48,9 @@ SWIFT_SOURCES=(
     Sources/ScreenshotSaveService.swift
     Sources/ScreenshotImageProcessor.swift
     Sources/ScreenshotCoordinator.swift
+    Sources/ScrollingImageStitcher.swift
+    Sources/ScrollingCaptureOverviewPanel.swift
+    Sources/ScrollingCaptureSession.swift
     Sources/ScreenshotEditorViewModel.swift
     Sources/ScreenshotGlobalHotKeyManager.swift
     Sources/PinPanelController.swift

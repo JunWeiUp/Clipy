@@ -139,11 +139,36 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
 
     var status = await notificationManager.getListenerStatus();
     if (status.permissionGranted && !status.serviceConnected) {
-      // 尝试一次 rebind（国产 ROM 常忽略此请求，但不影响尝试）
-      await notificationManager.requestListenerRebind();
+      // Soft rebind first (often ignored on Xiaomi).
+      appLog(
+        'NotificationHealthMonitor: listener disconnected; trying soft rebind',
+        level: 'warning',
+      );
+      await notificationManager.requestListenerRebind(force: false);
       await Future<void>.delayed(const Duration(seconds: 2));
       status = await notificationManager.getListenerStatus();
-      // 若仍未连接，不再循环——交给用户手动去设置页开关（MIUI/EMUI 上 requestRebind 不可靠）
+
+      // Xiaomi/MIUI/HyperOS: escalate to component disable/enable force reconnect.
+      if (!status.serviceConnected) {
+        appLog(
+          'NotificationHealthMonitor: soft rebind failed on OEM; forcing component reconnect',
+          level: 'warning',
+        );
+        await notificationManager.requestListenerRebind(force: true);
+        await Future<void>.delayed(const Duration(seconds: 3));
+        status = await notificationManager.getListenerStatus();
+        if (!status.serviceConnected) {
+          appLog(
+            'NotificationHealthMonitor: force reconnect still failed — '
+            'user must toggle 通知使用权 OFF/ON (common on Xiaomi)',
+            level: 'warning',
+          );
+        } else {
+          appLog('NotificationHealthMonitor: force reconnect succeeded');
+        }
+      } else {
+        appLog('NotificationHealthMonitor: soft rebind succeeded');
+      }
     }
 
     // 检测电池优化白名单——多数国产 ROM 会因省电杀掉后台监听服务

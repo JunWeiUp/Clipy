@@ -90,8 +90,8 @@ class AppStrings {
         'Notification listener permission is missing. Re-authorize Clipy Android to sync notifications.',
       );
   String get notificationListenerNotConnected => _t(
-        '通知监听服务未连接。请在系统设置中先关闭、再重新开启 Clipy Android 的通知使用权。',
-        'The notification listener service is not connected. Please turn Clipy Android notification access OFF, then back ON in system settings.',
+        '通知监听服务未连接（小米等机型常见）。可先点「重新授权」自动重连；若仍失败，请到系统设置关闭再打开 Clipy 的通知使用权，并允许自启动。',
+        'Notification listener disconnected (common on Xiaomi). Tap Re-authorize to force reconnect; if that fails, toggle notification access OFF/ON and allow autostart.',
       );
   String get notificationListenerNotReceiving => _t(
         '手机上有通知但长时间未同步到数据。请重新授权通知监听权限。',

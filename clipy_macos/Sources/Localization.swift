@@ -221,6 +221,7 @@ enum L10nKey: String {
     case screenshotRegion
     case screenshotWindow
     case screenshotFullscreen
+    case screenshotScrolling
     case screenshotShortcut
     case screenshotShortcutDescription
     case screenshotDefaultMode
@@ -242,6 +243,19 @@ enum L10nKey: String {
     case screenshotToolText
     case screenshotToolMosaic
     case screenshotLineWidth
+    case screenshotFontSize
+    case screenshotArrowSolid
+    case screenshotArrowDashed
+    case screenshotTextBackground
+    case screenshotMosaicRect
+    case screenshotMosaicBrushSmall
+    case screenshotMosaicBrushMedium
+    case screenshotMosaicBrushLarge
+    case screenshotScrollingHint
+    case screenshotScrollingSelectHint
+    case screenshotScrollingHeight
+    case screenshotScrollingEndHint
+    case screenshotScrollingLimitReached
     case screenCaptureRequiredTitle
     case screenCaptureRequiredMessage
     case screenshotCaptureFailedTitle
@@ -494,6 +508,7 @@ struct L10n {
             .screenshotRegion: "区域截图",
             .screenshotWindow: "窗口截图",
             .screenshotFullscreen: "全屏截图",
+            .screenshotScrolling: "长截图",
             .screenshotShortcut: "全局截图快捷键",
             .screenshotShortcutDescription: "按下此快捷键开始截图，默认使用偏好设置中的截图模式。",
             .screenshotDefaultMode: "默认截图模式",
@@ -514,6 +529,19 @@ struct L10n {
             .screenshotToolText: "文字",
             .screenshotToolMosaic: "马赛克",
             .screenshotLineWidth: "线宽 %d",
+            .screenshotFontSize: "字号",
+            .screenshotArrowSolid: "实线",
+            .screenshotArrowDashed: "虚线",
+            .screenshotTextBackground: "底色",
+            .screenshotMosaicRect: "矩形",
+            .screenshotMosaicBrushSmall: "笔·小",
+            .screenshotMosaicBrushMedium: "笔·中",
+            .screenshotMosaicBrushLarge: "笔·大",
+            .screenshotScrollingHint: "在选区内滚动拼接 · Enter 完成 · Esc 取消",
+            .screenshotScrollingSelectHint: "拖拽选择长截图区域 · Esc 取消",
+            .screenshotScrollingHeight: "高度 %d px",
+            .screenshotScrollingEndHint: "似乎已到底，可点完成",
+            .screenshotScrollingLimitReached: "已达最大高度，请完成",
             .screenCaptureRequiredTitle: "需要屏幕录制权限",
             .screenCaptureRequiredMessage: "Clipy 需要屏幕录制权限才能截图。请在系统设置中启用 ClipyClone 的屏幕录制权限。",
             .screenshotCaptureFailedTitle: "截图失败",
@@ -756,6 +784,7 @@ struct L10n {
             .screenshotRegion: "Capture Region",
             .screenshotWindow: "Capture Window",
             .screenshotFullscreen: "Capture Full Screen",
+            .screenshotScrolling: "Scrolling Capture",
             .screenshotShortcut: "Global Screenshot Shortcut",
             .screenshotShortcutDescription: "Press this shortcut to start a screenshot using the default mode below.",
             .screenshotDefaultMode: "Default Capture Mode",
@@ -776,6 +805,19 @@ struct L10n {
             .screenshotToolText: "Text",
             .screenshotToolMosaic: "Mosaic",
             .screenshotLineWidth: "Width %d",
+            .screenshotFontSize: "Font Size",
+            .screenshotArrowSolid: "Solid",
+            .screenshotArrowDashed: "Dashed",
+            .screenshotTextBackground: "Fill",
+            .screenshotMosaicRect: "Rect",
+            .screenshotMosaicBrushSmall: "Brush S",
+            .screenshotMosaicBrushMedium: "Brush M",
+            .screenshotMosaicBrushLarge: "Brush L",
+            .screenshotScrollingHint: "Scroll inside selection to stitch · Enter to finish · Esc to cancel",
+            .screenshotScrollingSelectHint: "Drag to select scrolling capture area · Esc to cancel",
+            .screenshotScrollingHeight: "Height %d px",
+            .screenshotScrollingEndHint: "Looks like the end — tap Done",
+            .screenshotScrollingLimitReached: "Max height reached — finish now",
             .screenCaptureRequiredTitle: "Screen Recording Permission Required",
             .screenCaptureRequiredMessage: "Clipy needs Screen Recording permission to capture screenshots. Enable ClipyClone in System Settings.",
             .screenshotCaptureFailedTitle: "Screenshot Failed",

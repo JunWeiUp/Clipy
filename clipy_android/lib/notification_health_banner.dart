@@ -111,8 +111,14 @@ class _NotificationHealthBannerState extends State<NotificationHealthBanner> {
     if (isBatteryIssue) {
       await NotificationManager.instance.requestBatteryOptimizationExemption();
     } else {
-      await NotificationManager.instance.requestListenerRebind();
-      await NotificationManager.instance.openListenerSettings();
+      // Xiaomi: soft rebind is usually ignored — force component reconnect first.
+      await NotificationManager.instance.requestListenerRebind(force: true);
+      await Future<void>.delayed(const Duration(seconds: 2));
+      var status = await NotificationHealthMonitor.instance.checkHealth();
+      if (!status.isHealthy) {
+        await NotificationManager.instance.openOemAutostartSettings();
+        await NotificationManager.instance.openListenerSettings();
+      }
     }
     await Future<void>.delayed(const Duration(seconds: 1));
     final status = await NotificationHealthMonitor.instance.checkHealth();
