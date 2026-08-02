@@ -16,85 +16,12 @@ CONTENTS_DIR="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 
-SWIFT_SOURCES=(
-    Sources/Localization.swift
-    Sources/HistoryMediaStore.swift
-    Sources/ImageDownsampler.swift
-    Sources/MemoryFootprintReclaimer.swift
-    Sources/HistoryThumbnailCache.swift
-    Sources/AppDatabase.swift
-    Sources/SQLiteHelpers.swift
-    Sources/HistoryQueryBuilder.swift
-    Sources/HistorySerializer.swift
-    Sources/HistorySearchIndexManager.swift
-    Sources/HistoryMigrationService.swift
-    Sources/HistoryRepository.swift
-    Sources/ClipboardManager.swift
-    Sources/HistorySearchRanker.swift
-    Sources/HistorySearchTypes.swift
-    Sources/HistorySearchIndexBuilder.swift
-    Sources/HistorySearchStateStore.swift
-    Sources/SearchGlobalHotKeyManager.swift
-    Sources/ScreenshotTypes.swift
-    Sources/ScreenCapturePermissionManager.swift
-    Sources/ScreenshotCaptureService.swift
-    Sources/ImageOCRService.swift
-    Sources/ScreenshotExport.swift
-    Sources/UIElementDetector.swift
-    Sources/CaptureMagnifierView.swift
-    Sources/ScreenshotSaveService.swift
-    Sources/ScreenshotImageProcessor.swift
-    Sources/ScreenshotGlobalHotKeyManager.swift
-    Sources/PinPanelController.swift
-    Sources/SecureStorageCrypto.swift
-    Sources/HistoryKeychain.swift
-    Sources/MenuController.swift
-    Sources/PreferencesManager.swift
-    Sources/SnippetManager.swift
-    Sources/SyncManager.swift
-    Sources/NotificationManager.swift
-    Sources/NotificationRepository.swift
-    Sources/NotificationWindow.swift
-    Sources/HotKeyManager.swift
-    Sources/SettingsWindow.swift
-    Sources/ScreenshotSettingsWindow.swift
-    Sources/SnippetEditorWindow.swift
-    Sources/ShortcutRecorderView.swift
-    Sources/SearchWindow.swift
-    Sources/WindowSession.swift
-    Sources/LogManager.swift
-    Sources/LogWindow.swift
-    Sources/LaunchAtLoginManager.swift
-    Sources/AccessibilityManager.swift
-    Sources/UI/DesignTokens.swift
-    Sources/UI/AppLanguageObserver.swift
-    Sources/UI/HostingWindow.swift
-    Sources/UI/AppWindowLayout.swift
-    Sources/UI/AppToolbar.swift
-    Sources/UI/StatusBarView.swift
-    Sources/UI/EmptyStateView.swift
-    Sources/UI/CountBadge.swift
-    Sources/UI/RelativeTimeFormatter.swift
-    Sources/UI/ShortcutRecorderRepresentable.swift
-    Sources/UI/LeftAlignedTextInput.swift
-    Sources/UI/SettingsView.swift
-    Sources/UI/ScreenshotSettingsView.swift
-    Sources/UI/SearchView.swift
-    Sources/UI/HighlightedText.swift
-    Sources/UI/HistoryPreviewView.swift
-    Sources/UI/HistoryPreviewRepresentables.swift
-    Sources/UI/NotificationView.swift
-    Sources/UI/SnippetEditorViewModel.swift
-    Sources/UI/SnippetEditorSidebarRepresentable.swift
-    Sources/UI/SnippetEditorView.swift
-    Sources/main.swift
-)
-
-# Append the ported macshot screenshot module (Phase 0+ of the screenshot rewrite).
-# macOS ships bash 3.2 (no globstar), so collect files with find to stay portable.
+# Collect every Swift source under Sources/ recursively. Adding/moving files
+# anywhere under Sources/ now requires NO build-script edits.
+SWIFT_SOURCES=()
 while IFS= read -r -d '' f; do
     SWIFT_SOURCES+=("$f")
-done < <(find Sources/Screenshot -type f -name '*.swift' -print0)
+done < <(find Sources -type f -name '*.swift' -print0)
 
 echo "🚀 开始构建 ${APP_NAME}.app..."
 
@@ -111,7 +38,6 @@ mkdir -p "${RESOURCES_DIR}"
 echo "🔨 正在编译 Swift 源代码..."
 BUILD_SRC_DIR="$(mktemp -d "${TMPDIR:-/tmp}/clipybuild.XXXXXX")"
 trap 'rm -rf "${BUILD_SRC_DIR}"' EXIT
-mkdir -p "${BUILD_SRC_DIR}/Sources/UI"
 for src in "${SWIFT_SOURCES[@]}"; do
     dest="${BUILD_SRC_DIR}/${src}"
     mkdir -p "$(dirname "${dest}")"
