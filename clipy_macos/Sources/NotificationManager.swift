@@ -41,7 +41,7 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: - Models
 
-    struct NotificationEntry: Codable, Identifiable {
+        struct NotificationEntry: Codable, Identifiable {
         let id: String
         let notificationKey: String?
         let packageName: String
@@ -52,6 +52,8 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let postTime: TimeInterval
         let groupKey: String?
         let isClearable: Bool
+        /// Prior WeChat snapshots kept when the live notification slot is reused.
+        let isArchived: Bool
         let extras: [String: String]?
 
         init(
@@ -65,6 +67,7 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             postTime: TimeInterval,
             groupKey: String?,
             isClearable: Bool,
+            isArchived: Bool = false,
             extras: [String: String]?
         ) {
             self.id = id
@@ -77,11 +80,12 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             self.postTime = postTime
             self.groupKey = groupKey
             self.isClearable = isClearable
+            self.isArchived = isArchived
             self.extras = extras
         }
 
         enum CodingKeys: String, CodingKey {
-            case id, notificationKey, packageName, appName, title, subtitle, body, postTime, groupKey, isClearable, extras
+            case id, notificationKey, packageName, appName, title, subtitle, body, postTime, groupKey, isClearable, isArchived, extras
         }
 
         init(from decoder: Decoder) throws {
@@ -96,7 +100,11 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             postTime = try container.decode(TimeInterval.self, forKey: .postTime)
             groupKey = try container.decodeIfPresent(String.self, forKey: .groupKey)
             isClearable = try container.decodeIfPresent(Bool.self, forKey: .isClearable) ?? true
-            extras = try container.decodeIfPresent([String: String].self, forKey: .extras)
+            let decodedExtras = try container.decodeIfPresent([String: String].self, forKey: .extras)
+            extras = decodedExtras
+            let flag = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+            let extrasFlag = decodedExtras?["clipyArchived"] == "true"
+            isArchived = flag || extrasFlag
         }
     }
 

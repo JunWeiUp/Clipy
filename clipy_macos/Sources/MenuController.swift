@@ -327,13 +327,6 @@ class MenuController: NSObject {
         )
         fullscreenItem.target = self
         screenshotSubmenu.addItem(fullscreenItem)
-        let scrollingItem = NSMenuItem(
-            title: L10n.t(.screenshotScrolling),
-            action: #selector(startScreenshotScrolling),
-            keyEquivalent: ""
-        )
-        scrollingItem.target = self
-        screenshotSubmenu.addItem(scrollingItem)
         screenshotSubmenu.addItem(NSMenuItem.separator())
         let screenshotPreferencesItem = NSMenuItem(
             title: L10n.t(.screenshotPreferences) + "...",
@@ -710,11 +703,6 @@ class MenuController: NSObject {
     @objc private func startScreenshotFullscreen() {
         NSApp.activate(ignoringOtherApps: true)
         ScreenshotCoordinator.shared.start(mode: .fullscreen)
-    }
-
-    @objc private func startScreenshotScrolling() {
-        NSApp.activate(ignoringOtherApps: true)
-        ScreenshotCoordinator.shared.start(mode: .scrolling)
     }
 
     @objc private func languageDidChange() {

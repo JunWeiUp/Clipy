@@ -40,7 +40,7 @@ final class ScreenshotCoordinator {
                     self.handleCaptureResult(screenRect: screenRect)
                 }
             }
-        case .region, .window, .scrolling:
+        case .region, .window:
             overlayController = CaptureOverlayController(mode: captureMode) { [weak self] rect in
                 self?.overlayController = nil
                 self?.handleCaptureResult(screenRect: rect)

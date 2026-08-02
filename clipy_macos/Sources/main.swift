@@ -8,6 +8,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var menuController: MenuController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        LogManager.shared.startSession()
+        CrashReporter.install()
         setupMainMenu()
         NotificationCenter.default.addObserver(
             self,

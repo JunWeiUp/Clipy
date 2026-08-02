@@ -17,6 +17,21 @@ class NotificationPackageGroup {
   });
 }
 
+/// Result of [NotificationRepository.upsert].
+class NotificationUpsertResult {
+  final bool accepted;
+  /// Local entries removed because this post replaces them (same slot / WeChat
+  /// conversation). Callers should dismiss these on peers before posting new.
+  final List<NotificationEntry> replaced;
+
+  const NotificationUpsertResult({
+    required this.accepted,
+    this.replaced = const [],
+  });
+
+  static const rejected = NotificationUpsertResult(accepted: false);
+}
+
 class NotificationRepository {
   NotificationRepository._();
   static final NotificationRepository instance = NotificationRepository._();
@@ -24,11 +39,19 @@ class NotificationRepository {
   static const duplicateWindowMs = 30000;
   /// Hard cap so long-running installs don't grow the DB without bound.
   static const maxRows = 5000;
+  /// WeChat updates the same conversation notification in-place (same person /
+  /// same chat title). Treat those as replacements, not new history rows.
+  static const wechatPackageName = 'com.tencent.mm';
   int _insertsSinceTrim = 0;
 
   Future<Database> get _db => AppDatabase.instance.database;
 
   NotificationEntry _fromRow(Map<String, Object?> row) {
+    final extras = Map<String, dynamic>.from(
+        jsonDecode(row['extras_json'] as String? ?? '{}') as Map);
+    final archivedCol = (row['is_archived'] as int? ?? 0) == 1;
+    final archivedExtra = extras['clipyArchived'] == true ||
+        extras['clipyArchived']?.toString() == 'true';
     return NotificationEntry(
       id: row['id'] as String,
       notificationKey: row['notification_key'] as String?,
@@ -40,12 +63,18 @@ class NotificationRepository {
       postTime: row['post_time'] as int,
       groupKey: row['group_key'] as String?,
       isClearable: (row['is_clearable'] as int? ?? 1) == 1,
-      extras: Map<String, dynamic>.from(
-          jsonDecode(row['extras_json'] as String? ?? '{}') as Map),
+      isArchived: archivedCol || archivedExtra,
+      extras: extras,
     );
   }
 
   Map<String, Object?> _toRow(NotificationEntry entry) {
+    final extras = Map<String, dynamic>.from(entry.extras);
+    if (entry.isArchived) {
+      extras['clipyArchived'] = true;
+    } else {
+      extras.remove('clipyArchived');
+    }
     return {
       'id': entry.id,
       'notification_key': entry.notificationKey,
@@ -57,7 +86,8 @@ class NotificationRepository {
       'post_time': entry.postTime,
       'group_key': entry.groupKey,
       'is_clearable': entry.isClearable ? 1 : 0,
-      'extras_json': jsonEncode(entry.extras),
+      'is_archived': entry.isArchived ? 1 : 0,
+      'extras_json': jsonEncode(extras),
     };
   }
 
@@ -70,15 +100,19 @@ class NotificationRepository {
 
   /// Upserts a notification entry.
   ///
-  /// Returns `false` (don't broadcast) when the entry is an exact re-send of a
-  /// notification we already have — same id or same `notificationKey` with
-  /// identical content. This happens whenever the Android
-  /// `NotificationListenerService` re-emits active notifications (app resume,
-  /// listener reconnect, process recreation); without this guard the peer would
-  /// show a duplicate banner on every foreground.
-  Future<bool> upsert(NotificationEntry entry) async {
-    if (_isEmpty(entry)) return false;
+  /// Returns [NotificationUpsertResult.rejected] when the entry is an exact
+  /// re-send of something we already have (identical content).
+  ///
+  /// WeChat (`com.tencent.mm`) in-place updates: the previous snapshot is kept
+  /// with [NotificationEntry.isArchived]=true and a unique notificationKey, so
+  /// every message stays in history. Other apps still replace the same slot.
+  ///
+  /// [NotificationUpsertResult.replaced] lists entries that were deleted (and
+  /// should be dismissed on peers). Archived WeChat snapshots are not listed.
+  Future<NotificationUpsertResult> upsert(NotificationEntry entry) async {
+    if (_isEmpty(entry)) return NotificationUpsertResult.rejected;
     final db = await _db;
+    final replaced = <NotificationEntry>[];
 
     final byId = await db.query(
       'notifications',
@@ -89,14 +123,14 @@ class NotificationRepository {
     if (byId.isNotEmpty) {
       final existing = _fromRow(byId.first);
       if (_isDuplicate(existing, entry)) {
-        return false;
+        return NotificationUpsertResult.rejected;
       }
-      await db.update('notifications', _toRow(entry), where: 'id = ?', whereArgs: [entry.id]);
-      return true;
+      await db.update('notifications', _toRow(entry),
+          where: 'id = ?', whereArgs: [entry.id]);
+      return const NotificationUpsertResult(accepted: true);
     }
 
-    // Same notification slot (stable Android sbn.key). A re-emitted active
-    // notification lands here: same key, identical content → suppress broadcast.
+    // Same notification slot (stable Android sbn.key).
     final key = entry.notificationKey;
     if (key != null && key.isNotEmpty) {
       final byKey = await db.query(
@@ -108,17 +142,16 @@ class NotificationRepository {
       if (byKey.isNotEmpty) {
         final existing = _fromRow(byKey.first);
         if (_isDuplicate(existing, entry)) {
-          return false;
+          return NotificationUpsertResult.rejected;
         }
-        await db.delete('notifications', where: 'id = ?', whereArgs: [existing.id]);
-        await db.insert('notifications', _toRow(entry),
-            conflictAlgorithm: ConflictAlgorithm.replace);
-        _insertsSinceTrim++;
-        if (_insertsSinceTrim >= 50) {
-          _insertsSinceTrim = 0;
-          await _trimToLimit(db);
+        if (entry.packageName == wechatPackageName) {
+          // Keep prior WeChat message as archived history; free the live key.
+          await _archiveInPlace(db, existing);
+        } else {
+          replaced.add(existing);
+          await db.delete('notifications',
+              where: 'id = ?', whereArgs: [existing.id]);
         }
-        return true;
       }
     }
 
@@ -132,8 +165,8 @@ class NotificationRepository {
     for (final row in dupRows) {
       final existing = _fromRow(row);
       if (_isDuplicate(existing, entry)) {
-        await db.delete('notifications', where: 'id = ?', whereArgs: [existing.id]);
-        break;
+        // Exact content re-send — ignore. Never delete archived WeChat history.
+        return NotificationUpsertResult.rejected;
       }
     }
 
@@ -144,7 +177,23 @@ class NotificationRepository {
       _insertsSinceTrim = 0;
       await _trimToLimit(db);
     }
-    return true;
+    return NotificationUpsertResult(accepted: true, replaced: replaced);
+  }
+
+  /// Detach a live notification slot so a newer WeChat update can use the same
+  /// Android key, while keeping the old message as a distinct history row.
+  Future<void> _archiveInPlace(Database db, NotificationEntry existing) async {
+    if (existing.isArchived) return;
+    final archived = existing.copyWith(
+      notificationKey: 'clipy-archived:${existing.id}',
+      isArchived: true,
+    );
+    await db.update(
+      'notifications',
+      _toRow(archived),
+      where: 'id = ?',
+      whereArgs: [existing.id],
+    );
   }
 
   Future<void> _trimToLimit(Database db) async {
@@ -157,12 +206,14 @@ class NotificationRepository {
     await db.delete('notifications', where: 'post_time < ?', whereArgs: [threshold]);
   }
 
+  /// True when [incoming] is an exact content re-send of [existing].
+  ///
+  /// IMPORTANT: same Android `notificationKey` alone is NOT a duplicate.
+  /// Messaging apps reuse the StatusBarNotification key when a second message
+  /// arrives and the system folds/stacks the notification — content changes
+  /// but the key stays the same. Treating key equality as duplicate dropped
+  /// those folded updates on Xiaomi and similar OEMs.
   bool _isDuplicate(NotificationEntry existing, NotificationEntry incoming) {
-    if (existing.notificationKey != null &&
-        incoming.notificationKey != null &&
-        existing.notificationKey == incoming.notificationKey) {
-      return true;
-    }
     return existing.title.trim() == incoming.title.trim() &&
         (existing.subtitle ?? '').trim() == (incoming.subtitle ?? '').trim() &&
         existing.body.trim() == incoming.body.trim() &&

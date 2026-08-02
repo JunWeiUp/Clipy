@@ -239,15 +239,17 @@ class ClipyNotificationListenerService : NotificationListenerService() {
                 ?: ""
             val subtitle = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()
                 ?: allExtras[Notification.EXTRA_SUB_TEXT]
-            val body = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
-                ?: extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-                ?: allExtras[Notification.EXTRA_BIG_TEXT]
-                ?: allExtras[Notification.EXTRA_TEXT]
-                ?: ""
+            // Folded/stacked notifications (InboxStyle / MessagingStyle) often keep
+            // EXTRA_TEXT as a summary ("2条新消息") while the real newest line lives
+            // in EXTRA_TEXT_LINES or EXTRA_MESSAGES — prefer those for sync.
+            val body = extractNotificationBody(extras, allExtras)
             if (title.isBlank() && subtitle.isNullOrBlank() && body.isBlank() && allExtras.values.none { it.isNotBlank() }) {
                 Log.d(TAG, "Skipping blank notification from $packageName")
                 return null
             }
+
+            val isGroupSummary =
+                (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
 
             return mapOf(
                 "key" to sbn.key,
@@ -258,6 +260,7 @@ class ClipyNotificationListenerService : NotificationListenerService() {
                 "body" to body,
                 "postTime" to sbn.postTime,
                 "groupKey" to sbn.groupKey,
+                "isGroupSummary" to isGroupSummary,
                 "isClearable" to ((notification.flags and Notification.FLAG_NO_CLEAR) == 0),
                 "extras" to allExtras,
             )
@@ -265,6 +268,54 @@ class ClipyNotificationListenerService : NotificationListenerService() {
             Log.e(TAG, "Error processing notification from ${sbn.packageName}", e)
             return null
         }
+    }
+
+    /**
+     * Prefer the newest line from InboxStyle / MessagingStyle folded stacks.
+     * Falls back to BIG_TEXT / TEXT.
+     */
+    private fun extractNotificationBody(
+        extras: Bundle,
+        allExtras: Map<String, String>,
+    ): String {
+        try {
+            val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            if (lines != null) {
+                for (i in lines.indices.reversed()) {
+                    val line = lines[i]?.toString()?.trim()
+                    if (!line.isNullOrEmpty()) return line
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                @Suppress("DEPRECATION")
+                val parcels = extras.getParcelableArray(Notification.EXTRA_MESSAGES)
+                if (parcels != null && parcels.isNotEmpty()) {
+                    val messages =
+                        Notification.MessagingStyle.Message.getMessagesFromBundleArray(parcels)
+                    for (i in messages.indices.reversed()) {
+                        val text = messages[i]?.text?.toString()?.trim()
+                        if (!text.isNullOrEmpty()) return text
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        val joinedLines = allExtras[Notification.EXTRA_TEXT_LINES]
+        if (!joinedLines.isNullOrBlank()) {
+            val parts = joinedLines.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+            if (parts.isNotEmpty()) return parts.last()
+        }
+
+        return extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+            ?: extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+            ?: allExtras[Notification.EXTRA_BIG_TEXT]
+            ?: allExtras[Notification.EXTRA_TEXT]
+            ?: ""
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {

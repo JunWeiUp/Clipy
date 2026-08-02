@@ -94,6 +94,7 @@ class LegacyMigration {
       'post_time': entry.postTime,
       'group_key': entry.groupKey,
       'is_clearable': entry.isClearable ? 1 : 0,
+      'is_archived': entry.isArchived ? 1 : 0,
       'extras_json': jsonEncode(entry.extras),
     };
   }

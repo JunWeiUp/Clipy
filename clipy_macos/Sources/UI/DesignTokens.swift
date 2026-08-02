@@ -20,6 +20,60 @@ enum AppFont {
     static var emptyState: Font { .system(size: emptyStateSize) }
 }
 
+// MARK: - Crash-safe AppKit text attributes
+
+extension AppFont {
+    /// AppKit's font factories are imported as non-optional but can still hand back nil —
+    /// `monospacedSystemFont` resolves the hidden `.AppleSystemUIFontMonospaced` asset and
+    /// fails on some machines. Swift lets that nil into an attribute dictionary and CoreText
+    /// aborts the process while laying out the string, so route every dictionary through here.
+    static func textAttributes(
+        size: CGFloat,
+        weight: NSFont.Weight = .regular,
+        monospaced: Bool = false,
+        color: NSColor?
+    ) -> [NSAttributedString.Key: Any] {
+        var attributes: [NSAttributedString.Key: Any] = [:]
+        if let font = resolveFont(size: size, weight: weight, monospaced: monospaced) {
+            attributes[.font] = font
+        }
+        if let color {
+            attributes[.foregroundColor] = color
+        }
+        return attributes
+    }
+
+    /// Adds `.font`/`.foregroundColor` only when they actually resolved.
+    static func attributes(font: NSFont?, color: NSColor?) -> [NSAttributedString.Key: Any] {
+        var attributes: [NSAttributedString.Key: Any] = [:]
+        if let font { attributes[.font] = font }
+        if let color { attributes[.foregroundColor] = color }
+        return attributes
+    }
+
+    static func resolveFont(size: CGFloat, weight: NSFont.Weight = .regular, monospaced: Bool = false) -> NSFont? {
+        if monospaced {
+            return firstResolved(
+                // Proportional metrics with tabular digits — same alignment benefit for
+                // numeric readouts without depending on the monospaced font asset.
+                NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight),
+                NSFont.monospacedSystemFont(ofSize: size, weight: weight),
+                NSFont(name: "Menlo", size: size),
+                NSFont.systemFont(ofSize: size)
+            )
+        }
+        return firstResolved(
+            NSFont.systemFont(ofSize: size, weight: weight),
+            NSFont.systemFont(ofSize: size),
+            NSFont(name: "Helvetica", size: size)
+        )
+    }
+
+    private static func firstResolved(_ candidates: NSFont?...) -> NSFont? {
+        candidates.first { $0 != nil } ?? nil
+    }
+}
+
 enum AppRowHeight {
     static let compact: CGFloat = 28
     static let standard: CGFloat = 36
@@ -49,7 +103,6 @@ enum ScreenshotChrome {
     static let magnifierSize: CGFloat = 120
     static let snapThreshold: CGFloat = 8
     static let presetColors: [NSColor] = [.systemRed, .systemOrange, .systemYellow, .systemGreen, .systemBlue]
-    static let scrollingMaxPixelHeight: CGFloat = 16_384
 }
 
 enum AppWindowSize {

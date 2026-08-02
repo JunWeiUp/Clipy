@@ -196,7 +196,9 @@ class AppStrings {
   String get clearAllNotifications => _t('清空通知', 'Clear Notifications');
   String get notificationSettings => _t('通知设置', 'Notification Settings');
   String get dismissOnPhone => _t('在手机上清除', 'Dismiss on Phone');
-  String get notificationListenerPermission => _t('通知监听权限', 'Notification Listener Permission');
+  String get notificationArchivedBadge => _t('历史', 'History');
+  String get notificationListenerPermission =>
+      _t('通知监听权限', 'Notification Listener Permission');
   String get permissionGranted => _t('已授权', 'Permission Granted');
   String get permissionNotGranted => _t('未授权', 'Not Granted');
   String notificationFrom(String appName) => _t('来自 $appName', 'From $appName');
@@ -222,6 +224,7 @@ class AppStrings {
   String get syncAll => _t('同步全部', 'Sync All');
   String get syncing => _t('正在同步', 'Syncing');
   String get paused => _t('已暂停', 'Paused');
+  String get syncedSection => _t('可同步', 'Syncable');
   String get collectedSection => _t('可收集', 'Collected');
   String get notCollectedSection => _t('不可收集', 'Not Collected');
 

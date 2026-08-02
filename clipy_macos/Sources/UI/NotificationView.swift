@@ -441,6 +441,11 @@ struct NotificationView: View {
                 Text(entry.title)
                     .font(AppFont.body)
                     .lineLimit(1)
+                if entry.isArchived {
+                    Text(L10n.t(.notificationArchivedBadge))
+                        .font(AppFont.caption)
+                        .foregroundStyle(.orange)
+                }
                 Text(entry.body)
                     .font(AppFont.secondary)
                     .foregroundStyle(.secondary)

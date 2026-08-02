@@ -190,6 +190,19 @@ final class NotificationRepository {
             return .updated
         }
 
+        // WeChat reuses the same StatusBarNotification key for each new message
+        // in a conversation. Archive the previous snapshot instead of deleting it.
+        if entry.packageName == "com.tencent.mm",
+           let key = entry.notificationKey, !key.isEmpty,
+           let existing = fetchByNotificationKeyLocked(key) {
+            if isContentDuplicate(existing, incoming: entry) {
+                return .replacedDuplicate(removedId: existing.id)
+            }
+            _ = archiveInPlaceLocked(existing)
+            _ = insertLocked(entry)
+            return .inserted
+        }
+
         if let duplicateId = findDuplicateIdLocked(for: entry) {
             _ = deleteByIdLocked(duplicateId)
             _ = insertLocked(entry)
@@ -198,6 +211,57 @@ final class NotificationRepository {
 
         _ = insertLocked(entry)
         return .inserted
+    }
+
+    private func fetchByNotificationKeyLocked(_ key: String) -> NotificationManager.NotificationEntry? {
+        guard let db else { return nil }
+        let sql = """
+        SELECT id, notification_key, package_name, app_name, title, subtitle, body,
+               post_time, group_key, is_clearable, extras_json
+        FROM phone_notifications
+        WHERE notification_key = ?
+        LIMIT 1
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        bindText(stmt, 1, key)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return entryFromStatement(stmt)
+    }
+
+    @discardableResult
+    private func archiveInPlaceLocked(_ existing: NotificationManager.NotificationEntry) -> Bool {
+        var extras = existing.extras ?? [:]
+        extras["clipyArchived"] = "true"
+        let archived = NotificationManager.NotificationEntry(
+            id: existing.id,
+            notificationKey: "clipy-archived:\(existing.id)",
+            packageName: existing.packageName,
+            appName: existing.appName,
+            title: existing.title,
+            subtitle: existing.subtitle,
+            body: existing.body,
+            postTime: existing.postTime,
+            groupKey: existing.groupKey,
+            isClearable: existing.isClearable,
+            isArchived: true,
+            extras: extras
+        )
+        return updateLocked(archived)
+    }
+
+    private func isContentDuplicate(
+        _ existing: NotificationManager.NotificationEntry,
+        incoming: NotificationManager.NotificationEntry
+    ) -> Bool {
+        existing.title.trimmingCharacters(in: .whitespacesAndNewlines) ==
+            incoming.title.trimmingCharacters(in: .whitespacesAndNewlines) &&
+            (existing.subtitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines) ==
+            (incoming.subtitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines) &&
+            existing.body.trimmingCharacters(in: .whitespacesAndNewlines) ==
+            incoming.body.trimmingCharacters(in: .whitespacesAndNewlines) &&
+            existing.groupKey == incoming.groupKey
     }
 
     @discardableResult
@@ -301,6 +365,11 @@ final class NotificationRepository {
                 return existingId
             }
 
+            // Keep archived WeChat history rows; never treat them as replaceable dups.
+            if let existingKey, existingKey.hasPrefix("clipy-archived:") {
+                continue
+            }
+
             let incomingTitle = incoming.title.trimmingCharacters(in: .whitespacesAndNewlines)
             let incomingSubtitle = (incoming.subtitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let incomingBody = incoming.body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -334,6 +403,7 @@ final class NotificationRepository {
             postTime: sqlite3_column_double(stmt, 7),
             groupKey: optionalString(stmt, 8),
             isClearable: sqlite3_column_int(stmt, 9) != 0,
+            isArchived: decodeExtras(optionalString(stmt, 10))?["clipyArchived"] == "true",
             extras: decodeExtras(optionalString(stmt, 10))
         )
     }

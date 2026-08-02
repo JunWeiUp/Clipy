@@ -9,7 +9,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'clipy.db';
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
 
   Database? _db;
 
@@ -57,6 +57,10 @@ class AppDatabase {
           await db.execute(
               'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_hash ON pending_text_sync(hash)');
         }
+        if (oldVersion < 4) {
+          await db.execute(
+              'ALTER TABLE notifications ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
+        }
       },
     );
     await LegacyMigration.runIfNeeded(db);
@@ -89,6 +93,7 @@ class AppDatabase {
         post_time INTEGER NOT NULL,
         group_key TEXT,
         is_clearable INTEGER NOT NULL DEFAULT 1,
+        is_archived INTEGER NOT NULL DEFAULT 0,
         extras_json TEXT NOT NULL DEFAULT '{}',
         synced_at INTEGER
       )
