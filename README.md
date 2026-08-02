@@ -56,12 +56,16 @@ Clipy lives in your menu bar and quietly supercharges your clipboard. Beyond sav
 - **XML import/export** of your snippet library.
 
 ### 📸 Screenshot & annotation (macOS)
-- Three capture modes: **region / window / fullscreen**.
-- Full annotation toolbar: rectangle, arrow, ellipse, text, pencil, highlighter, eraser, **mosaic/blur**.
-- **Magnifier** and **UI-element auto-snap** for pixel-perfect selections.
-- **Pin to screen**, **save as**, copy, or run **OCR** right after capture.
-- **On-device OCR** via Apple Vision — supports English, Chinese+English, and auto.
-- Configurable save directory and a global hotkey (default <kbd>⇧</kbd><kbd>⌘</kbd><kbd>5</kbd>).
+- Capture modes: **region / window / fullscreen / scrolling long-screenshot / screen recording (MP4 + GIF)**.
+- **18-tool annotation engine** (ported from [macshot](https://github.com/)) on a single unified overlay: pencil (pressure + smoothing), line, **6 arrow styles** (curved/dashed/sketchy), rectangle, filled rectangle, ellipse, **marker (multiply blend)**, rich text (bold/italic/outline/background), auto-incrementing **number**, emoji/image **stamp**, **pixelate/blur/solid/erase censor**, **loupe magnifier**, **pixel ruler**, **color sampler**, **spotlight highlight**.
+- Per-tool **secondary options bar** + glass primary toolbar + color/emoji/font/effects popovers.
+- **Beautify** gradient wrapping + **image effects** (brightness/contrast/saturation/sharpness).
+- **Scrolling capture** with live side preview (Vision-based frame-stitch).
+- **Recording** with system-audio + microphone, webcam overlay, mouse-click highlight, keystroke display.
+- **On-device OCR** + **QR** via Apple Vision; **auto-redact** PII; **Apple Translation** overlay.
+- **Pin to screen** (zoom/opacity/rotate/edit), **floating thumbnail** feedback, **standalone editor** window (crop/flip/zoom), save-as, copy.
+- Configurable save directory, single-key tool shortcuts, and a global hotkey.
+- Fully localized (English + Simplified Chinese).
 
 ### 🔍 Global search (macOS)
 - Summon with <kbd>⇧</kbd><kbd>⌘</kbd><kbd>F</kbd> from anywhere.
@@ -132,7 +136,7 @@ Release builds produce split APKs for `armeabi-v7a` and `arm64-v8a`.
 - `ClipboardManager` — pasteboard polling, history persistence, dedup, sync dispatch.
 - `SnippetManager` — folders, snippets, hotkeys, import/export.
 - `SyncManager` — subnet/manual discovery, length-prefixed TCP sync (protocol v2), AES-GCM encryption, reliable history + notification delivery.
-- `ScreenshotCaptureService` / `CaptureOverlayWindow` — capture, annotation, pin, OCR.
+- `Sources/Screenshot/` — the full screenshot/recording engine (ported from macshot): unified `OverlayView`, 18-tool annotation engine, scroll capture, recording, beautify/effects, OCR, pin, floating thumbnail, editor window. Driven by `ScreenshotSessionCoordinator`.
 - `SearchWindow` — global search with filters and ranking.
 - `NotificationManager` — phone-notification mirror.
 - `PreferencesManager`, `SettingsWindow`, `SnippetEditorWindow`, `LogWindow` — config & editing surfaces.
