@@ -147,10 +147,15 @@ class NotificationManager {
       extras: Map<String, dynamic>.from(data['extras'] as Map? ?? {}),
     );
 
-    final accepted = await NotificationRepository.instance.upsert(entry);
-    if (accepted) {
+    final result = await NotificationRepository.instance.upsert(entry);
+    if (result.accepted) {
       lastNotificationReceivedAt = DateTime.now();
       if (!_suppressBroadcast && _shouldSync(packageName)) {
+        // Replacements (esp. WeChat same-person updates) must dismiss the old
+        // peer banner first, otherwise Mac keeps both the previous and the new.
+        for (final old in result.replaced) {
+          _broadcastDismissForReplaced(old);
+        }
         _broadcastToSync(entry);
       }
       _notificationsChangedController.add(null);
@@ -176,6 +181,19 @@ class NotificationManager {
         'notificationKey': key,
         'packageName': packageName,
         'groupKey': null,
+      }),
+      hash: '',
+    );
+  }
+
+  void _broadcastDismissForReplaced(NotificationEntry old) {
+    NotificationRepository.instance.removePendingSync(old.id);
+    SyncManager.instance.broadcastNotificationMessage(
+      type: 'notification/dismiss',
+      content: jsonEncode({
+        'notificationKey': old.notificationKey,
+        'packageName': old.packageName,
+        'groupKey': old.groupKey,
       }),
       hash: '',
     );
@@ -219,8 +237,8 @@ class NotificationManager {
   }
 
   Future<void> _upsertRemote(NotificationEntry entry) async {
-    final accepted = await NotificationRepository.instance.upsert(entry);
-    if (accepted) {
+    final result = await NotificationRepository.instance.upsert(entry);
+    if (result.accepted) {
       _notificationsChangedController.add(null);
     }
   }

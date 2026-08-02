@@ -60,11 +60,13 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     });
     _collectedSub =
         NotificationManager.instance.onCollectedPackagesChanged.listen((_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      unawaited(_rebuildHistoryItems());
     });
     _syncedSub =
         NotificationManager.instance.onSyncedPackagesChanged.listen((_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      unawaited(_rebuildHistoryItems());
     });
   }
 
@@ -136,6 +138,7 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   }
 
   Future<void> _rebuildHistoryItems() async {
+    final l10n = context.l10n;
     final totalCount = await NotificationManager.instance.count();
     final appCount =
         await NotificationRepository.instance.packageGroupCount();
@@ -149,6 +152,8 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
       return;
     }
 
+    if (!mounted) return;
+
     final rows = <_HistoryListItem>[
       _HistoryListItem.summary(
         notificationCount: totalCount,
@@ -156,14 +161,19 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
       ),
     ];
 
-    // 按收集状态分组
-    final collectedGroups = <NotificationPackageGroup>[];
+    // 按同步/收集状态分三段：可同步 → 可收集 → 不可收集
+    final syncedGroups = <NotificationPackageGroup>[];
+    final collectedOnlyGroups = <NotificationPackageGroup>[];
     final notCollectedGroups = <NotificationPackageGroup>[];
+    final manager = NotificationManager.instance;
     for (final group in groups) {
-      if (NotificationManager.instance.isPackageCollected(group.packageName)) {
-        collectedGroups.add(group);
-      } else {
+      final collected = manager.isPackageCollected(group.packageName);
+      if (!collected) {
         notCollectedGroups.add(group);
+      } else if (manager.isPackageSynced(group.packageName)) {
+        syncedGroups.add(group);
+      } else {
+        collectedOnlyGroups.add(group);
       }
     }
 
@@ -197,36 +207,41 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
       }
     }
 
-    if (collectedGroups.isNotEmpty) {
-      final sectionKey = 'collected';
+    Future<void> appendSection({
+      required String sectionKey,
+      required String title,
+      required List<NotificationPackageGroup> sectionGroups,
+    }) async {
+      if (sectionGroups.isEmpty) return;
       final isCollapsed = _collapsedSections.contains(sectionKey);
       rows.add(_HistoryListItem.sectionHeader(
-        title: context.l10n.collectedSection,
-        isCollected: true,
+        title: title,
+        sectionKey: sectionKey,
         isCollapsed: isCollapsed,
-        count: collectedGroups.length,
+        count: sectionGroups.length,
       ));
       if (!isCollapsed) {
-        for (final group in collectedGroups) {
+        for (final group in sectionGroups) {
           await appendGroup(group);
         }
       }
     }
-    if (notCollectedGroups.isNotEmpty) {
-      final sectionKey = 'not_collected';
-      final isCollapsed = _collapsedSections.contains(sectionKey);
-      rows.add(_HistoryListItem.sectionHeader(
-        title: context.l10n.notCollectedSection,
-        isCollected: false,
-        isCollapsed: isCollapsed,
-        count: notCollectedGroups.length,
-      ));
-      if (!isCollapsed) {
-        for (final group in notCollectedGroups) {
-          await appendGroup(group);
-        }
-      }
-    }
+
+    await appendSection(
+      sectionKey: 'synced',
+      title: l10n.syncedSection,
+      sectionGroups: syncedGroups,
+    );
+    await appendSection(
+      sectionKey: 'collected',
+      title: l10n.collectedSection,
+      sectionGroups: collectedOnlyGroups,
+    );
+    await appendSection(
+      sectionKey: 'not_collected',
+      title: l10n.notCollectedSection,
+      sectionGroups: notCollectedGroups,
+    );
 
     if (mounted) setState(() => _historyItems = rows);
   }
@@ -614,8 +629,12 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
           case _HistoryListItemKind.summary:
             return _buildHistorySummary(l10n, item);
           case _HistoryListItemKind.sectionHeader:
-            final sectionKey =
-                item.sectionIsCollected! ? 'collected' : 'not_collected';
+            final sectionKey = item.sectionKey!;
+            final (IconData icon, Color? iconColor) = switch (sectionKey) {
+              'synced' => (Icons.sync, Colors.blue[700]),
+              'collected' => (Icons.check_circle_outline, Colors.green[700]),
+              _ => (Icons.block, Colors.grey[500]),
+            };
             return InkWell(
               onTap: () async {
                 if (_collapsedSections.contains(sectionKey)) {
@@ -640,13 +659,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                     ),
                     const SizedBox(width: 4),
                     Icon(
-                      item.sectionIsCollected!
-                          ? Icons.check_circle_outline
-                          : Icons.block,
+                      icon,
                       size: 16,
-                      color: item.sectionIsCollected!
-                          ? Colors.green[700]
-                          : Colors.grey[500],
+                      color: iconColor,
                     ),
                     const SizedBox(width: 6),
                     Text(
@@ -846,6 +861,7 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
       if ((entry.notificationKey ?? '').isNotEmpty)
         'Key: ${entry.notificationKey}',
       if ((entry.groupKey ?? '').isNotEmpty) 'Group: ${entry.groupKey}',
+      if (entry.isArchived) 'Archived: yes (WeChat history snapshot)',
     ];
 
     if (entry.extras.isNotEmpty) {
@@ -976,7 +992,7 @@ class _HistoryListItem {
   final int? notificationCount;
   final int? appCount;
   final String? sectionTitle;
-  final bool? sectionIsCollected;
+  final String? sectionKey;
   final bool? sectionIsCollapsed;
   final int? sectionCount;
   final String? appName;
@@ -992,7 +1008,7 @@ class _HistoryListItem {
     this.notificationCount,
     this.appCount,
     this.sectionTitle,
-    this.sectionIsCollected,
+    this.sectionKey,
     this.sectionIsCollapsed,
     this.sectionCount,
     this.appName,
@@ -1017,14 +1033,14 @@ class _HistoryListItem {
 
   factory _HistoryListItem.sectionHeader({
     required String title,
-    required bool isCollected,
+    required String sectionKey,
     required bool isCollapsed,
     required int count,
   }) {
     return _HistoryListItem._(
       kind: _HistoryListItemKind.sectionHeader,
       sectionTitle: title,
-      sectionIsCollected: isCollected,
+      sectionKey: sectionKey,
       sectionIsCollapsed: isCollapsed,
       sectionCount: count,
     );
@@ -1148,6 +1164,18 @@ class _NotificationTile extends StatelessWidget {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (entry.isArchived)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Text(
+                  l10n.notificationArchivedBadge,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.orange.shade800,
+                  ),
+                ),
+              ),
             if (body.isNotEmpty && body != title)
               Text(
                 body,
@@ -1162,7 +1190,7 @@ class _NotificationTile extends StatelessWidget {
             ),
           ],
         ),
-        isThreeLine: body.isNotEmpty && body != title,
+        isThreeLine: entry.isArchived || (body.isNotEmpty && body != title),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

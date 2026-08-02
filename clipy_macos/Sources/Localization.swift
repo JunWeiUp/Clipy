@@ -94,6 +94,7 @@ enum L10nKey: String {
     case exportAction
     case searchLogs
     case copyAll
+    case revealLogFile
     case clear
     case clipyLogs
     case quitClipy
@@ -154,6 +155,7 @@ enum L10nKey: String {
     case macNotificationPermission
     case macNotificationGranted
     case macNotificationDenied
+    case notificationArchivedBadge
     case openNotificationSettings
     case launchAtLogin
     case launchAtLoginFailed
@@ -221,7 +223,6 @@ enum L10nKey: String {
     case screenshotRegion
     case screenshotWindow
     case screenshotFullscreen
-    case screenshotScrolling
     case screenshotShortcut
     case screenshotShortcutDescription
     case screenshotDefaultMode
@@ -251,11 +252,6 @@ enum L10nKey: String {
     case screenshotMosaicBrushSmall
     case screenshotMosaicBrushMedium
     case screenshotMosaicBrushLarge
-    case screenshotScrollingHint
-    case screenshotScrollingSelectHint
-    case screenshotScrollingHeight
-    case screenshotScrollingEndHint
-    case screenshotScrollingLimitReached
     case screenCaptureRequiredTitle
     case screenCaptureRequiredMessage
     case screenshotCaptureFailedTitle
@@ -381,6 +377,7 @@ struct L10n {
             .exportAction: "导出",
             .searchLogs: "搜索日志...",
             .copyAll: "复制全部",
+            .revealLogFile: "日志文件",
             .clear: "清空",
             .clipyLogs: "Clipy 日志",
             .quitClipy: "退出 Clipy",
@@ -441,6 +438,7 @@ struct L10n {
             .macNotificationPermission: "Mac 通知权限",
             .macNotificationGranted: "已授权",
             .macNotificationDenied: "已拒绝，请在系统设置中允许",
+            .notificationArchivedBadge: "历史",
             .openNotificationSettings: "前往系统设置",
             .launchAtLogin: "登录时启动",
             .launchAtLoginFailed: "无法更新登录时启动设置，请重试。",
@@ -508,7 +506,6 @@ struct L10n {
             .screenshotRegion: "区域截图",
             .screenshotWindow: "窗口截图",
             .screenshotFullscreen: "全屏截图",
-            .screenshotScrolling: "长截图",
             .screenshotShortcut: "全局截图快捷键",
             .screenshotShortcutDescription: "按下此快捷键开始截图，默认使用偏好设置中的截图模式。",
             .screenshotDefaultMode: "默认截图模式",
@@ -537,11 +534,6 @@ struct L10n {
             .screenshotMosaicBrushSmall: "笔·小",
             .screenshotMosaicBrushMedium: "笔·中",
             .screenshotMosaicBrushLarge: "笔·大",
-            .screenshotScrollingHint: "在选区内滚动拼接 · Enter 完成 · Esc 取消",
-            .screenshotScrollingSelectHint: "拖拽选择长截图区域 · Esc 取消",
-            .screenshotScrollingHeight: "高度 %d px",
-            .screenshotScrollingEndHint: "似乎已到底，可点完成",
-            .screenshotScrollingLimitReached: "已达最大高度，请完成",
             .screenCaptureRequiredTitle: "需要屏幕录制权限",
             .screenCaptureRequiredMessage: "Clipy 需要屏幕录制权限才能截图。请在系统设置中启用 ClipyClone 的屏幕录制权限。",
             .screenshotCaptureFailedTitle: "截图失败",
@@ -657,6 +649,7 @@ struct L10n {
             .exportAction: "Export",
             .searchLogs: "Search logs...",
             .copyAll: "Copy All",
+            .revealLogFile: "Log File",
             .clear: "Clear",
             .clipyLogs: "Clipy Logs",
             .quitClipy: "Quit Clipy",
@@ -717,6 +710,7 @@ struct L10n {
             .macNotificationPermission: "Mac Notification Permission",
             .macNotificationGranted: "Granted",
             .macNotificationDenied: "Denied; please allow in System Settings",
+            .notificationArchivedBadge: "History",
             .openNotificationSettings: "Open System Settings",
             .launchAtLogin: "Launch at Login",
             .launchAtLoginFailed: "Unable to update launch at login settings. Please try again.",
@@ -784,7 +778,6 @@ struct L10n {
             .screenshotRegion: "Capture Region",
             .screenshotWindow: "Capture Window",
             .screenshotFullscreen: "Capture Full Screen",
-            .screenshotScrolling: "Scrolling Capture",
             .screenshotShortcut: "Global Screenshot Shortcut",
             .screenshotShortcutDescription: "Press this shortcut to start a screenshot using the default mode below.",
             .screenshotDefaultMode: "Default Capture Mode",
@@ -813,11 +806,6 @@ struct L10n {
             .screenshotMosaicBrushSmall: "Brush S",
             .screenshotMosaicBrushMedium: "Brush M",
             .screenshotMosaicBrushLarge: "Brush L",
-            .screenshotScrollingHint: "Scroll inside selection to stitch · Enter to finish · Esc to cancel",
-            .screenshotScrollingSelectHint: "Drag to select scrolling capture area · Esc to cancel",
-            .screenshotScrollingHeight: "Height %d px",
-            .screenshotScrollingEndHint: "Looks like the end — tap Done",
-            .screenshotScrollingLimitReached: "Max height reached — finish now",
             .screenCaptureRequiredTitle: "Screen Recording Permission Required",
             .screenCaptureRequiredMessage: "Clipy needs Screen Recording permission to capture screenshots. Enable ClipyClone in System Settings.",
             .screenshotCaptureFailedTitle: "Screenshot Failed",

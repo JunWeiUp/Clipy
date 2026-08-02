@@ -112,10 +112,7 @@ private final class MagnifierContentView: NSView {
         crosshair.stroke()
 
         let coordText = "\(Int(screenPoint.x)), \(Int(screenPoint.y))"
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .medium),
-            .foregroundColor: NSColor.white
-        ]
+        let attributes = AppFont.textAttributes(size: 10, weight: .medium, monospaced: true, color: .white)
         let textSize = (coordText as NSString).size(withAttributes: attributes)
         (coordText as NSString).draw(
             at: NSPoint(x: (bounds.width - textSize.width) / 2, y: 4),

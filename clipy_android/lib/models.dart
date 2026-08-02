@@ -86,6 +86,9 @@ class NotificationEntry {
   final int postTime;
   final String? groupKey;
   final bool isClearable;
+  /// WeChat (and similar) in-place updates: previous snapshot kept with this flag
+  /// so history retains every message while the live slot stays unique.
+  final bool isArchived;
   final Map<String, dynamic> extras;
 
   NotificationEntry({
@@ -99,8 +102,39 @@ class NotificationEntry {
     required this.postTime,
     this.groupKey,
     this.isClearable = true,
+    this.isArchived = false,
     this.extras = const {},
   });
+
+  NotificationEntry copyWith({
+    String? id,
+    String? notificationKey,
+    String? packageName,
+    String? appName,
+    String? title,
+    String? subtitle,
+    String? body,
+    int? postTime,
+    String? groupKey,
+    bool? isClearable,
+    bool? isArchived,
+    Map<String, dynamic>? extras,
+  }) {
+    return NotificationEntry(
+      id: id ?? this.id,
+      notificationKey: notificationKey ?? this.notificationKey,
+      packageName: packageName ?? this.packageName,
+      appName: appName ?? this.appName,
+      title: title ?? this.title,
+      subtitle: subtitle ?? this.subtitle,
+      body: body ?? this.body,
+      postTime: postTime ?? this.postTime,
+      groupKey: groupKey ?? this.groupKey,
+      isClearable: isClearable ?? this.isClearable,
+      isArchived: isArchived ?? this.isArchived,
+      extras: extras ?? this.extras,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -113,10 +147,15 @@ class NotificationEntry {
         'postTime': postTime,
         'groupKey': groupKey,
         'isClearable': isClearable,
+        'isArchived': isArchived,
         'extras': extras,
       };
 
   factory NotificationEntry.fromJson(Map<String, dynamic> json) {
+    final extras = Map<String, dynamic>.from(json['extras'] as Map? ?? {});
+    final archivedFlag = json['isArchived'] == true ||
+        extras['clipyArchived'] == true ||
+        extras['clipyArchived']?.toString() == 'true';
     return NotificationEntry(
       id: json['id'],
       notificationKey: json['notificationKey'],
@@ -129,10 +168,10 @@ class NotificationEntry {
           DateTime.now().millisecondsSinceEpoch,
       groupKey: json['groupKey'],
       isClearable: json['isClearable'] ?? true,
-      extras: Map<String, dynamic>.from(json['extras'] as Map? ?? {}),
+      isArchived: archivedFlag,
+      extras: extras,
     );
   }
-
 }
 
 class NotificationDismissRequest {

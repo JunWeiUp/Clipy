@@ -40,6 +40,11 @@ struct LogView: View {
                     }
                     .buttonStyle(.bordered)
 
+                    Button(action: revealLogFile) {
+                        Label(L10n.t(.revealLogFile), systemImage: "folder")
+                    }
+                    .buttonStyle(.bordered)
+
                     Button(action: { logManager.clear() }) {
                         Label(L10n.t(.clear), systemImage: "trash")
                     }
@@ -72,6 +77,15 @@ struct LogView: View {
         case .error: return .red
         case .warning: return .orange
         case .debug: return .gray
+        }
+    }
+
+    private func revealLogFile() {
+        let file = LogManager.currentLogFile
+        if FileManager.default.fileExists(atPath: file.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([file])
+        } else {
+            NSWorkspace.shared.open(LogManager.logDirectory)
         }
     }
 

@@ -80,7 +80,6 @@ struct ScreenshotSettingsView: View {
                             Text(L10n.t(.screenshotRegion)).tag(ScreenshotCaptureMode.region)
                             Text(L10n.t(.screenshotWindow)).tag(ScreenshotCaptureMode.window)
                             Text(L10n.t(.screenshotFullscreen)).tag(ScreenshotCaptureMode.fullscreen)
-                            Text(L10n.t(.screenshotScrolling)).tag(ScreenshotCaptureMode.scrolling)
                         }
                         .onChange(of: screenshotDefaultMode) { newValue in
                             PreferencesManager.shared.screenshotDefaultMode = newValue

@@ -15,7 +15,6 @@ private enum CapturePostAction {
 enum CaptureOverlayPhase {
     case selecting
     case adjusting
-    case scrolling
 }
 
 final class CaptureOverlayController: NSObject {
@@ -39,7 +38,6 @@ final class CaptureOverlayController: NSObject {
     private var isAnnotationTextEditing = false
     private let annotationPanelEdgeInset: CGFloat = 10
     private var annotationComposeSize: NSSize = .zero
-    private var scrollingSession: ScrollingCaptureSession?
 
     init(mode: ScreenshotCaptureMode, onComplete: @escaping (NSRect?) -> Void) {
         self.mode = mode
@@ -161,48 +159,12 @@ final class CaptureOverlayController: NSObject {
     private func handleSelectionReady(_ rect: NSRect) {
         currentSelectionRect = rect
         magnifier.dismiss()
-        if mode == .scrolling {
-            beginScrollingSession(rect: rect)
-            return
-        }
         annotationModel.selectedTool = .selection
         annotationModel.lineWidth = ScreenshotAnnotationTool.selection.defaultLineWidth
         setOverlayPhase(.adjusting)
         setAllowsSelectionAdjustment(true)
         showToolbar(for: rect)
         showAnnotationLayer(for: rect)
-    }
-
-    private func beginScrollingSession(rect: NSRect) {
-        guard !hasStartedCapture else { return }
-        hasStartedCapture = true
-        removeEventMonitors()
-        setOverlayPhase(.scrolling)
-        let windows = overlayWindows
-        overlayWindows = []
-        let session = ScrollingCaptureSession(selectionRect: rect) { [weak self] image, screenRect in
-            self?.scrollingSession = nil
-            self?.finishFromScrolling(image: image, rect: screenRect)
-        }
-        scrollingSession = session
-        session.start(overlayWindows: windows)
-    }
-
-    private func finishFromScrolling(image: NSImage?, rect: NSRect?) {
-        guard !isFinished else { return }
-        guard let image, let rect else {
-            finish(screenRect: nil)
-            return
-        }
-        pendingCaptureRect = rect
-        autoreleasepool {
-            guard let pngData = ScreenshotImageProcessor.pngData(from: image, logicalSize: image.size) else {
-                finish(screenRect: nil)
-                return
-            }
-            exportAndPostAction(pngData: pngData, image: image, logicalSize: image.size)
-            finish(screenRect: rect)
-        }
     }
 
     private func removeEventMonitors() {
@@ -421,8 +383,6 @@ final class CaptureOverlayController: NSObject {
         isFinished = true
         annotationModel.resetSession()
         magnifier.dismiss()
-        scrollingSession?.abandon()
-        scrollingSession = nil
         toolbarPanel?.close()
         toolbarPanel = nil
         annotationPanel?.close()
@@ -499,7 +459,6 @@ extension CaptureOverlayController: CaptureSelectionToolbarDelegate {
 final class CaptureOverlayWindow: NSPanel {
     let screenFrame: NSRect
     private let overlayView: CaptureOverlayView
-    private var scrollingPassThroughRect: NSRect = .zero
 
     init(screen: NSScreen, mode: ScreenshotCaptureMode, onRequest: @escaping (CaptureOverlayRequest) -> Void) {
         self.screenFrame = screen.frame
@@ -547,18 +506,6 @@ final class CaptureOverlayWindow: NSPanel {
         overlayView.window?.invalidateCursorRects(for: overlayView)
     }
 
-    func setScrollingPassThroughRect(_ rect: NSRect) {
-        scrollingPassThroughRect = rect
-        let local = NSRect(
-            x: rect.origin.x - frame.origin.x,
-            y: rect.origin.y - frame.origin.y,
-            width: rect.width,
-            height: rect.height
-        )
-        overlayView.scrollingPassThroughRect = local
-        overlayView.needsDisplay = true
-    }
-
     func setAllowsSelectionAdjustment(_ allowed: Bool) {
         overlayView.allowsSelectionAdjustment = allowed
         overlayView.window?.invalidateCursorRects(for: overlayView)
@@ -590,7 +537,6 @@ final class CaptureOverlayView: NSView {
 
     var phase: CaptureOverlayPhase = .selecting
     var allowsSelectionAdjustment = true
-    var scrollingPassThroughRect: NSRect = .zero
     var onSelectionReady: ((NSRect) -> Void)?
     var onSelectionChanged: ((NSRect) -> Void)?
     var onConfirmSelection: ((NSRect) -> Void)?
@@ -618,7 +564,7 @@ final class CaptureOverlayView: NSView {
 
     var onRequest: ((CaptureOverlayRequest) -> Void)?
 
-    private var isSmartCapture: Bool { mode == .region || mode == .window || mode == .scrolling }
+    private var isSmartCapture: Bool { mode == .region || mode == .window }
 
     init(mode: ScreenshotCaptureMode, screenFrame: NSRect) {
         self.mode = mode
@@ -632,20 +578,11 @@ final class CaptureOverlayView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        if phase == .scrolling, scrollingPassThroughRect.contains(point) {
-            return nil
-        }
-        return super.hitTest(point)
+        super.hitTest(point)
     }
 
     func handle(event: NSEvent, at point: NSPoint) {
         guard !hasSubmittedRequest else { return }
-        if phase == .scrolling {
-            if event.type == .keyDown, event.keyCode == 53 {
-                submit(.cancel)
-            }
-            return
-        }
 
         switch event.type {
         case .keyDown:
@@ -837,16 +774,16 @@ final class CaptureOverlayView: NSView {
 
         switch dragInteraction {
         case .drawing(let start, let snapTarget):
-            if !hasStartedDragging,
-               hypot(point.x - start.x, point.y - start.y) <= clickDragThreshold {
-                if pendingSnapRect.width > 0 {
-                    if mode == .window,
-                       let windowID = pendingWindowID,
-                       pendingHighlightSource == .window {
-                        clearPendingSnap()
-                        submit(.window(windowID, globalRect(from: pendingSnapRect)))
-                        return
-                    }
+                if !hasStartedDragging,
+                   hypot(point.x - start.x, point.y - start.y) <= clickDragThreshold {
+                    if pendingSnapRect.width > 0 {
+                        if mode == .window,
+                           let windowID = pendingWindowID,
+                           pendingHighlightSource == .window {
+                            clearPendingSnap()
+                            submit(.window(windowID, globalRect(from: pendingSnapRect)))
+                            return
+                        }
                     selectionRect = clampedSelection(pendingSnapRect)
                     highlightedBounds = .zero
                     highlightSource = nil
@@ -1112,13 +1049,10 @@ final class CaptureOverlayView: NSView {
         drawSizeLabel("\(Int(rect.width)) × \(Int(rect.height))", for: rect)
         if phase == .adjusting {
             drawSelectionHint(for: rect)
-        } else if phase == .scrolling {
-            drawScrollingHint(for: rect)
         }
     }
 
     private func drawCornerHandles(in rect: NSRect) {
-        guard phase != .scrolling else { return }
         let handleLength: CGFloat = 8
         NSColor.white.setStroke()
         let path = NSBezierPath()
@@ -1144,10 +1078,7 @@ final class CaptureOverlayView: NSView {
     }
 
     private func drawSizeLabel(_ text: String, for rect: NSRect) {
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium),
-            .foregroundColor: NSColor.white
-        ]
+        let attributes = AppFont.textAttributes(size: 11, weight: .medium, monospaced: true, color: .white)
         let textSize = (text as NSString).size(withAttributes: attributes)
         let padding = NSSize(width: 10, height: 4)
         let labelSize = NSSize(width: textSize.width + padding.width * 2, height: textSize.height + padding.height * 2)
@@ -1169,39 +1100,7 @@ final class CaptureOverlayView: NSView {
 
     private func drawSelectionHint(for rect: NSRect) {
         let text = L10n.t(.screenshotSelectionHint)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.white
-        ]
-        let textSize = (text as NSString).size(withAttributes: attributes)
-        let padding = NSSize(width: 12, height: 5)
-        let labelSize = NSSize(width: textSize.width + padding.width * 2, height: textSize.height + padding.height * 2)
-        let y = rect.minY - labelSize.height - 8 > bounds.minY + 8
-            ? rect.minY - labelSize.height - 8
-            : min(rect.maxY + 32, bounds.maxY - labelSize.height - 8)
-        let labelRect = NSRect(
-            x: min(max(rect.midX - labelSize.width / 2, bounds.minX + 8), bounds.maxX - labelSize.width - 8),
-            y: y,
-            width: labelSize.width,
-            height: labelSize.height
-        )
-
-        NSColor.black.withAlphaComponent(0.55).setFill()
-        NSBezierPath(roundedRect: labelRect, xRadius: labelSize.height / 2, yRadius: labelSize.height / 2).fill()
-
-        let textOrigin = NSPoint(
-            x: labelRect.midX - textSize.width / 2,
-            y: labelRect.midY - textSize.height / 2
-        )
-        (text as NSString).draw(at: textOrigin, withAttributes: attributes)
-    }
-
-    private func drawScrollingHint(for rect: NSRect) {
-        let text = L10n.t(.screenshotScrollingHint)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.white
-        ]
+        let attributes = AppFont.textAttributes(size: 12, weight: .medium, color: .white)
         let textSize = (text as NSString).size(withAttributes: attributes)
         let padding = NSSize(width: 12, height: 5)
         let labelSize = NSSize(width: textSize.width + padding.width * 2, height: textSize.height + padding.height * 2)
@@ -1226,11 +1125,8 @@ final class CaptureOverlayView: NSView {
     }
 
     private func drawHintBar() {
-        let hint = mode == .scrolling ? L10n.t(.screenshotScrollingSelectHint) : L10n.t(.screenshotHint)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
-            .foregroundColor: NSColor.white
-        ]
+        let hint = L10n.t(.screenshotHint)
+        let attributes = AppFont.textAttributes(size: 13, weight: .medium, color: .white)
         let textSize = (hint as NSString).size(withAttributes: attributes)
         let padding = NSSize(width: 16, height: 8)
         let barSize = NSSize(width: textSize.width + padding.width * 2, height: textSize.height + padding.height * 2)

@@ -40,10 +40,7 @@ struct TextAnnotationStyle: Equatable {
     }
 
     func attributes(color: NSColor, scale: CGFloat = 1) -> [NSAttributedString.Key: Any] {
-        var attrs: [NSAttributedString.Key: Any] = [
-            .font: makeFont(scale: scale),
-            .foregroundColor: color
-        ]
+        var attrs = AppFont.attributes(font: makeFont(scale: scale), color: color)
         if isUnderline {
             attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
         }
