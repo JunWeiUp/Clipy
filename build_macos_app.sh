@@ -39,16 +39,11 @@ SWIFT_SOURCES=(
     Sources/ScreenCapturePermissionManager.swift
     Sources/ScreenshotCaptureService.swift
     Sources/ImageOCRService.swift
-    Sources/CaptureOverlayWindow.swift
-    Sources/CaptureSelectionToolbar.swift
-    Sources/CaptureAnnotationPanel.swift
     Sources/ScreenshotExport.swift
     Sources/UIElementDetector.swift
     Sources/CaptureMagnifierView.swift
     Sources/ScreenshotSaveService.swift
     Sources/ScreenshotImageProcessor.swift
-    Sources/ScreenshotCoordinator.swift
-    Sources/ScreenshotEditorViewModel.swift
     Sources/ScreenshotGlobalHotKeyManager.swift
     Sources/PinPanelController.swift
     Sources/SecureStorageCrypto.swift
@@ -85,8 +80,6 @@ SWIFT_SOURCES=(
     Sources/UI/SettingsView.swift
     Sources/UI/ScreenshotSettingsView.swift
     Sources/UI/SearchView.swift
-    Sources/UI/ScreenshotToolbarView.swift
-    Sources/UI/AnnotationCanvasView.swift
     Sources/UI/HighlightedText.swift
     Sources/UI/HistoryPreviewView.swift
     Sources/UI/HistoryPreviewRepresentables.swift
@@ -96,6 +89,12 @@ SWIFT_SOURCES=(
     Sources/UI/SnippetEditorView.swift
     Sources/main.swift
 )
+
+# Append the ported macshot screenshot module (Phase 0+ of the screenshot rewrite).
+# macOS ships bash 3.2 (no globstar), so collect files with find to stay portable.
+while IFS= read -r -d '' f; do
+    SWIFT_SOURCES+=("$f")
+done < <(find Sources/Screenshot -type f -name '*.swift' -print0)
 
 echo "🚀 开始构建 ${APP_NAME}.app..."
 
@@ -127,6 +126,8 @@ done
 swiftc \
     "${BUILD_SRC_PATHS[@]}" \
     -whole-module-optimization \
+    -target arm64-apple-macos13.0 \
+    -D OFFLINE \
     -o "${MACOS_DIR}/${EXECUTABLE_NAME}" \
     -framework AppKit \
     -framework SwiftUI \
@@ -142,6 +143,11 @@ swiftc \
     -framework UniformTypeIdentifiers \
     -framework PDFKit \
     -framework WebKit \
+    -framework Quartz \
+    -framework AVFoundation \
+    -framework VideoToolbox \
+    -framework CoreVideo \
+    -framework CoreMedia \
     -lcompression
 
 # 4. 准备资源文件
@@ -188,6 +194,10 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <string>Clipy needs local network access to sync clipboard content with your other devices.</string>
     <key>NSScreenCaptureUsageDescription</key>
     <string>Clipy needs screen recording permission to capture screenshots.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Clipy needs microphone access to record voice audio in screen recordings.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Clipy needs camera access to show the webcam overlay in screen recordings.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_clipy-sync._tcp</string>

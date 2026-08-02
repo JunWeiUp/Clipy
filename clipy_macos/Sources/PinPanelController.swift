@@ -69,13 +69,8 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
     private var currentImage: NSImage
 
     // MARK: Edit mode state
-
-    private var isEditing = false
-    private var savedRotationDegrees: CGFloat = 0
-    private var annotationModel = AnnotationCanvasModel()
-    private var canvasView: AnnotationCanvasView?
-    private var editToolbar: PinEditToolbar?
-    private var editConstraints: [NSLayoutConstraint] = []
+    // Editing opens macshot's DetachedEditorWindowController (see enterEditMode);
+    // the in-pin canvas/toolbar machinery has been removed.
 
     init(image: NSImage, screenRect: NSRect? = nil, id: UUID, onClose: @escaping (UUID) -> Void) {
         self.panelID = id
@@ -206,9 +201,6 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        // While editing, the canvas owns pointer interaction; do not zoom.
-        if isEditing { return }
-
         if event.modifierFlags.contains(.command) {
             // Opacity: continuous on trackpad, stepped on mouse wheel.
             if event.hasPreciseScrollingDeltas {
@@ -272,25 +264,6 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
     }
 
     override func keyDown(with event: NSEvent) {
-        // While editing, let the canvas/toolbar handle keys; rotation/opacity shortcuts are disabled.
-        if isEditing {
-            switch event.charactersIgnoringModifiers?.lowercased() {
-            case "z":
-                if event.modifierFlags.contains(.shift) {
-                    annotationModel.redo()
-                } else {
-                    annotationModel.undo()
-                }
-                canvasView?.needsDisplay = true
-                editToolbar?.refreshUndoRedo()
-            case "escape":
-                exitEditMode(save: false)
-            default:
-                super.keyDown(with: event)
-            }
-            return
-        }
-
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "r":
             rotationDegrees += event.modifierFlags.contains(.shift) ? -90 : 90
@@ -320,87 +293,28 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
 
     // MARK: Edit mode
 
+    /// Open the pinned image in macshot's full detached editor (18 tools,
+    /// secondary options row, beautify/effects, crop/flip, undo/redo). This
+    /// matches macshot's pin → edit behavior: the floating pin closes and the
+    /// image opens in a standalone editor window. Saving in the editor ingests
+    /// the edited image back into clipy1's history (see AppDelegate's
+    /// ScreenshotAppIntegration conformance), where it can be re-pinned.
     @objc private func enterEditMode() {
-        guard !isEditing else { return }
-        isEditing = true
+        // Capture the current (possibly rotated/zoomed) image as the editor input.
+        // The detached editor works in image-relative coordinates, so we hand it
+        // the composited frame the user currently sees.
+        let editorImage = currentImage
 
-        // Rotation breaks annotation coordinate mapping; park it at 0 while editing and
-        // restore afterwards.
-        savedRotationDegrees = rotationDegrees
-        rotationDegrees = 0
-        updatePinViewTransform()
+        // Close this floating pin — the editor is now the owner of the image.
+        closePanel()
 
-        // Disable dragging so the canvas owns mouse interaction.
-        isMovableByWindowBackground = false
-
-        guard let container = contentView else { return }
-
-        let canvas = AnnotationCanvasView(baseImage: currentImage, model: annotationModel, contentMode: .fill)
-        canvas.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(canvas)
-        self.canvasView = canvas
-
-        let toolbar = PinEditToolbar(model: annotationModel) { [weak self] in
-            self?.canvasView?.needsDisplay = true
-        } onFinish: { [weak self] save in
-            self?.exitEditMode(save: save)
-        }
-        toolbar.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(toolbar)
-        self.editToolbar = toolbar
-
-        let constraints = [
-            canvas.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            canvas.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            canvas.topAnchor.constraint(equalTo: container.topAnchor),
-            canvas.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            toolbar.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
-            toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -32)
-        ]
-        NSLayoutConstraint.activate(constraints)
-        editConstraints = constraints
-
-        // Hide the floating buttons while editing; the toolbar has Done/Cancel.
-        closeButton.isHidden = true
-        editButton.isHidden = true
-
-        makeKey()
-        canvas.needsDisplay = true
+        // Activate the app so the editor window can become key (.regular policy).
+        NSApp.activate(ignoringOtherApps: true)
+        DetachedEditorWindowController.open(image: editorImage, fromCapture: false)
     }
 
-    private func exitEditMode(save: Bool) {
-        guard isEditing else { return }
-        isEditing = false
-
-        if save {
-            // Bake annotations into the image at native resolution, then update the pin so
-            // subsequent edits stack on the annotated result.
-            if let flattened = AnnotationCanvasView.flatten(baseImage: currentImage, model: annotationModel) {
-                currentImage = flattened
-                pinView.image = currentImage
-            }
-        }
-
-        canvasView?.removeFromSuperview()
-        canvasView = nil
-        editToolbar?.removeFromSuperview()
-        editToolbar = nil
-        NSLayoutConstraint.deactivate(editConstraints)
-        editConstraints = []
-
-        annotationModel.resetSession()
-
-        // Restore interaction + rotation.
-        isMovableByWindowBackground = true
-        rotationDegrees = savedRotationDegrees
-        updatePinViewTransform()
-
-        closeButton.isHidden = false
-        editButton.isHidden = false
-    }
 
     @objc private func closePanel() {
-        if isEditing { exitEditMode(save: false) }
         orderOut(nil)
         onClose(panelID)
     }
@@ -420,197 +334,6 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         onClose(panelID)
     }
-}
-
-// MARK: - Edit toolbar
-
-private final class PinEditToolbar: NSView {
-    private let model: AnnotationCanvasModel
-    private let onChange: () -> Void
-    private let onFinish: (Bool) -> Void
-    private var toolButtons: [ScreenshotAnnotationTool: NSButton] = [:]
-
-    private let paletteColors: [NSColor] = [
-        .systemRed, .systemOrange, .systemYellow, .systemGreen,
-        .systemBlue, .systemPurple, .white, .black
-    ]
-
-    init(model: AnnotationCanvasModel, onChange: @escaping () -> Void, onFinish: @escaping (Bool) -> Void) {
-        self.model = model
-        self.onChange = onChange
-        self.onFinish = onFinish
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 8
-        layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.9).cgColor
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.cgColor
-        buildUI()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    private func buildUI() {
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2)
-        ])
-
-        // Tool buttons.
-        for tool in ScreenshotAnnotationTool.allCases {
-            let button = makeToolButton(tool)
-            toolButtons[tool] = button
-            stack.addArrangedSubview(button)
-        }
-        selectTool(.rectangle)
-
-        stack.addArrangedSubview(separator())
-
-        // Color swatches.
-        for color in paletteColors {
-            stack.addArrangedSubview(makeColorButton(color))
-        }
-
-        stack.addArrangedSubview(separator())
-
-        // Line width stepper.
-        let widthLabel = NSTextField(labelWithString: "3")
-        widthLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        widthLabel.alignment = .center
-        widthLabel.widthAnchor.constraint(equalToConstant: 16).isActive = true
-        let minus = makeImageButton(symbol: "minus") { [weak self, weak widthLabel] in
-            guard let self else { return }
-            self.model.lineWidth = max(1, (self.model.lineWidth - 1).rounded())
-            widthLabel?.stringValue = "\(Int(self.model.lineWidth))"
-            self.onChange()
-        }
-        let plus = makeImageButton(symbol: "plus") { [weak self, weak widthLabel] in
-            guard let self else { return }
-            self.model.lineWidth = min(40, (self.model.lineWidth + 1).rounded())
-            widthLabel?.stringValue = "\(Int(self.model.lineWidth))"
-            self.onChange()
-        }
-        stack.addArrangedSubview(minus)
-        stack.addArrangedSubview(widthLabel)
-        stack.addArrangedSubview(plus)
-
-        stack.addArrangedSubview(separator())
-
-        // Undo / redo / clear.
-        stack.addArrangedSubview(makeImageButton(symbol: "arrow.uturn.backward") { [weak self] in
-            self?.model.undo(); self?.onChange(); self?.refreshUndoRedo()
-        })
-        stack.addArrangedSubview(makeImageButton(symbol: "arrow.uturn.forward") { [weak self] in
-            self?.model.redo(); self?.onChange(); self?.refreshUndoRedo()
-        })
-        stack.addArrangedSubview(makeImageButton(symbol: "trash") { [weak self] in
-            self?.model.clearAnnotations(); self?.onChange(); self?.refreshUndoRedo()
-        })
-
-        stack.addArrangedSubview(separator())
-
-        // Done.
-        let done = NSButton(title: L10n.t(.screenshotEditDone), target: nil, action: nil)
-        done.bezelStyle = .inline
-        done.controlSize = .small
-        done.target = self
-        done.action = #selector(doneTapped)
-        stack.addArrangedSubview(done)
-    }
-
-    private func makeToolButton(_ tool: ScreenshotAnnotationTool) -> NSButton {
-        let button = NSButton()
-        button.bezelStyle = .inline
-        button.isBordered = false
-        button.image = NSImage(systemSymbolName: tool.systemImage, accessibilityDescription: tool.id)
-        button.contentTintColor = .labelColor
-        button.target = self
-        button.action = #selector(toolTapped(_:))
-        button.tag = ScreenshotAnnotationTool.allCases.firstIndex(of: tool) ?? 0
-        button.widthAnchor.constraint(equalToConstant: 24).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 24).isActive = true
-        return button
-    }
-
-    private func makeColorButton(_ color: NSColor) -> NSButton {
-        let button = NSButton()
-        button.bezelStyle = .inline
-        button.isBordered = false
-        button.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)
-        button.contentTintColor = color
-        button.target = self
-        button.action = #selector(colorTapped(_:))
-        button.widthAnchor.constraint(equalToConstant: 18).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 18).isActive = true
-        return button
-    }
-
-    private func makeImageButton(symbol: String, action: @escaping () -> Void) -> NSButton {
-        let button = NSButton()
-        button.bezelStyle = .inline
-        button.isBordered = false
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        button.contentTintColor = .labelColor
-        button.widthAnchor.constraint(equalToConstant: 24).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 24).isActive = true
-        // Use an associated object closure to keep the call site simple.
-        objc_setAssociatedObject(button, &Self.actionKey, action, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-        button.target = self
-        button.action = #selector(imageButtonTapped(_:))
-        return button
-    }
-
-    private func separator() -> NSView {
-        let view = NSBox()
-        view.boxType = .separator
-        view.widthAnchor.constraint(equalToConstant: 1).isActive = true
-        return view
-    }
-
-    private func selectTool(_ tool: ScreenshotAnnotationTool) {
-        model.selectedTool = tool
-        model.lineWidth = tool.defaultLineWidth
-        for (t, button) in toolButtons {
-            button.contentTintColor = (t == tool) ? .controlAccentColor : .labelColor
-        }
-    }
-
-    @objc private func toolTapped(_ sender: NSButton) {
-        let all = ScreenshotAnnotationTool.allCases
-        guard sender.tag >= 0, sender.tag < all.count else { return }
-        selectTool(all[sender.tag])
-        onChange()
-    }
-
-    @objc private func colorTapped(_ sender: NSButton) {
-        model.strokeColor = sender.contentTintColor ?? .systemRed
-        onChange()
-    }
-
-    @objc private func imageButtonTapped(_ sender: NSButton) {
-        if let action = objc_getAssociatedObject(sender, &Self.actionKey) as? () -> Void {
-            action()
-        }
-    }
-
-    @objc private func doneTapped() {
-        onFinish(true)
-    }
-
-    fileprivate func refreshUndoRedo() {
-        // Buttons are stateless images; enabled-state could be toggled here if desired.
-    }
-
-    private static var actionKey: UInt8 = 0
 }
 
 private final class PinContainerView: NSView {

@@ -691,18 +691,15 @@ class MenuController: NSObject {
     }
 
     @objc private func startScreenshotRegion() {
-        NSApp.activate(ignoringOtherApps: true)
-        ScreenshotCoordinator.shared.start(mode: .region)
+        ScreenshotSessionCoordinator.shared.startCapture(mode: .region, fromMenu: true)
     }
 
     @objc private func startScreenshotWindow() {
-        NSApp.activate(ignoringOtherApps: true)
-        ScreenshotCoordinator.shared.start(mode: .window)
+        ScreenshotSessionCoordinator.shared.startCapture(mode: .window, fromMenu: true)
     }
 
     @objc private func startScreenshotFullscreen() {
-        NSApp.activate(ignoringOtherApps: true)
-        ScreenshotCoordinator.shared.start(mode: .fullscreen)
+        ScreenshotSessionCoordinator.shared.startCapture(mode: .fullscreen, fromMenu: true)
     }
 
     @objc private func languageDidChange() {
