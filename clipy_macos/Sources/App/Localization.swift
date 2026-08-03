@@ -64,6 +64,7 @@ enum L10nKey: String {
     case enterTextToSend
     case editSnippets
     case clearHistory
+    case clearHistoryConfirm
     case showLogs
     case quit
     case chooseFileToSend
@@ -347,6 +348,7 @@ struct L10n {
             .enterTextToSend: "输入要发送的文本",
             .editSnippets: "编辑片段...",
             .clearHistory: "清空历史记录",
+            .clearHistoryConfirm: "将删除全部历史记录，此操作不可撤销。",
             .showLogs: "显示日志...",
             .quit: "退出",
             .chooseFileToSend: "选择要发送到 %@ 的文件",
@@ -619,6 +621,7 @@ struct L10n {
             .enterTextToSend: "Enter text to send",
             .editSnippets: "Edit Snippets...",
             .clearHistory: "Clear History",
+            .clearHistoryConfirm: "All history will be deleted. This cannot be undone.",
             .showLogs: "Show Logs...",
             .quit: "Quit",
             .chooseFileToSend: "Choose a file to send to %@",

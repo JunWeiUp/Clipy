@@ -275,6 +275,22 @@ final class SearchViewModel: ObservableObject {
         performSearch(immediate: true)
     }
 
+    /// 清空全部历史记录（破坏性操作，弹窗确认）。返回是否已执行清理。
+    @discardableResult
+    func clearAllHistory() -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = L10n.t(.clearHistory)
+        alert.informativeText = L10n.t(.clearHistoryConfirm)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.t(.clear))
+        alert.addButton(withTitle: L10n.t(.cancel))
+        guard alert.runModal() == .alertFirstButtonReturn else { return false }
+        ClipboardManager.shared.clearHistory()
+        performSearch(immediate: true)
+        return true
+    }
+
     func togglePinSelected() {
         for id in selectedIDs {
             guard let entry = results.first(where: { $0.id == id })?.entry else { continue }
@@ -353,6 +369,14 @@ struct SearchView: View {
                             .onChange(of: viewModel.useRegex) { _ in
                                 viewModel.onFilterChange()
                             }
+                        Button {
+                            viewModel.clearAllHistory()
+                        } label: {
+                            Label(L10n.t(.clearHistory), systemImage: "trash")
+                                .labelStyle(.titleAndIcon)
+                        }
+                        .buttonStyle(.bordered)
+                        .help(L10n.t(.clearHistory))
                     }
 
                     HStack(spacing: AppSpacing.sm) {

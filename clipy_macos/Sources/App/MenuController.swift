@@ -333,10 +333,6 @@ class MenuController: NSObject {
         menu.addItem(NSMenuItem.separator())
 
         // --- System ---
-        let clearItem = NSMenuItem(title: L10n.t(.clearHistory), action: #selector(clearHistory), keyEquivalent: "")
-        clearItem.target = self
-        menu.addItem(clearItem)
-
         let logsItem = NSMenuItem(title: L10n.t(.showLogs), action: #selector(openLogs), keyEquivalent: "L")
         logsItem.target = self
         menu.addItem(logsItem)
@@ -763,10 +759,6 @@ class MenuController: NSObject {
         alert.runModal()
     }
     
-    @objc private func clearHistory() {
-        clipboardManager.clearHistory()
-    }
-
     @objc private func openNotifications() {
         notificationWindow.showWindow()
     }
