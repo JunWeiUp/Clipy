@@ -426,6 +426,14 @@ class ClipboardManager {
             self.backfillSearchIndexesIfNeeded()
             self.schedulePruneUnreferencedMediaFiles()
         }
+
+        // 预热首屏数据：后台跑一次摘要查询，让 SQLite 缓存页提前暖起来，
+        // 避免第一次打开菜单时 fetchSummaries 因启动期 DB 队列争用而阻塞卡顿。
+        // 结果丢弃，不写入 recentSummaries（仍由菜单打开时正式加载），零行为风险。
+        let warmupLimit = menuHistoryLimit
+        DispatchQueue.global(qos: .utility).async {
+            _ = HistoryRepository.shared.fetchSummaries(limit: warmupLimit)
+        }
     }
     
     private func updateRecentContentHashes() {

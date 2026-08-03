@@ -14,6 +14,17 @@ class MenuController: NSObject {
     private let snippetManager = SnippetManager.shared
     private lazy var notificationWindow = NotificationWindow()
     private var menuUpdateWorkItem: DispatchWorkItem?
+
+    /// 菜单是否正在显示（menuNeedsUpdate 进入到 menuDidClose 之间为 true）。
+    /// 打开期间禁止全量 removeAllItems 重建——重建会销毁正在 hover/展开的 item
+    /// 导致"无法选中"，并重新发起所有缩略图/HTML 标题异步加载导致布局抖动。
+    private var isMenuOpen = false
+    /// 打开期间发生过数据变化（历史/片段/通知），关闭后再重建一次保证下次最新。
+    private var isMenuDirtyWhileOpen = false
+
+    /// 标识 Network 区段的固定 tag，便于设备区增量更新时定位区间。
+    private static let networkSectionHeaderTag = 0x4E45_5457 // "NETW"
+    private static let networkLocalIPItemTag = 0x4C4F_4350   // "LOCP"
     
     override init() {
         super.init()
@@ -112,7 +123,11 @@ class MenuController: NSObject {
 
         SyncManager.shared.onDevicesChanged = { [weak self] _ in
             DispatchQueue.main.async {
-                self?.scheduleMenuUpdate()
+                guard let self else { return }
+                // 菜单打开期间只做设备区增量更新；关闭时无需处理，下次打开自然最新。
+                if self.isMenuOpen {
+                    self.applyDeviceIncrementalUpdate()
+                }
             }
         }
     }
@@ -126,17 +141,12 @@ class MenuController: NSObject {
     }
 
     private func scheduleMenuUpdate() {
-        menuUpdateWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            // 仅在菜单已打开（仍保留摘要）时刷新；关闭状态下交给下次 menuNeedsUpdate。
-            guard self.clipboardManager.isMenuMemoryRetained,
-                  let menu = self.statusItem.menu else { return }
-            self.clipboardManager.ensureMenuSummariesLoaded()
-            self.rebuildMenuContents(menu, with: self.clipboardManager.recentSummaries)
-        }
-        menuUpdateWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+        // 菜单未打开：什么都不做，下次 menuNeedsUpdate 会整建。
+        // 菜单已打开：禁止全量 removeAllItems 重建（会销毁正在交互的 item 并重新发起
+        // 缩略图/HTML 标题异步加载，导致抖动与无法选中）。仅标记 dirty，
+        // 关闭后由 menuDidClose 重建一次；设备变化走 applyDeviceIncrementalUpdate 局部更新。
+        guard isMenuOpen else { return }
+        isMenuDirtyWhileOpen = true
     }
 
     private func refreshMenuForOpen(_ menu: NSMenu) {
@@ -240,54 +250,18 @@ class MenuController: NSObject {
             keyEquivalent: "r",
             keyEquivalentModifierMask: [.command],
             action: #selector(refreshLanDevices),
-            buttonEnabled: syncEnabled
+            buttonEnabled: syncEnabled,
+            tag: Self.networkSectionHeaderTag
         ) { [weak self] in
             self?.refreshLanDevices()
         })
 
         let deviceEntries = SyncManager.shared.availableDeviceEntries
-        if deviceEntries.isEmpty {
-            let emptyItem = NSMenuItem(
-                title: Self.indentedMenuTitle(L10n.t(.noDevicesFound)),
-                action: nil,
-                keyEquivalent: ""
-            )
-            emptyItem.isEnabled = false
-            menu.addItem(emptyItem)
-        } else {
-            for entry in deviceEntries {
-                let deviceItem = NSMenuItem(
-                    title: Self.indentedMenuTitle(entry.displayName),
-                    action: nil,
-                    keyEquivalent: ""
-                )
-                let deviceSubmenu = NSMenu()
-
-                let sendTextItem = NSMenuItem(
-                    title: L10n.t(.sendText),
-                    action: #selector(sendTextClicked(_:)),
-                    keyEquivalent: ""
-                )
-                sendTextItem.target = self
-                sendTextItem.representedObject = entry.peerId
-                deviceSubmenu.addItem(sendTextItem)
-
-                let sendFileItem = NSMenuItem(
-                    title: L10n.t(.sendFile),
-                    action: #selector(sendFileClicked(_:)),
-                    keyEquivalent: ""
-                )
-                sendFileItem.target = self
-                sendFileItem.representedObject = entry.peerId
-                deviceSubmenu.addItem(sendFileItem)
-
-                deviceItem.submenu = deviceSubmenu
-                menu.addItem(deviceItem)
-            }
-        }
+        addDeviceItems(to: menu, entries: deviceEntries)
 
         // Always show this device's LAN IP so the user knows which address
         // peers should connect to (useful for manual peer entry on Android).
+        // 打固定 tag，作为设备区增量更新的右边界哨兵。
         let localIPs = SyncManager.shared.enumerateLocalIPv4s()
         if let primaryIP = localIPs.first {
             let ipTitle: String
@@ -298,6 +272,7 @@ class MenuController: NSObject {
             }
             let ipItem = NSMenuItem(title: ipTitle, action: nil, keyEquivalent: "")
             ipItem.isEnabled = false
+            ipItem.tag = Self.networkLocalIPItemTag
             menu.addItem(ipItem)
         }
 
@@ -391,6 +366,142 @@ class MenuController: NSObject {
             menu.addItem(groupFolderItem)
         }
     }
+
+    // MARK: - Network device section (incremental update)
+
+    /// 构造单个设备项（含 sendText/sendFile 子菜单）。
+    /// 在 populateMenu 初始构建与设备区增量更新时共用，保证一致。
+    private func makeDeviceMenuItem(for entry: DeviceEntry) -> NSMenuItem {
+        let deviceItem = NSMenuItem(
+            title: Self.indentedMenuTitle(entry.displayName),
+            action: nil,
+            keyEquivalent: ""
+        )
+        let deviceSubmenu = NSMenu()
+
+        let sendTextItem = NSMenuItem(
+            title: L10n.t(.sendText),
+            action: #selector(sendTextClicked(_:)),
+            keyEquivalent: ""
+        )
+        sendTextItem.target = self
+        sendTextItem.representedObject = entry.peerId
+        deviceSubmenu.addItem(sendTextItem)
+
+        let sendFileItem = NSMenuItem(
+            title: L10n.t(.sendFile),
+            action: #selector(sendFileClicked(_:)),
+            keyEquivalent: ""
+        )
+        sendFileItem.target = self
+        sendFileItem.representedObject = entry.peerId
+        deviceSubmenu.addItem(sendFileItem)
+
+        deviceItem.submenu = deviceSubmenu
+        deviceItem.representedObject = entry.peerId
+        return deviceItem
+    }
+
+    /// 在 Network section header 之后、本机 IP 项之前，添加设备项或空状态占位。
+    /// 空状态占位项也带 peerId sentinel，便于增量更新时识别。
+    private func addDeviceItems(to menu: NSMenu, entries: [DeviceEntry]) {
+        if entries.isEmpty {
+            let emptyItem = NSMenuItem(
+                title: Self.indentedMenuTitle(L10n.t(.noDevicesFound)),
+                action: nil,
+                keyEquivalent: ""
+            )
+            emptyItem.isEnabled = false
+            emptyItem.representedObject = "__no_devices__"
+            menu.addItem(emptyItem)
+        } else {
+            for entry in entries {
+                menu.addItem(makeDeviceMenuItem(for: entry))
+            }
+        }
+    }
+
+    /// 设备区增量更新：菜单打开期间，设备扫描陆续返回时只调整 Network 区的设备项，
+    /// 不触发整张菜单 removeAllItems 重建——避免历史/片段/工具区被销毁导致抖动与无法选中。
+    /// 区间定位：从 networkSectionHeaderTag 之后第一个 item 起，到 networkLocalIPItemTag（含）
+    /// 之前的所有 item 视为设备项（含可能的空状态占位）。
+    private func applyDeviceIncrementalUpdate() {
+        guard isMenuOpen, let menu = statusItem.menu else { return }
+
+        // 找到 Network section header 的索引。
+        guard let headerIndex = menu.items.firstIndex(where: { $0.tag == Self.networkSectionHeaderTag }) else {
+            return
+        }
+        let deviceStart = headerIndex + 1
+
+        let newEntries = SyncManager.shared.availableDeviceEntries
+        let newPeerIds = Set(newEntries.map(\.peerId))
+
+        // 1) 从后往前移除消失的设备项与空状态占位（设备列表非空时占位必须清除）。
+        //    从后往前避免移除导致索引前移的错位。
+        for i in stride(from: deviceSectionEnd(menu, deviceStart: deviceStart) - 1,
+                        through: deviceStart,
+                        by: -1) where i < menu.items.count {
+            guard i >= 0 else { break }
+            let item = menu.items[i]
+            let peerId = item.representedObject as? String
+            if peerId == "__no_devices__" || (peerId.map { !newPeerIds.contains($0) } ?? false) {
+                menu.removeItem(at: i)
+            }
+        }
+
+        // 2) 以新 entries 为准，逐个校正位置：已存在则改 title，否则插入。
+        //    这样新增设备会按新顺序依次出现在 deviceStart 处。
+        var insertAt = deviceStart
+        for entry in newEntries {
+            if let existing = indexInDeviceSection(menu, peerId: entry.peerId, deviceStart: deviceStart) {
+                let desired = Self.indentedMenuTitle(entry.displayName)
+                if menu.items[existing].title != desired {
+                    menu.items[existing].title = desired
+                }
+                // 已存在的项保持原位，新项的插入游标顺序推进即可。
+            } else {
+                menu.insertItem(makeDeviceMenuItem(for: entry), at: insertAt)
+            }
+            insertAt += 1
+        }
+
+        // 3) 最终设备列表为空则补一个空状态占位。
+        if newEntries.isEmpty, deviceSectionEnd(menu, deviceStart: deviceStart) == deviceStart {
+            let emptyItem = NSMenuItem(
+                title: Self.indentedMenuTitle(L10n.t(.noDevicesFound)),
+                action: nil,
+                keyEquivalent: ""
+            )
+            emptyItem.isEnabled = false
+            emptyItem.representedObject = "__no_devices__"
+            menu.insertItem(emptyItem, at: deviceStart)
+        }
+    }
+
+    /// 设备区区间末尾索引（ exclusive）：从 deviceStart 扫到 local IP 项或 separator。
+    private func deviceSectionEnd(_ menu: NSMenu, deviceStart: Int) -> Int {
+        var i = deviceStart
+        while i < menu.items.count {
+            let item = menu.items[i]
+            if item.tag == Self.networkLocalIPItemTag || item.isSeparatorItem { return i }
+            i += 1
+        }
+        return i
+    }
+
+    /// 在设备区区间内查找指定 peerId 的 item 索引。
+    private func indexInDeviceSection(_ menu: NSMenu, peerId: String, deviceStart: Int) -> Int? {
+        var i = deviceStart
+        while i < menu.items.count {
+            let item = menu.items[i]
+            if item.tag == Self.networkLocalIPItemTag || item.isSeparatorItem { return nil }
+            if (item.representedObject as? String) == peerId { return i }
+            i += 1
+        }
+        return nil
+    }
+
     
     private func makeHistoryMenuItem(summary: HistorySummary, indexInGroup: Int, startIndex: Int) -> NSMenuItem {
         let rawTitle = summaryDisplayTitle(for: summary)
@@ -463,7 +574,14 @@ class MenuController: NSObject {
 
         if case .image(let path) = summary.item {
             // Thumbnails come from disk (possibly with decrypt + downsample on miss);
-            // never block menu construction on that IO.
+            // never block menu construction on that IO. 先挂一个与最终缩略图同尺寸的
+            // 占位图标，使菜单项首次渲染即具备正确高度/左侧宽度，避免缩略图异步回来后
+            // 项的高度/排版跳变。
+            let placeholderConfig = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+            menuItem.image = NSImage(
+                systemSymbolName: "photo",
+                accessibilityDescription: L10n.t(.historyTypeImage)
+            )?.withSymbolConfiguration(placeholderConfig)
             DispatchQueue.global(qos: .userInitiated).async { [weak menuItem] in
                 let thumbnail = HistoryThumbnailCache.thumbnail(for: path, size: NSSize(width: 32, height: 32))
                 DispatchQueue.main.async {
@@ -655,9 +773,14 @@ class MenuController: NSObject {
 
     @objc private func refreshLanDevices() {
         SyncManager.shared.refreshDiscovery()
-        scheduleMenuUpdate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.scheduleMenuUpdate()
+        // 菜单打开期间走设备区增量更新（由 onDevicesChanged 回调驱动），
+        // 不再触发整张菜单重建；1s 后补一次增量以兜底慢响应的设备。
+        if isMenuOpen {
+            applyDeviceIncrementalUpdate()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self else { return }
+                if self.isMenuOpen { self.applyDeviceIncrementalUpdate() }
+            }
         }
     }
     
@@ -716,12 +839,14 @@ class MenuController: NSObject {
         keyEquivalentModifierMask: NSEvent.ModifierFlags,
         action: Selector,
         buttonEnabled: Bool = true,
+        tag: Int = 0,
         onAction: @escaping () -> Void
     ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
         item.keyEquivalentModifierMask = keyEquivalentModifierMask
         item.target = self
         item.isEnabled = buttonEnabled
+        item.tag = tag
         let headerView = SectionMenuHeaderView(
             title: title,
             symbolName: symbolName,
@@ -878,12 +1003,22 @@ private final class HoverIconButton: NSButton {
 extension MenuController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === statusItem.menu else { return }
+        isMenuOpen = true
+        isMenuDirtyWhileOpen = false
         refreshMenuForOpen(menu)
     }
 
     func menuDidClose(_ menu: NSMenu) {
         guard menu === statusItem.menu else { return }
+        isMenuOpen = false
         clipboardManager.releaseMenuMemory()
         MemoryFootprintReclaimer.reclaimIfIdle()
+        // 打开期间累积的 dirty（历史/片段/通知变化）在关闭后补一次重建，
+        // 保证下次打开内容最新；设备区已通过增量更新实时反映，无需在此重做。
+        if isMenuDirtyWhileOpen, let nextMenu = statusItem.menu {
+            isMenuDirtyWhileOpen = false
+            clipboardManager.ensureMenuSummariesLoaded()
+            rebuildMenuContents(nextMenu, with: clipboardManager.recentSummaries)
+        }
     }
 }
