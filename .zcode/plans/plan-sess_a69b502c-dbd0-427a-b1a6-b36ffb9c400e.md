@@ -1,58 +1,21 @@
-# Mac 端代码按功能重组目录结构
+# 截图相关控制全部纳入截图偏好
 
 ## 目标
-把扁平的 `Sources/`(48 根文件 + 21 个 UI 文件)按功能重组为清晰目录,让 AI 一眼定位。同时把构建脚本从"显式列文件"改成 `find` 自动收集(以后加文件零维护)。
+把分散在 UserDefaults 的截图/录屏/输出/滚动/绘制辅助/美化特效控制,统一纳入 `PreferencesManager` 门面 + `ScreenshotSettingsView` 偏好面板。
 
-## 关键事实(降低风险)
-- Swift 同模块内文件**不需要 import**——移动文件只改 `build_macos_app.sh` 路径,**不影响任何代码逻辑**。
-- 改成 `find` 全自动收集后,移动文件连脚本都不用改。
-- `Sources/Screenshot/` 子树**已组织好,完全不动**。
+## 已确认范围(用户全选)
+- **录屏控制**:完成动作(编辑器/Finder/剪贴板)、帧率、隐藏HUD、系统音频/麦克风/摄像头/鼠标高亮/按键默认开关、按键模式(全部/仅快捷键)、摄像头位置/尺寸/形状
+- **输出与缩略图**:显示浮动缩略图、堆叠、尺寸/位置、快速捕获动作、捕获鼠标光标、保存格式+质量、缩小Retina、提示音
+- **滚动与绘制辅助**:滚动最大高度/自动滚动/速度/冻结检测;吸附对齐线、记住上次工具、单键快捷键提示、压感/平滑/智能荧光笔
+- **美化与特效默认值**:渐变样式/模式/边距/圆角/阴影、特效预设/亮度/对比度/饱和度/锐度
 
-## 新目录结构
-```
-Sources/
-├── main.swift                          (留根:应用入口)
-├── App/                                (应用基础设施)
-│   ├── MenuController, PreferencesManager, Localization, HotKeyManager
-│   ├── LaunchAtLoginManager, AccessibilityManager, MemoryFootprintReclaimer
-│   ├── WindowSession, LogManager, LogWindow, ShortcutRecorderView
-│   ├── SearchGlobalHotKeyManager, SearchWindow
-│   ├── ScreenshotPreferences (从 ScreenshotTypes 迁出的 4 个枚举)
-│   ├── ScreenshotSettingsWindow, ScreenshotGlobalHotKeyManager
-├── Clipboard/   ClipboardManager
-├── History/    AppDatabase, SQLiteHelpers, HistoryRepository, HistorySerializer,
-│   HistoryQueryBuilder, HistoryMediaStore, HistoryThumbnailCache, HistoryKeychain,
-│   HistoryMigrationService, SecureStorageCrypto, ImageDownsampler,
-│   HistorySearchIndexManager/Builder/Ranker, HistorySearchStateStore, HistorySearchTypes,
-│   ImageOCRService (历史索引 OCR)
-├── Snippets/   SnippetManager, SnippetEditorWindow
-├── Sync/       SyncManager
-├── Notifications/  NotificationManager, NotificationRepository, NotificationWindow
-├── Screenshot/      (不动 —— 已组织好的截图/录屏引擎)
-└── UI/              (共享 SwiftUI 组件 + 各功能视图,UI/Snippets/ 子目录)
-```
+## 改动文件(2 个)
+1. **`Sources/App/PreferencesManager.swift`** — 新增 ~40 个计算属性(包装对应 UserDefaults 键,默认值与 macshot 一致),集中管理
+2. **`Sources/UI/ScreenshotSettingsView.swift`** — 新增 4 个分区(录屏/输出缩略图/滚动绘制辅助/美化特效),用中文直显(应用中文优先,与 macshot 模块的 L() 风格一致)
 
-## 遗留文件彻底清理(7 个)
-新 Screenshot 模块已不用它们,先迁移仍被引用的类型再删:
+## 不改的
+- macshot 代码里的 `UserDefaults.standard.bool(forKey:)` 读取点不改(键名一致,PreferencesManager 只是门面,运行时读同一处);后续可逐步替换为 PreferencesManager.shared.xxx
+- 不新增 L10nKey(约 40 个新字符串用中文直显,避免膨胀)
 
-### 纯死代码,直接删(4 个)
-- `ScreenshotCaptureService`、`ScreenshotExport`、`CaptureMagnifierView`、`UIElementDetector`
-
-### 迁移类型再删(3 个)
-- **`ScreenshotTypes`** → 把 4 个枚举(ScreenshotCaptureMode/PostCaptureAction/OCRLanguage/Resolution)迁到 `App/ScreenshotPreferences.swift`;CoordinateConverter/ToolbarPlacement 随删
-- **`ScreenshotImageProcessor`** → 活跃 helper(bestCGImage/releaseCIContext/EncodedImage/encodeForSave)迁进 `Screenshot/Services/ImageEncoder.swift`(与新模块的 ImageEncoder 合并),改活跃调用方引用,再删
-- **`ImageOCRService`** → 保留移到 `History/`,内部 `ScreenshotImageProcessor.bestCGImage` 改 `image.cgImage(forProposedRect:)`,`ScreenshotOCRLanguage` 改引用迁移后位置
-
-## build_macos_app.sh 改造
-`SWIFT_SOURCES` 硬编码列表替换为 `find Sources -name '*.swift'` 自动收集(临时目录拷贝、框架列表、`-D OFFLINE`、`-target`、Info.plist 全保留)。
-
-## 执行顺序(每步独立编译验证)
-1. `build_macos_app.sh` → `find` 自动收集(文件仍在原位,先验证编译)
-2. 迁移类型(ScreenshotTypes 枚举 → App/;ScreenshotImageProcessor helper → ImageEncoder)
-3. 改活跃调用方引用新位置
-4. `git rm` 7 个遗留文件 → 编译验证
-5. `git mv` 保留文件到新目录(App/Clipboard/History/Snippets/Sync/Notifications/UI/Snippets/)
-6. 最终编译 + 更新 AGENTS.md 目录结构段
-
-## 风险控制
-每步 `swiftc -typecheck` + `bash build_macos_app.sh` 双验证;类型迁移改调用方即可(同模块无 import 问题);全程 git 可回滚。
+## 验证
+`bash build_macos_app.sh` EXIT 0 + App 启动 + 打开截图偏好面板冒烟(4 个新分区可见、可改)

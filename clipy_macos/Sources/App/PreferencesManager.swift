@@ -411,6 +411,216 @@ class PreferencesManager {
         set { defaults.set(newValue, forKey: screenshotTextBackgroundEnabledKey) }
     }
 
+    // MARK: - Recording
+
+    /// Action when a recording finishes: "editor" (default), "finder", "clipboard".
+    var recordingOnStop: String {
+        get { defaults.string(forKey: "recordingOnStop") ?? "editor" }
+        set { defaults.set(newValue, forKey: "recordingOnStop") }
+    }
+    /// Recording frame rate (default 30).
+    var recordingFPS: Int {
+        get { defaults.object(forKey: "recordingFPS") as? Int ?? 30 }
+        set { defaults.set(newValue, forKey: "recordingFPS") }
+    }
+    /// Hide the floating timer HUD during recording.
+    var hideRecordingHUD: Bool {
+        get { defaults.bool(forKey: "hideRecordingHUD") }
+        set { defaults.set(newValue, forKey: "hideRecordingHUD") }
+    }
+    var recordSystemAudio: Bool {
+        get { defaults.bool(forKey: "recordSystemAudio") }
+        set { defaults.set(newValue, forKey: "recordSystemAudio") }
+    }
+    var recordMicAudio: Bool {
+        get { defaults.bool(forKey: "recordMicAudio") }
+        set { defaults.set(newValue, forKey: "recordMicAudio") }
+    }
+    var recordWebcam: Bool {
+        get { defaults.bool(forKey: "recordWebcam") }
+        set { defaults.set(newValue, forKey: "recordWebcam") }
+    }
+    var recordMouseHighlight: Bool {
+        get { defaults.bool(forKey: "recordMouseHighlight") }
+        set { defaults.set(newValue, forKey: "recordMouseHighlight") }
+    }
+    var recordKeystroke: Bool {
+        get { defaults.bool(forKey: "recordKeystroke") }
+        set { defaults.set(newValue, forKey: "recordKeystroke") }
+    }
+    /// Keystroke display mode: true = all keys, false = shortcuts only (default).
+    var keystrokeShowAll: Bool {
+        get { defaults.bool(forKey: "keystrokeShowAll") }
+        set { defaults.set(newValue, forKey: "keystrokeShowAll") }
+    }
+    var webcamPosition: String {
+        get { defaults.string(forKey: "webcamPosition") ?? "bottomRight" }
+        set { defaults.set(newValue, forKey: "webcamPosition") }
+    }
+    var webcamSize: String {
+        get { defaults.string(forKey: "webcamSize") ?? "medium" }
+        set { defaults.set(newValue, forKey: "webcamSize") }
+    }
+    var webcamShape: String {
+        get { defaults.string(forKey: "webcamShape") ?? "circle" }
+        set { defaults.set(newValue, forKey: "webcamShape") }
+    }
+
+    // MARK: - Output & thumbnail
+
+    /// Show the floating thumbnail after capture (default on).
+    var showFloatingThumbnail: Bool {
+        get { defaults.object(forKey: "showFloatingThumbnail") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "showFloatingThumbnail") }
+    }
+    /// Stack successive thumbnails (default on).
+    var thumbnailStacking: Bool {
+        get { defaults.object(forKey: "thumbnailStacking") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "thumbnailStacking") }
+    }
+    /// Thumbnail scale multiplier (default 1.0 → 240×160).
+    var thumbnailScale: Double {
+        get { defaults.object(forKey: "thumbnailScale") as? Double ?? 1.0 }
+        set { defaults.set(newValue, forKey: "thumbnailScale") }
+    }
+    var thumbnailCorner: String {
+        get { defaults.string(forKey: "thumbnailCorner") ?? "bottomRight" }
+        set { defaults.set(newValue, forKey: "thumbnailCorner") }
+    }
+    /// Quick-capture action: 0=save, 1=copy (default), 2=both, 3=thumbnail only.
+    var quickCaptureMode: Int {
+        get { defaults.object(forKey: "quickCaptureMode") as? Int ?? 1 }
+        set { defaults.set(newValue, forKey: "quickCaptureMode") }
+    }
+    /// Include the mouse cursor in captures (default off).
+    var captureCursor: Bool {
+        get { defaults.bool(forKey: "captureCursor") }
+        set { defaults.set(newValue, forKey: "captureCursor") }
+    }
+    /// Saved image format (default png).
+    var imageFormat: String {
+        get { defaults.string(forKey: "imageFormat") ?? "png" }
+        set { defaults.set(newValue, forKey: "imageFormat") }
+    }
+    /// Lossy quality 0.1–1.0 (default 0.85).
+    var imageQuality: Double {
+        get { defaults.object(forKey: "imageQuality") as? Double ?? 0.85 }
+        set { defaults.set(newValue, forKey: "imageQuality") }
+    }
+    /// Downscale Retina (2×) captures to 1× (default off).
+    var downscaleRetina: Bool {
+        get { defaults.bool(forKey: "downscaleRetina") }
+        set { defaults.set(newValue, forKey: "downscaleRetina") }
+    }
+    /// Play the capture sound on confirm (default on).
+    var playCopySound: Bool {
+        get { defaults.object(forKey: "playCopySound") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "playCopySound") }
+    }
+
+    // MARK: - Scroll capture
+
+    /// Max stitched height in pixels (default 30000).
+    var scrollMaxHeight: Int {
+        get { defaults.object(forKey: "scrollMaxHeight") as? Int ?? 30000 }
+        set { defaults.set(newValue, forKey: "scrollMaxHeight") }
+    }
+    var scrollAutoScrollEnabled: Bool {
+        get { defaults.bool(forKey: "scrollAutoScrollEnabled") }
+        set { defaults.set(newValue, forKey: "scrollAutoScrollEnabled") }
+    }
+    var scrollAutoScrollSpeed: Int {
+        get { defaults.object(forKey: "scrollAutoScrollSpeed") as? Int ?? 3 }
+        set { defaults.set(newValue, forKey: "scrollAutoScrollSpeed") }
+    }
+    var scrollFrozenDetection: Bool {
+        get { defaults.object(forKey: "scrollFrozenDetection") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "scrollFrozenDetection") }
+    }
+
+    // MARK: - Drawing aids
+
+    /// Show alignment snap guides while drawing (default on).
+    var snapGuidesEnabled: Bool {
+        get { defaults.object(forKey: "snapGuidesEnabled") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "snapGuidesEnabled") }
+    }
+    /// Remember the last-used tool across sessions (default on).
+    var rememberLastTool: Bool {
+        get { defaults.object(forKey: "rememberLastTool") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "rememberLastTool") }
+    }
+    /// Show single-key tool shortcut hints in tooltips (default off).
+    var showToolShortcutsInTooltips: Bool {
+        get { defaults.bool(forKey: "showToolShortcutsInTooltips") }
+        set { defaults.set(newValue, forKey: "showToolShortcutsInTooltips") }
+    }
+    /// Pencil pressure sensitivity (Apple Pencil; default off).
+    var pencilPressureEnabled: Bool {
+        get { defaults.bool(forKey: "pencilPressureEnabled") }
+        set { defaults.set(newValue, forKey: "pencilPressureEnabled") }
+    }
+    /// Pencil smoothing: 0=None, 1=Smooth (default), 2=Refined.
+    var pencilSmoothMode: Int {
+        get { defaults.object(forKey: "pencilSmoothMode") as? Int ?? 1 }
+        set { defaults.set(newValue, forKey: "pencilSmoothMode") }
+    }
+    /// Smart marker snaps to text line height via Vision (default off).
+    var smartMarkerEnabled: Bool {
+        get { defaults.bool(forKey: "smartMarkerEnabled") }
+        set { defaults.set(newValue, forKey: "smartMarkerEnabled") }
+    }
+
+    // MARK: - Beautify & effects defaults
+
+    var beautifyEnabled: Bool {
+        get { defaults.bool(forKey: "beautifyEnabled") }
+        set { defaults.set(newValue, forKey: "beautifyEnabled") }
+    }
+    /// Beautify gradient style index; -1 = custom background image.
+    var beautifyStyleIndex: Int {
+        get { defaults.integer(forKey: "beautifyStyleIndex") }
+        set { defaults.set(newValue, forKey: "beautifyStyleIndex") }
+    }
+    /// Beautify mode: 0=window, 1=rounded.
+    var beautifyMode: Int {
+        get { defaults.integer(forKey: "beautifyMode") }
+        set { defaults.set(newValue, forKey: "beautifyMode") }
+    }
+    var beautifyPadding: Double {
+        get { defaults.object(forKey: "beautifyPadding") as? Double ?? 48 }
+        set { defaults.set(newValue, forKey: "beautifyPadding") }
+    }
+    var beautifyCornerRadius: Double {
+        get { defaults.object(forKey: "beautifyCornerRadius") as? Double ?? 10 }
+        set { defaults.set(newValue, forKey: "beautifyCornerRadius") }
+    }
+    var beautifyShadowRadius: Double {
+        get { defaults.object(forKey: "beautifyShadowRadius") as? Double ?? 20 }
+        set { defaults.set(newValue, forKey: "beautifyShadowRadius") }
+    }
+    /// Effects preset: 0=none (default).
+    var effectsPreset: Int {
+        get { defaults.integer(forKey: "effectsPreset") }
+        set { defaults.set(newValue, forKey: "effectsPreset") }
+    }
+    var effectsBrightness: Double {
+        get { defaults.object(forKey: "effectsBrightness") as? Double ?? 0 }
+        set { defaults.set(newValue, forKey: "effectsBrightness") }
+    }
+    var effectsContrast: Double {
+        get { defaults.object(forKey: "effectsContrast") as? Double ?? 1 }
+        set { defaults.set(newValue, forKey: "effectsContrast") }
+    }
+    var effectsSaturation: Double {
+        get { defaults.object(forKey: "effectsSaturation") as? Double ?? 1 }
+        set { defaults.set(newValue, forKey: "effectsSaturation") }
+    }
+    var effectsSharpness: Double {
+        get { defaults.object(forKey: "effectsSharpness") as? Double ?? 0 }
+        set { defaults.set(newValue, forKey: "effectsSharpness") }
+    }
+
     static var defaultScreenshotSaveDirectoryPath: String {
         let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser
