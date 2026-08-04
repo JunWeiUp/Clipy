@@ -29,7 +29,12 @@ final class SearchViewModel: ObservableObject {
     private let searchQueue = DispatchQueue(label: "com.clipy.search", qos: .userInitiated)
 
     init() {
-        browseLimit = PreferencesManager.shared.historyLoadCount
+        // The history manager loads ALL history on open (Table is lazily
+        // rendered, so even thousands of rows don't cost UI time). browseLimit
+        // caps the browse-mode fetch; seeding it with the total count makes
+        // the first query return everything at once instead of paging.
+        let total = ClipboardManager.shared.totalHistoryCount
+        browseLimit = total > 0 ? total : PreferencesManager.shared.historyLoadCount
     }
 
     func onResultRowAppear(_ result: HistorySearchResult) {
@@ -58,7 +63,12 @@ final class SearchViewModel: ObservableObject {
     }
 
     func onAppear() {
-        browseLimit = PreferencesManager.shared.historyLoadCount
+        // Refresh the total in case history grew while the window was closed,
+        // then load everything for browsing. (When a query/filter is active the
+        // fetch goes through fetchFiltered with its own maxHistoryItems cap, so
+        // this large browseLimit only affects the unfiltered browse view.)
+        let total = ClipboardManager.shared.totalHistoryCount
+        browseLimit = total > 0 ? total : PreferencesManager.shared.historyLoadCount
         let snapshot = HistorySearchStateStore.load()
         query = snapshot.query
         typeFilter = snapshot.typeFilter
@@ -77,6 +87,10 @@ final class SearchViewModel: ObservableObject {
     /// query and re-registers the observer so the reopened window reflects the
     /// current history (including anything copied while it was closed).
     func reactivate() {
+        // Re-seed browseLimit from the live total so a reused window still
+        // loads all history (history may have grown while it was closed).
+        let total = ClipboardManager.shared.totalHistoryCount
+        if total > 0 { browseLimit = total }
         performSearch(immediate: true)
         registerHistoryChangeObserver()
     }
@@ -108,7 +122,10 @@ final class SearchViewModel: ObservableObject {
         results = []
         selectedIDs = []
         statusText = ""
-        browseLimit = PreferencesManager.shared.historyLoadCount
+        // browseLimit is intentionally NOT reset here: it is recomputed from
+        // the live total count on every onAppear/reactivate, and resetting it
+        // to the small page size here would make a window reopen (which runs
+        // reactivate, not onAppear) fetch only one page instead of all.
         availableSourceApps = []
         if let observer = historyObserver {
             NotificationCenter.default.removeObserver(observer)

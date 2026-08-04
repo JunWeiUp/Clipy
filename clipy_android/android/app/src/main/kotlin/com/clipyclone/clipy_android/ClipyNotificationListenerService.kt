@@ -12,6 +12,7 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import android.util.LruCache
 import io.flutter.plugin.common.MethodChannel
+import org.json.JSONObject
 import java.util.concurrent.ConcurrentLinkedQueue
 
 class ClipyNotificationListenerService : NotificationListenerService() {
@@ -29,6 +30,12 @@ class ClipyNotificationListenerService : NotificationListenerService() {
         private val mainHandler = Handler(Looper.getMainLooper())
         private val pendingPostedNotifications = ConcurrentLinkedQueue<Map<String, Any?>>()
         private val appNameCache = LruCache<String, String>(128)
+
+        /// Application context captured in onCreate so companion-object methods
+        /// (which can't access the instance `applicationContext` directly) can
+        /// persist to [NativePendingPostStore].
+        @Volatile
+        private var appContext: android.content.Context? = null
 
         fun setMethodChannel(channel: MethodChannel?) {
             methodChannel = channel
@@ -55,26 +62,47 @@ class ClipyNotificationListenerService : NotificationListenerService() {
             }
         }
 
-        private fun emitNotificationPosted(data: Map<String, Any?>) {
-            runOnMainThread {
-                val channel = methodChannel
-                if (channel == null) {
-                    Log.w(
-                        TAG,
-                        "MethodChannel null; queueing pkg=${data["packageName"]} " +
-                            "(queue=${pendingPostedNotifications.size + 1})",
-                    )
-                    enqueuePending(data)
-                    return@runOnMainThread
-                }
-                try {
-                    channel.invokeMethod("onNotificationPosted", data)
-                } catch (e: Exception) {
-                    Log.w(TAG, "invokeMethod failed; queueing", e)
-                    enqueuePending(data)
-                }
+    private fun emitNotificationPosted(data: Map<String, Any?>) {
+        runOnMainThread {
+            val channel = methodChannel
+            if (channel == null) {
+                // Flutter 引擎不可用（锁屏 / 进程被回收 / Activity 重建期间）。
+                // 落盘到独立 SQLite 缓冲库，Dart 启动后 drainAll 一次性拉走并清空。
+                // 内存队列仍保留作为 Activity 短暂重建的快速通道。
+                persistToNativeStore(data)
+                Log.w(
+                    TAG,
+                    "MethodChannel null; persisted pkg=${data["packageName"]} " +
+                        "(memQueue=${pendingPostedNotifications.size + 1})",
+                )
+                enqueuePending(data)
+                return@runOnMainThread
+            }
+            // 热路径：channel 可用，直接投递给 Dart。
+            // 不落盘 native 表 —— Dart 侧 insertPendingSync 已负责持久化 + ack 清理。
+            try {
+                channel.invokeMethod("onNotificationPosted", data)
+            } catch (e: Exception) {
+                Log.w(TAG, "invokeMethod failed; persisted + queueing", e)
+                persistToNativeStore(data)
+                enqueuePending(data)
             }
         }
+    }
+
+    /**
+     * 把通知序列化为 JSON 存入 [NativePendingPostStore]，供 Dart 启动后消费。
+     * 仅在 channel 不可用时调用（冷路径）。
+     */
+    private fun persistToNativeStore(data: Map<String, Any?>) {
+        val ctx = appContext ?: return
+        try {
+            val json = JSONObject(data).toString()
+            NativePendingPostStore.insert(ctx, json)
+        } catch (e: Exception) {
+            Log.e(TAG, "persistToNativeStore failed", e)
+        }
+    }
 
         private fun flushPendingPostedNotifications() {
             runOnMainThread {
@@ -160,6 +188,7 @@ class ClipyNotificationListenerService : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        appContext = applicationContext
         Log.i(TAG, "Service created")
     }
 

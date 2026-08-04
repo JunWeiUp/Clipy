@@ -17,6 +17,7 @@ final class AppDatabase {
         dbURL = appSupport.appendingPathComponent("clipy.db")
         openDatabase()
         queue.sync {
+            applyPragmas()
             createAllSchemas()
             migrateLegacyDatabaseFilesIfNeeded()
         }
@@ -28,6 +29,26 @@ final class AppDatabase {
         if sqlite3_open(dbURL.path, &db) != SQLITE_OK {
             appLog("Failed to open app database", level: .error)
             db = nil
+        }
+    }
+
+    /// Connection-level tuning applied once at init (single long-lived
+    /// connection, serialized on `queue`). WAL lets readers not block on the
+    /// polling/history writes; mmap + an in-memory cache reduce repeated
+    /// page-fault / IO on the hot fetchSummaries / count paths so RSS does
+    /// not churn. Side effect: `clipy.db-wal` and `clipy.db-shm` appear next
+    /// to the db file (normal WAL artifacts).
+    private func applyPragmas() {
+        guard let db else { return }
+        let pragmas = [
+            "PRAGMA journal_mode=WAL;",       // readers don't block writers
+            "PRAGMA synchronous=NORMAL;",      // safe under WAL, fewer fsync
+            "PRAGMA cache_size=-20000;",       // ~20MB page cache (negative = KB)
+            "PRAGMA mmap_size=268435456;",     // 256MB memory-mapped I/O
+            "PRAGMA temp_store=MEMORY;"        // temp tables/indexes in RAM
+        ]
+        for sql in pragmas {
+            sqlite3_exec(db, sql, nil, nil, nil)
         }
     }
 

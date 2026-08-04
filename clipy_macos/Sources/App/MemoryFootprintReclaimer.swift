@@ -23,9 +23,15 @@ enum MemoryFootprintReclaimer {
     static func reclaimIfIdle() {
         guard !hasVisibleInteractiveWindows() else { return }
         ClipboardManager.shared.releaseMenuMemory()
-        // The CIContext pool can grow large after a screenshot and never shrinks
-        // on its own; release it while the app is idle so the footprint recovers.
+        // The CIContext pools can grow large after a screenshot and never shrink
+        // on their own; release them while the app is idle so the footprint
+        // recovers. ScreenshotImageProcessor, ImageEffects and Annotation each
+        // hold their own CIContext (30-80MB of IOSurface/texture pool per
+        // context after a 4K render).
         ScreenshotImageProcessor.releaseCIContext()
+        ImageEffects.releaseContext()
+        Annotation.releaseContext()
+        OverlayView.releaseOutlineGlowContext()
         applyMallocPressure()
     }
 
@@ -41,6 +47,9 @@ enum MemoryFootprintReclaimer {
             // Give the capture pipeline's autorelease pool a runloop tick to
             // drain before we measure/compact.
             ScreenshotImageProcessor.releaseCIContext()
+            ImageEffects.releaseContext()
+            Annotation.releaseContext()
+            OverlayView.releaseOutlineGlowContext()
             applyMallocPressure()
         }
     }

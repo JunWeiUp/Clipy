@@ -322,7 +322,11 @@ class ClipboardManager {
     private(set) var recentSummaries: [HistorySummary] = []
     private(set) var isMenuMemoryRetained = false
     private(set) var totalHistoryCount = 0
-    private var menuHistoryLimit: Int { PreferencesManager.shared.historyLoadCount }
+    /// The menu bar only ever renders `MenuController.menuDisplayLimit` (50)
+    /// items, so loading more into `recentSummaries` is pure waste. Cap the
+    /// in-memory load at 50 regardless of the (search-window) page size
+    /// `historyLoadCount`, which the search window still uses for paging.
+    private var menuHistoryLimit: Int { min(PreferencesManager.shared.historyLoadCount, 50) }
     private var maxHistoryItems: Int { PreferencesManager.shared.historyLimit }
     private let repository = HistoryRepository.shared
     /// Path of the legacy standalone file-history JSON. Kept only so

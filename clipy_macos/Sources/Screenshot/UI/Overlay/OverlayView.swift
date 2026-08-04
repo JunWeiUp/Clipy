@@ -4682,7 +4682,20 @@ class OverlayView: NSView {
     }
 
     /// Shared CIContext for outline glow rendering — reused across frames.
-    private static let outlineGlowCIContext = CIContext()
+    /// Lazily created and intentionally releasable: a CIContext's IOSurface/
+    /// texture pool grows to the largest rendered image and never shrinks, so
+    /// a big glow (e.g. a loupe/marker spanning a large area) can pin tens of
+    /// MB. The reclaimer drops it when idle / after a screenshot session.
+    private static var _outlineGlowCIContext: CIContext?
+    private static var outlineGlowCIContext: CIContext {
+        if let ctx = _outlineGlowCIContext { return ctx }
+        let ctx = CIContext()
+        _outlineGlowCIContext = ctx
+        return ctx
+    }
+    /// Drop the outline-glow CIContext so its IOSurface/texture pool returns
+    /// to the system. Re-creating it on next use costs only tens of ms.
+    static func releaseOutlineGlowContext() { _outlineGlowCIContext = nil }
 
     /// Draw a generic outline glow around any annotation by rendering it offscreen,
     /// dilating the alpha mask, then compositing the outline back. Cached on the annotation.
@@ -9967,6 +9980,14 @@ class OverlayView: NSView {
         autoQuickSaveMode = false
         autoScrollCaptureMode = false
         autoConfirmMode = false
+        // Drawing caches hold full-display composite/annotation NSImages (a
+        // 4K composite is ~64MB). The overlay controller is kept alive across
+        // sessions for warm captures, so these MUST be dropped here — otherwise
+        // they leak for the lifetime of the app. They are lazily rebuilt by
+        // the draw path on the next session, so clearing is behavior-free.
+        cachedCompositedImage = nil
+        cachedAnnotationLayer = nil
+        cachedAnnotationLayerExcludingSelected = nil
         needsDisplay = true
     }
 }

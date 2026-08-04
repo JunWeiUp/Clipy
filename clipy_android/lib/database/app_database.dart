@@ -9,7 +9,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'clipy.db';
-  static const schemaVersion = 4;
+  static const schemaVersion = 5;
 
   Database? _db;
 
@@ -61,6 +61,13 @@ class AppDatabase {
           await db.execute(
               'ALTER TABLE notifications ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
         }
+        if (oldVersion < 5) {
+          // sync_state: 0 = 待同步（默认），1 = Mac 已 ack 确认送达。
+          // 用于 refreshActiveNotifications 的 backfill：只把 sync_state=0
+          // 且不在 pending_notification_sync 队列里的通知补发，已 ack 的不重复补。
+          await db.execute(
+              'ALTER TABLE notifications ADD COLUMN sync_state INTEGER NOT NULL DEFAULT 0');
+        }
       },
     );
     await LegacyMigration.runIfNeeded(db);
@@ -94,6 +101,7 @@ class AppDatabase {
         group_key TEXT,
         is_clearable INTEGER NOT NULL DEFAULT 1,
         is_archived INTEGER NOT NULL DEFAULT 0,
+        sync_state INTEGER NOT NULL DEFAULT 0,
         extras_json TEXT NOT NULL DEFAULT '{}',
         synced_at INTEGER
       )

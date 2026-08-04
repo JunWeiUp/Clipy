@@ -167,6 +167,17 @@ class MainActivity: FlutterActivity() {
                         result.error("NO_LISTENER", "NotificationListenerService not running", null)
                     }
                 }
+                "drainNativePendingPosts" -> {
+                    // 拉取并清空 Kotlin 端在 channel=null 期间落盘的通知缓冲。
+                    // 返回 List<String>（每项为通知 JSON），Dart 侧逐条走
+                    // _handleNotificationPosted 完成入库 + 入 pending 同步队列。
+                    try {
+                        val payloads = NativePendingPostStore.drainAll(this)
+                        result.success(payloads)
+                    } catch (e: Exception) {
+                        result.error("DRAIN_FAILED", e.message, null)
+                    }
+                }
                 "getInstalledApps" -> {
                     Thread {
                         try {

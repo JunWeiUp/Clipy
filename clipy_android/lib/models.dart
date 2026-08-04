@@ -89,6 +89,9 @@ class NotificationEntry {
   /// WeChat (and similar) in-place updates: previous snapshot kept with this flag
   /// so history retains every message while the live slot stays unique.
   final bool isArchived;
+  /// 同步状态：0 = 待同步（默认），1 = Mac 已 ack 确认送达。
+  /// 仅在本地维护，不随 toJson 序列化到 wire（Mac 侧按 id 去重，不需要此字段）。
+  final int syncState;
   final Map<String, dynamic> extras;
 
   NotificationEntry({
@@ -103,6 +106,7 @@ class NotificationEntry {
     this.groupKey,
     this.isClearable = true,
     this.isArchived = false,
+    this.syncState = 0,
     this.extras = const {},
   });
 
@@ -118,6 +122,7 @@ class NotificationEntry {
     String? groupKey,
     bool? isClearable,
     bool? isArchived,
+    int? syncState,
     Map<String, dynamic>? extras,
   }) {
     return NotificationEntry(
@@ -132,6 +137,7 @@ class NotificationEntry {
       groupKey: groupKey ?? this.groupKey,
       isClearable: isClearable ?? this.isClearable,
       isArchived: isArchived ?? this.isArchived,
+      syncState: syncState ?? this.syncState,
       extras: extras ?? this.extras,
     );
   }

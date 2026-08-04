@@ -21,14 +21,20 @@ class ToolbarButtonView: NSView {
     private var cachedIconIsOn: Bool?       // the isOn state when icon was cached
 
     /// Shared cross-instance cache: avoids re-rasterizing SF Symbols when toolbar is rebuilt.
-    /// Key: "symbolName|isOn|colorHex"
-    private static var iconCache: [String: NSImage] = [:]
+    /// NSCache (not a plain Dictionary) so it auto-evicts under memory pressure and is
+    /// bounded by `countLimit` — a plain Dictionary grew without bound as the user picked
+    /// new colors in the picker (each color is a distinct cache key). Key: "symbolName|isOn|R,G,B".
+    private static let iconCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 128
+        return cache
+    }()
 
-    private static func cacheKey(name: String, isOn: Bool, color: NSColor) -> String {
+    private static func cacheKey(name: String, isOn: Bool, color: NSColor) -> NSString {
         let rgb = color.usingColorSpace(.sRGB) ?? color
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
         rgb.getRed(&r, green: &g, blue: &b, alpha: nil)
-        return "\(name)|\(isOn)|\(Int(r*255)),\(Int(g*255)),\(Int(b*255))"
+        return "\(name)|\(isOn)|\(Int(r*255)),\(Int(g*255)),\(Int(b*255))" as NSString
     }
 
     var onClick: ((ToolbarButtonAction) -> Void)?
@@ -119,7 +125,7 @@ class ToolbarButtonView: NSView {
         if cachedIcon == nil || cachedIconIsOn != currentIsOn {
             let color = currentIsOn ? ToolbarLayout.iconColor : tintColor
             let key = Self.cacheKey(name: name, isOn: currentIsOn, color: color)
-            if let cached = Self.iconCache[key] {
+            if let cached = Self.iconCache.object(forKey: key) {
                 cachedIcon = cached
                 cachedIconIsOn = currentIsOn
             } else {
@@ -142,7 +148,7 @@ class ToolbarButtonView: NSView {
                 }
                 if let img = img {
                     img.lockFocus(); img.unlockFocus()
-                    Self.iconCache[key] = img
+                    Self.iconCache.setObject(img, forKey: key)
                     cachedIcon = img
                     cachedIconIsOn = currentIsOn
                 }

@@ -2244,7 +2244,21 @@ class Annotation {
         return NSImage(cgImage: resultCG, size: rect.size)
     }
 
-    private static let ciContext = CIContext()
+    /// Lazily created and intentionally releasable. The Gaussian-blur path
+    /// (mosaic/blur/loupe) can feed this CIContext a full-screenshot image,
+    /// pinning 30-80MB of IOSurface/texture pool that never shrinks on its
+    /// own. Making it releasable lets the reclaimer return that memory when
+    /// the app is idle or after a screenshot session ends.
+    private static var _ciContext: CIContext?
+    private static var ciContext: CIContext {
+        if let ctx = _ciContext { return ctx }
+        let ctx = CIContext()
+        _ciContext = ctx
+        return ctx
+    }
+    /// Drop the shared CIContext so its IOSurface/texture pool is returned to
+    /// the system. Re-creating it on next use costs only tens of ms.
+    static func releaseContext() { _ciContext = nil }
 
     private func applyGaussianBlur(to cgImage: CGImage) -> CGImage? {
         let w = cgImage.width

@@ -52,7 +52,20 @@ struct ImageEffectsConfig {
 
 enum ImageEffects {
 
-    private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+    /// Lazily created and intentionally releasable. A CIContext accumulates an
+    /// IOSurface/texture pool sized to the largest image it has rendered
+    /// (a 4K screenshot can pin 30-80MB that never shrinks). Unlike a plain
+    /// `static let`, this lets the reclaimer return that memory when idle.
+    private static var _ciContext: CIContext?
+    private static var ciContext: CIContext {
+        if let ctx = _ciContext { return ctx }
+        let ctx = CIContext(options: [.useSoftwareRenderer: false])
+        _ciContext = ctx
+        return ctx
+    }
+    /// Drop the shared CIContext so its IOSurface/texture pool is returned to
+    /// the system. Re-creating it on next use costs only tens of ms.
+    static func releaseContext() { _ciContext = nil }
     private static let vividContrast: Float = 1.2
     private static let vividSaturation: Float = 1.5
 
