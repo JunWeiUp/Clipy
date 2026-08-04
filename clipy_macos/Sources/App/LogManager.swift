@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 class LogManager: ObservableObject {
     static let shared = LogManager()
@@ -193,16 +194,150 @@ class LogManager: ObservableObject {
     }
 }
 
-/// Records uncaught Objective-C exceptions to the log file before the process aborts.
-/// AppKit drawing code throws these from CoreText/CoreFoundation and Swift cannot catch them,
-/// so the file is the only trace left besides the system crash report.
+/// Captures both uncaught Objective-C exceptions and fatal POSIX signals so a
+/// trace always lands in the log file before the process dies.
+///
+/// Why two mechanisms: `NSSetUncaughtExceptionHandler` only catches ObjC
+/// `NSException` — it never fires for a signal-driven crash (SIGABRT from a
+/// TCC privacy violation, SIGSEGV/SIGBUS from native code, etc.), which is why
+/// earlier "the app just crashed" incidents left no trace in this file. The
+/// signal handler below closes that gap using only async-signal-safe POSIX
+/// calls, then re-raises the signal so macOS `ReportCrash` still emits a
+/// system `.ips` report (full machine stack) plus the "unexpectedly quit" dialog.
 enum CrashReporter {
+    /// Today's log path, captured at `install()` time (main context — safe) and
+    /// leaked on purpose: the process is about to die, and the signal handler
+    /// must not call `FileManager`/`DateFormatter` to recompute it.
+    private static var crashLogPath: UnsafeMutablePointer<CChar>?
+
+    /// Preallocated backtrace buffer so the signal handler never `malloc`s
+    /// (malloc is not async-signal-safe). One crash is terminal, so a single
+    /// shared buffer is fine — there is no re-entrancy to worry about.
+    private static var backtraceBuffer: UnsafeMutablePointer<UnsafeMutableRawPointer?>?
+
     static func install() {
+        // --- Capture everything that is NOT async-signal-safe while still on the
+        // main queue: the log path, and force symbol binding for backtrace()/
+        // backtrace_symbols_fd (their *first* call would otherwise hit lazy
+        // binding, which is unsafe inside a signal handler). ---
+        let path = LogManager.currentLogFile.path
+        crashLogPath = strdup(path)
+
+        let frames = UnsafeMutablePointer<UnsafeMutableRawPointer?>.allocate(capacity: 64)
+        frames.initialize(repeating: nil, count: 64)
+        backtraceBuffer = frames
+        let devNull = open("/dev/null", O_WRONLY)
+        if devNull >= 0 {
+            let n = backtrace(frames, 64)
+            backtrace_symbols_fd(frames, n, devNull)
+            close(devNull)
+        }
+
+        // ObjC NSException handler — unchanged. Swift cannot catch these, the
+        // file is the only trace besides the system crash report.
         NSSetUncaughtExceptionHandler { exception in
             let stack = exception.callStackSymbols.joined(separator: "\n    ")
             LogManager.shared.logFatalSynchronously(
                 "Uncaught \(exception.name.rawValue): \(exception.reason ?? "no reason")\n    \(stack)"
             )
+        }
+
+        // POSIX signal handler. `@convention(c)` so it can be stored as a raw
+        // `sighandler_t`. The body only calls async-signal-safe code.
+        let handler: @convention(c) (Int32) -> Void = { sig in
+            CrashReporter.writeSignalTrace(sig)
+            // Restore the default disposition and re-raise so ReportCrash still
+            // produces the system .ips report + "unexpectedly quit" dialog.
+            signal(sig, SIG_DFL)
+            raise(sig)
+            // Should not return; guarantee termination if it somehow does.
+            _exit(128 + sig)
+        }
+        for sig in [SIGABRT, SIGSEGV, SIGBUS, SIGFPE, SIGILL] {
+            signal(sig, handler)
+        }
+        // A sync peer closing its socket mid-write must not abort us.
+        signal(SIGPIPE, SIG_IGN)
+    }
+
+    /// Async-signal-safe crash trace writer.
+    ///
+    /// Only uses POSIX primitives documented safe inside a signal handler:
+    /// `open`/`write`/`fsync`/`close`, `backtrace`/`backtrace_symbols_fd`,
+    /// `time`/`ctime_r`, plus trivial byte/integer arithmetic. No `snprintf`
+    /// (variadic — unavailable in Swift), no `Foundation` formatting. It
+    /// deliberately does NOT touch `logFatalSynchronously` (uses
+    /// `bufferQueue.sync`, `DateFormatter`, `FileHandle.synchronize`) — those
+    /// would deadlock or crash a second time from this context.
+    private static func writeSignalTrace(_ sig: Int32) {
+        guard let pathPtr = crashLogPath, let frames = backtraceBuffer else { return }
+        let fd = open(pathPtr, O_WRONLY | O_CREAT | O_APPEND, mode_t(0o644))
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+
+        var now: time_t = 0
+        time(&now)
+        var timebuf = [CChar](repeating: 0, count: 32)
+        ctime_r(&now, &timebuf)
+
+        // Header: "[<time>] [FATAL] signal <n> captured ...\nCall stack:\n"
+        // Assembled by hand to stay async-signal-safe (no printf/string interp).
+        writeStr(fd, "[")
+        writeCStr(fd, timebuf)
+        writeStr(fd, "] [FATAL] signal ")
+        writeInt32(fd, sig)
+        writeStr(fd, " captured — see ~/Library/Logs/DiagnosticReports for the full system .ips\nCall stack:\n")
+
+        let count = backtrace(frames, 64)
+        backtrace_symbols_fd(frames, count, fd)
+
+        writeStr(fd, "\n==============================\n")
+
+        fsync(fd)
+    }
+
+    /// Writes a Swift string literal as UTF-8 — string literals are static
+    /// storage, safe to reference from a signal handler.
+    @inline(__always)
+    private static func writeStr(_ fd: Int32, _ s: String) {
+        let bytes = Array(s.utf8)
+        bytes.withUnsafeBufferPointer { buf in
+            _ = write(fd, buf.baseAddress, buf.count)
+        }
+    }
+
+    /// Writes a NUL-terminated C string buffer (e.g. ctime_r output).
+    @inline(__always)
+    private static func writeCStr(_ fd: Int32, _ buf: [CChar]) {
+        buf.withUnsafeBufferPointer { ptr in
+            guard let base = ptr.baseAddress else { return }
+            var len = 0
+            while len < ptr.count && base[len] != 0 { len += 1 }
+            _ = write(fd, base, len)
+        }
+    }
+
+    /// Writes a non-negative Int32 in decimal — pure arithmetic, no allocation.
+    @inline(__always)
+    private static func writeInt32(_ fd: Int32, _ value: Int32) {
+        var v = value < 0 ? -value : value
+        var digits: [UInt8] = []
+        if v == 0 {
+            digits.append(48) // '0'
+        } else {
+            while v > 0 {
+                digits.append(UInt8(v % 10) + 48)
+                v /= 10
+            }
+        }
+        if value < 0 { digits.append(45) } // '-'
+        // digits are little-endian (least significant first); reverse on write.
+        var i = digits.count - 1
+        var out: [UInt8] = []
+        out.reserveCapacity(digits.count)
+        while i >= 0 { out.append(digits[i]); i -= 1 }
+        out.withUnsafeBufferPointer { buf in
+            _ = write(fd, buf.baseAddress, buf.count)
         }
     }
 }

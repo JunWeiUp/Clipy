@@ -363,11 +363,40 @@ final class PinPanelController {
             ClipboardManager.shared.ingestCapturedImage(pngData, copyToPasteboard: true)
         }
 
+        // Pins are floating reference overlays. Downsample to a max edge of
+        // 2560px (enough for a single pin on a mainstream 5K display) so each
+        // pinned NSImage costs ~8MB instead of ~30MB+ for a 4K capture. The
+        // full-res original is already in history/clipboard and is never
+        // affected; this only changes the in-memory copy the panel holds.
+        let displayImage = Self.downsampleForPin(image, maxEdge: 2560) ?? image
+
         let id = UUID()
-        let panel = PinPanel(image: image, screenRect: screenRect, id: id) { [weak self] panelID in
+        let panel = PinPanel(image: displayImage, screenRect: screenRect, id: id) { [weak self] panelID in
             self?.panels.removeValue(forKey: panelID)
         }
         panels[id] = panel
         panel.showPanel()
+    }
+
+    /// Downsample an NSImage so its longest edge is <= maxEdge, using an image
+    /// source that does NOT cache the decoded full-res bitmap. Returns nil if
+    /// the image is already small enough or the conversion fails (caller falls
+    /// back to the original).
+    private static func downsampleForPin(_ image: NSImage, maxEdge: CGFloat) -> NSImage? {
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        let longestEdge = max(size.width, size.height)
+        guard longestEdge > maxEdge else { return nil }
+
+        guard let tiff = image.tiffRepresentation,
+              let source = CGImageSourceCreateWithData(tiff as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCache: false,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: Int(maxEdge)
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     }
 }

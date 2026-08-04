@@ -17,6 +17,13 @@ final class FloatingThumbnailPresenter {
     /// Active thumbnails, newest last. Bottom-corner thumbnails stack upward.
     private var controllers: [FloatingThumbnailController] = []
 
+    /// Hard cap so memory stays bounded even when auto-dismiss is disabled
+    /// (`thumbnailAutoDismiss = 0`). Each thumbnail holds a full-display NSImage
+    /// (~30-50MB for a 4K capture), so without a cap a "never dismiss" user
+    /// could accumulate unbounded memory. When the cap is hit the oldest is
+    /// dismissed (mirrors replace mode's intent but keeps the recent stack).
+    private static let maxStackedThumbnails = 8
+
     /// Show a thumbnail for a confirmed image in the screen's bottom-right corner.
     /// - Parameters:
     ///   - image: the final (composited) image to thumbnail.
@@ -83,6 +90,14 @@ final class FloatingThumbnailPresenter {
         }
         controller.show(at: NSPoint(x: xOrigin, y: yOrigin), corner: corner)
         controllers.append(controller)
+        // Bounded stack: if auto-dismiss was disabled and the user keeps
+        // capturing, drop the oldest (first = bottommost = oldest) so memory
+        // never grows past maxStackedThumbnails full-display images. The
+        // dismiss triggers onDismiss → reflow, so positions stay correct.
+        while controllers.count > Self.maxStackedThumbnails {
+            let oldest = controllers.removeFirst()
+            oldest.dismiss()
+        }
     }
 
     /// Restack remaining thumbnails after one is dismissed.

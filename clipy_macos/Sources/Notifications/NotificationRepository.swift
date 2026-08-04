@@ -95,18 +95,24 @@ final class NotificationRepository {
         queue.sync { upsertLocked(entry) }
     }
 
-    func delete(id: String) -> Bool {
+    /// Returns the number of rows actually deleted (via `sqlite3_changes`),
+    /// so callers can adjust the in-memory count without re-running COUNT(*).
+    @discardableResult
+    func delete(id: String) -> Int {
         queue.sync { deleteByIdLocked(id) }
     }
 
-    func delete(matching request: NotificationManager.NotificationDismissRequest) -> Bool {
+    @discardableResult
+    func delete(matching request: NotificationManager.NotificationDismissRequest) -> Int {
         queue.sync { deleteMatchingLocked(request) }
     }
 
-    func deleteAll() -> Bool {
+    @discardableResult
+    func deleteAll() -> Int {
         queue.sync {
-            guard let db else { return false }
-            return sqlite3_exec(db, "DELETE FROM phone_notifications", nil, nil, nil) == SQLITE_OK
+            guard let db else { return 0 }
+            guard sqlite3_exec(db, "DELETE FROM phone_notifications", nil, nil, nil) == SQLITE_OK else { return 0 }
+            return Int(sqlite3_changes(db))
         }
     }
 
@@ -306,18 +312,19 @@ final class NotificationRepository {
         return sqlite3_step(stmt) == SQLITE_DONE
     }
 
-    private func deleteByIdLocked(_ id: String) -> Bool {
-        guard let db else { return false }
+    private func deleteByIdLocked(_ id: String) -> Int {
+        guard let db else { return 0 }
         let sql = "DELETE FROM phone_notifications WHERE id = ?"
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, id)
-        return sqlite3_step(stmt) == SQLITE_DONE
+        guard sqlite3_step(stmt) == SQLITE_DONE else { return 0 }
+        return Int(sqlite3_changes(db))
     }
 
-    private func deleteMatchingLocked(_ request: NotificationManager.NotificationDismissRequest) -> Bool {
-        guard let db else { return false }
+    private func deleteMatchingLocked(_ request: NotificationManager.NotificationDismissRequest) -> Int {
+        guard let db else { return 0 }
         let sql: String
         if let notificationKey = request.notificationKey, !notificationKey.isEmpty {
             sql = "DELETE FROM phone_notifications WHERE package_name = ? AND notification_key = ?"
@@ -325,13 +332,14 @@ final class NotificationRepository {
             sql = "DELETE FROM phone_notifications WHERE package_name = ?"
         }
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, request.packageName)
         if let notificationKey = request.notificationKey, !notificationKey.isEmpty {
             bindText(stmt, 2, notificationKey)
         }
-        return sqlite3_step(stmt) == SQLITE_DONE
+        guard sqlite3_step(stmt) == SQLITE_DONE else { return 0 }
+        return Int(sqlite3_changes(db))
     }
 
     private func findDuplicateIdLocked(for incoming: NotificationManager.NotificationEntry) -> String? {

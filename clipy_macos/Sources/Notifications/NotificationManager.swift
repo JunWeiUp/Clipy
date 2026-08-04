@@ -21,7 +21,17 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     /// 命中即不弹横幅的屏蔽关键字；优先级高于 bannerApps/bannerKeywords。
     var blockedKeywords: [String] = []
 
-    var notificationCount: Int { repository.count() }
+    /// In-memory notification count, maintained incrementally (+1 on insert,
+    /// -Δ on delete) instead of re-running `SELECT COUNT(*)` on every read.
+    /// Seeded once from the DB at init; afterwards only mutated by the
+    /// upsert/delete paths below. didSet broadcasts to UI (menu bar badge,
+    /// notification window) only when the value actually changes.
+    private(set) var notificationCount: Int = 0 {
+        didSet {
+            guard oldValue != notificationCount else { return }
+            notifyNotificationsChanged()
+        }
+    }
 
     /// Distinct apps observed in received notifications, for the settings picker.
     var knownApps: [NotificationRepository.AppIdentity] { repository.fetchUniqueApps() }
@@ -37,6 +47,11 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         super.init()
         loadPreferences()
         setupNotificationCenter()
+        // Seed the in-memory count once. This is the only COUNT(*) on this
+        // table at steady state; every subsequent change adjusts it by ±Δ.
+        // Done last so DB schema (created in NotificationRepository.init via
+        // `AppDatabase.shared`) is guaranteed ready.
+        notificationCount = repository.count()
     }
 
     // MARK: - Models
@@ -199,13 +214,15 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             return
         }
 
-        _ = repository.delete(matching: request)
-        notifyNotificationsChanged()
+        // Adjust the in-memory count by the number of rows actually removed.
+        // didSet broadcasts to UI only if the count changed.
+        let removed = repository.delete(matching: request)
+        if removed > 0 { notificationCount -= removed }
     }
 
     func handleRemoteClearAll() {
-        _ = repository.deleteAll()
-        notifyNotificationsChanged()
+        repository.deleteAll()
+        notificationCount = 0   // didSet broadcasts
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
     }
 
@@ -217,16 +234,18 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
         switch repository.upsert(entry) {
         case .inserted:
-            notifyNotificationsChanged()
+            // +1 net row; didSet broadcasts the count change to UI.
+            notificationCount += 1
             return true
         case .replacedDuplicate(let removedId):
-            // Same content / notificationKey under a new id (re-send). Update
-            // storage but do not show the system banner again.
+            // Net 0 rows (delete-then-insert, or pure content-equal no-op).
+            // The count is unchanged, but the content did, so the open
+            // notification window still needs a refresh.
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [removedId])
             notifyNotificationsChanged()
             return false
         case .updated:
-            // Same id already exists — this is a re-send (backfill). Don't show banner again.
+            // Same id re-sent (backfill). Count unchanged, content may differ.
             notifyNotificationsChanged()
             return false
         }
@@ -267,6 +286,11 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func showSystemNotification(_ entry: NotificationEntry) {
+        // 内容为空（标题与正文都为空）时不弹横幅、不发声
+        let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = entry.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.isEmpty && body.isEmpty { return }
+
         let content = UNMutableNotificationContent()
         content.title = entry.appName
         content.subtitle = entry.title
@@ -311,14 +335,14 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func removeNotification(_ id: String) {
-        _ = repository.delete(id: id)
-        notifyNotificationsChanged()
+        let removed = repository.delete(id: id)
+        if removed > 0 { notificationCount -= removed }   // didSet broadcasts
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
     }
 
     func clearAllLocal() {
-        _ = repository.deleteAll()
-        notifyNotificationsChanged()
+        repository.deleteAll()
+        notificationCount = 0   // didSet broadcasts
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
     }
 

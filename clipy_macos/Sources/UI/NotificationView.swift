@@ -70,7 +70,14 @@ final class NotificationViewModel: ObservableObject {
 
     @objc private func notificationsDidChange() {
         DispatchQueue.main.async { [weak self] in
-            self?.reload()
+            // Only reload when the window is actually visible. After close the
+            // VM may stay alive for a few minutes (WindowSession teardown delay)
+            // and still receive this broadcast; reloading then would pull the
+            // full notification table back into memory for nothing. The menu
+            // bar count is maintained independently in NotificationManager and
+            // does not depend on this reload.
+            guard let self, self.isActive else { return }
+            self.reload()
         }
     }
 

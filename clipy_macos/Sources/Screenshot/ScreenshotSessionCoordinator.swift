@@ -314,6 +314,12 @@ extension ScreenshotSessionCoordinator: OverlayWindowControllerDelegate {
         } else if let qr = result.qrCodes.first {
             appLog("Screenshot OCR: detected QR \(qr)", level: .info)
         }
+        // OCR is a terminal action: tear down overlays on ALL screens so the
+        // other monitors' captures are dismissed too. The originating controller
+        // already dismissed itself (see OverlayWindowController.overlayViewDidRequestOCR),
+        // but every other active controller is still on screen — dismiss them
+        // here just like confirm/cancel/pin do. dismiss() is idempotent.
+        tearDownOverlays(refocusPreviousApp: true)
     }
 
     func overlayDidRequestUpload(_ controller: OverlayWindowController,

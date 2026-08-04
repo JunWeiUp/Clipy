@@ -82,6 +82,9 @@ class NotificationManager {
     _channel.setMethodCallHandler(_handleMethodCall);
     monitoringStartedAt = DateTime.now();
     if (isEnabled) {
+      // 先消费 Kotlin 端在 channel=null 期间（锁屏 / 进程被回收）落盘的通知，
+      // 再 refresh active 通知。两者都走 _handleNotificationPosted，由 upsert 去重保证幂等。
+      unawaited(_drainNativePendingPosts());
       unawaited(refreshActiveNotifications());
     }
   }
@@ -222,7 +225,67 @@ class NotificationManager {
   void handleAck(String hash) {
     if (hash.isEmpty) return;
     NotificationRepository.instance.removePendingSync(hash);
-    appLog('NotificationManager: ACK received, removed pending sync for $hash');
+    NotificationRepository.instance.markSynced(hash);
+    appLog('NotificationManager: ACK received, removed pending sync + marked synced for $hash');
+  }
+
+  /// 消费 Kotlin 端在 MethodChannel 不可用期间（锁屏 / 进程被回收 /
+  /// Activity 重建）落盘到 NativePendingPostStore 的通知。
+  ///
+  /// 每条 JSON 走标准的 [_handleNotificationPosted] 路径：upsert 入库 +
+  /// （若未被 suppress）insertPendingSync + 即时广播。upsert 的去重保证
+  /// 同一条通知即使被内存队列 flush 和本方法各投递一次也只入库一次。
+  Future<void> _drainNativePendingPosts() async {
+    try {
+      final list = await _channel
+          .invokeMethod<List<dynamic>>('drainNativePendingPosts');
+      if (list == null || list.isEmpty) return;
+      appLog('NotificationManager: consumed ${list.length} native-buffered notification(s)');
+      for (final item in list) {
+        if (item is String) {
+          try {
+            final data = jsonDecode(item) as Map<String, dynamic>;
+            await _handleNotificationPosted(data);
+          } catch (e) {
+            appLog(
+                'NotificationManager: native buffered post decode error: $e',
+                level: 'warning');
+          }
+        }
+      }
+    } catch (e) {
+      appLog('NotificationManager: drainNativePendingPosts failed: $e',
+          level: 'warning');
+    }
+  }
+
+  /// Backfill：扫描本地历史表，把"应该同步但既不在 pending 队列里、也未被 Mac
+  /// ack"的通知补进同步队列并即时广播。
+  ///
+  /// 覆盖缺口 2：refreshActiveNotifications 在 suppressBroadcast 下把 active
+  /// 通知只写历史表不入同步队列；本方法在 refresh 完成后补上漏发的部分。
+  /// 也覆盖"曾经 broadcast 但丢了、Mac 从未收到"的情况。
+  Future<void> _backfillMissingToPendingSync() async {
+    if (!isEnabled) return;
+    try {
+      final alreadyPending =
+          await NotificationRepository.instance.fetchPendingSyncIds();
+      final unsynced = await NotificationRepository.instance.fetchUnsynced(
+        shouldSync: _shouldSync,
+        withinDays: 2,
+        selfPackageName: _selfPackageName,
+      );
+      final toBackfill = unsynced
+          .where((e) => !alreadyPending.contains(e.id))
+          .toList();
+      if (toBackfill.isEmpty) return;
+      appLog('NotificationManager: backfilling ${toBackfill.length} missed notification(s) to sync queue');
+      for (final entry in toBackfill) {
+        _broadcastToSync(entry);
+      }
+    } catch (e) {
+      appLog('NotificationManager: backfill failed: $e', level: 'warning');
+    }
   }
 
   void handleRemoteNotification(String decrypted, String senderDevice) {
@@ -338,8 +401,10 @@ class NotificationManager {
 
   /// Pull currently-active status-bar notifications into local history.
   ///
-  /// Never syncs to peers: refresh is for UI/DB catch-up only. Real-time
-  /// `onNotificationPosted` events still broadcast when appropriate.
+  /// 仍然 suppressBroadcast：active 快照走 suppress 入库，避免和实时 onNotificationPosted
+  /// 竞争重复广播。但在 refresh 完成后调用 [_backfillMissingToPendingSync]：
+  /// 把"应该同步、却从未进过 pending 队列、且未被 Mac ack"的通知补发出去。
+  /// 这样锁屏期间收到、现在还挂在状态栏的通知能在 APP 重开 + Mac 连上后补发。
   Future<void> refreshActiveNotifications() async {
     if (!isEnabled) return;
     _suppressBroadcast = true;
@@ -358,6 +423,9 @@ class NotificationManager {
     } finally {
       _suppressBroadcast = false;
     }
+    // refresh 把 active 通知写进了历史表，但它们 sync_state=0 且不在 pending 队列里。
+    // backfill 会把它们补进 pending_notification_sync + 即时广播给已连接的 Mac。
+    await _backfillMissingToPendingSync();
   }
 
   Future<void> dismissNotification(NotificationDismissRequest request) async {

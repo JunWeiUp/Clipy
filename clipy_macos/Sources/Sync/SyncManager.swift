@@ -811,7 +811,10 @@ final class SyncManager: NSObject {
                 return
             }
             let length: Int = session.buffer.withUnsafeBytes { raw in
-                Int(UInt32(bigEndian: raw.load(as: UInt32.self)))
+                // loadUnaligned: the buffer is a Data byte array, no 4-byte
+                // alignment guarantee — an aligned `load` would be UB on some
+                // ISAs. The `count >= 4` guard above makes this safe regardless.
+                Int(UInt32(bigEndian: raw.loadUnaligned(as: UInt32.self)))
             }
             guard length > 0, length <= Self.maxFrameLength else {
                 closeSession(peerId: peerId, scheduleReconnect: true)

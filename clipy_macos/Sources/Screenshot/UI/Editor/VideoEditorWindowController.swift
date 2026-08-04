@@ -572,6 +572,17 @@ private final class VideoEditorView: NSView {
         if deleteOnClose {
             try? FileManager.default.removeItem(at: videoURL)
         }
+        // Drop the large media-backed fields explicitly. The view tree is
+        // released shortly after cleanup() (windowWillClose nils editorView),
+        // but naming these releases makes intent obvious and protects against
+        // a future "keep editorView alive for re-open" change that would
+        // otherwise pin tens of MB (thumbnailStrip alone can be a large image).
+        thumbnailImages = []
+        thumbnailStrip = nil
+        thumbnailStripWidth = 0
+        asset = nil
+        textRasterCache.removeAll(keepingCapacity: false)
+        effectsOverlay = nil
     }
 
     private var currentPlaybackTime: Double {

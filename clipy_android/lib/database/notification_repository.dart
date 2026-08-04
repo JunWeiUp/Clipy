@@ -64,6 +64,7 @@ class NotificationRepository {
       groupKey: row['group_key'] as String?,
       isClearable: (row['is_clearable'] as int? ?? 1) == 1,
       isArchived: archivedCol || archivedExtra,
+      syncState: (row['sync_state'] as int? ?? 0),
       extras: extras,
     );
   }
@@ -87,6 +88,7 @@ class NotificationRepository {
       'group_key': entry.groupKey,
       'is_clearable': entry.isClearable ? 1 : 0,
       'is_archived': entry.isArchived ? 1 : 0,
+      'sync_state': entry.syncState,
       'extras_json': jsonEncode(extras),
     };
   }
@@ -298,6 +300,62 @@ class NotificationRepository {
     final rows = await (await _db).rawQuery(
         'SELECT DISTINCT package_name FROM notifications ORDER BY package_name');
     return rows.map((r) => r['package_name'] as String).toList();
+  }
+
+  // ---- Sync state tracking ----
+
+  /// Mac ack 确认送达后，把对应通知标记为已同步（sync_state=1）。
+  /// 已标记的通知不会被 backfill 重复补发。
+  Future<void> markSynced(String id) async {
+    await (await _db).update(
+      'notifications',
+      {'sync_state': 1},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// 返回当前 pending 同步队列里的全部 notification_id 集合。
+  /// backfill 时用它排除"已在队列里、无需重复补"的通知。
+  Future<Set<String>> fetchPendingSyncIds() async {
+    final rows = await (await _db).query(
+      'pending_notification_sync',
+      columns: ['notification_id'],
+    );
+    return rows.map((r) => r['notification_id'] as String).toSet();
+  }
+
+  /// backfill 数据源：返回 sync_state=0（尚未被 Mac ack）且符合同步条件
+  /// 且在 [withinDays] 天内的通知，按时间正序（先发先补）。
+  ///
+  /// 调用方（NotificationManager._backfillMissingToPendingSync）会进一步
+  /// 过滤掉已在 pending_notification_sync 队列里的条目。
+  Future<List<NotificationEntry>> fetchUnsynced({
+    required bool Function(String packageName) shouldSync,
+    int withinDays = 2,
+    String? selfPackageName,
+  }) async {
+    final cutoff = DateTime.now()
+        .subtract(Duration(days: withinDays))
+        .millisecondsSinceEpoch;
+    final rows = await (await _db).query(
+      'notifications',
+      where: 'sync_state = 0 AND post_time >= ?',
+      whereArgs: [cutoff],
+      orderBy: 'post_time ASC',
+      limit: 200,
+    );
+    final result = <NotificationEntry>[];
+    for (final row in rows) {
+      final entry = _fromRow(row);
+      if (entry.isArchived) continue; // 归档的历史快照不补发
+      if (selfPackageName != null && entry.packageName == selfPackageName) {
+        continue;
+      }
+      if (!shouldSync(entry.packageName)) continue;
+      result.add(entry);
+    }
+    return result;
   }
 
   // ---- Pending notification sync (offline delivery queue) ----
