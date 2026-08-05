@@ -22,3 +22,8 @@ clipy_android/.flutter-plugins-dependencies
 
 # Android local SDK paths
 clipy_android/android/local.properties
+
+# IDE / tool metadata (machine-generated, not project source)
+.zcode/
+.trae/
+.workbuddy/
