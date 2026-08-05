@@ -98,31 +98,34 @@ final class PencilToolHandler: AnnotationToolHandler {
                 let pr = annotation.pressures?.first ?? 1.0
                 annotation.pressures = [pr, pr, pr]
             }
-        } else if canvas.pencilSmoothMode == 2 {
+        } else if canvas.pencilSmoothMode == 2, let lastRawPoint = rawPointBuffer.last {
             // Refined: retroactively apply moving average to the full raw buffer,
             // then Chaikin polish. Pad the end of the buffer with copies of the
             // last raw point so the moving average converges to the true endpoint
             // naturally — no abrupt straight segment needed.
             let padCount = smoothWindowSize - 1
-            let padded = rawPointBuffer + Array(repeating: rawPointBuffer.last!, count: padCount)
+            let padded = rawPointBuffer + Array(repeating: lastRawPoint, count: padCount)
             let smoothed = Self.movingAverageSmooth(padded, windowSize: smoothWindowSize)
             let final = Self.chaikinSmooth(smoothed, iterations: 2)
             annotation.points = final
             // Interpolate pressures to match smoothed point count.
             // Use gentle smoothing (moving average only, no Chaikin) to preserve
             // the user's pressure intent, then linearly interpolate to match point count.
-            if annotation.pressures != nil {
-                let paddedP = rawPressureBuffer + Array(repeating: rawPressureBuffer.last!, count: padCount)
+            // The pressure buffer is filled independently of the point buffer, so
+            // it can be empty even when `pressures` is non-nil.
+            if annotation.pressures != nil, let lastRawPressure = rawPressureBuffer.last {
+                let paddedP = rawPressureBuffer + Array(repeating: lastRawPressure, count: padCount)
                 let smoothedP = Self.movingAverageSmoothValues(paddedP, windowSize: max(smoothWindowSize / 2, 3))
                 let finalP = Self.interpolateToCount(smoothedP, targetCount: final.count)
                 annotation.pressures = finalP
             }
         } else if canvas.pencilSmoothMode >= 1 {
             // Mode 1 (Smooth): Chaikin on finish only
-            annotation.points = Self.chaikinSmooth(points, iterations: 2)
+            let smoothedPoints = Self.chaikinSmooth(points, iterations: 2)
+            annotation.points = smoothedPoints
             if let pressures = annotation.pressures {
                 // Interpolate pressures to match smoothed point count without over-averaging
-                annotation.pressures = Self.interpolateToCount(pressures, targetCount: annotation.points!.count)
+                annotation.pressures = Self.interpolateToCount(pressures, targetCount: smoothedPoints.count)
             }
         }
 

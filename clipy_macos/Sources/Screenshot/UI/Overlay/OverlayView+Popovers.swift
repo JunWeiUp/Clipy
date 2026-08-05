@@ -185,28 +185,40 @@ extension OverlayView {
         panel.canChooseDirectories = false
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = false
+        // No host window (overlay already dismissed) — run it modally instead of
+        // force-unwrapping into a crash.
+        guard let hostWindow = window else {
+            guard panel.runModal() == .OK, let url = panel.url,
+                  let image = NSImage(contentsOf: url) else { return }
+            applyCustomBeautifyBackground(image)
+            return
+        }
         // Lower overlay window level temporarily so the open panel is interactive
-        let savedLevel = window?.level
-        window?.level = .normal
-        panel.beginSheetModal(for: window!) { [weak self] response in
-            self?.window?.level = savedLevel ?? .normal
+        let savedLevel = hostWindow.level
+        hostWindow.level = .normal
+        panel.beginSheetModal(for: hostWindow) { [weak self] response in
+            self?.window?.level = savedLevel
             guard let self = self, response == .OK, let url = panel.url,
                   let image = NSImage(contentsOf: url) else { return }
-            // Store image data (PNG) in UserDefaults for persistence
-            if let tiff = image.tiffRepresentation,
-               let bitmap = NSBitmapImageRep(data: tiff),
-               let pngData = bitmap.representation(using: .png, properties: [:]) {
-                UserDefaults.standard.set(pngData, forKey: "beautifyCustomBgImageData")
-            }
-            self.customBeautifyBackground = image
-            self.prepareBeautifyBackgroundCache()
-            self.beautifyStyleIndex = -1
-            UserDefaults.standard.set(-1, forKey: "beautifyStyleIndex")
-            self.cachedCompositedImage = nil
-            self.needsDisplay = true
-            self.updateBeautifySwatch(styleIndex: -1)
-            self.rebuildToolbarLayout()
+            self.applyCustomBeautifyBackground(image)
         }
+    }
+
+    private func applyCustomBeautifyBackground(_ image: NSImage) {
+        // Store image data (PNG) in UserDefaults for persistence
+        if let tiff = image.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiff),
+           let pngData = bitmap.representation(using: .png, properties: [:]) {
+            UserDefaults.standard.set(pngData, forKey: "beautifyCustomBgImageData")
+        }
+        customBeautifyBackground = image
+        prepareBeautifyBackgroundCache()
+        beautifyStyleIndex = -1
+        UserDefaults.standard.set(-1, forKey: "beautifyStyleIndex")
+        cachedCompositedImage = nil
+        needsDisplay = true
+        updateBeautifySwatch(styleIndex: -1)
+        rebuildToolbarLayout()
     }
 
     func loadCustomBeautifyBackground() {

@@ -61,7 +61,12 @@ enum AutoRedactor {
 
         DispatchQueue.global(qos: .userInitiated).async {
             VisionOCR.performTextRecognition(cgImage: cgImage) { request, _ in
-                guard let observations = request.results as? [VNRecognizedTextObservation] else { completion([]); return }
+                // Vision calls back on its own queue; completion mutates the
+                // overlay's annotation/undo state, so every exit must hop to main.
+                guard let observations = request.results as? [VNRecognizedTextObservation] else {
+                    DispatchQueue.main.async { completion([]) }
+                    return
+                }
                 let annotations = buildPIIRedactions(
                     observations: observations, selectionRect: selectionRect,
                     redactTool: redactTool, color: color,
@@ -90,7 +95,10 @@ enum AutoRedactor {
 
         DispatchQueue.global(qos: .userInitiated).async {
             VisionOCR.performTextRecognition(cgImage: cgImage) { request, _ in
-                guard let observations = request.results as? [VNRecognizedTextObservation] else { completion([]); return }
+                guard let observations = request.results as? [VNRecognizedTextObservation] else {
+                    DispatchQueue.main.async { completion([]) }
+                    return
+                }
                 let groupID = UUID()
                 let padding: CGFloat = 2
                 var annotations: [Annotation] = []
@@ -137,7 +145,10 @@ enum AutoRedactor {
         guard let cgImage = cgImage else { completion([]); return }
 
         let request = VNDetectFaceRectanglesRequest { request, _ in
-            guard let observations = request.results as? [VNFaceObservation] else { completion([]); return }
+            guard let observations = request.results as? [VNFaceObservation] else {
+                DispatchQueue.main.async { completion([]) }
+                return
+            }
             let groupID = UUID()
             let padding: CGFloat = 4
             var annotations: [Annotation] = []
@@ -166,7 +177,14 @@ enum AutoRedactor {
         }
 
         DispatchQueue.global(qos: .userInitiated).async {
-            try? VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+            do {
+                try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+            } catch {
+                // Without this the completion handler is never called on a
+                // throwing perform, leaving the caller waiting forever.
+                appLog("AutoRedactor face detection failed: \(error.localizedDescription)", level: .warning)
+                DispatchQueue.main.async { completion([]) }
+            }
         }
     }
 
@@ -185,7 +203,10 @@ enum AutoRedactor {
         guard let cgImage = cgImage else { completion([]); return }
 
         let request = VNDetectHumanRectanglesRequest { request, _ in
-            guard let observations = request.results as? [VNHumanObservation] else { completion([]); return }
+            guard let observations = request.results as? [VNHumanObservation] else {
+                DispatchQueue.main.async { completion([]) }
+                return
+            }
             let groupID = UUID()
             let padding: CGFloat = 4
             var annotations: [Annotation] = []
@@ -214,7 +235,12 @@ enum AutoRedactor {
         }
 
         DispatchQueue.global(qos: .userInitiated).async {
-            try? VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+            do {
+                try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+            } catch {
+                appLog("AutoRedactor person detection failed: \(error.localizedDescription)", level: .warning)
+                DispatchQueue.main.async { completion([]) }
+            }
         }
     }
 

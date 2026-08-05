@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 final class SnippetEditorViewModel: ObservableObject {
     enum SidebarSelection: Equatable {
@@ -98,7 +99,16 @@ final class SnippetEditorViewModel: ObservableObject {
 
     func persistDraftContent() {
         guard let snippetId = selectedSnippetId else { return }
-        SnippetManager.shared.updateSnippetContent(id: snippetId, content: draftContent)
+        persistContent(draftContent, for: snippetId)
+    }
+
+    /// Explicit-id variant for the debounced body editor, which must still save
+    /// after a selection change or window close has cleared `selectedSnippetId`.
+    func persistContent(_ content: String, for snippetId: UUID) {
+        SnippetManager.shared.updateSnippetContent(id: snippetId, content: content)
+        if selectedSnippetId == snippetId {
+            draftContent = content
+        }
     }
 
     func persistDraftShortcut() {
@@ -154,12 +164,21 @@ final class SnippetEditorViewModel: ObservableObject {
         reloadSidebar()
     }
 
+    /// `.clipy` has no registered UTI, so it is declared here as an XML subtype.
+    private static let snippetContentTypes: [UTType] = {
+        var types: [UTType] = [.xml]
+        if let clipy = UTType(filenameExtension: "clipy", conformingTo: .xml) {
+            types.insert(clipy, at: 0)
+        }
+        return types
+    }()
+
     func importSnippets() {
         let openPanel = NSOpenPanel()
         openPanel.allowsMultipleSelection = false
         openPanel.canChooseDirectories = false
         openPanel.canCreateDirectories = false
-        openPanel.allowedFileTypes = ["xml", "clipy"]
+        openPanel.allowedContentTypes = Self.snippetContentTypes
         openPanel.begin { [weak self] response in
             guard response == .OK, let url = openPanel.url else { return }
             do {
@@ -182,7 +201,7 @@ final class SnippetEditorViewModel: ObservableObject {
         let savePanel = NSSavePanel()
         savePanel.title = L10n.t(.exportSnippets)
         savePanel.nameFieldStringValue = "ClipySnippets.clipy"
-        savePanel.allowedFileTypes = ["clipy", "xml"]
+        savePanel.allowedContentTypes = Self.snippetContentTypes
         savePanel.canCreateDirectories = true
         savePanel.begin { response in
             guard response == .OK, let url = savePanel.url else { return }

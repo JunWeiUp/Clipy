@@ -16,25 +16,23 @@ final class HistoryMigrationService {
     }
 
     /// Reads the legacy JSON file (plain or encrypted) and, if present, imports
-    /// every entry through the supplied `insertHandler`. The JSON file is then
-    /// moved to a `.bak` backup.
+    /// every entry through the supplied `insertHandler`, then moves the JSON file
+    /// to a `.bak` backup.
     ///
-    /// - Note: The `insertHandler` runs on the caller's behalf while the
-    ///   database queue is already held, so it must **not** perform its own
-    ///   queue synchronization (i.e. it should be a "locked" variant).
+    /// - Note: `insertHandler` runs **outside** the database queue so it can
+    ///   externalize entry text to disk without blocking every reader; it must
+    ///   therefore be the queue-taking (public) insert, not a "locked" variant.
     func migrateFromLegacyJSONIfNeeded(insertHandler: (HistoryEntry) -> Bool) {
-        database.queue.sync {
-            guard FileManager.default.fileExists(atPath: legacyJSONURL.path) else { return }
-            guard let entries = decodeLegacyJSON(from: legacyJSONURL), !entries.isEmpty else { return }
+        guard FileManager.default.fileExists(atPath: legacyJSONURL.path) else { return }
+        guard let entries = decodeLegacyJSON(from: legacyJSONURL), !entries.isEmpty else { return }
 
-            appLog("Migrating clipboard history from JSON to SQLite...", level: .info)
-            for entry in entries {
-                _ = insertHandler(entry)
-            }
-            let backupURL = legacyJSONURL.deletingPathExtension().appendingPathExtension("json.bak")
-            try? FileManager.default.moveItem(at: legacyJSONURL, to: backupURL)
-            appLog("History migration complete: \(entries.count) entries", level: .info)
+        appLog("Migrating clipboard history from JSON to SQLite...", level: .info)
+        for entry in entries {
+            _ = insertHandler(entry)
         }
+        let backupURL = legacyJSONURL.deletingPathExtension().appendingPathExtension("json.bak")
+        try? FileManager.default.moveItem(at: legacyJSONURL, to: backupURL)
+        appLog("History migration complete: \(entries.count) entries", level: .info)
     }
 
     // MARK: - Private

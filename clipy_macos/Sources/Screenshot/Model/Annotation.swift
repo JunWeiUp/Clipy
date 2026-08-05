@@ -149,7 +149,10 @@ class Annotation {
     var numberFormat: NumberFormat = .decimal
     var points: [NSPoint]?
     var pressures: [CGFloat]?  // per-point pressure (parallel to points), nil = uniform width
-    var sourceImage: NSImage?    // for pixelate: temporary reference during drawing (cleared after bake)
+    // Shared reference to the canvas screenshot (never a copy). Pixelate/blur
+    // keep it past the first bake on purpose: moving or resizing the annotation
+    // clears bakedBlurNSImage and re-bakes from this image.
+    var sourceImage: NSImage?
     var sourceImageBounds: NSRect = .zero  // the bounds the image was drawn into
     var bakedBlurNSImage: NSImage?    // baked result for pixelate/blur (NSImage avoids CGImage flip issues)
     var outlineGlowImage: NSImage?   // cached selection outline glow (invalidated on move/change)

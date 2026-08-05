@@ -1,6 +1,7 @@
 AGENTS.md
 .DS_Store
 *.app/
+*.dSYM/
 build/
 Kim_AGENTS.md
 

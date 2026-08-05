@@ -4,324 +4,27 @@ import CoreGraphics
 import ApplicationServices
 import CryptoKit
 
-extension Notification.Name {
-    static let clipboardHistoryDidChange = Notification.Name("clipboardHistoryDidChange")
-}
-
-enum HistoryItem: Codable {
-    case text(String)
-    case image(String)
-    case rtf(String)
-    case pdf(String)
-    case html(String)
-    case files([URL])
-
-    enum CodingKeys: String, CodingKey {
-        case text
-        case imagePath, rtfPath, pdfPath, htmlPath
-        case image, rtf, pdf, html
-        case fileURL, files
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let store = HistoryMediaStore.shared
-        if let value = try? container.decode(String.self, forKey: .text) {
-            self = .text(value)
-        } else if let path = try? container.decode(String.self, forKey: .imagePath) {
-            self = .image(path)
-        } else if let data = try? container.decode(Data.self, forKey: .image) {
-            self = .image(store.storeLegacy(data: data, kind: .image))
-        } else if let path = try? container.decode(String.self, forKey: .rtfPath) {
-            self = .rtf(path)
-        } else if let data = try? container.decode(Data.self, forKey: .rtf) {
-            self = .rtf(store.storeLegacy(data: data, kind: .rtf))
-        } else if let path = try? container.decode(String.self, forKey: .pdfPath) {
-            self = .pdf(path)
-        } else if let data = try? container.decode(Data.self, forKey: .pdf) {
-            self = .pdf(store.storeLegacy(data: data, kind: .pdf))
-        } else if let path = try? container.decode(String.self, forKey: .htmlPath) {
-            self = .html(path)
-        } else if let data = try? container.decode(Data.self, forKey: .html) {
-            self = .html(store.storeLegacy(data: data, kind: .html))
-        } else if let value = try? container.decode([URL].self, forKey: .files) {
-            self = .files(value)
-        } else if let value = try? container.decode(URL.self, forKey: .fileURL) {
-            self = .files([value])
-        } else {
-            throw DecodingError.dataCorruptedError(forKey: .text, in: container, debugDescription: "Invalid HistoryItem format")
-        }
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        switch self {
-        case .text(let value):
-            try container.encode(value, forKey: .text)
-        case .image(let path):
-            try container.encode(path, forKey: .imagePath)
-        case .rtf(let path):
-            try container.encode(path, forKey: .rtfPath)
-        case .pdf(let path):
-            try container.encode(path, forKey: .pdfPath)
-        case .html(let path):
-            try container.encode(path, forKey: .htmlPath)
-        case .files(let urls):
-            if urls.count == 1 {
-                try container.encode(urls[0], forKey: .fileURL)
-            } else {
-                try container.encode(urls, forKey: .files)
-            }
-        }
-    }
-
-    var fileURLs: [URL]? {
-        if case .files(let urls) = self { return urls }
-        return nil
-    }
-
-    var isFile: Bool {
-        if case .files = self { return true }
-        return false
-    }
-
-    var title: String {
-        switch self {
-        case .text(let str):
-            return str.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
-        case .image:
-            return "[Image]"
-        case .rtf:
-            return "[Rich Text]"
-        case .pdf:
-            return "[PDF Document]"
-        case .html:
-            return "[HTML]"
-        case .files(let urls):
-            guard !urls.isEmpty else { return "[File]" }
-            if urls.count == 1 {
-                return urls[0].lastPathComponent
-            }
-            let names = urls.map(\.lastPathComponent).joined(separator: ", ")
-            return "[\(urls.count) Files] \(names)"
-        }
-    }
-
-    var locationSummary: String? {
-        if let path = storedMediaPath {
-            return FilePathDisplay.shorten(path)
-        }
-        guard case .files(let urls) = self, !urls.isEmpty else { return nil }
-        if urls.count == 1 {
-            return FilePathDisplay.string(for: urls[0])
-        }
-        return urls.map { FilePathDisplay.string(for: $0) }.joined(separator: "\n")
-    }
-
-    var fileNamesText: String? {
-        guard case .files(let urls) = self, !urls.isEmpty else { return nil }
-        return urls.map(\.lastPathComponent).joined(separator: "\n")
-    }
-}
-
-enum HistoryTypeFilter: String, CaseIterable, Identifiable {
-    case all
-    case text
-    case image
-    case file
-    case richText
-
-    var id: String { rawValue }
-
-    var labelKey: L10nKey {
-        switch self {
-        case .all: return .historyFilterAll
-        case .text: return .historyTypeText
-        case .image: return .historyTypeImage
-        case .file: return .historyTypeFile
-        case .richText: return .historyFilterRichText
-        }
-    }
-
-    func matches(_ item: HistoryItem) -> Bool {
-        switch self {
-        case .all:
-            return true
-        case .text:
-            if case .text = item { return true }
-            return false
-        case .image:
-            if case .image = item { return true }
-            return false
-        case .file:
-            return item.isFile
-        case .richText:
-            switch item {
-            case .rtf, .html, .pdf:
-                return true
-            default:
-                return false
-            }
-        }
-    }
-}
-
-enum FilePathDisplay {
-    static func string(for url: URL) -> String {
-        shorten(url.path)
-    }
-
-    static func shorten(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        if path.hasPrefix(home + "/") {
-            return "~/" + path.dropFirst(home.count + 1)
-        }
-        if path == home {
-            return "~"
-        }
-        return path
-    }
-
-    static func revealInFinder(urls: [URL]) {
-        guard !urls.isEmpty else { return }
-        NSWorkspace.shared.activateFileViewerSelecting(urls)
-    }
-}
-
-struct HistorySummary {
-    let rowid: Int64
-    var item: HistoryItem
-    var date: Date
-    let sourceApp: String?
-    let sourceBundleId: String?
-    let contentHash: String?
-    var isPinned: Bool
-    let textPath: String?
-
-    func asEntry(
-        searchIndex: String? = nil,
-        lastUsedAt: Date? = nil,
-        useCount: Int = 0
-    ) -> HistoryEntry {
-        HistoryEntry(
-            item: item,
-            date: date,
-            sourceApp: sourceApp,
-            sourceBundleId: sourceBundleId,
-            contentHash: contentHash,
-            isPinned: isPinned,
-            searchIndex: searchIndex,
-            lastUsedAt: lastUsedAt,
-            useCount: useCount,
-            textPath: textPath
-        )
-    }
-
-    static func from(entry: HistoryEntry, rowid: Int64) -> HistorySummary {
-        HistorySummary(
-            rowid: rowid,
-            item: entry.item,
-            date: entry.date,
-            sourceApp: entry.sourceApp,
-            sourceBundleId: entry.sourceBundleId,
-            contentHash: entry.contentHash,
-            isPinned: entry.isPinned,
-            textPath: entry.textPath
-        )
-    }
-}
-
-struct HistoryEntry: Codable {
-    var item: HistoryItem
-    var date: Date
-    let sourceApp: String?
-    let sourceBundleId: String?
-    let contentHash: String?
-    var isPinned: Bool
-    var searchIndex: String?
-    var lastUsedAt: Date?
-    var useCount: Int
-    var textPath: String?
-
-    init(
-        item: HistoryItem,
-        date: Date,
-        sourceApp: String?,
-        sourceBundleId: String? = nil,
-        contentHash: String?,
-        isPinned: Bool = false,
-        searchIndex: String? = nil,
-        lastUsedAt: Date? = nil,
-        useCount: Int = 0,
-        textPath: String? = nil
-    ) {
-        self.item = item
-        self.date = date
-        self.sourceApp = sourceApp
-        self.sourceBundleId = sourceBundleId
-        self.contentHash = contentHash
-        self.isPinned = isPinned
-        self.searchIndex = searchIndex
-        self.lastUsedAt = lastUsedAt
-        self.useCount = useCount
-        self.textPath = textPath
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case item, date, sourceApp, sourceBundleId, contentHash, isPinned
-        case searchIndex, lastUsedAt, useCount, textPath
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        item = try container.decode(HistoryItem.self, forKey: .item)
-        date = try container.decode(Date.self, forKey: .date)
-        sourceApp = try container.decodeIfPresent(String.self, forKey: .sourceApp)
-        sourceBundleId = try container.decodeIfPresent(String.self, forKey: .sourceBundleId)
-        contentHash = try container.decodeIfPresent(String.self, forKey: .contentHash)
-        isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
-        searchIndex = try container.decodeIfPresent(String.self, forKey: .searchIndex)
-        lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt)
-        useCount = try container.decodeIfPresent(Int.self, forKey: .useCount) ?? 0
-        textPath = try container.decodeIfPresent(String.self, forKey: .textPath)
-    }
-
-    var listDisplayTitle: String {
-        switch item {
-        case .image:
-            if isScreenshotCapture {
-                return L10n.t(.screenshot)
-            }
-            return L10n.t(.historyTypeImage)
-        default:
-            return item.title
-        }
-    }
-
-    private var isScreenshotCapture: Bool {
-        sourceBundleId == Bundle.main.bundleIdentifier
-            || sourceApp?.localizedCaseInsensitiveContains("screenshot") == true
-    }
-}
-
-struct FileHistoryItem: Codable {
-    let id: UUID
-    let fileName: String
-    let filePath: String
-    let fileSize: Int64
-    let timestamp: Date
-    let senderName: String
-}
-
 class ClipboardManager {
     static let shared = ClipboardManager()
 
     private let pasteboard = NSPasteboard.general
     private var changeCount: Int
     private var timer: Timer?
+    private var pollingObserverTokens: [NSObjectProtocol] = []
+    private var workspaceObserverTokens: [NSObjectProtocol] = []
     private(set) var recentSummaries: [HistorySummary] = []
     private(set) var isMenuMemoryRetained = false
-    private(set) var totalHistoryCount = 0
+    /// Lazily refreshed: every insert used to run a synchronous `COUNT(*)` on
+    /// the main thread even though only Settings and the search window read it.
+    private var cachedHistoryCount = 0
+    private var isHistoryCountStale = true
+    var totalHistoryCount: Int {
+        if isHistoryCountStale {
+            cachedHistoryCount = repository.count()
+            isHistoryCountStale = false
+        }
+        return cachedHistoryCount
+    }
     /// The menu bar only ever renders `MenuController.menuDisplayLimit` (50)
     /// items, so loading more into `recentSummaries` is pure waste. Cap the
     /// in-memory load at 50 regardless of the (search-window) page size
@@ -487,6 +190,7 @@ class ClipboardManager {
                 sourceBundleId: nil,
                 lastKnownSyncHash: syncHash,
                 recentRemoteHashes: remoteHashes,
+                pasteboardPlainText: nil,
                 date: item.timestamp
             )
         }
@@ -533,12 +237,11 @@ class ClipboardManager {
         if HistoryMediaStore.shared.consumeLegacyMigrationNeeded() {
             reimportHistoryForLegacyMediaMigration()
         }
-        totalHistoryCount = repository.count()
+        isHistoryCountStale = true
     }
 
     func ensureMenuSummariesLoaded() {
         isMenuMemoryRetained = true
-        totalHistoryCount = repository.count()
         recentSummaries = repository.fetchSummaries(limit: menuHistoryLimit)
     }
 
@@ -560,12 +263,11 @@ class ClipboardManager {
         if !wasRetained {
             // 调用方通常会立刻 ensureMenuSummariesLoaded；这里也重拉一次确保完整。
             recentSummaries = repository.fetchSummaries(limit: menuHistoryLimit)
-            totalHistoryCount = repository.count()
         }
     }
 
     private func reloadLoadedSummaries() {
-        totalHistoryCount = repository.count()
+        isHistoryCountStale = true
         guard isMenuMemoryRetained else { return }
         recentSummaries = repository.fetchSummaries(limit: menuHistoryLimit)
     }
@@ -581,36 +283,68 @@ class ClipboardManager {
         }
     }
 
+    /// True while a re-encryption pass is running; the settings toggle stays
+    /// disabled until it finishes so the two passes can't interleave.
+    private(set) var isReencryptingHistory = false
+
+    /// Flips at-rest encryption and rewrites every referenced media file.
+    ///
+    /// The rewrite runs off the main thread — with a large history it is
+    /// thousands of file reads, AES passes and atomic writes, which used to
+    /// freeze the Settings window for the duration.
     @discardableResult
-    func setHistoryEncryptionEnabled(_ enabled: Bool) -> Bool {
+    func setHistoryEncryptionEnabled(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) -> Bool {
         let previous = PreferencesManager.shared.isHistoryEncryptionEnabled
-        guard previous != enabled else { return true }
+        guard previous != enabled else {
+            completion?(true)
+            return true
+        }
+        guard !isReencryptingHistory else {
+            completion?(false)
+            return false
+        }
 
         PreferencesManager.shared.isHistoryEncryptionEnabled = enabled
+        isReencryptingHistory = true
         let paths = repository.referencedStoragePaths()
-        HistoryMediaStore.shared.reencryptReferencedFiles(keeping: paths, wasEncrypted: previous)
+        ingestQueue.async { [weak self] in
+            HistoryMediaStore.shared.reencryptReferencedFiles(keeping: paths, wasEncrypted: previous)
+            DispatchQueue.main.async {
+                self?.isReencryptingHistory = false
+                NotificationCenter.default.post(name: .historyEncryptionDidFinish, object: nil)
+                completion?(true)
+            }
+        }
         return true
     }
 
     private func startPolling() {
         startPollingTimer(interval: minCheckInterval)
 
+        // Idempotent: a second call would otherwise stack duplicate observers,
+        // each re-running adjustPollingInterval on every activation.
+        guard pollingObserverTokens.isEmpty else { return }
+
         // Poll fast while the user is interacting with this Mac session; ease off when
         // the app is idle so the RunLoop is not woken 3x per second around the clock.
         let center = NotificationCenter.default
-        center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.adjustPollingInterval()
-        }
-        center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.adjustPollingInterval()
-        }
+        pollingObserverTokens.append(
+            center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.adjustPollingInterval()
+            })
+        pollingObserverTokens.append(
+            center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.adjustPollingInterval()
+            })
         // Wake events arrive on NSWorkspace's own notification center.
-        NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.adjustPollingInterval()
-        }
+        workspaceObserverTokens.append(
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.adjustPollingInterval()
+            })
     }
+
 
     private func startPollingTimer(interval: TimeInterval) {
         timer?.invalidate()
@@ -633,6 +367,14 @@ class ClipboardManager {
     func stopPolling() {
         timer?.invalidate()
         timer = nil
+        for token in pollingObserverTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+        pollingObserverTokens.removeAll()
+        for token in workspaceObserverTokens {
+            NSWorkspace.shared.notificationCenter.removeObserver(token)
+        }
+        workspaceObserverTokens.removeAll()
     }
 
     private func checkPasteboardWithDebounce() {
@@ -684,7 +426,11 @@ class ClipboardManager {
         // value data that heavy processing can consume from any thread.
         guard let payload = readPasteboardPayload() else { return }
 
-        if synchronous {
+        // A synchronous ingest is only worth it when it is cheap. Text and file
+        // lists need no media-store write, so the entry can be in the menu the
+        // moment it opens; images/PDF/RTF mean encoding, hashing and possibly
+        // encrypting tens of megabytes, which would stall the menu instead.
+        if synchronous && payload.isCheapToIngestSynchronously {
             let item = historyItem(from: payload)
             addToHistory(item, sourceApp: sourceApp, sourceBundleId: bundleIdentifier)
             return
@@ -696,6 +442,7 @@ class ClipboardManager {
         // Snapshot the loopback set on the main thread (it is mutated here only);
         // the heavy ingest runs off-thread and must not race the live list.
         let capturedRemoteHashes = Set(recentRemoteHashes.map { $0.hash })
+        let capturedPlainText = pasteboard.string(forType: .string)
         ingestQueue.async { [weak self] in
             guard let self else { return }
             let item = self.historyItem(from: payload)
@@ -704,7 +451,8 @@ class ClipboardManager {
                 sourceApp: sourceApp,
                 sourceBundleId: bundleIdentifier,
                 lastKnownSyncHash: capturedSyncHash,
-                recentRemoteHashes: capturedRemoteHashes
+                recentRemoteHashes: capturedRemoteHashes,
+                pasteboardPlainText: capturedPlainText
             )
             DispatchQueue.main.async {
                 self.finalizeHistoryInsert(prepared)
@@ -719,6 +467,13 @@ class ClipboardManager {
         case html(Data)
         case pdf(Data)
         case image(Data)
+
+        var isCheapToIngestSynchronously: Bool {
+            switch self {
+            case .files, .text: return true
+            case .rtf, .html, .pdf, .image: return false
+            }
+        }
     }
 
     private func readPasteboardPayload() -> PasteboardPayload? {
@@ -772,26 +527,29 @@ class ClipboardManager {
             place: .headInsertEventTap,
             options: .defaultTap,
             eventsOfInterest: CGEventMask(eventMask),
+            // The event is borrowed from the tap machinery, which keeps owning it
+            // after the callback returns. passRetained added a +1 nobody balanced,
+            // leaking one CGEvent per keystroke.
             callback: { _, type, event, refcon in
                 guard let refcon else {
-                    return Unmanaged.passRetained(event)
+                    return Unmanaged.passUnretained(event)
                 }
                 guard type == .keyDown else {
-                    return Unmanaged.passRetained(event)
+                    return Unmanaged.passUnretained(event)
                 }
 
                 let flags = event.flags
                 guard flags.contains(.maskCommand),
                       !flags.contains(.maskAlternate),
                       event.getIntegerValueField(.keyboardEventKeycode) == 0x09 else {
-                    return Unmanaged.passRetained(event)
+                    return Unmanaged.passUnretained(event)
                 }
 
                 let manager = Unmanaged<ClipboardManager>.fromOpaque(refcon).takeUnretainedValue()
                 DispatchQueue.main.async {
                     manager.recordUsageIfPasteboardMatchesHistory()
                 }
-                return Unmanaged.passRetained(event)
+                return Unmanaged.passUnretained(event)
             },
             userInfo: userInfo
         ) else {
@@ -861,6 +619,7 @@ class ClipboardManager {
             sourceBundleId: sourceBundleId,
             lastKnownSyncHash: lastSyncHash,
             recentRemoteHashes: Set(recentRemoteHashes.map { $0.hash }),
+            pasteboardPlainText: pasteboard.string(forType: .string),
             date: date
         )
         finalizeHistoryInsert(prepared)
@@ -868,12 +627,16 @@ class ClipboardManager {
 
     /// Heavy half of the insert (hashing, index build, DB write). Safe on any thread:
     /// the repository is internally serialized and the media store only touches disk.
+    ///
+    /// `pasteboardPlainText` must be sampled by the caller on the main thread —
+    /// NSPasteboard is not thread-safe and this runs on `ingestQueue`.
     private func prepareHistoryInsert(
         _ item: HistoryItem,
         sourceApp: String?,
         sourceBundleId: String?,
         lastKnownSyncHash: String?,
         recentRemoteHashes: Set<String>,
+        pasteboardPlainText: String?,
         date: Date? = nil
     ) -> PreparedHistoryInsert {
         let hash = contentHash(for: item)
@@ -882,7 +645,7 @@ class ClipboardManager {
         // Broadcast unless this content was just delivered by a remote peer
         // (loopback). Both the single-slot lastKnownSyncHash and the time-windowed
         // set are checked: either match means we keep it local.
-        if let sync = plainTextForLANSync(from: item),
+        if let sync = plainTextForLANSync(from: item, pasteboardPlainText: pasteboardPlainText),
            sync.hash != lastKnownSyncHash,
            !recentRemoteHashes.contains(sync.hash) {
             SyncManager.shared.broadcastSync(content: sync.text, hash: sync.hash)
@@ -1374,8 +1137,11 @@ class ClipboardManager {
     }
 
     /// Resolves LAN-syncable plain text even when history stores HTML/RTF rich content.
-    private func plainTextForLANSync(from item: HistoryItem) -> (text: String, hash: String)? {
-        if let pasted = pasteboard.string(forType: .string)?
+    private func plainTextForLANSync(
+        from item: HistoryItem,
+        pasteboardPlainText: String?
+    ) -> (text: String, hash: String)? {
+        if let pasted = pasteboardPlainText?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !pasted.isEmpty,
            let hash = contentHash(for: .text(pasted)) {

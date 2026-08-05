@@ -7,8 +7,17 @@ cd "${MACOS_PROJECT_DIR}"
 
 # 配置变量
 APP_NAME="ClipyClone"
-BUNDLE_ID="com.yourdomain.ClipyClone"
+# 保留历史默认值：TCC（屏幕录制/麦克风/摄像头/辅助功能）授权是按 Bundle ID 记录的，
+# 改这个值会让已授权的用户全部重新授权。要用自己的标识符时通过环境变量覆盖：
+#   BUNDLE_ID=com.example.Clipy ./build_macos_app.sh
+BUNDLE_ID="${BUNDLE_ID:-com.yourdomain.ClipyClone}"
 EXECUTABLE_NAME="ClipyClone"
+# 调试符号：默认生成 .dSYM，崩溃日志里的地址才能还原成函数名和行号。
+# GENERATE_DSYM=0 可关闭。
+GENERATE_DSYM="${GENERATE_DSYM:-1}"
+# 构建后是否安装到 /Applications 并启动。CI 或只想验证编译时设 0。
+INSTALL_APP="${INSTALL_APP:-1}"
+LAUNCH_APP="${LAUNCH_APP:-1}"
 APP_VERSION="${APP_VERSION:-1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 APP_BUNDLE="${APP_NAME}.app"
@@ -49,11 +58,17 @@ for src in "${SWIFT_SOURCES[@]}"; do
     BUILD_SRC_PATHS+=("${BUILD_SRC_DIR}/${src}")
 done
 
+SWIFTC_DEBUG_FLAGS=()
+if [ "${GENERATE_DSYM}" = "1" ]; then
+    SWIFTC_DEBUG_FLAGS+=(-g)
+fi
+
 swiftc \
     "${BUILD_SRC_PATHS[@]}" \
     -whole-module-optimization \
     -target arm64-apple-macos13.0 \
     -D OFFLINE \
+    "${SWIFTC_DEBUG_FLAGS[@]}" \
     -o "${MACOS_DIR}/${EXECUTABLE_NAME}" \
     -framework AppKit \
     -framework SwiftUI \
@@ -139,6 +154,19 @@ if [ ! -f "${MACOS_DIR}/${EXECUTABLE_NAME}" ]; then
 fi
 chmod +x "${MACOS_DIR}/${EXECUTABLE_NAME}"
 
+# 6. 生成 dSYM（必须在签名之前：dsymutil 读取可执行文件，签名后再抽取符号会
+#    让 UUID 与最终二进制不匹配，symbolicate 就失效了）
+if [ "${GENERATE_DSYM}" = "1" ] && command -v dsymutil >/dev/null 2>&1; then
+    DSYM_PATH="${APP_BUNDLE}.dSYM"
+    rm -rf "${DSYM_PATH}"
+    if dsymutil "${MACOS_DIR}/${EXECUTABLE_NAME}" -o "${DSYM_PATH}" 2>/dev/null; then
+        echo "🔍 已生成调试符号: ${MACOS_PROJECT_DIR}/${DSYM_PATH}"
+        echo "   还原崩溃地址: atos -o \"${DSYM_PATH}/Contents/Resources/DWARF/${EXECUTABLE_NAME}\" -l <load_address> <address>"
+    else
+        echo "⚠️ dSYM 生成失败，崩溃日志将只有裸地址"
+    fi
+fi
+
 # 6. 代码签名（TCC 权限绑定 Bundle ID + 证书；ad-hoc 签名每次编译都会变，导致需反复授权）
 resolve_sign_identity() {
     if [ -n "${SIGN_IDENTITY}" ] && [ "${SIGN_IDENTITY}" != "-" ] && [ "${SIGN_IDENTITY}" != "adhoc" ]; then
@@ -200,7 +228,12 @@ if command -v codesign >/dev/null 2>&1; then
     }
 fi
 
-# 7. 安装到 /Applications（固定路径 + 稳定证书签名，TCC 权限才能跨编译保持）
+# 8. 安装到 /Applications（固定路径 + 稳定证书签名，TCC 权限才能跨编译保持）
+if [ "${INSTALL_APP}" != "1" ]; then
+    echo "✅ 构建完成（未安装）: ${MACOS_PROJECT_DIR}/${APP_BUNDLE}"
+    exit 0
+fi
+
 echo "📦 正在安装到 ${INSTALLED_APP}..."
 rm -rf "${INSTALLED_APP}"
 ditto "${APP_BUNDLE}" "${INSTALLED_APP}"
@@ -219,4 +252,6 @@ else
     echo "   若仍反复要求授权，可执行: tccutil reset ScreenCapture ${BUNDLE_ID} 后重新授权一次"
 fi
 
-open "${INSTALLED_APP}"
+if [ "${LAUNCH_APP}" = "1" ]; then
+    open "${INSTALLED_APP}"
+fi

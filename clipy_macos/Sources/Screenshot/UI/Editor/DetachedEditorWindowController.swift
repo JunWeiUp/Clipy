@@ -26,6 +26,7 @@ class DetachedEditorWindowController: NSObject, NSWindowDelegate {
     private var topBar: EditorTopBarView?
     private var addCaptureHandler: AddCaptureOverlayHandler?
     private var ocrController: OCRResultController?
+    private var zoomObserverTokens: [NSObjectProtocol] = []
     private static var activeControllers: [DetachedEditorWindowController] = []
 
     /// History entry ID — when set, "Done" button appears and commits edits back to history.
@@ -73,8 +74,10 @@ class DetachedEditorWindowController: NSObject, NSWindowDelegate {
 
     private func show(image: NSImage, tool: AnnotationTool?, color: NSColor?, strokeWidth: CGFloat?, annotations: [Annotation]) {
         let imgSize = image.size
-        let screen = NSScreen.main ?? NSScreen.screens.first!
-        let screenFrame = screen.visibleFrame
+        // `NSScreen.screens` is empty with no attached display (e.g. a headless
+        // session), so fall back to a fixed frame rather than trapping.
+        let screenFrame = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
         let minW: CGFloat = 800
         let minH: CGFloat = 400
@@ -180,8 +183,12 @@ class DetachedEditorWindowController: NSObject, NSWindowDelegate {
         let updateZoom = { [weak topBar, weak scrollView] (_: Notification) in
             if let mag = scrollView?.magnification { topBar?.updateZoom(mag) }
         }
-        NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveMagnifyNotification, object: scrollView, queue: .main, using: updateZoom)
-        NotificationCenter.default.addObserver(forName: NSScrollView.didLiveScrollNotification, object: scrollView, queue: .main, using: updateZoom)
+        // Block-based observers are not tied to `self`, so their tokens have to
+        // be kept and removed by hand or every reopened editor leaves one behind.
+        zoomObserverTokens = [
+            NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveMagnifyNotification, object: scrollView, queue: .main, using: updateZoom),
+            NotificationCenter.default.addObserver(forName: NSScrollView.didLiveScrollNotification, object: scrollView, queue: .main, using: updateZoom),
+        ]
 
         // Set chrome parent BEFORE applySelection so toolbars are added to container, not documentView
         view.chromeParentView = container
@@ -313,6 +320,10 @@ class DetachedEditorWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        for token in zoomObserverTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+        zoomObserverTokens = []
         overlayView?.reset()
         overlayView?.overlayDelegate = nil
         window?.contentView = nil
@@ -510,12 +521,13 @@ extension DetachedEditorWindowController: OverlayViewDelegate {
     private func ensureInHistory(compositedImage: NSImage, annotationData: CaptureAnnotationData? = nil) {
         guard historyEntryID == nil, overlayView != nil else { return }
         let data = annotationData ?? currentAnnotationData()
-        ScreenshotHistory.shared.add(
+        // Use the id `add` returns. `entries.first` is the *oldest* entry, so the
+        // editor used to link its Done button to an unrelated capture.
+        historyEntryID = ScreenshotHistory.shared.add(
             image: compositedImage,
             rawImage: data?.rawImage,
             annotations: data?.annotations,
             editState: data?.editState)
-        historyEntryID = ScreenshotHistory.shared.entries.first?.id
         if historyEntryID != nil {
             topBar?.onDone = { [weak self] in self?.commitToHistory() }
             refreshDoneButtonVisibility()

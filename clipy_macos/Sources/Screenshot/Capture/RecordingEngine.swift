@@ -49,6 +49,8 @@ final class RecordingEngine: NSObject {
     var onCompletion: RecordingCompletionCallback?
 
     private var progressTimer: Timer?
+    /// Set when SCStream stops on its own; reported alongside the salvaged file.
+    private var interruptionError: Error?
     private var elapsedSeconds: Int = 0
     private var pauseStartTime: Date?
     var onPauseChanged: ((Bool) -> Void)?
@@ -210,7 +212,14 @@ final class RecordingEngine: NSObject {
             output.onAudioSample = { sampleBuffer in
                 writer.handleSystemAudioSample(sampleBuffer)
             }
-            output.onStopped = { [weak self] in
+            // The stream died on us (display disconnected, permission revoked,
+            // capture engine crash). Finalize anyway so the frames already
+            // written are kept, but surface why it ended early.
+            output.onStopped = { [weak self] error in
+                if let error {
+                    appLog("Screenshot: capture stream stopped early — \(error.localizedDescription)", level: .warning)
+                    self?.interruptionError = error
+                }
                 self?.stopRecording()
             }
             self.streamOutput = output
@@ -332,11 +341,20 @@ final class RecordingEngine: NSObject {
 
     @MainActor private func succeed() {
         state = .idle
+        let interruption = interruptionError
+        interruptionError = nil
+        if let interruption {
+            appLog(
+                "Screenshot: recording finalized after interruption — \(interruption.localizedDescription)",
+                level: .warning
+            )
+        }
         onCompletion?(outputURL, nil)
     }
 
     @MainActor private func fail(_ error: Error) {
         state = .idle
+        interruptionError = nil
         onCompletion?(nil, error)
     }
 
@@ -356,7 +374,7 @@ final class RecordingEngine: NSObject {
 private class RecordingStreamOutput: NSObject, SCStreamOutput, SCStreamDelegate {
     var onFrame: ((CVPixelBuffer, CMTime) -> Void)?
     var onAudioSample: ((CMSampleBuffer) -> Void)?
-    var onStopped: (() -> Void)?
+    var onStopped: ((Error?) -> Void)?
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         switch type {
@@ -366,14 +384,19 @@ private class RecordingStreamOutput: NSObject, SCStreamOutput, SCStreamDelegate 
             onFrame?(pixelBuffer, pts)
         case .audio:
             onAudioSample?(sampleBuffer)
-        @unknown default:
-            break
+        default:
+            // macOS 15 added `.microphone`. We capture the mic through a separate
+            // AVCaptureDevice and mix it ourselves, so SCStream never delivers it;
+            // handled explicitly anyway in case mic capture moves to the stream.
+            if #available(macOS 15.0, *), type == .microphone {
+                onAudioSample?(sampleBuffer)
+            }
         }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         DispatchQueue.main.async { [weak self] in
-            self?.onStopped?()
+            self?.onStopped?(error)
         }
     }
 }

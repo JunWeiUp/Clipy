@@ -21,20 +21,18 @@ final class SearchViewModel: ObservableObject {
     @Published var statusText = ""
 
     private var debounceWorkItem: DispatchWorkItem?
+    private var historyChangeWorkItem: DispatchWorkItem?
     private var historyObserver: NSObjectProtocol?
     private var browseLimit: Int
 
     private var isLoadingMore = false
     private var searchGeneration = 0
     private let searchQueue = DispatchQueue(label: "com.clipy.search", qos: .userInitiated)
+    private static let historyChangeDebounce: TimeInterval = 0.25
 
     init() {
-        // The history manager loads ALL history on open (Table is lazily
-        // rendered, so even thousands of rows don't cost UI time). browseLimit
-        // caps the browse-mode fetch; seeding it with the total count makes
-        // the first query return everything at once instead of paging.
-        let total = ClipboardManager.shared.totalHistoryCount
-        browseLimit = total > 0 ? total : PreferencesManager.shared.historyLoadCount
+        // First screen is one page; further pages load when the last row appears.
+        browseLimit = PreferencesManager.shared.historyLoadCount
     }
 
     func onResultRowAppear(_ result: HistorySearchResult) {
@@ -63,12 +61,7 @@ final class SearchViewModel: ObservableObject {
     }
 
     func onAppear() {
-        // Refresh the total in case history grew while the window was closed,
-        // then load everything for browsing. (When a query/filter is active the
-        // fetch goes through fetchFiltered with its own maxHistoryItems cap, so
-        // this large browseLimit only affects the unfiltered browse view.)
-        let total = ClipboardManager.shared.totalHistoryCount
-        browseLimit = total > 0 ? total : PreferencesManager.shared.historyLoadCount
+        browseLimit = PreferencesManager.shared.historyLoadCount
         let snapshot = HistorySearchStateStore.load()
         query = snapshot.query
         typeFilter = snapshot.typeFilter
@@ -87,10 +80,7 @@ final class SearchViewModel: ObservableObject {
     /// query and re-registers the observer so the reopened window reflects the
     /// current history (including anything copied while it was closed).
     func reactivate() {
-        // Re-seed browseLimit from the live total so a reused window still
-        // loads all history (history may have grown while it was closed).
-        let total = ClipboardManager.shared.totalHistoryCount
-        if total > 0 { browseLimit = total }
+        browseLimit = PreferencesManager.shared.historyLoadCount
         performSearch(immediate: true)
         registerHistoryChangeObserver()
     }
@@ -102,8 +92,19 @@ final class SearchViewModel: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            self?.scheduleHistoryChangeRefresh()
+        }
+    }
+
+    /// Clipboard churn (rapid copies / remote sync) can fire many notifications;
+    /// coalesce into one search so we don't re-query SQLite on every event.
+    private func scheduleHistoryChangeRefresh() {
+        historyChangeWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
             self?.performSearch(immediate: true)
         }
+        historyChangeWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.historyChangeDebounce, execute: work)
     }
 
     func onDisappear() {
@@ -118,14 +119,14 @@ final class SearchViewModel: ObservableObject {
     func clearLoadedData() {
         debounceWorkItem?.cancel()
         debounceWorkItem = nil
+        historyChangeWorkItem?.cancel()
+        historyChangeWorkItem = nil
         isLoadingMore = false
         results = []
         selectedIDs = []
         statusText = ""
-        // browseLimit is intentionally NOT reset here: it is recomputed from
-        // the live total count on every onAppear/reactivate, and resetting it
-        // to the small page size here would make a window reopen (which runs
-        // reactivate, not onAppear) fetch only one page instead of all.
+        // Reset to one page; onAppear/reactivate also re-seed this before fetch.
+        browseLimit = PreferencesManager.shared.historyLoadCount
         availableSourceApps = []
         if let observer = historyObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -144,6 +145,7 @@ final class SearchViewModel: ObservableObject {
     }
 
     func onFilterChange() {
+        browseLimit = PreferencesManager.shared.historyLoadCount
         performSearch(immediate: true)
     }
 
@@ -339,13 +341,6 @@ final class SearchViewModel: ObservableObject {
         result.highlightRanges
     }
 
-    private func matchesSelection(_ lhs: HistoryEntry, _ rhs: HistoryEntry) -> Bool {
-        let lhsHash = lhs.contentHash ?? ""
-        let rhsHash = rhs.contentHash ?? ""
-        if !lhsHash.isEmpty, lhsHash == rhsHash { return true }
-        return lhs.id == rhs.id
-    }
-
     private func isShowingAllHistory(
         trimmed: String,
         selectedSourceApp: String?,
@@ -511,8 +506,9 @@ struct SearchView: View {
             }
         }
         .background(
-            HistoryTableDoubleClickHandler(results: viewModel.results.map(\.entry)) { entry in
-                viewModel.applyAction(.pasteAndClose, to: entry)
+            HistoryTableDoubleClickHandler { row in
+                guard viewModel.results.indices.contains(row) else { return }
+                viewModel.applyAction(.pasteAndClose, to: viewModel.results[row].entry)
             }
         )
     }
@@ -667,34 +663,34 @@ struct SearchView: View {
 }
 
 private struct HistoryTableDoubleClickHandler: NSViewRepresentable {
-    let results: [HistoryEntry]
-    let onDoubleClick: (HistoryEntry) -> Void
+    /// Resolve the clicked row on demand so each table refresh does not copy
+    /// the full results array into the representable.
+    let onDoubleClickRow: (Int) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onDoubleClick: onDoubleClick)
+        Coordinator(onDoubleClickRow: onDoubleClickRow)
     }
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
-        context.coordinator.attach(to: view, results: results)
+        context.coordinator.attach(to: view)
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.attach(to: nsView, results: results)
+        context.coordinator.onDoubleClickRow = onDoubleClickRow
+        context.coordinator.attach(to: nsView)
     }
 
     final class Coordinator: NSObject {
-        var onDoubleClick: (HistoryEntry) -> Void
+        var onDoubleClickRow: (Int) -> Void
         private weak var tableView: NSTableView?
-        private var results: [HistoryEntry] = []
 
-        init(onDoubleClick: @escaping (HistoryEntry) -> Void) {
-            self.onDoubleClick = onDoubleClick
+        init(onDoubleClickRow: @escaping (Int) -> Void) {
+            self.onDoubleClickRow = onDoubleClickRow
         }
 
-        func attach(to view: NSView, results: [HistoryEntry]) {
-            self.results = results
+        func attach(to view: NSView) {
             DispatchQueue.main.async { [weak self] in
                 guard let self, let tableView = self.findTableView(from: view) else { return }
                 guard self.tableView !== tableView else { return }
@@ -706,8 +702,8 @@ private struct HistoryTableDoubleClickHandler: NSViewRepresentable {
 
         @objc private func handleDoubleClick(_ sender: NSTableView) {
             let row = sender.clickedRow
-            guard row >= 0, row < results.count else { return }
-            onDoubleClick(results[row])
+            guard row >= 0 else { return }
+            onDoubleClickRow(row)
         }
 
         private func findTableView(from view: NSView) -> NSTableView? {

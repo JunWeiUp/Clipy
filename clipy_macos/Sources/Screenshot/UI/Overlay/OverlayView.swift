@@ -1034,9 +1034,18 @@ class OverlayView: NSView {
             windowSnapCooldown = true
         }
 
+        // viewDidMoveToWindow fires again every time a pooled overlay is reused,
+        // so remove first — otherwise handleToolbarColorsChanged (which rebuilds
+        // the whole toolbar) ends up running once per past capture.
+        NotificationCenter.default.removeObserver(
+            self, name: .toolbarColorsDidChange, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleToolbarColorsChanged),
             name: .toolbarColorsDidChange, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     @objc private func handleToolbarColorsChanged() {
@@ -5624,8 +5633,8 @@ class OverlayView: NSView {
             // Sticky color wheel: click to pick a color
             if colorWheel.isVisible && colorWheel.isSticky {
                 colorWheel.updateHover(at: point)
-                if colorWheel.hoveredColor != nil {
-                    currentColor = colorWheel.hoveredColor!
+                if let hoveredColor = colorWheel.hoveredColor {
+                    currentColor = hoveredColor
                     applyColorToTextIfEditing()
                     applyColorToSelectedAnnotation()
                     rebuildToolbarLayout()
@@ -6309,17 +6318,17 @@ class OverlayView: NSView {
                 overlayDelegate?.overlayViewSelectionDidChange(selectionRect)
                 updateResolutionBox()
                 needsDisplay = true
-            } else if currentAnnotation != nil {
+            } else if let annotationInProgress = currentAnnotation {
                 if spaceRepositioning {
                     // Space held: reposition the whole shape
                     let dx = canvasPoint.x - spaceRepositionLast.x
                     let dy = canvasPoint.y - spaceRepositionLast.y
-                    currentAnnotation!.startPoint.x += dx
-                    currentAnnotation!.startPoint.y += dy
-                    currentAnnotation!.endPoint.x += dx
-                    currentAnnotation!.endPoint.y += dy
-                    if let points = currentAnnotation!.points {
-                        currentAnnotation!.points = points.map {
+                    annotationInProgress.startPoint.x += dx
+                    annotationInProgress.startPoint.y += dy
+                    annotationInProgress.endPoint.x += dx
+                    annotationInProgress.endPoint.y += dy
+                    if let points = annotationInProgress.points {
+                        annotationInProgress.points = points.map {
                             NSPoint(x: $0.x + dx, y: $0.y + dy)
                         }
                     }
@@ -6922,9 +6931,9 @@ class OverlayView: NSView {
 
     override func rightMouseUp(with event: NSEvent) {
         if colorWheel.isVisible && !colorWheel.isSticky {
-            if colorWheel.hoveredColor != nil {
+            if let hoveredColor = colorWheel.hoveredColor {
                 // User dragged to a color — pick it and dismiss
-                currentColor = colorWheel.hoveredColor!
+                currentColor = hoveredColor
                 applyColorToTextIfEditing()
                 applyColorToSelectedAnnotation()
                 rebuildToolbarLayout()
@@ -9367,6 +9376,13 @@ class OverlayView: NSView {
         if selectedAnnotations.count != beforeCount {
             changed = true
         }
+        // The hover highlight and selection handles are drawn from this state, so
+        // dropping them has to invalidate — `changed` was computed and discarded,
+        // leaving stale handles on screen until some other event forced a redraw.
+        if changed {
+            cachedAnnotationLayerExcludingSelected = nil
+            needsDisplay = true
+        }
     }
 
     func redo() {
@@ -9926,6 +9942,17 @@ class OverlayView: NSView {
         hoveredAnnotationClearTimer?.invalidate()
         hoveredAnnotationClearTimer = nil
         hoveredAnnotation = nil
+        // Overlays are pooled, so a repeating timer left running here keeps
+        // firing (and retaining its target) for the rest of the app's life.
+        beautifyToolbarAnimTimer?.invalidate()
+        beautifyToolbarAnimTimer = nil
+        editorZoomAnimTimer?.invalidate()
+        editorZoomAnimTimer = nil
+        editorZoomRedrawTimer?.invalidate()
+        editorZoomRedrawTimer = nil
+        longPressTimer?.invalidate()
+        longPressTimer = nil
+        stopMicLevelMonitor()
         colorWheel.dismiss()
         beautifyEnabled = UserDefaults.standard.bool(forKey: "beautifyEnabled")
         beautifyStyleIndex = UserDefaults.standard.integer(forKey: "beautifyStyleIndex")
@@ -9939,10 +9966,13 @@ class OverlayView: NSView {
             UserDefaults.standard.object(forKey: "beautifyShadowRadius") as? Double ?? 20)
         beautifyBgRadius = CGFloat(
             UserDefaults.standard.object(forKey: "beautifyBgRadius") as? Double ?? 8)
-        // The custom-style background is loaded here (not lazily in the
-        // beautifyConfig getter) so reads during draw never mutate state.
+        // Only released here, never reloaded: reset() runs at session teardown,
+        // and re-reading the background would keep a full-size wallpaper plus its
+        // CGImage cache resident in every pooled overlay until the next capture.
+        // The `screenshotImage` setter and the beautify tool both load it eagerly
+        // when it is actually needed. (The load must stay out of the
+        // `beautifyConfig` getter so draws never mutate state.)
         customBeautifyBackground = nil
-        ensureCustomBeautifyBackgroundLoaded()
         currentLineStyle =
             LineStyle(rawValue: UserDefaults.standard.integer(forKey: "currentLineStyle")) ?? .solid
         currentArrowStyle =

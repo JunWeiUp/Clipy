@@ -145,13 +145,17 @@ final class MarkerToolHandler: AnnotationToolHandler {
             commitAnnotation(annotation, canvas: canvas)
             return
         }
-        let minX = points.map(\.x).min()!
-        let maxX = points.map(\.x).max()!
+        // Safe: `points.first` above already proved the array is non-empty.
+        let xs = points.map(\.x)
+        guard let minX = xs.min(), let maxX = xs.max() else {
+            commitAnnotation(annotation, canvas: canvas)
+            return
+        }
         let strokeY = firstPt.y  // horizontal line, Y is constant
 
         // Use cached observations if selection hasn't changed
-        if cachedObservations != nil && cachedSelectionRect == selectionRect {
-            applySmartSnap(annotation: annotation, observations: cachedObservations!,
+        if let cached = cachedObservations, cachedSelectionRect == selectionRect {
+            applySmartSnap(annotation: annotation, observations: cached,
                            strokeMinX: minX, strokeMaxX: maxX, strokeY: strokeY,
                            selectionRect: selectionRect, canvas: canvas)
             return

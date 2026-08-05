@@ -1372,6 +1372,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   late TextEditingController _portController;
   late TextEditingController _nameController;
+  late TextEditingController _pairingSecretController;
   StreamSubscription? _devicesSubscription;
   List<DiscoveredPeer> _availableDevices = [];
 
@@ -1383,6 +1384,9 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     _nameController = TextEditingController(
       text: SyncManager.instance.displayName,
+    );
+    _pairingSecretController = TextEditingController(
+      text: SyncManager.instance.pairingSecret,
     );
     _availableDevices = SyncManager.instance.availablePeers;
     _devicesSubscription = SyncManager.instance.onPeersChanged.listen((peers) {
@@ -1398,6 +1402,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     _portController.dispose();
     _nameController.dispose();
+    _pairingSecretController.dispose();
     _devicesSubscription?.cancel();
     super.dispose();
   }
@@ -1455,6 +1460,48 @@ class _SettingsPageState extends State<SettingsPage> {
                     }
                   },
                   child: Text(l10n.save),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding:
+                const EdgeInsets.only(left: 16.0, right: 16.0, bottom: 16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _pairingSecretController,
+                        obscureText: true,
+                        decoration: InputDecoration(
+                          labelText: l10n.syncPairingSecret,
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: () async {
+                        final messenger = ScaffoldMessenger.of(context);
+                        final message = l10n.syncPairingSecretUpdated;
+                        await SyncManager.instance.updatePairingSecret(
+                            _pairingSecretController.text);
+                        if (mounted) {
+                          messenger
+                              .showSnackBar(SnackBar(content: Text(message)));
+                        }
+                      },
+                      child: Text(l10n.save),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  l10n.syncPairingSecretHint,
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
             ),

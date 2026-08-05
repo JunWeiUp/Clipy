@@ -183,8 +183,9 @@ class ToolbarButtonView: NSView {
         // (Liquid Glass chrome). With `.activeInActiveApp`, mouseExited wouldn't
         // fire when the app isn't frontmost, leaving a previous button stuck in
         // its hover state when moving to another.
-        trackingArea = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeAlways], owner: self, userInfo: nil)
-        addTrackingArea(trackingArea!)
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeAlways], owner: self, userInfo: nil)
+        trackingArea = area
+        addTrackingArea(area)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

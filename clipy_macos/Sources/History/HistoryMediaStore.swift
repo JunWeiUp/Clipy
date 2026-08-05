@@ -106,22 +106,49 @@ final class HistoryMediaStore {
         }
     }
 
-    private func writeProtectedData(_ data: Data, to url: URL) {
-        if PreferencesManager.shared.isHistoryEncryptionEnabled,
-           let key = HistoryKeychain.loadOrCreateKey(),
-           let encrypted = try? SecureStorageCrypto.encrypt(data, using: key) {
-            try? encrypted.write(to: url, options: .atomic)
-            return
+    /// Writes `data`, encrypted when the user enabled at-rest encryption.
+    ///
+    /// Never falls back to plaintext on an encryption failure: reads always try
+    /// to decrypt, so a silent plaintext write produced a file that could not be
+    /// read back — the entry looked present but its content was gone.
+    @discardableResult
+    private func writeProtectedData(_ data: Data, to url: URL) -> Bool {
+        if PreferencesManager.shared.isHistoryEncryptionEnabled {
+            guard let key = HistoryKeychain.loadOrCreateKey() else {
+                appLog("HistoryMediaStore: no encryption key available, refusing to store \(url.lastPathComponent) as plaintext", level: .error)
+                return false
+            }
+            do {
+                let encrypted = try SecureStorageCrypto.encrypt(data, using: key)
+                try encrypted.write(to: url, options: .atomic)
+                return true
+            } catch {
+                appLog("HistoryMediaStore: failed to encrypt \(url.lastPathComponent) — \(error.localizedDescription)", level: .error)
+                return false
+            }
         }
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            appLog("HistoryMediaStore: failed to write \(url.lastPathComponent) — \(error.localizedDescription)", level: .error)
+            return false
+        }
     }
 
+    /// Decrypts when encryption is on. Files written before the user enabled it
+    /// are still plaintext, so a failed decrypt returns the raw bytes rather
+    /// than nil — the caller then either parses them or fails, but nothing that
+    /// is actually readable gets thrown away.
     private func decryptIfNeeded(_ data: Data) -> Data? {
         guard PreferencesManager.shared.isHistoryEncryptionEnabled,
               let key = HistoryKeychain.loadKey() else {
             return data
         }
-        return try? SecureStorageCrypto.decrypt(data, using: key)
+        if let decrypted = try? SecureStorageCrypto.decrypt(data, using: key) {
+            return decrypted
+        }
+        return data
     }
 
     func fileURL(for item: HistoryItem) -> URL? {

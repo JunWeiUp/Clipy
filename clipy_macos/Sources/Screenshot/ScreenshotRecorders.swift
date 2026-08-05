@@ -154,6 +154,9 @@ final class ScreenshotRecorder {
         mouseHighlightOverlay?.stopMonitoring()
         mouseHighlightOverlay?.close()
         mouseHighlightOverlay = nil
+        // stopMonitoring (not just close) — the event tap and its refcon outlive
+        // the window otherwise, and keep listening into the next recording.
+        keystrokeOverlay?.stopMonitoring()
         keystrokeOverlay?.close()
         keystrokeOverlay = nil
         webcamOverlay?.stopPreview()
@@ -163,10 +166,12 @@ final class ScreenshotRecorder {
 
         if let error = error {
             appLog("Screenshot: recording failed — \(error.localizedDescription)", level: .warning)
+            Self.presentRecordingFailure(error)
             return
         }
         guard let url = url else {
             appLog("Screenshot: recording produced no file", level: .warning)
+            Self.presentRecordingFailure(nil)
             return
         }
 
@@ -186,6 +191,18 @@ final class ScreenshotRecorder {
             // Open in macshot's video editor (trim/export/upload).
             VideoEditorWindowController.open(url: url)
         }
+    }
+
+    /// A failed recording used to be log-only, so the user just saw the HUD
+    /// disappear and assumed the file was saved somewhere.
+    private static func presentRecordingFailure(_ error: Error?) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L("Recording failed")
+        alert.informativeText = error?.localizedDescription ?? L("The recording could not be saved.")
+        alert.addButton(withTitle: L("OK"))
+        alert.runModal()
     }
 }
 

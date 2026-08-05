@@ -1,5 +1,7 @@
 import AppKit
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 /// 缩略图仅落盘缓存，不常驻内存；使用时从磁盘按需读取。
 enum HistoryThumbnailCache {
@@ -23,14 +25,15 @@ enum HistoryThumbnailCache {
         }
 
         let maxPixel = max(1, Int(max(size.width, size.height)))
-        guard let thumbnail = autoreleasepool(invoking: {
-            guard let downsampled = ImageDownsampler.thumbnail(at: path, maxPixelSize: maxPixel) else {
-                return nil as NSImage?
+        guard let rendered = autoreleasepool(invoking: {
+            guard let downsampled = ImageDownsampler.cgImage(at: path, maxPixelSize: maxPixel) else {
+                return nil as CGImage?
             }
-            return scaledImage(downsampled, toFit: size)
+            return centered(downsampled, in: size)
         }) else { return nil }
 
-        if let pngData = pngData(from: thumbnail) {
+        let thumbnail = NSImage(cgImage: rendered, size: size)
+        if let pngData = pngData(from: rendered) {
             try? pngData.write(to: diskURL, options: .atomic)
         }
         return thumbnail
@@ -78,37 +81,52 @@ enum HistoryThumbnailCache {
         return "\(hash)_\(Int(size.width))x\(Int(size.height))"
     }
 
-    private static func pngData(from image: NSImage) -> Data? {
-        guard let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
-        return bitmap.representation(using: .png, properties: [:])
+    private static func pngData(from image: CGImage) -> Data? {
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else { return nil }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
     }
 
-    private static func scaledImage(_ image: NSImage, toFit targetSize: NSSize) -> NSImage {
-        let sourceSize = image.size
-        guard sourceSize.width > 0, sourceSize.height > 0 else { return image }
+    /// Letterboxes `image` into `targetSize`.
+    ///
+    /// Uses CoreGraphics rather than `NSImage.lockFocus()`: thumbnails are built
+    /// on a background queue, and lockFocus touches the shared AppKit graphics
+    /// state (and picks the backing scale of whichever display happens to be
+    /// attached), neither of which is safe or predictable off the main thread.
+    private static func centered(_ image: CGImage, in targetSize: NSSize) -> CGImage? {
+        let width = max(1, Int(targetSize.width.rounded()))
+        let height = max(1, Int(targetSize.height.rounded()))
+        let sourceWidth = CGFloat(image.width)
+        let sourceHeight = CGFloat(image.height)
+        guard sourceWidth > 0, sourceHeight > 0 else { return image }
 
-        let scale = min(targetSize.width / sourceSize.width, targetSize.height / sourceSize.height)
-        let scaledSize = NSSize(
-            width: max(1, floor(sourceSize.width * scale)),
-            height: max(1, floor(sourceSize.height * scale))
-        )
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return image }
 
-        let result = NSImage(size: targetSize)
-        result.lockFocus()
-        NSColor.clear.set()
-        NSRect(origin: .zero, size: targetSize).fill()
-        let origin = NSPoint(
-            x: (targetSize.width - scaledSize.width) / 2,
-            y: (targetSize.height - scaledSize.height) / 2
-        )
-        image.draw(
-            in: NSRect(origin: origin, size: scaledSize),
-            from: NSRect(origin: .zero, size: sourceSize),
-            operation: .copy,
-            fraction: 1.0
-        )
-        result.unlockFocus()
-        return result
+        let scale = min(CGFloat(width) / sourceWidth, CGFloat(height) / sourceHeight)
+        let drawWidth = max(1, (sourceWidth * scale).rounded(.down))
+        let drawHeight = max(1, (sourceHeight * scale).rounded(.down))
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(
+            x: (CGFloat(width) - drawWidth) / 2,
+            y: (CGFloat(height) - drawHeight) / 2,
+            width: drawWidth,
+            height: drawHeight
+        ))
+        return context.makeImage() ?? image
     }
 }
