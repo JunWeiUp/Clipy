@@ -96,6 +96,7 @@ final class SyncManager: NSObject {
     private static let endpointCacheKey = "clipy.peerEndpoints.v2"
     private static let endpointCacheTTL: TimeInterval = 86400
     private static let maxReconnectBackoff: TimeInterval = 30
+    private static let minReconnectInterval: TimeInterval = 2
     private static let scanConcurrency = 48
 
     private var displayName: String { PreferencesManager.shared.deviceName }
@@ -127,10 +128,20 @@ final class SyncManager: NSObject {
         var readSource: DispatchSourceRead?
         var buffer = Data()
         var lastPong = Date()
+        // Role decided at handshake: the lexicographically smaller peerId is the
+        // "client" and owns keepalive-driven reconnects (pong timeout, EOF). This
+        // breaks the reconnect storm where both sides independently redial each
+        // other after a dropped link. Both endpoints compute the same result
+        // from the same two peerIds, so roles align without any protocol change.
+        let isClient: Bool
     }
     private var sessions: [String: Session] = [:]
     private var reconnectBackoffs: [String: TimeInterval] = [:]
     private var pendingReconnects: [String: DispatchWorkItem] = [:]
+    // Debounce: minimum gap between two reconnect attempts to the same peerId.
+    // Caps the data-driven reconnect rate (deliver write failures on both sides)
+    // so it can't stack with the client's keepalive reconnect into a storm.
+    private var lastReconnectAttempt: [String: Date] = [:]
 
     // Listener
     private var listenFD: Int32 = -1
@@ -146,6 +157,11 @@ final class SyncManager: NSObject {
         let enqueueAt: Date
     }
     private var pendingQueue: [PendingFrame] = []
+    // Per-peer hashes delivered on the current session but not yet ACKed.
+    // Prevents a reconnect (new performHandshake → flushPending) from re-sending
+    // the whole pending batch before the previous ACK arrives. Cleared on ACK
+    // and on session close (so a real disconnect still allows redelivery).
+    private var inFlightHashes: [String: Set<String>] = [:]
 
     // Keepalive
     private var pingTimer: DispatchSourceTimer?
@@ -452,8 +468,11 @@ final class SyncManager: NSObject {
 
     @discardableResult
     private func deliver(data: Data, type: String, peerId: String, hash: String?, reliable: Bool) -> Bool {
-        if let session = sessions[peerId], writeAll(session.fd, data) {
-            return true
+        if let session = sessions[peerId] {
+            if writeAll(session.fd, data) {
+                return true
+            }
+            appLog("deliver \(type) failed to \(peerId.prefix(8)); queueing\(reliable ? "" : " (unreliable, dropped)")", level: .warning)
         }
         if reliable {
             enqueuePending(data: data, type: type, peerId: peerId, hash: hash)
@@ -497,13 +516,33 @@ final class SyncManager: NSObject {
             }
         }
         guard !due.isEmpty, let session = sessions[peerId] else { return }
-        appLog("Flushing \(due.count) pending frame(s) to \(peerId)")
+        // Only reliable types (history/notif.post) carry a hash and wait for ACK;
+        // they are the ones at risk of redelivery on reconnect.
+        let reliable = due.filter { frame in
+            (frame.type == SyncType.history || frame.type == SyncType.notifPost)
+                && frame.hash != nil
+        }
+        let dropped = reliable.filter { inFlightHashes[peerId]?.contains($0.hash!) ?? false }.count
+        appLog("Flushing \(due.count) pending frame(s) to \(peerId)\(dropped > 0 ? " (skipped \(dropped) in-flight)" : "")")
         for frame in due {
+            // Skip hashes already delivered on this session and awaiting ACK.
+            if (frame.type == SyncType.history || frame.type == SyncType.notifPost),
+               let hash = frame.hash,
+               inFlightHashes[peerId]?.contains(hash) ?? false {
+                continue
+            }
             if writeAll(session.fd, frame.data) {
-                // Keep history/notif.post until ack; drop fire-and-forget types
-                if frame.type != SyncType.history && frame.type != SyncType.notifPost {
+                if frame.type == SyncType.history || frame.type == SyncType.notifPost {
+                    if let hash = frame.hash {
+                        if inFlightHashes[peerId] == nil { inFlightHashes[peerId] = [] }
+                        inFlightHashes[peerId]?.insert(hash)
+                    }
+                } else {
+                    // fire-and-forget: drop immediately
                     pendingQueue.removeAll { $0.peerId == peerId && $0.data == frame.data }
                 }
+            } else {
+                appLog("flushPending \(frame.type) send failed to \(peerId.prefix(8)); frame retained", level: .warning)
             }
         }
     }
@@ -521,6 +560,10 @@ final class SyncManager: NSObject {
         pendingQueue.removeAll { $0.hash == hash }
         if pendingQueue.count != before {
             appLog("ACK cleared pending for hash \(hash.prefix(8))")
+        }
+        // Clear the in-flight mark so future flushes may redeliver if needed.
+        for key in inFlightHashes.keys {
+            inFlightHashes[key]?.remove(hash)
         }
     }
 
@@ -542,6 +585,11 @@ final class SyncManager: NSObject {
         let port = syncPort
         let myIPs = Set(Self.localIPv4Addresses())
         let myPeerId = peerId
+
+        // Surface every local interface so VPN-induced fake LAN subnets (utun/tun
+        // carrying 10.8.0.x etc.) are visible. A VPN interface appearing as [LAN]
+        // is the tell-tale sign of route hijack starving the real Wi-Fi subnet.
+        appLog(Self.diagnoseInterfaces())
 
         // Manual peers first
         for entry in manual {
@@ -570,10 +618,12 @@ final class SyncManager: NSObject {
 
         // /24 subnet scan
         var candidates: [String] = []
+        var subnets = Set<String>()
         for ip in myIPs {
             let parts = ip.split(separator: ".").map(String.init)
             guard parts.count == 4, let a = Int(parts[0]), let b = Int(parts[1]), let c = Int(parts[2]) else { continue }
             guard Self.isLanIPv4(a: a, b: b) else { continue }
+            subnets.insert("\(a).\(b).\(c).0/24")
             for d in 1...254 {
                 let candidate = "\(a).\(b).\(c).\(d)"
                 if myIPs.contains(candidate) { continue }
@@ -587,8 +637,10 @@ final class SyncManager: NSObject {
             Set(sessions.values.map(\.host))
         }
         let toScan = candidates.filter { !connectedHosts.contains($0) }
-        appLog("Subnet scan: \(toScan.count) hosts on :\(port)")
+        let subnetList = subnets.isEmpty ? "<none>" : subnets.sorted().joined(separator: ", ")
+        appLog("Subnet scan: \(toScan.count) hosts on :\(port) (subnets: \(subnetList))")
 
+        let stats = ScanStats()
         let group = DispatchGroup()
         let semaphore = DispatchSemaphore(value: Self.scanConcurrency)
         for host in toScan {
@@ -599,11 +651,11 @@ final class SyncManager: NSObject {
                     semaphore.signal()
                     group.leave()
                 }
-                self.dialOnScanQueue(host: host, port: port, reason: "scan", timeout: Self.scanConnectTimeout)
+                self.dialOnScanQueue(host: host, port: port, reason: "scan", timeout: Self.scanConnectTimeout, stats: stats)
             }
         }
         _ = group.wait(timeout: .now() + 20)
-        appLog("Subnet scan finished")
+        appLog("Subnet scan finished: \(stats.summary())")
     }
 
     private func peerSnapshot(_ id: String) -> DiscoveredPeer? {
@@ -617,11 +669,11 @@ final class SyncManager: NSObject {
     private func dial(host: String, port: UInt16, reason: String, timeout: TimeInterval = SyncManager.connectTimeout) {
         // Never block syncQueue on TCP connect/handshake.
         scanQueue.async { [weak self] in
-            self?.dialOnScanQueue(host: host, port: port, reason: reason, timeout: timeout)
+            self?.dialOnScanQueue(host: host, port: port, reason: reason, timeout: timeout, stats: nil)
         }
     }
 
-    private func dialOnScanQueue(host: String, port: UInt16, reason: String, timeout: TimeInterval) {
+    private func dialOnScanQueue(host: String, port: UInt16, reason: String, timeout: TimeInterval, stats: ScanStats?) {
         let key = "\(host):\(port)"
         let now = Date()
         dialDedupLock.lock()
@@ -637,11 +689,29 @@ final class SyncManager: NSObject {
         }
         if already { return }
 
-        guard let fd = tcpConnect(host: host, port: port, timeout: timeout) else { return }
-        performHandshake(fd: fd, host: host, port: port, inbound: false)
+        if let stats = stats, reason == "scan" { stats.recordAttempt() }
+        var connFailure: ConnectFailure? = nil
+        guard let fd = tcpConnectDiag(host: host, port: port, timeout: timeout, failure: &connFailure) else {
+            if let stats = stats, reason == "scan" {
+                stats.recordConnectFailure(connFailure ?? .other)
+            } else if reason != "scan" {
+                appLog("Dial \(reason) \(host):\(port) failed: connect(\(connFailure?.label ?? "unknown"))", level: .warning)
+            }
+            return
+        }
+        if let stats = stats, reason == "scan" { stats.recordConnectOk() }
+
+        let isScan = reason == "scan"
+        performHandshake(fd: fd, host: host, port: port, inbound: false) { hf in
+            if isScan {
+                stats?.recordHandshakeFailure(hf)
+            } else {
+                appLog("Dial \(reason) \(host):\(port) failed: handshake(\(hf.label))", level: .warning)
+            }
+        }
     }
 
-    private func performHandshake(fd: Int32, host: String, port: UInt16, inbound: Bool) {
+    private func performHandshake(fd: Int32, host: String, port: UInt16, inbound: Bool, onFailure: ((HandshakeFailure) -> Void)? = nil) {
         let hello = SyncEnvelope.make(
             type: SyncType.hello,
             peerId: peerId,
@@ -649,6 +719,7 @@ final class SyncManager: NSObject {
             port: Int(syncPort)
         )
         guard let helloData = encodeFrame(hello), writeAll(fd, helloData) else {
+            onFailure?(.writeFail)
             Darwin.close(fd)
             return
         }
@@ -656,11 +727,13 @@ final class SyncManager: NSObject {
         // Wait for welcome (or hello if they dialed us — we reply welcome below for inbound)
         guard let frame = readOneFrame(fd: fd, timeout: Self.handshakeTimeout),
               let env = decodeEnvelope(frame) else {
+            onFailure?(.readTimeout)
             Darwin.close(fd)
             return
         }
 
         if env.v != SyncEnvelope.version {
+            onFailure?(.versionMismatch)
             Darwin.close(fd)
             return
         }
@@ -669,6 +742,7 @@ final class SyncManager: NSObject {
             // Peer sent hello; we already sent hello — expect their hello, reply welcome
             if env.type == SyncType.hello {
                 guard env.peerId != peerId, !env.peerId.isEmpty else {
+                    onFailure?(.selfHandshake)
                     Darwin.close(fd)
                     return
                 }
@@ -678,7 +752,9 @@ final class SyncManager: NSObject {
                     name: displayName,
                     port: Int(syncPort)
                 )
-                if let data = encodeFrame(welcome) { _ = writeAll(fd, data) }
+                if let data = encodeFrame(welcome), !writeAll(fd, data) {
+                    appLog("welcome send failed (inbound) to \(env.peerId.prefix(8))", level: .warning)
+                }
                 adoptSession(peerId: env.peerId, name: env.name ?? env.peerId, host: host, port: UInt16(env.port ?? Int(port)), fd: fd)
                 return
             }
@@ -687,6 +763,7 @@ final class SyncManager: NSObject {
         // Outbound path: we sent hello, expect welcome (or hello from simultaneous dial)
         if env.type == SyncType.welcome || env.type == SyncType.hello {
             guard env.peerId != peerId, !env.peerId.isEmpty else {
+                onFailure?(.selfHandshake)
                 Darwin.close(fd)
                 return
             }
@@ -697,7 +774,9 @@ final class SyncManager: NSObject {
                     name: displayName,
                     port: Int(syncPort)
                 )
-                if let data = encodeFrame(welcome) { _ = writeAll(fd, data) }
+                if let data = encodeFrame(welcome), !writeAll(fd, data) {
+                    appLog("welcome send failed (outbound) to \(env.peerId.prefix(8))", level: .warning)
+                }
             }
             // Tie-break: if we are lexicographically larger and this is outbound,
             // prefer letting the smaller peer own the link — but keep this session
@@ -712,6 +791,7 @@ final class SyncManager: NSObject {
             return
         }
 
+        onFailure?(.badType)
         Darwin.close(fd)
     }
 
@@ -721,6 +801,7 @@ final class SyncManager: NSObject {
 
             if let existing = self.sessions[peerId] {
                 // Keep existing; drop duplicate
+                appLog("Duplicate session for \(peerId.prefix(8)), dropping new fd (existing @ \(existing.host))")
                 Darwin.close(fd)
                 self.recordPeer(peerId: peerId, name: name, host: existing.host, port: existing.port)
                 return
@@ -731,7 +812,8 @@ final class SyncManager: NSObject {
                 client.source.cancel()
             }
 
-            var session = Session(peerId: peerId, host: host, port: port, fd: fd)
+            var session = Session(peerId: peerId, host: host, port: port, fd: fd,
+                                  isClient: self.peerId < peerId)
             let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: self.syncQueue)
             source.setEventHandler { [weak self] in
                 self?.onSessionReadable(peerId: peerId)
@@ -795,7 +877,8 @@ final class SyncManager: NSObject {
         var tmp = [UInt8](repeating: 0, count: 65536)
         let n = Darwin.recv(session.fd, &tmp, tmp.count, 0)
         if n <= 0 {
-            closeSession(peerId: peerId, scheduleReconnect: true)
+            appLog("recv \(n == 0 ? "EOF" : "error errno=\(errno)") from \(peerId.prefix(8))")
+            closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true)
             return
         }
         session.buffer.append(contentsOf: tmp.prefix(n))
@@ -817,7 +900,7 @@ final class SyncManager: NSObject {
                 Int(UInt32(bigEndian: raw.loadUnaligned(as: UInt32.self)))
             }
             guard length > 0, length <= Self.maxFrameLength else {
-                closeSession(peerId: peerId, scheduleReconnect: true)
+                closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true)
                 return
             }
             guard session.buffer.count >= 4 + length else {
@@ -840,7 +923,9 @@ final class SyncManager: NSObject {
         case SyncType.ping:
             let pong = SyncEnvelope.make(type: SyncType.pong, peerId: peerId)
             if let d = encodeFrame(pong), let fd = sessions[remotePeerId]?.fd {
-                _ = writeAll(fd, d)
+                if !writeAll(fd, d) {
+                    appLog("pong send failed to \(remotePeerId.prefix(8))", level: .warning)
+                }
             }
         case SyncType.pong:
             if var s = sessions[remotePeerId] {
@@ -889,24 +974,43 @@ final class SyncManager: NSObject {
         guard let hash, !hash.isEmpty else { return }
         let env = SyncEnvelope.make(type: SyncType.ack, peerId: self.peerId, hash: hash)
         guard let data = encodeFrame(env), let fd = sessions[peerId]?.fd else { return }
-        _ = writeAll(fd, data)
+        if !writeAll(fd, data) {
+            appLog("ack send failed to \(peerId.prefix(8))", level: .warning)
+        }
     }
 
-    private func closeSession(peerId: String, scheduleReconnect: Bool) {
+    private func closeSession(peerId: String, scheduleReconnect: Bool, keepaliveDriven: Bool = false) {
         guard let session = sessions.removeValue(forKey: peerId) else { return }
         session.readSource?.cancel()
         Darwin.close(session.fd)
+        // Drop the in-flight marks for this peer: the session is gone, so ACKs
+        // for anything sent on it will never return. Clearing allows a reconnect
+        // to legitimately redeliver still-pending items.
+        inFlightHashes.removeValue(forKey: peerId)
         appLog("Session closed with \(peerId.prefix(8))")
-        if scheduleReconnect {
-            self.scheduleReconnect(peerId: peerId)
-        }
+        guard scheduleReconnect else { return }
+        // Keepalive-driven close (pong timeout / EOF / frame corruption): only the
+        // client role redials, so the two sides don't both reconnect each other.
+        // Data-driven close (deliver write fail) bypasses this — both roles may
+        // reconnect, throttled by scheduleReconnect's debounce.
+        if keepaliveDriven && !session.isClient { return }
+        self.scheduleReconnect(peerId: peerId)
     }
 
     private func scheduleReconnect(peerId: String) {
         guard PreferencesManager.shared.isSyncEnabled else { return }
         if pendingReconnects[peerId] != nil { return }
+        // Debounce: don't fire another reconnect attempt within the min interval.
+        // This caps data-driven reconnects (deliver write failures) so they can't
+        // pile on top of the client's keepalive reconnect.
+        let now = Date()
+        if let last = lastReconnectAttempt[peerId], now.timeIntervalSince(last) < Self.minReconnectInterval {
+            return
+        }
+        lastReconnectAttempt[peerId] = now
         let delay = reconnectBackoffs[peerId] ?? 1
         reconnectBackoffs[peerId] = min(delay * 2, Self.maxReconnectBackoff)
+        appLog("Reconnect scheduled for \(peerId.prefix(8)) in \(Int(delay))s (next backoff \(Int(min(delay * 2, Self.maxReconnectBackoff)))s)")
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.pendingReconnects.removeValue(forKey: peerId)
@@ -989,7 +1093,10 @@ final class SyncManager: NSObject {
 
         // Handshake on background then adopt
         scanQueue.async { [weak self] in
-            self?.performHandshake(fd: clientFD, host: host, port: self?.syncPort ?? 5566, inbound: true)
+            guard let self else { Darwin.close(clientFD); return }
+            self.performHandshake(fd: clientFD, host: host, port: self.syncPort, inbound: true) { hf in
+                appLog("Inbound handshake failed from \(host): \(hf.label)", level: .warning)
+            }
         }
     }
 
@@ -1012,10 +1119,12 @@ final class SyncManager: NSObject {
         let staleCutoff = Date().addingTimeInterval(-Self.pingInterval * 3)
         for (id, session) in sessions {
             if session.lastPong < staleCutoff {
-                closeSession(peerId: id, scheduleReconnect: true)
+                closeSession(peerId: id, scheduleReconnect: true, keepaliveDriven: true)
                 continue
             }
-            _ = writeAll(session.fd, data)
+            if !writeAll(session.fd, data) {
+                appLog("ping send failed to \(id.prefix(8))", level: .warning)
+            }
         }
     }
 
@@ -1084,10 +1193,95 @@ final class SyncManager: NSObject {
 
     // MARK: - POSIX helpers
 
+    /// Classified TCP connect failure for diagnostics. Most silent scan failures
+    /// (VPN route hijack, firewall, port closed) collapse into `.timeout` — that
+    /// bucket dominating the scan summary is the VPN/route-hijack tell-tale.
+    private enum ConnectFailure {
+        case timeout, refused, unreachable, other
+
+        fileprivate init(errno err: Int32) {
+            switch err {
+            case ECONNREFUSED: self = .refused
+            case EHOSTUNREACH, ENETUNREACH: self = .unreachable
+            default: self = .other
+            }
+        }
+        fileprivate init(soError err: Int32) {
+            switch err {
+            case ECONNREFUSED: self = .refused
+            case EHOSTUNREACH, ENETUNREACH: self = .unreachable
+            default: self = .other
+            }
+        }
+
+        fileprivate var label: String {
+            switch self {
+            case .timeout: return "timeout"
+            case .refused: return "refused"
+            case .unreachable: return "unreachable"
+            case .other: return "other"
+            }
+        }
+    }
+
+    /// Classified handshake failure for diagnostics.
+    private enum HandshakeFailure {
+        case writeFail, readTimeout, versionMismatch, selfHandshake, badType
+
+        fileprivate var label: String {
+            switch self {
+            case .writeFail: return "writeFail"
+            case .readTimeout: return "readTimeout"
+            case .versionMismatch: return "versionMismatch"
+            case .selfHandshake: return "selfHandshake"
+            case .badType: return "badType"
+            }
+        }
+    }
+
+    /// Thread-safe aggregator for one /24 scan sweep. scanQueue is concurrent with
+    /// up to `scanConcurrency` workers, so counters are guarded by an NSLock.
+    private final class ScanStats {
+        private let lock = NSLock()
+        private var attempted = 0
+        private var connectOk = 0
+        private var connectFail: [ConnectFailure: Int] = [:]
+        private var handshakeFail: [HandshakeFailure: Int] = [:]
+
+        func recordAttempt() { lock.lock(); defer { lock.unlock() }; attempted += 1 }
+        func recordConnectOk() { lock.lock(); defer { lock.unlock() }; connectOk += 1 }
+        func recordConnectFailure(_ f: ConnectFailure) {
+            lock.lock(); defer { lock.unlock() }
+            connectFail[f, default: 0] += 1
+        }
+        func recordHandshakeFailure(_ f: HandshakeFailure) {
+            lock.lock(); defer { lock.unlock() }
+            handshakeFail[f, default: 0] += 1
+        }
+
+        func summary() -> String {
+            lock.lock(); defer { lock.unlock() }
+            let hsFailTotal = handshakeFail.values.reduce(0, +)
+            let hsOk = max(connectOk - hsFailTotal, 0)
+            let cfParts = connectFail.sorted { $0.key.label < $1.key.label }.map { "\($0.key.label)=\($0.value)" }
+            let hfParts = handshakeFail.sorted { $0.key.label < $1.key.label }.map { "\($0.key.label)=\($0.value)" }
+            let cfStr = cfParts.isEmpty ? "" : cfParts.joined(separator: ",")
+            let hfStr = hfParts.isEmpty ? "" : hfParts.joined(separator: ",")
+            return "attempted=\(attempted) connect_ok=\(connectOk) handshake_ok=\(hsOk) | connect_fail{\(cfStr)} handshake_fail{\(hfStr)}"
+        }
+    }
+
     private func tcpConnect(host: String, port: UInt16, timeout: TimeInterval) -> Int32? {
+        var failure: ConnectFailure? = nil
+        return tcpConnectDiag(host: host, port: port, timeout: timeout, failure: &failure)
+    }
+
+    /// Same behavior as `tcpConnect`, but reports *why* it failed via `failure`.
+    /// Original callers ignore the out-param and behavior is unchanged.
+    private func tcpConnectDiag(host: String, port: UInt16, timeout: TimeInterval, failure: inout ConnectFailure?) -> Int32? {
         let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { return nil }
-        var flags = fcntl(fd, F_GETFL, 0)
+        guard fd >= 0 else { failure = .other; return nil }
+        let flags = fcntl(fd, F_GETFL, 0)
         _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
 
         var addr = sockaddr_in()
@@ -1095,6 +1289,7 @@ final class SyncManager: NSObject {
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = port.bigEndian
         guard inet_pton(AF_INET, host, &addr.sin_addr) == 1 else {
+            failure = .other
             Darwin.close(fd)
             return nil
         }
@@ -1110,6 +1305,7 @@ final class SyncManager: NSObject {
             return fd
         }
         if errno != EINPROGRESS {
+            failure = ConnectFailure(errno: errno)
             Darwin.close(fd)
             return nil
         }
@@ -1118,6 +1314,7 @@ final class SyncManager: NSObject {
         let ms = Int32(timeout * 1000)
         let pr = poll(&pfd, 1, ms)
         guard pr > 0 else {
+            failure = .timeout
             Darwin.close(fd)
             return nil
         }
@@ -1125,6 +1322,7 @@ final class SyncManager: NSObject {
         var len = socklen_t(MemoryLayout<Int32>.size)
         getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &len)
         guard soError == 0 else {
+            failure = ConnectFailure(soError: soError)
             Darwin.close(fd)
             return nil
         }
@@ -1250,6 +1448,37 @@ final class SyncManager: NSObject {
             result.append(ip)
         }
         return Array(Set(result)).sorted()
+    }
+
+    /// One-line diagnostic of every up, non-loopback IPv4 interface and whether it
+    /// is treated as a LAN scan subnet. A VPN `utun` carrying `10.8.0.x` shows up
+    /// as `[LAN]` here because `isLanIPv4(10, *) == true` — that is the tell-tale
+    /// sign of VPN route hijack starving the real Wi-Fi subnet of scan packets.
+    static func diagnoseInterfaces() -> String {
+        var parts: [String] = []
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else {
+            return "Discovery local interfaces: <getifaddrs failed>"
+        }
+        defer { freeifaddrs(ifaddr) }
+        var ptr: UnsafeMutablePointer<ifaddrs>? = first
+        while let p = ptr {
+            defer { ptr = p.pointee.ifa_next }
+            guard p.pointee.ifa_addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+            let flags = Int32(p.pointee.ifa_flags)
+            guard (flags & IFF_UP) != 0, (flags & IFF_LOOPBACK) == 0 else { continue }
+            let nameC = p.pointee.ifa_name
+            let ifName = nameC.map { String(cString: $0) } ?? "?"
+            var addr = p.pointee.ifa_addr.pointee
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            guard getnameinfo(&addr, socklen_t(addr.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
+            let ip = String(cString: host)
+            let octets = ip.split(separator: ".").compactMap { Int($0) }
+            let isLan = octets.count == 4 && isLanIPv4(a: octets[0], b: octets[1])
+            parts.append("\(ifName)=\(ip)[\(isLan ? "LAN" : "ignored")]")
+        }
+        if parts.isEmpty { return "Discovery local interfaces: <none>" }
+        return "Discovery local interfaces: " + parts.joined(separator: ", ")
     }
 
     static func isLanIPv4(a: Int, b: Int) -> Bool {

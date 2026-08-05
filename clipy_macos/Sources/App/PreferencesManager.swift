@@ -106,12 +106,53 @@ class PreferencesManager {
 
     var syncPeerId: String {
         get {
-            if let id = defaults.string(forKey: syncPeerIdKey), !id.isEmpty {
+            if let id = defaults.string(forKey: syncPeerIdKey), !id.isEmpty, Self.isValidUuid(id) {
                 return id
+            }
+            // Regenerate if empty OR not a canonical UUID. Protocol-v1 stored
+            // peerId as "Android-<8hex>" / "iOS-<8hex>"; those legacy values
+            // revive verbatim and corrupt session identity (adoptSession dedup,
+            // role arbitration, auth lists).
+            if let stale = defaults.string(forKey: syncPeerIdKey), !stale.isEmpty {
+                pruneLegacyAuthorizedPeerIds(oldPeerId: stale)
+                appLog("syncPeerId invalid format, regenerating: \(stale)", level: .warning)
             }
             let id = UUID().uuidString
             defaults.set(id, forKey: syncPeerIdKey)
+            pruneLegacyAuthorizedPeerIds()
             return id
+        }
+    }
+
+    /// Canonical UUID v4 format: 8-4-4-4-12 hex digits with hyphens.
+    static let uuidPattern: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        try! NSRegularExpression(pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+    }()
+
+    static func isValidUuid(_ id: String) -> Bool {
+        let range = NSRange(id.startIndex..., in: id)
+        return uuidPattern.firstMatch(in: id, options: [], range: range) != nil
+    }
+
+    /// Remove legacy non-UUID entries (e.g. "Android-066f3806", raw display names)
+    /// from all three auth lists. These point at identities that no longer exist
+    /// after peerId regeneration or protocol-v1→v2 upgrade, and would silently
+    /// block fanout to the real peer (which now has a proper UUID).
+    func pruneLegacyAuthorizedPeerIds(oldPeerId: String? = nil) {
+        func prune(_ key: String) {
+            let list = defaults.stringArray(forKey: key) ?? []
+            let kept = list.filter { Self.isValidUuid($0) && $0 != oldPeerId }
+            if kept.count != list.count {
+                defaults.set(kept, forKey: key)
+            }
+        }
+        prune(clipboardSyncPeerIdsKey)
+        prune(notificationSyncPeerIdsKey)
+        prune(authorizedPeerIdsKey)
+        // Legacy v1 list stored display names, never valid peerIds — clear once.
+        if defaults.object(forKey: authorizedDevicesKey) != nil {
+            defaults.removeObject(forKey: authorizedDevicesKey)
         }
     }
 
