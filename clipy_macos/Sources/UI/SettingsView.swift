@@ -25,6 +25,8 @@ struct SettingsView: View {
     @State private var manualPeerHost = ""
     @State private var manualPeerPort = "5566"
     @State private var accessibilityGranted: Bool
+    @State private var isReencryptingHistory = false
+    @State private var syncPairingSecret: String = PreferencesManager.shared.syncPairingSecret
 
     init() {
         let prefs = PreferencesManager.shared
@@ -129,8 +131,14 @@ struct SettingsView: View {
                     }
 
                 Toggle(L10n.t(.encryptHistoryAtRest), isOn: $historyEncryptionEnabled)
+                    .disabled(isReencryptingHistory)
                     .onChange(of: historyEncryptionEnabled) { newValue in
-                        if !ClipboardManager.shared.setHistoryEncryptionEnabled(newValue) {
+                        isReencryptingHistory = true
+                        let started = ClipboardManager.shared.setHistoryEncryptionEnabled(newValue) { _ in
+                            isReencryptingHistory = false
+                        }
+                        if !started {
+                            isReencryptingHistory = false
                             historyEncryptionEnabled = !newValue
                             AlertPresenter.showWarning(
                                 title: L10n.t(.error),
@@ -138,6 +146,14 @@ struct SettingsView: View {
                             )
                         }
                     }
+                if isReencryptingHistory {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(L10n.t(.historyEncryptionInProgress))
+                            .font(AppFont.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Text(L10n.t(.encryptHistoryAtRestDescription))
                     .font(AppFont.caption)
                     .foregroundStyle(.secondary)
@@ -175,6 +191,20 @@ struct SettingsView: View {
                         }
                     }
 
+                SecureField(L10n.t(.syncPairingSecret), text: $syncPairingSecret)
+                    .onSubmit { PreferencesManager.shared.syncPairingSecret = syncPairingSecret }
+                    .onChange(of: syncPairingSecret) { newValue in
+                        PreferencesManager.shared.syncPairingSecret = newValue
+                    }
+                Text(L10n.t(.syncPairingSecretHint))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+                if syncPairingSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(L10n.t(.syncPairingSecretDefaultWarning))
+                        .font(AppFont.caption)
+                        .foregroundStyle(.orange)
+                }
+
                 Text(L10n.t(.authorizedDevices))
                     .font(AppFont.caption)
                     .foregroundStyle(.secondary)
@@ -208,7 +238,7 @@ struct SettingsView: View {
                 let unionAuthorized = clipboardSyncTargets.union(notificationSyncTargets)
                 let staleAuthorized = unionAuthorized.subtracting(Set(availablePeers.map(\.peerId)))
                 if !staleAuthorized.isEmpty {
-                    Text("离线已授权设备（可删除）")
+                    Text(L10n.t(.syncOfflineAuthorizedDevices))
                         .font(AppFont.caption)
                         .foregroundStyle(.orange)
                     ForEach(staleAuthorized.sorted(), id: \.self) { peerId in
@@ -279,10 +309,10 @@ struct SettingsView: View {
                 }
 
                 Divider()
-                Text("手动添加设备（跨频段/跨子网兜底）")
+                Text(L10n.t(.syncAddManualDevice))
                     .font(AppFont.caption)
                     .foregroundStyle(.secondary)
-                Text("当自动发现失效（如 2.4G/5G 隔离）时，在对端查看 IP 后在此手动添加。")
+                Text(L10n.t(.syncManualDeviceHint))
                     .font(AppFont.caption)
                     .foregroundStyle(.secondary)
 
@@ -291,7 +321,7 @@ struct SettingsView: View {
                     manualPeerPort = "\(PreferencesManager.shared.syncPort)"
                     showAddManualPeer = true
                 } label: {
-                    Label("添加设备", systemImage: "plus")
+                    Label(L10n.t(.syncAdd), systemImage: "plus")
                 }
                 .disabled(!syncEnabled)
 
@@ -336,7 +366,9 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .syncAvailableDevicesDidChange)) { notification in
             if let peers = notification.userInfo?["peers"] as? [DiscoveredPeer] {
                 availablePeers = peers
-            } else if let devices = notification.userInfo?["devices"] as? [String] {
+            } else if notification.userInfo?["devices"] is [String] {
+                // Legacy name-only payload carries no peer objects; read the
+                // manager's current list instead.
                 availablePeers = SyncManager.shared.availablePeers
             }
         }
@@ -359,20 +391,20 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showAddManualPeer) {
             VStack(spacing: 16) {
-                Text("添加设备").font(.headline)
-                TextField("IP 地址（如 192.168.1.20）", text: $manualPeerHost)
+                Text(L10n.t(.syncAddManualDevice)).font(.headline)
+                TextField(L10n.t(.syncManualDeviceHost), text: $manualPeerHost)
                     .textFieldStyle(.roundedBorder)
                 HStack {
-                    Text("端口")
+                    Text(L10n.t(.syncManualDevicePort))
                     TextField("5566", text: $manualPeerPort)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 100)
                 }
                 HStack {
-                    Button("取消") { showAddManualPeer = false }
+                    Button(L10n.t(.cancel)) { showAddManualPeer = false }
                         .keyboardShortcut(.cancelAction)
                     Spacer()
-                    Button("添加") {
+                    Button(L10n.t(.syncAdd)) {
                         let host = manualPeerHost.trimmingCharacters(in: .whitespaces)
                         let port = Int(manualPeerPort) ?? PreferencesManager.shared.syncPort
                         guard Self.isValidIPv4(host), (1...65535).contains(port) else { return }

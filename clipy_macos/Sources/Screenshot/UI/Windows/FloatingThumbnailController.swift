@@ -200,7 +200,32 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
 
     private var window: NSPanel?
     private var dismissTask: DispatchWorkItem?
-    private(set) var image: NSImage
+    /// Full-resolution image, dropped once `offloadedImageURL` is written.
+    private var inMemoryImage: NSImage?
+    /// Backing file for the full-resolution image. A 4K capture is 30-50MB in
+    /// memory and the panel only ever draws a 240x160 thumbnail, so stacked
+    /// thumbnails used to pin hundreds of MB for the lifetime of the stack.
+    private var offloadedImageURL: URL?
+    /// Small copy actually rendered by the panel.
+    private var previewImage: NSImage
+
+    /// Full-resolution image for copy / save / pin / edit / drag. Read back from
+    /// disk when it has been offloaded; falls back to the preview only if that
+    /// read fails, so an action never silently produces nothing.
+    private(set) var image: NSImage {
+        get {
+            if let inMemoryImage { return inMemoryImage }
+            if let offloadedImageURL, let restored = NSImage(contentsOf: offloadedImageURL) {
+                return restored
+            }
+            return previewImage
+        }
+        set {
+            inMemoryImage = newValue
+            offloadedImageURL = nil
+            previewImage = Self.previewCopy(of: newValue)
+        }
+    }
     private var thumbnailView: ThumbnailView?
     private var corner: FloatingThumbnailCorner = .bottomRight
     /// History entry ID — used to match and update the thumbnail when the editor saves.
@@ -232,13 +257,43 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
     var onOCR: (() -> Void)?
 
     init(image: NSImage) {
-        self.image = image
+        self.inMemoryImage = image
+        self.previewImage = Self.previewCopy(of: image)
         super.init()
     }
 
     static func currentThumbnailSize() -> NSSize {
         let scale = CGFloat(UserDefaults.standard.object(forKey: "thumbnailScale") as? Double ?? 1.0)
         return NSSize(width: round(240 * scale), height: round(160 * scale))
+    }
+
+    /// Downsamples for on-screen display. Sized at 2x the largest thumbnail the
+    /// preference allows so it still looks sharp on Retina.
+    private static func previewCopy(of image: NSImage) -> NSImage {
+        let maxEdge = 720
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              max(cg.width, cg.height) > maxEdge,
+              let data = ImageEncoder.encode(image),
+              let downsampled = ImageDownsampler.thumbnail(from: data, maxPixelSize: maxEdge) else {
+            return image
+        }
+        return downsampled
+    }
+
+    /// Writes the full-resolution image to the scratch directory and releases it
+    /// from memory. Encoding happens off the main thread.
+    private func offloadFullImage() {
+        guard let full = inMemoryImage else { return }
+        let url = TmpScratchDirectory.makeURL(filename: "thumb-\(UUID().uuidString).png")
+        DispatchQueue.global(qos: .utility).async {
+            guard let data = ImageEncoder.encode(full),
+                  (try? data.write(to: url, options: .atomic)) != nil else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.inMemoryImage === full else { return }
+                self.offloadedImageURL = url
+                self.inMemoryImage = nil
+            }
+        }
     }
 
     // MARK: - Show
@@ -279,7 +334,7 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
         panel.acceptsMouseMovedEvents = true
 
-        let view = ThumbnailView(image: image, thumbSize: thumbSize)
+        let view = ThumbnailView(image: previewImage, thumbSize: thumbSize)
         view.frame = NSRect(origin: .zero, size: thumbSize)
         view.autoresizingMask = [.width, .height]
         view.dismissesTowardLeft = corner.isLeft
@@ -320,6 +375,7 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
         })
 
         scheduleAutoDismiss()
+        offloadFullImage()
     }
 
     private func pauseAutoDismiss() {
@@ -347,6 +403,11 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
         window?.close()
         window = nil
         thumbnailView = nil
+        if let offloadedImageURL {
+            try? FileManager.default.removeItem(at: offloadedImageURL)
+            self.offloadedImageURL = nil
+        }
+        inMemoryImage = nil
         onDismiss?()
         onDismiss = nil
     }
@@ -366,7 +427,8 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
     func updateImage(_ newImage: NSImage, annotationData: CaptureAnnotationData? = nil) {
         image = newImage
         self.annotationData = annotationData
-        thumbnailView?.updateImage(newImage)
+        thumbnailView?.updateImage(previewImage)
+        offloadFullImage()
     }
 
     private func makeCurrentImageFileURL() -> URL? {

@@ -111,7 +111,9 @@ final class NotificationRepository {
     func deleteAll() -> Int {
         queue.sync {
             guard let db else { return 0 }
-            guard sqlite3_exec(db, "DELETE FROM phone_notifications", nil, nil, nil) == SQLITE_OK else { return 0 }
+            guard sqliteExec(db, "DELETE FROM phone_notifications", context: "notification deleteAll") else {
+                return 0
+            }
             return Int(sqlite3_changes(db))
         }
     }
@@ -280,10 +282,17 @@ final class NotificationRepository {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            sqliteLogFailure(db, "notification insert prepare")
+            return false
+        }
         defer { sqlite3_finalize(stmt) }
         bindEntry(stmt, entry)
-        return sqlite3_step(stmt) == SQLITE_DONE
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            sqliteLogFailure(db, "notification insert")
+            return false
+        }
+        return true
     }
 
     @discardableResult
@@ -296,7 +305,10 @@ final class NotificationRepository {
         WHERE id = ?
         """
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            sqliteLogFailure(db, "notification update prepare")
+            return false
+        }
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, entry.notificationKey)
         bindText(stmt, 2, entry.packageName)
@@ -309,36 +321,66 @@ final class NotificationRepository {
         sqlite3_bind_int(stmt, 9, entry.isClearable ? 1 : 0)
         bindText(stmt, 10, encodeExtras(entry.extras))
         bindText(stmt, 11, entry.id)
-        return sqlite3_step(stmt) == SQLITE_DONE
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            sqliteLogFailure(db, "notification update")
+            return false
+        }
+        return true
     }
 
     private func deleteByIdLocked(_ id: String) -> Int {
         guard let db else { return 0 }
         let sql = "DELETE FROM phone_notifications WHERE id = ?"
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            sqliteLogFailure(db, "notification delete prepare")
+            return 0
+        }
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, id)
-        guard sqlite3_step(stmt) == SQLITE_DONE else { return 0 }
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            sqliteLogFailure(db, "notification delete")
+            return 0
+        }
         return Int(sqlite3_changes(db))
     }
 
+    /// Deletes the notifications a remote dismiss refers to.
+    ///
+    /// A dismiss must identify *which* notification: with neither a
+    /// notificationKey nor a groupKey this used to delete every mirrored
+    /// notification for the app, so one stray dismiss wiped a whole app's
+    /// history. Such a request is now rejected.
     private func deleteMatchingLocked(_ request: NotificationManager.NotificationDismissRequest) -> Int {
         guard let db else { return 0 }
+        let notificationKey = request.notificationKey.flatMap { $0.isEmpty ? nil : $0 }
+        let groupKey = request.groupKey.flatMap { $0.isEmpty ? nil : $0 }
+
         let sql: String
-        if let notificationKey = request.notificationKey, !notificationKey.isEmpty {
+        if notificationKey != nil {
             sql = "DELETE FROM phone_notifications WHERE package_name = ? AND notification_key = ?"
+        } else if groupKey != nil {
+            sql = "DELETE FROM phone_notifications WHERE package_name = ? AND group_key = ?"
         } else {
-            sql = "DELETE FROM phone_notifications WHERE package_name = ?"
+            appLog(
+                "NotificationRepository: ignoring dismiss for \(request.packageName) with no notificationKey/groupKey",
+                level: .warning
+            )
+            return 0
         }
+
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            sqliteLogFailure(db, "notification delete-matching prepare")
+            return 0
+        }
         defer { sqlite3_finalize(stmt) }
         bindText(stmt, 1, request.packageName)
-        if let notificationKey = request.notificationKey, !notificationKey.isEmpty {
-            bindText(stmt, 2, notificationKey)
+        bindText(stmt, 2, notificationKey ?? groupKey)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            sqliteLogFailure(db, "notification delete-matching")
+            return 0
         }
-        guard sqlite3_step(stmt) == SQLITE_DONE else { return 0 }
         return Int(sqlite3_changes(db))
     }
 

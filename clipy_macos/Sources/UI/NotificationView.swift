@@ -10,6 +10,7 @@ struct NotificationGroup: Identifiable {
 
 final class NotificationViewModel: ObservableObject {
     @Published var groups: [NotificationGroup] = []
+    @Published private(set) var filteredGroups: [NotificationGroup] = []
     @Published var expandedPackages = Set<String>()
     @Published var selectedIDs = Set<String>()
     @Published var searchText = ""
@@ -25,6 +26,16 @@ final class NotificationViewModel: ObservableObject {
     /// we cannot rely on it as the sole data-load trigger.
     private var lastReloadAt: Date = .distantPast
     private static let refreshMinInterval: TimeInterval = 1
+    private static let searchDebounce: TimeInterval = 0.25
+
+    private var loadedCount = 0
+    private var hasMore = false
+    private var isLoadingMore = false
+    private var isLoadingAllForSearch = false
+    /// Bumped whenever the paging window resets, so an in-flight background
+    /// fetch can tell its rows are stale.
+    private var dataGeneration: UInt64 = 0
+    private var searchDebounceWorkItem: DispatchWorkItem?
 
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -45,6 +56,7 @@ final class NotificationViewModel: ObservableObject {
     }
 
     deinit {
+        searchDebounceWorkItem?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -60,12 +72,20 @@ final class NotificationViewModel: ObservableObject {
 
     func prepareForClose() {
         isActive = false
+        searchDebounceWorkItem?.cancel()
+        searchDebounceWorkItem = nil
         // Release all notification data immediately to minimize memory footprint.
         groups = []
+        filteredGroups = []
         expandedPackages.removeAll()
         selectedIDs.removeAll()
         searchText = ""
         bannerKeywordsText = ""
+        loadedCount = 0
+        hasMore = false
+        isLoadingMore = false
+        isLoadingAllForSearch = false
+        dataGeneration &+= 1
     }
 
     @objc private func notificationsDidChange() {
@@ -85,6 +105,11 @@ final class NotificationViewModel: ObservableObject {
     /// is fresh even when the window was closed (or reused) when notifications
     /// arrived. Throttled to avoid reloading on every focus change.
     func refreshIfStale() {
+        // Must run before the throttle check: on a reused window this is the only
+        // hook that fires, and leaving `isActive` false made the VM ignore every
+        // subsequent change broadcast, so the list stayed frozen until the user
+        // touched a filter.
+        isActive = true
         guard Date().timeIntervalSince(lastReloadAt) >= Self.refreshMinInterval else { return }
         reload()
     }
@@ -94,12 +119,62 @@ final class NotificationViewModel: ObservableObject {
         return count == 0 ? L10n.t(.noNotifications) : "\(L10n.t(.phoneNotifications)): \(count)"
     }
 
-    // MARK: - Data loading (full load, no pagination)
+    // MARK: - Data loading (paged)
 
     func reload() {
         lastReloadAt = Date()
-        let entries = manager.fetchAllNotifications()
-        groups = Self.buildGroups(from: entries)
+        isLoadingMore = false
+        isLoadingAllForSearch = false
+        dataGeneration &+= 1
+        loadedCount = 0
+        let page = manager.fetchPage(offset: 0, limit: NotificationManager.pageSize)
+        groups = Self.buildGroups(from: page)
+        loadedCount = page.count
+        hasMore = loadedCount < manager.notificationCount
+        recomputeFilteredGroups()
+    }
+
+    func onGroupRowAppear(_ group: NotificationGroup) {
+        guard group.id == filteredGroups.last?.id else { return }
+        loadMoreIfNeeded()
+    }
+
+    private func loadMoreIfNeeded() {
+        guard hasMore, !isLoadingMore else { return }
+        // While searching, ensureFullyLoaded already pulled the rest if needed.
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty else { return }
+
+        isLoadingMore = true
+        let page = manager.fetchPage(offset: loadedCount, limit: NotificationManager.pageSize)
+        if page.isEmpty {
+            hasMore = false
+            isLoadingMore = false
+            return
+        }
+        appendEntries(page)
+        loadedCount += page.count
+        hasMore = loadedCount < manager.notificationCount
+        isLoadingMore = false
+        recomputeFilteredGroups()
+    }
+
+    private func appendEntries(_ entries: [NotificationManager.NotificationEntry]) {
+        var grouped = Dictionary(uniqueKeysWithValues: groups.map { ($0.packageName, $0) })
+        var order = groups.map(\.packageName)
+        for entry in entries {
+            if grouped[entry.packageName] == nil {
+                order.append(entry.packageName)
+                grouped[entry.packageName] = NotificationGroup(
+                    id: entry.packageName,
+                    packageName: entry.packageName,
+                    appName: entry.appName,
+                    items: []
+                )
+            }
+            grouped[entry.packageName]!.items.append(entry)
+        }
+        groups = order.compactMap { grouped[$0] }
     }
 
     private static func buildGroups(from entries: [NotificationManager.NotificationEntry]) -> [NotificationGroup] {
@@ -120,10 +195,70 @@ final class NotificationViewModel: ObservableObject {
         return order.compactMap { grouped[$0] }
     }
 
-    var filteredGroups: [NotificationGroup] {
+    func onSearchTextChange() {
+        searchDebounceWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.recomputeFilteredGroups()
+        }
+        searchDebounceWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.searchDebounce, execute: work)
+    }
+
+    private func recomputeFilteredGroups() {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return groups }
-        return groups.compactMap { group -> NotificationGroup? in
+        guard !trimmed.isEmpty else {
+            filteredGroups = groups
+            return
+        }
+        // Show matches among the loaded pages right away, then widen the result
+        // once the rest of the table arrives.
+        filteredGroups = Self.filterGroups(groups, matching: trimmed)
+        loadRemainingForSearch()
+    }
+
+    /// Search has to see rows beyond the loaded pages. Reading them is SQLite IO
+    /// proportional to the whole table, so it runs off the main thread and the
+    /// filter is recomputed when the rows land.
+    private func loadRemainingForSearch() {
+        guard hasMore, !isLoadingAllForSearch else { return }
+        isLoadingAllForSearch = true
+        let generation = dataGeneration
+        let startOffset = loadedCount
+        let pageSize = NotificationManager.pageSize
+        let manager = self.manager
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var collected: [NotificationManager.NotificationEntry] = []
+            var offset = startOffset
+            while true {
+                let page = manager.fetchPage(offset: offset, limit: pageSize)
+                collected.append(contentsOf: page)
+                offset += page.count
+                if page.count < pageSize { break }
+            }
+            DispatchQueue.main.async {
+                guard let self, self.isActive else { return }
+                self.isLoadingAllForSearch = false
+                // A reload while we were fetching reset the paging window; these
+                // rows would append at the wrong offset and duplicate.
+                guard self.dataGeneration == generation else {
+                    self.recomputeFilteredGroups()
+                    return
+                }
+                if !collected.isEmpty {
+                    self.appendEntries(collected)
+                    self.loadedCount += collected.count
+                }
+                self.hasMore = false
+                let trimmed = self.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.filteredGroups = trimmed.isEmpty
+                    ? self.groups
+                    : Self.filterGroups(self.groups, matching: trimmed)
+            }
+        }
+    }
+
+    private static func filterGroups(_ groups: [NotificationGroup], matching trimmed: String) -> [NotificationGroup] {
+        groups.compactMap { group -> NotificationGroup? in
             // App/package match keeps the whole group; otherwise filter down to
             // only entries whose content (title/subtitle/body) matches the query.
             if group.appName.localizedCaseInsensitiveContains(trimmed) ||
@@ -268,7 +403,9 @@ final class NotificationViewModel: ObservableObject {
         panel.nameFieldStringValue = "notifications_\(exportTimestamp()).json"
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        let allEntries = groups.flatMap { $0.items }
+        // Export always reads the full table so pagination in the list UI
+        // cannot silently omit older notifications from the file.
+        let allEntries = manager.fetchAllNotifications()
         let jsonArray = allEntries.map { entry -> [String: Any] in
             var dict: [String: Any] = [
                 "id": entry.id,
@@ -378,18 +515,22 @@ struct NotificationView: View {
                 .foregroundStyle(.secondary)
             TextField(L10n.t(.searchApps), text: $viewModel.searchText)
                 .textFieldStyle(.plain)
+                .onChange(of: viewModel.searchText) { _ in
+                    viewModel.onSearchTextChange()
+                }
         }
         .padding(.horizontal, AppSpacing.sm)
         .padding(.vertical, AppSpacing.xs)
     }
 
     private var notificationList: some View {
-        ZStack {
-            if viewModel.filteredGroups.isEmpty {
+        let displayedGroups = viewModel.filteredGroups
+        return ZStack {
+            if displayedGroups.isEmpty {
                 EmptyStateView(message: viewModel.groups.isEmpty ? L10n.t(.noNotifications) : L10n.t(.noSearchResults))
             } else {
                 List(selection: $viewModel.selectedIDs) {
-                    ForEach(viewModel.filteredGroups) { group in
+                    ForEach(displayedGroups) { group in
                         DisclosureGroup(
                             isExpanded: Binding(
                                 get: { viewModel.expandedPackages.contains(group.packageName) },
@@ -411,6 +552,9 @@ struct NotificationView: View {
                             }
                         } label: {
                             groupLabel(group)
+                        }
+                        .onAppear {
+                            viewModel.onGroupRowAppear(group)
                         }
                     }
                 }

@@ -144,6 +144,12 @@ class AppStrings {
   String get deviceNameForSync => _t('设备名称（用于同步）', 'Device Name (for Sync)');
   String get enterDeviceName => _t('输入设备名称', 'Enter device name');
   String get deviceNameUpdated => _t('设备名称已更新，同步已重启', 'Device name updated and sync restarted');
+  String get syncPairingSecret => _t('同步配对密钥', 'Sync Pairing Secret');
+  String get syncPairingSecretHint => _t(
+      '所有设备必须填写完全相同的密钥；留空则使用内置默认密钥（局域网内不安全）。',
+      'All devices must use the exact same secret. Leave empty to fall back to the built-in default (not safe on a shared LAN).');
+  String get syncPairingSecretUpdated =>
+      _t('配对密钥已更新，同步已重启', 'Pairing secret updated and sync restarted');
   String get authorizedDevices => _t('授权设备', 'Authorized Devices');
   String get syncTargetsHint => _t(
         '分别勾选要同步剪贴板 / 通知的设备。仅需在本机授权，对方无需勾选即可接收。',

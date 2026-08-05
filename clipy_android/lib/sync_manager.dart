@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -197,7 +198,14 @@ class SyncManager with WidgetsBindingObserver {
       MethodChannel('com.clipyclone.clipy_android/sync_service');
 
   static const int _maxFrameLength = 2 * 1024 * 1024;
+  /// Shipped fallback secret. Recoverable from the binary, so it only keeps
+  /// existing installs working; real confidentiality comes from a user-set
+  /// pairing secret. Must stay in step with SyncManager.legacySharedSecret
+  /// on the macOS side.
   static const String _hardcodedSecret = 'ClipySyncSecret2026';
+  static const String _keyDerivationSalt = 'clipy.sync.v2.hkdf';
+  static const String _keyDerivationInfo = 'aes-256-gcm';
+  static const String _pairingSecretKey = 'clipy.sync.pairingSecret';
   static const String _endpointCacheKey = 'clipy.peerEndpoints.v2';
   static const Duration _endpointCacheTtl = Duration(hours: 24);
   static const Duration _discoveryDebounce = Duration(milliseconds: 600);
@@ -252,6 +260,10 @@ class SyncManager with WidgetsBindingObserver {
   List<String> notificationSyncPeerIds = [];
   String peerId = '';
   String displayName = 'Android';
+  /// Shared pairing secret; must match the macOS peer's value verbatim.
+  String pairingSecret = '';
+  String? _cachedKeySecret;
+  encrypt.Key? _cachedKey;
 
   /// Union of clipboard + notification outbound targets.
   List<String> get authorizedPeerIds =>
@@ -289,6 +301,7 @@ class SyncManager with WidgetsBindingObserver {
     }
     displayName = prefs.getString('deviceName') ??
         (Platform.isAndroid ? 'Android' : 'Device');
+    pairingSecret = prefs.getString(_pairingSecretKey) ?? '';
     await _migrateAuthorizedPeerIds(prefs);
     await _migrateDualSyncAuth(prefs);
     clipboardSyncPeerIds =
@@ -1536,15 +1549,73 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
-  static encrypt.Key _key() {
-    final hash = sha256.convert(utf8.encode(_hardcodedSecret));
-    return encrypt.Key(Uint8List.fromList(hash.bytes));
+  /// HKDF-SHA256 (RFC 5869), mirroring CryptoKit's `HKDF<SHA256>.deriveKey`
+  /// so both ends land on the same 32-byte transport key.
+  static Uint8List _hkdfSha256({
+    required List<int> ikm,
+    required List<int> salt,
+    required List<int> info,
+    required int length,
+  }) {
+    final prk = Hmac(sha256, salt).convert(ikm).bytes;
+    final out = <int>[];
+    var block = <int>[];
+    var counter = 1;
+    while (out.length < length) {
+      block = Hmac(sha256, prk).convert([...block, ...info, counter]).bytes;
+      out.addAll(block);
+      counter++;
+    }
+    return Uint8List.fromList(out.sublist(0, length));
+  }
+
+  /// A user-set pairing secret is stretched with HKDF; with none configured we
+  /// keep the legacy SHA256(shipped secret) so unpaired installs keep syncing.
+  encrypt.Key _key() {
+    final secret = pairingSecret;
+    if (_cachedKeySecret == secret && _cachedKey != null) return _cachedKey!;
+    final Uint8List bytes;
+    if (secret.isEmpty) {
+      bytes = Uint8List.fromList(
+          sha256.convert(utf8.encode(_hardcodedSecret)).bytes);
+    } else {
+      bytes = _hkdfSha256(
+        ikm: utf8.encode(secret),
+        salt: utf8.encode(_keyDerivationSalt),
+        info: utf8.encode(_keyDerivationInfo),
+        length: 32,
+      );
+    }
+    final key = encrypt.Key(bytes);
+    _cachedKeySecret = secret;
+    _cachedKey = key;
+    return key;
+  }
+
+  Future<void> updatePairingSecret(String secret) async {
+    final next = secret.trim();
+    if (next == pairingSecret) return;
+    pairingSecret = next;
+    _cachedKeySecret = null;
+    _cachedKey = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_pairingSecretKey, next);
+    // Live sessions negotiated under the old key can no longer be read.
+    if (isEnabled) {
+      await stop();
+      await Future.delayed(const Duration(seconds: 1));
+      await start();
+    }
   }
 
   String? _encrypt(String text) {
     try {
       final key = _key();
-      final iv = encrypt.IV.fromLength(12);
+      // GCM must never reuse a nonce under the same key — a fixed all-zero IV
+      // (the old `IV.fromLength(12)`) leaks the authentication subkey.
+      final rng = Random.secure();
+      final iv = encrypt.IV(
+          Uint8List.fromList(List<int>.generate(12, (_) => rng.nextInt(256))));
       final encrypter =
           encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.gcm));
       final encrypted = encrypter.encrypt(text, iv: iv);

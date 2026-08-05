@@ -19,3 +19,30 @@ func optionalString(_ stmt: OpaquePointer?, _ index: Int32) -> String? {
           let cString = sqlite3_column_text(stmt, index) else { return nil }
     return String(cString: cString)
 }
+
+/// Last error message reported by the connection, for diagnostics.
+func sqliteErrorMessage(_ db: OpaquePointer?) -> String {
+    guard let db, let message = sqlite3_errmsg(db) else { return "unknown error" }
+    return String(cString: message)
+}
+
+/// Logs a failed SQLite operation. Failures used to be dropped on the floor,
+/// which made a corrupt or full database look like an empty history.
+func sqliteLogFailure(_ db: OpaquePointer?, _ context: String) {
+    appLog("SQLite \(context) failed: \(sqliteErrorMessage(db))", level: .error)
+}
+
+/// Runs a statement that returns no rows, logging any failure.
+@discardableResult
+func sqliteExec(_ db: OpaquePointer?, _ sql: String, context: String) -> Bool {
+    guard let db else { return false }
+    var errorPointer: UnsafeMutablePointer<CChar>?
+    guard sqlite3_exec(db, sql, nil, nil, &errorPointer) == SQLITE_OK else {
+        let detail = errorPointer.map { String(cString: $0) } ?? sqliteErrorMessage(db)
+        sqlite3_free(errorPointer)
+        appLog("SQLite \(context) failed: \(detail)", level: .error)
+        return false
+    }
+    sqlite3_free(errorPointer)
+    return true
+}

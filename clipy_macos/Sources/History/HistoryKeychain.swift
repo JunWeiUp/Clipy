@@ -2,10 +2,21 @@ import CryptoKit
 import Foundation
 import Security
 
+/// Storage for the at-rest history encryption key.
+///
+/// The key lives in a 0600 file under Application Support rather than the
+/// Keychain: the app is distributed with a development/ad-hoc signature, and a
+/// Keychain item's ACL is bound to the signing identity, so every re-sign would
+/// lock the user out of their own history. `loadKey` still migrates any key left
+/// behind by older Keychain-based builds.
 enum HistoryKeychain {
     private static let service = "com.yourdomain.ClipyClone.history-key"
     private static let account = "default"
     private static let keyFileName = ".history-encryption-key"
+
+    /// Cached so encrypt/decrypt on the hot path doesn't hit the disk per item.
+    private static let cacheLock = NSLock()
+    private static var cachedKey: SymmetricKey?
 
     private static var keyFileURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -25,20 +36,33 @@ enum HistoryKeychain {
         guard status == errSecSuccess, saveKeyData(keyData) else {
             return nil
         }
-        return SymmetricKey(data: keyData)
+        return cache(SymmetricKey(data: keyData))
     }
 
     static func loadKey() -> SymmetricKey? {
+        cacheLock.lock()
+        let cached = cachedKey
+        cacheLock.unlock()
+        if let cached { return cached }
+
         if let data = loadKeyDataFromFile() {
-            return SymmetricKey(data: data)
+            return cache(SymmetricKey(data: data))
         }
         if let data = loadKeyDataFromKeychain() {
             if saveKeyData(data) {
                 deleteKeyFromKeychain()
             }
-            return SymmetricKey(data: data)
+            return cache(SymmetricKey(data: data))
         }
         return nil
+    }
+
+    @discardableResult
+    private static func cache(_ key: SymmetricKey) -> SymmetricKey {
+        cacheLock.lock()
+        cachedKey = key
+        cacheLock.unlock()
+        return key
     }
 
     private static func loadKeyDataFromFile() -> Data? {

@@ -48,7 +48,6 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
   Timer? _timer;
   NotificationHealthStatus? _latestStatus;
   bool _observingLifecycle = false;
-  bool _inBackground = false;
 
   final _healthChangedController =
       StreamController<NotificationHealthStatus>.broadcast();
@@ -102,10 +101,8 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _inBackground = state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden ||
-        state == AppLifecycleState.inactive;
-
+    // Background state is expressed by whether `_timer` is running, so there is
+    // no separate flag to keep in sync.
     if (state == AppLifecycleState.resumed) {
       unawaited(checkHealth());
       // Resume periodic checks (foreground interval).

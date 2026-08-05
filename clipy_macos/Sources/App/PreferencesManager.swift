@@ -10,7 +10,11 @@ class PreferencesManager {
     private let excludedAppsKey = "excludedApps"
     private let syncEnabledKey = "syncEnabled"
     private let syncPortKey = "syncPort"
-    private let syncSecretKey = "syncSecret"
+    /// New key on purpose: the old `syncSecret` slot could hold a per-install
+    /// random value that was never used for anything, and reading it as a
+    /// pairing secret would derive a key no other device shares.
+    private let syncPairingSecretKey = "syncPairingSecret"
+    private let legacySyncSecretKey = "syncSecret"
     private let authorizedDevicesKey = "authorizedDevices"
     private let authorizedPeerIdsKey = "authorizedPeerIds"
     private let clipboardSyncPeerIdsKey = "clipboardSyncPeerIds"
@@ -40,8 +44,21 @@ class PreferencesManager {
     private let screenshotTextUnderlineKey = "screenshotTextUnderline"
     private let screenshotTextBackgroundEnabledKey = "screenshotTextBackgroundEnabled"
     
+    /// `Host.current().localizedName` can hit mDNS/DNS resolution and block for
+    /// seconds. The device name is read on hot paths (every sync handshake and
+    /// menu build), so resolve it at most once per launch.
+    private static let fallbackDeviceName: String = {
+        // gethostname()-backed, unlike Host.current() — strip the ".local" suffix
+        // and turn the hyphens Bonjour inserts back into spaces.
+        let shortName = ProcessInfo.processInfo.hostName
+            .components(separatedBy: ".")
+            .first?
+            .replacingOccurrences(of: "-", with: " ") ?? ""
+        return shortName.isEmpty ? "Mac" : shortName
+    }()
+
     var deviceName: String {
-        get { defaults.string(forKey: deviceNameKey) ?? Host.current().localizedName ?? "Mac" }
+        get { defaults.string(forKey: deviceNameKey) ?? Self.fallbackDeviceName }
         set { defaults.set(newValue, forKey: deviceNameKey) }
     }
 
@@ -92,17 +109,28 @@ class PreferencesManager {
         set { defaults.set(newValue, forKey: syncPortKey) }
     }
 
-    var syncSecret: String {
-        get { 
-            if let secret = defaults.string(forKey: syncSecretKey) {
-                return secret
+    /// Pairing secret shared by every device in one sync group. Empty means the
+    /// shipped fallback key is in use, which any copy of the app can derive —
+    /// set the same non-empty value on each device to get real confidentiality.
+    var syncPairingSecret: String {
+        get {
+            if defaults.object(forKey: legacySyncSecretKey) != nil {
+                defaults.removeObject(forKey: legacySyncSecretKey)
             }
-            let newSecret = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-            defaults.set(newSecret, forKey: syncSecretKey)
-            return newSecret
+            return defaults.string(forKey: syncPairingSecretKey) ?? ""
         }
-        set { defaults.set(newValue, forKey: syncSecretKey) }
+        set {
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                defaults.removeObject(forKey: syncPairingSecretKey)
+            } else {
+                defaults.set(trimmed, forKey: syncPairingSecretKey)
+            }
+            SyncManager.shared.invalidateKeyCache()
+        }
     }
+
+    var isUsingDefaultSyncSecret: Bool { syncPairingSecret.isEmpty }
 
     var syncPeerId: String {
         get {

@@ -141,42 +141,42 @@ struct ScreenshotSettingsView: View {
                     // MARK: - 权限
                     Section {
                         permissionRow(
-                            name: "屏幕录制",
-                            hint: "截图 / 录屏必需",
+                            name: L("Screen Recording"),
+                            hint: L("Required for screenshots and recording"),
                             granted: screenCaptureGranted,
                             onRequest: { ScreenCapturePermissionManager.requestAccess() },
                             onOpenSettings: { ScreenCapturePermissionManager.openSettings() }
                         )
                         permissionRow(
-                            name: "辅助功能",
-                            hint: "粘贴模拟、元素吸附",
+                            name: L("Accessibility"),
+                            hint: L("Paste simulation and element snap"),
                             granted: accessibilityGranted,
                             onRequest: { AccessibilityManager.requestSystemPrompt() },
                             onOpenSettings: { AccessibilityManager.openSettings() }
                         )
                         permissionRow(
-                            name: "输入监控",
-                            hint: "录屏按键显示、鼠标点击高亮",
+                            name: L("Input Monitoring"),
+                            hint: L("Keystroke display and mouse click highlight"),
                             granted: inputMonitoringGranted,
                             onRequest: { KeystrokeOverlay.requestInputMonitoringPermission() },
                             onOpenSettings: { PermissionDeepLink.openInputMonitoringSettings() }
                         )
                         permissionRow(
-                            name: "麦克风",
-                            hint: "录屏录制人声",
+                            name: L("Microphone"),
+                            hint: L("Record voice during screen recording"),
                             granted: microphoneGranted,
                             onRequest: { AVCaptureDevice.requestAccess(for: .audio) { _ in refreshPermissionStatuses() } },
                             onOpenSettings: { PermissionDeepLink.openMicrophoneSettings() }
                         )
                         permissionRow(
-                            name: "摄像头",
-                            hint: "录屏摄像头悬浮窗",
+                            name: L("Camera"),
+                            hint: L("Webcam overlay during recording"),
                             granted: cameraGranted,
                             onRequest: { AVCaptureDevice.requestAccess(for: .video) { _ in refreshPermissionStatuses() } },
                             onOpenSettings: { PermissionDeepLink.openCameraSettings() }
                         )
                     } header: {
-                        Text("权限")
+                        Text(L("Permissions"))
                     } footer: {
                         Text(L10n.t(.screenCapturePermissionHint))
                             .font(AppFont.caption)
@@ -267,7 +267,7 @@ struct ScreenshotSettingsView: View {
                         .disabled(!screenshotAutoSaveEnabled)
                         .opacity(screenshotAutoSaveEnabled ? 1 : 0.55)
                     } header: {
-                        Text("截图")
+                        Text(L("Screenshot"))
                     } footer: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(L10n.t(.screenshotShortcutDescription))
@@ -279,16 +279,16 @@ struct ScreenshotSettingsView: View {
                     }
 
                     // MARK: - 录屏
-                    Section("录屏") {
-                        Picker("录制完成动作", selection: $recordingOnStop) {
-                            Text("打开编辑器").tag("editor")
-                            Text("在 Finder 中显示").tag("finder")
-                            Text("复制到剪贴板").tag("clipboard")
+                    Section(L("Recording")) {
+                        Picker(L("After Recording"), selection: $recordingOnStop) {
+                            Text(L("Open editor")).tag("editor")
+                            Text(L("Show in Finder")).tag("finder")
+                            Text(L("Copy to clipboard")).tag("clipboard")
                         }
                         .onChange(of: recordingOnStop) { newValue in
                             PreferencesManager.shared.recordingOnStop = newValue
                         }
-                        Picker("帧率 (FPS)", selection: $recordingFPS) {
+                        Picker(L("Frame Rate (FPS)"), selection: $recordingFPS) {
                             ForEach([15, 24, 30, 60], id: \.self) { fps in
                                 Text("\(fps)").tag(fps)
                             }
@@ -296,61 +296,61 @@ struct ScreenshotSettingsView: View {
                         .onChange(of: recordingFPS) { newValue in
                             PreferencesManager.shared.recordingFPS = newValue
                         }
-                        Toggle("隐藏录制计时 HUD", isOn: $hideRecordingHUD)
+                        Toggle(L("Hide Recording Timer HUD"), isOn: $hideRecordingHUD)
                             .onChange(of: hideRecordingHUD) { newValue in
                                 PreferencesManager.shared.hideRecordingHUD = newValue
                             }
-                        Toggle("录制系统音频", isOn: $recordSystemAudio)
+                        Toggle(L("Record System Audio"), isOn: $recordSystemAudio)
                             .onChange(of: recordSystemAudio) { newValue in
                                 PreferencesManager.shared.recordSystemAudio = newValue
                             }
-                        Toggle("录制麦克风", isOn: $recordMicAudio)
+                        Toggle(L("Record Microphone"), isOn: $recordMicAudio)
                             .onChange(of: recordMicAudio) { newValue in
                                 PreferencesManager.shared.recordMicAudio = newValue
                             }
-                        Toggle("摄像头悬浮窗", isOn: $recordWebcam)
+                        Toggle(L("Webcam Overlay"), isOn: $recordWebcam)
                             .onChange(of: recordWebcam) { newValue in
                                 PreferencesManager.shared.recordWebcam = newValue
                             }
                         if recordWebcam {
-                            Picker("摄像头位置", selection: $webcamPosition) {
-                                Text("右下").tag("bottomRight")
-                                Text("左下").tag("bottomLeft")
-                                Text("右上").tag("topRight")
-                                Text("左上").tag("topLeft")
+                            Picker(L("Webcam Position"), selection: $webcamPosition) {
+                                Text(L("Bottom Right")).tag("bottomRight")
+                                Text(L("Bottom Left")).tag("bottomLeft")
+                                Text(L("Top Right")).tag("topRight")
+                                Text(L("Top Left")).tag("topLeft")
                             }
                             .onChange(of: webcamPosition) { newValue in
                                 PreferencesManager.shared.webcamPosition = newValue
                             }
-                            Picker("摄像头尺寸", selection: $webcamSize) {
-                                Text("小").tag("small")
-                                Text("中").tag("medium")
-                                Text("大").tag("large")
-                                Text("特大").tag("xlarge")
+                            Picker(L("Webcam Size"), selection: $webcamSize) {
+                                Text(L("Small")).tag("small")
+                                Text(L("Medium")).tag("medium")
+                                Text(L("Large")).tag("large")
+                                Text(L("Huge")).tag("xlarge")
                             }
                             .onChange(of: webcamSize) { newValue in
                                 PreferencesManager.shared.webcamSize = newValue
                             }
-                            Picker("摄像头形状", selection: $webcamShape) {
-                                Text("圆形").tag("circle")
-                                Text("圆角矩形").tag("roundedRect")
+                            Picker(L("Webcam Shape"), selection: $webcamShape) {
+                                Text(L("Circle")).tag("circle")
+                                Text(L("Rounded Rectangle")).tag("roundedRect")
                             }
                             .onChange(of: webcamShape) { newValue in
                                 PreferencesManager.shared.webcamShape = newValue
                             }
                         }
-                        Toggle("鼠标点击高亮", isOn: $recordMouseHighlight)
+                        Toggle(L("Mouse Click Highlight"), isOn: $recordMouseHighlight)
                             .onChange(of: recordMouseHighlight) { newValue in
                                 PreferencesManager.shared.recordMouseHighlight = newValue
                             }
-                        Toggle("按键显示", isOn: $recordKeystroke)
+                        Toggle(L("Keystroke Display"), isOn: $recordKeystroke)
                             .onChange(of: recordKeystroke) { newValue in
                                 PreferencesManager.shared.recordKeystroke = newValue
                             }
                         if recordKeystroke {
-                            Picker("按键模式", selection: $keystrokeShowAll) {
-                                Text("仅快捷键").tag(false)
-                                Text("全部按键").tag(true)
+                            Picker(L("Keystroke Mode"), selection: $keystrokeShowAll) {
+                                Text(L("Shortcuts Only")).tag(false)
+                                Text(L("All Keystrokes")).tag(true)
                             }
                             .onChange(of: keystrokeShowAll) { newValue in
                                 PreferencesManager.shared.keystrokeShowAll = newValue
@@ -359,27 +359,27 @@ struct ScreenshotSettingsView: View {
                     }
 
                     // MARK: - 输出与缩略图
-                    Section("输出与缩略图") {
-                        Toggle("完成后显示浮动缩略图", isOn: $showFloatingThumbnail)
+                    Section(L("Output & Thumbnails")) {
+                        Toggle(L("Show Floating Thumbnail After Capture"), isOn: $showFloatingThumbnail)
                             .onChange(of: showFloatingThumbnail) { newValue in
                                 PreferencesManager.shared.showFloatingThumbnail = newValue
                             }
                         if showFloatingThumbnail {
-                            Toggle("连续截图堆叠缩略图", isOn: $thumbnailStacking)
+                            Toggle(L("Stack Thumbnails for Consecutive Captures"), isOn: $thumbnailStacking)
                                 .onChange(of: thumbnailStacking) { newValue in
                                     PreferencesManager.shared.thumbnailStacking = newValue
                                 }
-                            Picker("缩略图位置", selection: $thumbnailCorner) {
-                                Text("右下").tag("bottomRight")
-                                Text("左下").tag("bottomLeft")
-                                Text("右上").tag("topRight")
-                                Text("左上").tag("topLeft")
+                            Picker(L("Thumbnail Position"), selection: $thumbnailCorner) {
+                                Text(L("Bottom Right")).tag("bottomRight")
+                                Text(L("Bottom Left")).tag("bottomLeft")
+                                Text(L("Top Right")).tag("topRight")
+                                Text(L("Top Left")).tag("topLeft")
                             }
                             .onChange(of: thumbnailCorner) { newValue in
                                 PreferencesManager.shared.thumbnailCorner = newValue
                             }
                             HStack {
-                                Text("缩略图尺寸")
+                                Text(L("Thumbnail Size"))
                                 Spacer()
                                 Slider(value: $thumbnailScale, in: 0.5...2.0, step: 0.1) { editing in
                                     if !editing {
@@ -392,28 +392,28 @@ struct ScreenshotSettingsView: View {
                                     .frame(width: 36, alignment: .trailing)
                             }
                         }
-                        Picker("快速捕获动作", selection: $quickCaptureMode) {
-                            Text("仅保存").tag(0)
-                            Text("复制到剪贴板").tag(1)
-                            Text("保存并复制").tag(2)
-                            Text("仅显示缩略图").tag(3)
+                        Picker(L("Quick Capture Action"), selection: $quickCaptureMode) {
+                            Text(L("Save Only")).tag(0)
+                            Text(L("Copy to clipboard")).tag(1)
+                            Text(L("Save and Copy")).tag(2)
+                            Text(L("Thumbnail Only")).tag(3)
                         }
                         .onChange(of: quickCaptureMode) { newValue in
                             PreferencesManager.shared.quickCaptureMode = newValue
                         }
-                        Toggle("捕获鼠标光标", isOn: $captureCursor)
+                        Toggle(L("Capture Mouse Cursor"), isOn: $captureCursor)
                             .onChange(of: captureCursor) { newValue in
                                 PreferencesManager.shared.captureCursor = newValue
                             }
-                        Toggle("缩小 Retina 截图到 1×", isOn: $downscaleRetina)
+                        Toggle(L("Downscale Retina Screenshots to 1×"), isOn: $downscaleRetina)
                             .onChange(of: downscaleRetina) { newValue in
                                 PreferencesManager.shared.downscaleRetina = newValue
                             }
-                        Toggle("完成后播放提示音", isOn: $playCopySound)
+                        Toggle(L("Play Sound After Capture"), isOn: $playCopySound)
                             .onChange(of: playCopySound) { newValue in
                                 PreferencesManager.shared.playCopySound = newValue
                             }
-                        Picker("保存格式", selection: $imageFormat) {
+                        Picker(L("Save Format"), selection: $imageFormat) {
                             Text("PNG").tag("png")
                             Text("JPEG").tag("jpeg")
                             Text("HEIC").tag("heic")
@@ -424,7 +424,7 @@ struct ScreenshotSettingsView: View {
                         }
                         if imageFormat != "png" {
                             HStack {
-                                Text("质量")
+                                Text(L("Quality"))
                                 Spacer()
                                 Slider(value: $imageQuality, in: 0.1...1.0, step: 0.05) { editing in
                                     if !editing {
@@ -440,18 +440,18 @@ struct ScreenshotSettingsView: View {
                     }
 
                     // MARK: - 滚动与绘制辅助
-                    Section("滚动截图与绘制辅助") {
-                        Text("滚动截图").font(AppFont.body)
-                        Stepper("最大高度：\(scrollMaxHeight) 像素", value: $scrollMaxHeight, in: 2000...40000, step: 1000)
+                    Section(L("Scroll Capture & Drawing Aids")) {
+                        Text(L("Scroll Capture")).font(AppFont.body)
+                        Stepper(String(format: L("Max Height: %d px"), scrollMaxHeight), value: $scrollMaxHeight, in: 2000...40000, step: 1000)
                             .onChange(of: scrollMaxHeight) { newValue in
                                 PreferencesManager.shared.scrollMaxHeight = newValue
                             }
-                        Toggle("自动滚动", isOn: $scrollAutoScrollEnabled)
+                        Toggle(L("Auto Scroll"), isOn: $scrollAutoScrollEnabled)
                             .onChange(of: scrollAutoScrollEnabled) { newValue in
                                 PreferencesManager.shared.scrollAutoScrollEnabled = newValue
                             }
                         if scrollAutoScrollEnabled {
-                            Picker("自动滚动速度", selection: $scrollAutoScrollSpeed) {
+                            Picker(L("Auto Scroll Speed"), selection: $scrollAutoScrollSpeed) {
                                 ForEach(1...5, id: \.self) { s in
                                     Text("\(s)").tag(s)
                                 }
@@ -460,56 +460,56 @@ struct ScreenshotSettingsView: View {
                                 PreferencesManager.shared.scrollAutoScrollSpeed = newValue
                             }
                         }
-                        Toggle("冻结表头检测", isOn: $scrollFrozenDetection)
+                        Toggle(L("Detect Frozen Headers"), isOn: $scrollFrozenDetection)
                             .onChange(of: scrollFrozenDetection) { newValue in
                                 PreferencesManager.shared.scrollFrozenDetection = newValue
                             }
                         Divider()
-                        Toggle("显示对齐辅助线", isOn: $snapGuidesEnabled)
+                        Toggle(L("Show Alignment Guides"), isOn: $snapGuidesEnabled)
                             .onChange(of: snapGuidesEnabled) { newValue in
                                 PreferencesManager.shared.snapGuidesEnabled = newValue
                             }
-                        Toggle("记住上次使用的工具", isOn: $rememberLastTool)
+                        Toggle(L("Remember Last Used Tool"), isOn: $rememberLastTool)
                             .onChange(of: rememberLastTool) { newValue in
                                 PreferencesManager.shared.rememberLastTool = newValue
                             }
-                        Toggle("工具提示中显示快捷键", isOn: $showToolShortcutsInTooltips)
+                        Toggle(L("Show Shortcuts in Tooltips"), isOn: $showToolShortcutsInTooltips)
                             .onChange(of: showToolShortcutsInTooltips) { newValue in
                                 PreferencesManager.shared.showToolShortcutsInTooltips = newValue
                             }
-                        Toggle("画笔压感（Apple Pencil）", isOn: $pencilPressureEnabled)
+                        Toggle(L("Pencil Pressure (Apple Pencil)"), isOn: $pencilPressureEnabled)
                             .onChange(of: pencilPressureEnabled) { newValue in
                                 PreferencesManager.shared.pencilPressureEnabled = newValue
                             }
-                        Picker("画笔平滑", selection: $pencilSmoothMode) {
-                            Text("无").tag(0)
-                            Text("平滑").tag(1)
-                            Text("精细").tag(2)
+                        Picker(L("Pencil Smoothing"), selection: $pencilSmoothMode) {
+                            Text(L("None")).tag(0)
+                            Text(L("Smooth")).tag(1)
+                            Text(L("Refined")).tag(2)
                         }
                         .onChange(of: pencilSmoothMode) { newValue in
                             PreferencesManager.shared.pencilSmoothMode = newValue
                         }
-                        Toggle("智能荧光笔（贴合文字行高）", isOn: $smartMarkerEnabled)
+                        Toggle(L("Smart Marker (Fit Text Line Height)"), isOn: $smartMarkerEnabled)
                             .onChange(of: smartMarkerEnabled) { newValue in
                                 PreferencesManager.shared.smartMarkerEnabled = newValue
                             }
                     }
 
                     // MARK: - 美化与特效
-                    Section("美化与图像特效（默认值）") {
-                        Toggle("默认启用美化包裹", isOn: $beautifyEnabled)
+                    Section(L("Beautify & Image Effects (Defaults)")) {
+                        Toggle(L("Enable Beautify Wrap by Default"), isOn: $beautifyEnabled)
                             .onChange(of: beautifyEnabled) { newValue in
                                 PreferencesManager.shared.beautifyEnabled = newValue
                             }
-                        Picker("美化模式", selection: $beautifyMode) {
-                            Text("窗口（含红绿灯）").tag(0)
-                            Text("圆角").tag(1)
+                        Picker(L("Beautify Mode"), selection: $beautifyMode) {
+                            Text(L("Window (with Traffic Lights)")).tag(0)
+                            Text(L("Rounded")).tag(1)
                         }
                         .onChange(of: beautifyMode) { newValue in
                             PreferencesManager.shared.beautifyMode = newValue
                         }
                         HStack {
-                            Text("边距")
+                            Text(L("Margin"))
                             Spacer()
                             Slider(value: $beautifyPadding, in: 0...120, step: 2) { editing in
                                 if !editing {
@@ -522,7 +522,7 @@ struct ScreenshotSettingsView: View {
                                 .frame(width: 32, alignment: .trailing)
                         }
                         HStack {
-                            Text("圆角")
+                            Text(L("Rounded"))
                             Spacer()
                             Slider(value: $beautifyCornerRadius, in: 0...40, step: 1) { editing in
                                 if !editing {
@@ -535,7 +535,7 @@ struct ScreenshotSettingsView: View {
                                 .frame(width: 32, alignment: .trailing)
                         }
                         HStack {
-                            Text("阴影")
+                            Text(L("Shadow"))
                             Spacer()
                             Slider(value: $beautifyShadowRadius, in: 0...60, step: 1) { editing in
                                 if !editing {
@@ -549,7 +549,7 @@ struct ScreenshotSettingsView: View {
                         }
                         Divider()
                         HStack {
-                            Text("亮度")
+                            Text(L("Brightness"))
                             Spacer()
                             Slider(value: $effectsBrightness, in: -0.5...0.5) { editing in
                                 if !editing {
@@ -562,7 +562,7 @@ struct ScreenshotSettingsView: View {
                                 .frame(width: 44, alignment: .trailing)
                         }
                         HStack {
-                            Text("对比度")
+                            Text(L("Contrast"))
                             Spacer()
                             Slider(value: $effectsContrast, in: 0.5...1.5) { editing in
                                 if !editing {
@@ -575,7 +575,7 @@ struct ScreenshotSettingsView: View {
                                 .frame(width: 44, alignment: .trailing)
                         }
                         HStack {
-                            Text("饱和度")
+                            Text(L("Saturation"))
                             Spacer()
                             Slider(value: $effectsSaturation, in: 0...2) { editing in
                                 if !editing {
@@ -588,7 +588,7 @@ struct ScreenshotSettingsView: View {
                                 .frame(width: 44, alignment: .trailing)
                         }
                         HStack {
-                            Text("锐度")
+                            Text(L("Sharpness"))
                             Spacer()
                             Slider(value: $effectsSharpness, in: 0...1) { editing in
                                 if !editing {
@@ -649,7 +649,7 @@ struct ScreenshotSettingsView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { granted ? onOpenSettings() : onRequest() }
-        .help(granted ? L10n.t(.openSystemSettings) : "请求权限")
+        .help(granted ? L10n.t(.openSystemSettings) : L("Request Permission"))
     }
 
     private func chooseScreenshotSaveDirectory() {

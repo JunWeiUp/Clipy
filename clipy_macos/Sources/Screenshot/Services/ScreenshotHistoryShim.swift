@@ -1,27 +1,25 @@
 import AppKit
 import Foundation
 
-/// Minimal in-memory screenshot history shim.
+/// Bridges macshot's `ScreenshotHistory` calls onto clipy1's clipboard history.
 ///
-/// macshot's `DetachedEditorWindowController` calls into `ScreenshotHistory` to
-/// persist re-edited captures and read back the latest entry id. clipy1 keeps
-/// its own clipboard-history store (`HistoryRepository`), and wiring the editor
-/// into it is a host concern — not the screenshot module's job.
-///
-/// This shim keeps those call sites compiling and provides a thin in-memory
-/// record. The host app (via `ScreenshotSessionCoordinator`) is responsible for
-/// ingesting captures into the real history, so the shim is intentionally
-/// best-effort: `add` returns a generated id and stores nothing persistent.
+/// macshot's `DetachedEditorWindowController` persists re-edited captures through
+/// this type and reads back an entry id to link its floating thumbnail. clipy1
+/// has no separate screenshot store, so an entry here is a row in the regular
+/// clipboard history: `add` ingests the composited PNG, and `updateEntry`
+/// re-ingests the edited version so a save from the editor is actually kept.
+@MainActor
 final class ScreenshotHistory {
     static let shared = ScreenshotHistory()
 
-    /// Lightweight in-memory entry mirror used only to satisfy `entries.first?.id`.
     struct Entry {
         let id: String
     }
 
-    /// In-memory list of ids handed out by `add`. Not the real store.
+    /// Ids handed out by `add`, newest last. Bounded because the editor can be
+    /// reopened any number of times within one app session.
     private(set) var entries: [Entry] = []
+    private static let maxTrackedEntries = 32
 
     private init() {}
 
@@ -30,11 +28,26 @@ final class ScreenshotHistory {
              editState: CaptureEditState? = nil) -> String {
         let id = UUID().uuidString
         entries.append(Entry(id: id))
+        if entries.count > Self.maxTrackedEntries {
+            entries.removeFirst(entries.count - Self.maxTrackedEntries)
+        }
+        ingest(image)
         return id
     }
 
     func updateEntry(id: String, compositedImage: NSImage, rawImage: NSImage?,
                      annotations: [Annotation]?, editState: CaptureEditState? = nil) {
-        // No-op: the host ingests the final composited image via its own pipeline.
+        // clipy1's history is append-only and de-duplicates by content hash, so
+        // an edited capture lands as its own entry rather than mutating the old
+        // row. Losing the edit entirely (the previous no-op) was worse.
+        ingest(compositedImage)
+    }
+
+    private func ingest(_ image: NSImage) {
+        guard let pngData = ImageEncoder.encodePNG(image) ?? image.tiffRepresentation else {
+            appLog("ScreenshotHistory: failed to encode image for history", level: .warning)
+            return
+        }
+        ClipboardManager.shared.ingestCapturedImage(pngData, copyToPasteboard: false)
     }
 }

@@ -719,9 +719,10 @@ class MenuController: NSObject {
         guard !content.isEmpty else { return }
 
         let hash = ClipboardManager.shared.contentHashForPlainText(content) ?? UUID().uuidString
-        let success = SyncManager.shared.sendTextToPeer(content, hash: hash, peerId: peerId)
-        if !success {
-            Self.showSendFailedAlert()
+        SyncManager.shared.sendTextToPeer(content, hash: hash, peerId: peerId) { success in
+            if !success {
+                Self.showSendFailedAlert()
+            }
         }
     }
 
@@ -818,6 +819,12 @@ class MenuController: NSObject {
     }
 
     @objc private func languageDidChange() {
+        // Rebuilding while the menu is on screen destroys the item the user is
+        // hovering; the next open re-renders with the new language anyway.
+        guard !isMenuOpen else {
+            isMenuDirtyWhileOpen = true
+            return
+        }
         if clipboardManager.isMenuMemoryRetained, let menu = statusItem.menu {
             rebuildMenuContents(menu, with: clipboardManager.recentSummaries)
         }
@@ -851,147 +858,6 @@ class MenuController: NSObject {
     }
 }
 
-/// Section header with a trailing hoverable action icon.
-private final class SectionMenuHeaderView: NSView {
-    var onAction: (() -> Void)?
-
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let actionButton = HoverIconButton(frame: .zero)
-
-    init(
-        title: String,
-        symbolName: String,
-        toolTip: String,
-        buttonEnabled: Bool = true,
-        width: CGFloat = 240
-    ) {
-        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 22))
-        wantsLayer = true
-
-        titleLabel.stringValue = title
-        titleLabel.font = NSFont.menuFont(ofSize: 0)
-        titleLabel.textColor = .secondaryLabelColor
-        titleLabel.isEditable = false
-        titleLabel.isBordered = false
-        titleLabel.backgroundColor = .clear
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(titleLabel)
-
-        actionButton.isBordered = false
-        actionButton.imagePosition = .imageOnly
-        actionButton.imageScaling = .scaleProportionallyDown
-        actionButton.toolTip = toolTip
-        actionButton.target = self
-        actionButton.action = #selector(actionClicked)
-        actionButton.isEnabled = buttonEnabled
-        actionButton.translatesAutoresizingMaskIntoConstraints = false
-        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: toolTip) {
-            let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
-            actionButton.image = image.withSymbolConfiguration(config)
-        }
-        actionButton.normalTint = .secondaryLabelColor
-        actionButton.hoverTint = .labelColor
-        addSubview(actionButton)
-
-        NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: actionButton.leadingAnchor, constant: -8),
-
-            actionButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            actionButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            actionButton.widthAnchor.constraint(equalToConstant: 22),
-            actionButton.heightAnchor.constraint(equalToConstant: 22),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func viewDidMoveToSuperview() {
-        super.viewDidMoveToSuperview()
-        if let menuWidth = enclosingMenuItem?.menu?.size.width, menuWidth > frame.width {
-            setFrameSize(NSSize(width: menuWidth, height: frame.height))
-        }
-    }
-
-    @objc private func actionClicked() {
-        enclosingMenuItem?.menu?.cancelTracking()
-        onAction?()
-    }
-}
-
-/// Small icon button with hover highlight suitable for menu accessory controls.
-private final class HoverIconButton: NSButton {
-    var normalTint: NSColor = .secondaryLabelColor {
-        didSet { applyAppearance(hovered: isHovered) }
-    }
-    var hoverTint: NSColor = .labelColor {
-        didSet { applyAppearance(hovered: isHovered) }
-    }
-
-    private var isHovered = false
-    private var trackingArea: NSTrackingArea?
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.cornerRadius = 4
-        isBordered = false
-        applyAppearance(hovered: false)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override var isEnabled: Bool {
-        didSet { applyAppearance(hovered: isHovered) }
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        guard isEnabled else { return }
-        isHovered = true
-        applyAppearance(hovered: true)
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovered = false
-        applyAppearance(hovered: false)
-    }
-
-    private func applyAppearance(hovered: Bool) {
-        if !isEnabled {
-            contentTintColor = .tertiaryLabelColor
-            layer?.backgroundColor = NSColor.clear.cgColor
-            return
-        }
-        contentTintColor = hovered ? hoverTint : normalTint
-        layer?.backgroundColor = hovered
-            ? NSColor.quaternaryLabelColor.cgColor
-            : NSColor.clear.cgColor
-    }
-}
-
 extension MenuController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === statusItem.menu else { return }
@@ -1003,14 +869,11 @@ extension MenuController: NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         guard menu === statusItem.menu else { return }
         isMenuOpen = false
+        // 打开期间累积的 dirty 不在这里重建：menuNeedsUpdate 每次打开都会
+        // ensureMenuSummariesLoaded + rebuild，关闭后再建一次只会把刚释放的
+        // 摘要重新拉回内存，并渲染一张没人看得见的菜单。
+        isMenuDirtyWhileOpen = false
         clipboardManager.releaseMenuMemory()
         MemoryFootprintReclaimer.reclaimIfIdle()
-        // 打开期间累积的 dirty（历史/片段/通知变化）在关闭后补一次重建，
-        // 保证下次打开内容最新；设备区已通过增量更新实时反映，无需在此重做。
-        if isMenuDirtyWhileOpen, let nextMenu = statusItem.menu {
-            isMenuDirtyWhileOpen = false
-            clipboardManager.ensureMenuSummariesLoaded()
-            rebuildMenuContents(nextMenu, with: clipboardManager.recentSummaries)
-        }
     }
 }

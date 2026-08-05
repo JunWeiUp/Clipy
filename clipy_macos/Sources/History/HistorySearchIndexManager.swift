@@ -21,11 +21,18 @@ final class HistorySearchIndexManager {
             guard let db = database.db else { return false }
             let sql = "UPDATE history_entries SET search_index = ? WHERE content_hash = ?"
             var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                sqliteLogFailure(db, "search index update prepare")
+                return false
+            }
             defer { sqlite3_finalize(stmt) }
             bindText(stmt, 1, text)
             bindText(stmt, 2, contentHash)
-            return sqlite3_step(stmt) == SQLITE_DONE
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                sqliteLogFailure(db, "search index update")
+                return false
+            }
+            return true
         }
     }
 
@@ -42,7 +49,10 @@ final class HistorySearchIndexManager {
             LIMIT ?
             """
             var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                sqliteLogFailure(db, "entriesNeedingSearchIndex prepare")
+                return []
+            }
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int(stmt, 1, Int32(limit))
 
@@ -58,10 +68,16 @@ final class HistorySearchIndexManager {
 
     /// Nulls out the search index for all text entries, forcing them to be
     /// rebuilt from the on-disk text content.
+    /// Text entries are searched through `text_preview`/`text_path`, so their
+    /// `search_index` column is dead weight left over from older builds.
+    ///
+    /// The `IS NOT NULL` clause matters: without it this rewrote every text row
+    /// on every launch, since nothing ever repopulates the column.
     func clearTextSearchIndexes() {
         database.queue.sync {
             guard let db = database.db else { return }
-            sqlite3_exec(db, "UPDATE history_entries SET search_index = NULL WHERE item_type = 'text'", nil, nil, nil)
+            let sql = "UPDATE history_entries SET search_index = NULL WHERE item_type = 'text' AND search_index IS NOT NULL"
+            sqliteExec(db, sql, context: "clearTextSearchIndexes")
         }
     }
 }

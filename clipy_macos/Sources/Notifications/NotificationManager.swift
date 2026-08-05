@@ -190,7 +190,7 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
         // Always ACK after a successful decode so the sender can clear its
         // pending queue — even when we drop/dedupe and do not show a banner.
-        defer { SyncManager.shared.sendNotificationAck(hash: entry.id) }
+        defer { SyncManager.shared.sendNotificationAck(hash: entry.id, to: senderDevice) }
 
         if isEmptyNotification(entry) {
             return

@@ -27,7 +27,7 @@ final class AppDatabase {
 
     private func openDatabase() {
         if sqlite3_open(dbURL.path, &db) != SQLITE_OK {
-            appLog("Failed to open app database", level: .error)
+            appLog("Failed to open app database: \(sqliteErrorMessage(db))", level: .error)
             db = nil
         }
     }
@@ -48,7 +48,7 @@ final class AppDatabase {
             "PRAGMA temp_store=MEMORY;"        // temp tables/indexes in RAM
         ]
         for sql in pragmas {
-            sqlite3_exec(db, sql, nil, nil, nil)
+            sqliteExec(db, sql, context: "pragma \(sql)")
         }
     }
 
@@ -92,7 +92,7 @@ final class AppDatabase {
         CREATE INDEX IF NOT EXISTS idx_phone_notifications_order ON phone_notifications(post_time DESC);
         CREATE INDEX IF NOT EXISTS idx_phone_notifications_package_time ON phone_notifications(package_name, post_time DESC);
         """
-        sqlite3_exec(db, sql, nil, nil, nil)
+        sqliteExec(db, sql, context: "schema creation")
     }
 
     private func migrateLegacyDatabaseFilesIfNeeded() {
@@ -123,7 +123,7 @@ final class AppDatabase {
 
         let copySQL = "INSERT INTO main.\(table) SELECT * FROM legacy_db.\(legacyTable)"
         let copied = sqlite3_exec(db, copySQL, nil, nil, nil) == SQLITE_OK
-        sqlite3_exec(db, "DETACH DATABASE legacy_db", nil, nil, nil)
+        sqliteExec(db, "DETACH DATABASE legacy_db", context: "detach legacy database")
 
         guard copied else {
             appLog("Failed to migrate \(table) from \(legacyFileName)", level: .error)

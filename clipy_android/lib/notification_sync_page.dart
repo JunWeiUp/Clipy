@@ -745,6 +745,11 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                 _packageNotificationsCache.remove(item.packageName);
               },
               onCopyAll: () async {
+                // Resolve the messenger before the await: `context` may be
+                // unmounted by the time the notifications load, and looking it
+                // up then throws.
+                final messenger = ScaffoldMessenger.of(context);
+                final message = l10n.copiedToClipboard;
                 final notifications =
                     await _notificationsForPackage(item.packageName!);
                 final text = notifications
@@ -753,9 +758,8 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                 ClipboardManager.instance.copyToClipboard(
                   HistoryItem(type: 'text', value: text),
                 );
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(l10n.copiedToClipboard)),
-                );
+                if (!mounted) return;
+                messenger.showSnackBar(SnackBar(content: Text(message)));
               },
             );
           case _HistoryListItemKind.notification:

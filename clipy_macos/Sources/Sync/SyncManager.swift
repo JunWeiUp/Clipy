@@ -82,9 +82,19 @@ final class SyncManager: NSObject {
     private let syncQueue = DispatchQueue(label: "com.clipy.sync.v2")
     private let scanQueue = DispatchQueue(label: "com.clipy.scan.v2", attributes: .concurrent)
     private let dialDedupLock = NSLock()
+    /// Reusable recv landing buffer. `syncQueue`-only.
+    private var receiveScratch = Data(count: 65536)
 
     private static let maxFrameLength = 2 * 1024 * 1024
-    private static let hardcodedSecret = "ClipySyncSecret2026"
+    /// hello/welcome are a few hundred bytes; anything larger during a handshake
+    /// is either a bug or an attempt to make us allocate on an unauthenticated fd.
+    private static let maxHandshakeFrameLength = 64 * 1024
+    /// Shipped fallback secret. Recoverable from the binary, so it only keeps
+    /// existing installs working — confidentiality against a LAN attacker comes
+    /// from a user-configured pairing secret, and integrity from `isInboundAuthorized`.
+    private static let legacySharedSecret = "ClipySyncSecret2026"
+    private static let keyDerivationSalt = Data("clipy.sync.v2.hkdf".utf8)
+    private static let keyDerivationInfo = Data("aes-256-gcm".utf8)
     private static let defaultPort: UInt16 = 5566
     private static let discoveryDebounce: TimeInterval = 0.6
     private static let handshakeTimeout: TimeInterval = 2.0
@@ -106,9 +116,49 @@ final class SyncManager: NSObject {
         return UInt16(clamping: p == 0 ? Int(Self.defaultPort) : p)
     }
 
+    private let keyLock = NSLock()
+    private var cachedKeySecret: String?
+    private var cachedKey: SymmetricKey?
+
+    /// Transport key. A user-configured pairing secret is stretched with HKDF;
+    /// with no secret set we keep the legacy SHA256(shipped secret) so devices
+    /// that have not been re-paired keep syncing.
     private var encryptionKey: SymmetricKey {
-        let data = Self.hardcodedSecret.data(using: .utf8)!
-        return SymmetricKey(data: SHA256.hash(data: data))
+        let secret = PreferencesManager.shared.syncPairingSecret
+        keyLock.lock()
+        defer { keyLock.unlock() }
+        if cachedKeySecret == secret, let cachedKey { return cachedKey }
+        let key: SymmetricKey
+        if secret.isEmpty {
+            key = SymmetricKey(data: SHA256.hash(data: Data(Self.legacySharedSecret.utf8)))
+        } else {
+            key = HKDF<SHA256>.deriveKey(
+                inputKeyMaterial: SymmetricKey(data: Data(secret.utf8)),
+                salt: Self.keyDerivationSalt,
+                info: Self.keyDerivationInfo,
+                outputByteCount: 32
+            )
+        }
+        cachedKeySecret = secret
+        cachedKey = key
+        return key
+    }
+
+    /// Drops the derived-key cache so a secret change takes effect immediately.
+    func invalidateKeyCache() {
+        keyLock.lock()
+        cachedKeySecret = nil
+        cachedKey = nil
+        keyLock.unlock()
+    }
+
+    /// Inbound gate. Decrypting a frame proves nothing about its sender: the
+    /// transport key is shared by every paired device (and the shipped fallback
+    /// is in the binary). Only peers the user authorized in Settings may write
+    /// into the clipboard/notification stores.
+    private func isInboundAuthorized(_ remotePeerId: String) -> Bool {
+        guard !remotePeerId.isEmpty else { return false }
+        return Set(PreferencesManager.shared.authorizedPeerIds).contains(remotePeerId)
     }
 
     // Discovery
@@ -116,6 +166,16 @@ final class SyncManager: NSObject {
     private let peersLock = NSLock()
     private var pendingDiscoveryWork: DispatchWorkItem?
     private var isRefreshingDiscovery = false
+    /// Guards the /24 sweep: without it, the many triggers (path change, empty
+    /// fanout target, deliver failure, manual refresh) could stack overlapping
+    /// 254-host × N-interface scans.
+    private let scanStateLock = NSLock()
+    private var isScanning = false
+    private var lastScanFinishedAt: Date?
+    private static let subnetScanCooldown: TimeInterval = 60
+    /// Bumped by `stop()`; handshakes that finish afterwards close their fd
+    /// instead of resurrecting a session on a stopped service.
+    private var serviceGeneration = 0
     private var lastDialAt: [String: Date] = [:]
     private let dialDedupTTL: TimeInterval = 4
 
@@ -191,6 +251,9 @@ final class SyncManager: NSObject {
 
     func stop() {
         appLog("SyncManager v2 stopping...")
+        scanStateLock.lock()
+        serviceGeneration &+= 1
+        scanStateLock.unlock()
         syncQueue.async { [weak self] in
             guard let self else { return }
             self.stopPathMonitoring()
@@ -342,20 +405,37 @@ final class SyncManager: NSObject {
         fanoutReliable(env, requireAuth: true, allowWithoutClipboardSync: true)
     }
 
-    func sendNotificationAck(hash: String) {
+    /// Acks a mirrored notification back to the device that sent it. Previously
+    /// this was broadcast to every discovered peer, leaking notification ids to
+    /// devices the user never authorized.
+    func sendNotificationAck(hash: String, to senderPeerId: String) {
+        guard !hash.isEmpty, !senderPeerId.isEmpty else { return }
         let env = SyncEnvelope.make(
             type: SyncType.notifAck,
             peerId: peerId,
             hash: hash,
             payload: nil
         )
-        fanoutReliable(env, requireAuth: false, allowWithoutClipboardSync: true)
+        sendEnvelope(env, to: senderPeerId, reliable: false)
     }
 
-    @discardableResult
-    func sendTextToPeer(_ content: String, hash: String, peerId targetId: String) -> Bool {
-        guard PreferencesManager.shared.isSyncEnabled else { return false }
-        guard let payload = encrypt(content) else { return false }
+    /// Sends to one peer. Never blocks the caller: the frame is handed to
+    /// `syncQueue` and the result comes back on the main queue. Reliable sends
+    /// that can't go out now are queued and retried when the peer reconnects.
+    func sendTextToPeer(
+        _ content: String,
+        hash: String,
+        peerId targetId: String,
+        completion: ((Bool) -> Void)? = nil
+    ) {
+        guard PreferencesManager.shared.isSyncEnabled else {
+            completion?(false)
+            return
+        }
+        guard let payload = encrypt(content) else {
+            completion?(false)
+            return
+        }
         let env = SyncEnvelope.make(
             type: SyncType.history,
             peerId: peerId,
@@ -363,13 +443,13 @@ final class SyncManager: NSObject {
             hash: hash,
             payload: payload
         )
-        return sendEnvelope(env, to: targetId, reliable: true)
+        sendEnvelope(env, to: targetId, reliable: true, completion: completion)
     }
 
     func sendText(_ content: String, hash: String, toDevice targetName: String) {
         let peers = availablePeers.filter { $0.displayName == targetName }
         guard let peer = peers.first else { return }
-        _ = sendTextToPeer(content, hash: hash, peerId: peer.peerId)
+        sendTextToPeer(content, hash: hash, peerId: peer.peerId)
     }
 
     @discardableResult
@@ -423,47 +503,55 @@ final class SyncManager: NSObject {
     ) {
         if !allowWithoutClipboardSync && !PreferencesManager.shared.isSyncEnabled { return }
         guard let data = encodeFrame(env) else { return }
-        let targets: [String]
+        let auth = authIds(for: env)
+        let discovered: Set<String>
         peersLock.lock()
-        if requireAuth {
-            let auth = authIds(for: env)
-            targets = discoveredPeers.keys.filter { auth.contains($0) }
-        } else {
-            targets = Array(discoveredPeers.keys)
-        }
+        discovered = Set(discoveredPeers.keys)
         peersLock.unlock()
 
-        if targets.isEmpty {
-            // Queue for when peers appear (history / notif with hash)
-            if env.type == SyncType.history || env.type == SyncType.notifPost {
-                for peerId in authIds(for: env) {
-                    enqueuePending(data: data, type: env.type, peerId: peerId, hash: env.hash)
-                }
-            }
+        // Every authorized peer is a target: online ones get delivered now,
+        // offline ones queue up. Only queueing when *no* peer is reachable used
+        // to silently skip offline devices whenever any other device was up.
+        let targets: [String] = requireAuth ? Array(auth) : Array(discovered)
+        guard !targets.isEmpty else {
             scheduleDiscovery(immediate: false)
             return
         }
+        let queueable = env.type == SyncType.history || env.type == SyncType.notifPost
 
         syncQueue.async { [weak self] in
             guard let self else { return }
+            var needsDiscovery = false
             for id in targets {
-                self.deliver(data: data, type: env.type, peerId: id, hash: env.hash, reliable: true)
+                if self.sessions[id] != nil || discovered.contains(id) {
+                    self.deliver(data: data, type: env.type, peerId: id, hash: env.hash, reliable: true)
+                } else if queueable {
+                    self.enqueuePending(data: data, type: env.type, peerId: id, hash: env.hash)
+                    needsDiscovery = true
+                }
             }
+            if needsDiscovery { self.scheduleDiscovery(immediate: false) }
         }
     }
 
-    @discardableResult
-    private func sendEnvelope(_ env: SyncEnvelope, to targetId: String, reliable: Bool) -> Bool {
-        guard let data = encodeFrame(env) else { return false }
-        var ok = false
-        let sem = DispatchSemaphore(value: 0)
-        syncQueue.async { [weak self] in
-            guard let self else { sem.signal(); return }
-            ok = self.deliver(data: data, type: env.type, peerId: targetId, hash: env.hash, reliable: reliable)
-            sem.signal()
+    private func sendEnvelope(
+        _ env: SyncEnvelope,
+        to targetId: String,
+        reliable: Bool,
+        completion: ((Bool) -> Void)? = nil
+    ) {
+        guard let data = encodeFrame(env) else {
+            completion?(false)
+            return
         }
-        _ = sem.wait(timeout: .now() + 5)
-        return ok
+        syncQueue.async { [weak self] in
+            guard let self else {
+                if let completion { DispatchQueue.main.async { completion(false) } }
+                return
+            }
+            let ok = self.deliver(data: data, type: env.type, peerId: targetId, hash: env.hash, reliable: reliable)
+            if let completion { DispatchQueue.main.async { completion(ok) } }
+        }
     }
 
     @discardableResult
@@ -487,6 +575,8 @@ final class SyncManager: NSObject {
         return false
     }
 
+    /// Must run on `syncQueue`: `pendingQueue` and `inFlightHashes` are plain
+    /// arrays/dicts shared with `deliver`/`flushPending`/`handleAck`.
     private func enqueuePending(data: Data, type: String, peerId: String, hash: String?) {
         let cutoff = Date().addingTimeInterval(-Self.pendingQueueTTL)
         pendingQueue.removeAll { $0.enqueueAt < cutoff }
@@ -518,11 +608,11 @@ final class SyncManager: NSObject {
         guard !due.isEmpty, let session = sessions[peerId] else { return }
         // Only reliable types (history/notif.post) carry a hash and wait for ACK;
         // they are the ones at risk of redelivery on reconnect.
-        let reliable = due.filter { frame in
-            (frame.type == SyncType.history || frame.type == SyncType.notifPost)
-                && frame.hash != nil
+        let reliableHashes = due.compactMap { frame -> String? in
+            guard frame.type == SyncType.history || frame.type == SyncType.notifPost else { return nil }
+            return frame.hash
         }
-        let dropped = reliable.filter { inFlightHashes[peerId]?.contains($0.hash!) ?? false }.count
+        let dropped = reliableHashes.filter { inFlightHashes[peerId]?.contains($0) ?? false }.count
         appLog("Flushing \(due.count) pending frame(s) to \(peerId)\(dropped > 0 ? " (skipped \(dropped) in-flight)" : "")")
         for frame in due {
             // Skip hashes already delivered on this session and awaiting ACK.
@@ -554,17 +644,18 @@ final class SyncManager: NSObject {
         }
     }
 
-    private func handleAck(hash: String) {
-        guard !hash.isEmpty else { return }
+    /// An ACK only clears what was queued **for the peer that sent it**. Clearing
+    /// by hash alone let one device's ACK drop the copies still owed to every
+    /// other device with the same content hash.
+    private func handleAck(hash: String, from remotePeerId: String) {
+        guard !hash.isEmpty, !remotePeerId.isEmpty else { return }
         let before = pendingQueue.count
-        pendingQueue.removeAll { $0.hash == hash }
+        pendingQueue.removeAll { $0.hash == hash && $0.peerId == remotePeerId }
         if pendingQueue.count != before {
-            appLog("ACK cleared pending for hash \(hash.prefix(8))")
+            appLog("ACK from \(remotePeerId.prefix(8)) cleared pending for hash \(hash.prefix(8))")
         }
         // Clear the in-flight mark so future flushes may redeliver if needed.
-        for key in inFlightHashes.keys {
-            inFlightHashes[key]?.remove(hash)
-        }
+        inFlightHashes[remotePeerId]?.remove(hash)
     }
 
     // MARK: - Discovery
@@ -572,14 +663,37 @@ final class SyncManager: NSObject {
     private func scheduleDiscovery(immediate: Bool) {
         pendingDiscoveryWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.runDiscovery()
+            // `immediate` marks user- or network-event-driven discovery, which
+            // is allowed to bypass the sweep cooldown.
+            self?.runDiscovery(force: immediate)
         }
         pendingDiscoveryWork = work
         let delay = immediate ? 0.05 : Self.discoveryDebounce
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    private func runDiscovery() {
+    /// Returns false when another sweep is running or the last one finished
+    /// within the cooldown window.
+    private func beginSubnetScan(force: Bool) -> Bool {
+        scanStateLock.lock()
+        defer { scanStateLock.unlock() }
+        if isScanning { return false }
+        if !force, let last = lastScanFinishedAt,
+           Date().timeIntervalSince(last) < Self.subnetScanCooldown {
+            return false
+        }
+        isScanning = true
+        return true
+    }
+
+    private func endSubnetScan() {
+        scanStateLock.lock()
+        isScanning = false
+        lastScanFinishedAt = Date()
+        scanStateLock.unlock()
+    }
+
+    private func runDiscovery(force: Bool) {
         guard PreferencesManager.shared.isSyncEnabled else { return }
         let manual = PreferencesManager.shared.manualSyncPeers
         let port = syncPort
@@ -605,18 +719,16 @@ final class SyncManager: NSObject {
         }
 
         // Cached endpoints
-        syncQueue.sync {
-            for (id, session) in sessions {
-                _ = id
-                _ = session
-            }
-        }
         let cached = loadEndpointCacheEntries()
         for entry in cached where entry.peerId != myPeerId {
             dial(host: entry.host, port: entry.port, reason: "cache")
         }
 
-        // /24 subnet scan
+        // The /24 sweep is the expensive part (254 hosts per interface). Manual
+        // and cached dials above always run; the sweep is rate-limited.
+        guard beginSubnetScan(force: force) else { return }
+        defer { endSubnetScan() }
+
         var candidates: [String] = []
         var subnets = Set<String>()
         for ip in myIPs {
@@ -711,7 +823,14 @@ final class SyncManager: NSObject {
         }
     }
 
+    private var currentGeneration: Int {
+        scanStateLock.lock()
+        defer { scanStateLock.unlock() }
+        return serviceGeneration
+    }
+
     private func performHandshake(fd: Int32, host: String, port: UInt16, inbound: Bool, onFailure: ((HandshakeFailure) -> Void)? = nil) {
+        let generation = currentGeneration
         let hello = SyncEnvelope.make(
             type: SyncType.hello,
             peerId: peerId,
@@ -755,7 +874,7 @@ final class SyncManager: NSObject {
                 if let data = encodeFrame(welcome), !writeAll(fd, data) {
                     appLog("welcome send failed (inbound) to \(env.peerId.prefix(8))", level: .warning)
                 }
-                adoptSession(peerId: env.peerId, name: env.name ?? env.peerId, host: host, port: UInt16(env.port ?? Int(port)), fd: fd)
+                adoptSession(peerId: env.peerId, name: env.name ?? env.peerId, host: host, port: UInt16(env.port ?? Int(port)), fd: fd, generation: generation)
                 return
             }
         }
@@ -786,7 +905,8 @@ final class SyncManager: NSObject {
                 name: env.name ?? env.peerId,
                 host: host,
                 port: UInt16(env.port ?? Int(port)),
-                fd: fd
+                fd: fd,
+                generation: generation
             )
             return
         }
@@ -795,16 +915,29 @@ final class SyncManager: NSObject {
         Darwin.close(fd)
     }
 
-    private func adoptSession(peerId: String, name: String, host: String, port: UInt16, fd: Int32) {
+    private func adoptSession(peerId: String, name: String, host: String, port: UInt16, fd: Int32, generation: Int) {
         syncQueue.async { [weak self] in
             guard let self else { Darwin.close(fd); return }
+            guard generation == self.currentGeneration else {
+                appLog("Discarding handshake from \(host): service restarted mid-handshake")
+                Darwin.close(fd)
+                return
+            }
 
             if let existing = self.sessions[peerId] {
-                // Keep existing; drop duplicate
-                appLog("Duplicate session for \(peerId.prefix(8)), dropping new fd (existing @ \(existing.host))")
-                Darwin.close(fd)
-                self.recordPeer(peerId: peerId, name: name, host: existing.host, port: existing.port)
-                return
+                // A session that missed its last two pongs is presumed half-open
+                // (peer rebooted, NAT dropped the mapping). Handing it the new fd
+                // beats waiting out the ~90s keepalive timeout with sync stalled.
+                let staleCutoff = Date().addingTimeInterval(-Self.pingInterval * 2)
+                if existing.lastPong < staleCutoff {
+                    appLog("Replacing stale session for \(peerId.prefix(8)) (last pong \(Int(Date().timeIntervalSince(existing.lastPong)))s ago)")
+                    self.closeSession(peerId: peerId, scheduleReconnect: false)
+                } else {
+                    appLog("Duplicate session for \(peerId.prefix(8)), dropping new fd (existing @ \(existing.host))")
+                    Darwin.close(fd)
+                    self.recordPeer(peerId: peerId, name: name, host: existing.host, port: existing.port)
+                    return
+                }
             }
 
             // Close any accepting-client bookkeeping for this fd
@@ -874,14 +1007,19 @@ final class SyncManager: NSObject {
 
     private func onSessionReadable(peerId: String) {
         guard var session = sessions[peerId] else { return }
-        var tmp = [UInt8](repeating: 0, count: 65536)
-        let n = Darwin.recv(session.fd, &tmp, tmp.count, 0)
+        // `receiveScratch` is reused across reads: this fires on every readable
+        // event, and a fresh 64KB array per event was pure allocator churn.
+        // Safe because every read runs on `syncQueue`.
+        let n = receiveScratch.withUnsafeMutableBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return -1 }
+            return Darwin.recv(session.fd, base, raw.count, 0)
+        }
         if n <= 0 {
             appLog("recv \(n == 0 ? "EOF" : "error errno=\(errno)") from \(peerId.prefix(8))")
             closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true)
             return
         }
-        session.buffer.append(contentsOf: tmp.prefix(n))
+        session.buffer.append(receiveScratch.prefix(n))
         sessions[peerId] = session
         drainBuffer(peerId: peerId)
     }
@@ -908,7 +1046,13 @@ final class SyncManager: NSObject {
                 return
             }
             let frame = session.buffer.subdata(in: 4..<(4 + length))
-            session.buffer.removeSubrange(0..<(4 + length))
+            if session.buffer.count == 4 + length {
+                // Fully consumed: drop the allocation instead of keeping a
+                // grown-to-2MB buffer alive per peer for the whole session.
+                session.buffer = Data()
+            } else {
+                session.buffer.removeSubrange(0..<(4 + length))
+            }
             sessions[peerId] = session
             handleFrame(frame, from: peerId, host: session.host)
             guard let again = sessions[peerId] else { return }
@@ -933,30 +1077,45 @@ final class SyncManager: NSObject {
                 sessions[remotePeerId] = s
             }
         case SyncType.ack:
-            if let hash = env.hash { handleAck(hash: hash) }
+            guard requireInboundAuthorization(remotePeerId, for: env.type) else { return }
+            if let hash = env.hash { handleAck(hash: hash, from: remotePeerId) }
         case SyncType.history:
+            guard requireInboundAuthorization(remotePeerId, for: env.type) else { return }
             guard let payload = env.payload, let text = decrypt(payload) else { return }
-            DispatchQueue.main.async {
-                ClipboardManager.shared.handleRemoteSync(content: text, hash: env.hash ?? "")
+            let hash = env.hash
+            // ACK only after the entry is actually stored. Acking first meant a
+            // crash between the ACK and the insert made the sender drop it from
+            // its pending queue while we never persisted it.
+            DispatchQueue.main.async { [weak self] in
+                ClipboardManager.shared.handleRemoteSync(content: text, hash: hash ?? "")
+                self?.syncQueue.async {
+                    self?.replyAck(to: remotePeerId, hash: hash)
+                }
             }
-            replyAck(to: remotePeerId, hash: env.hash)
         case SyncType.notifPost:
+            guard requireInboundAuthorization(remotePeerId, for: env.type) else { return }
             guard let payload = env.payload, let text = decrypt(payload) else { return }
             DispatchQueue.main.async {
                 NotificationManager.shared.handleRemoteNotification(text, from: env.peerId)
             }
         case SyncType.notifDismiss:
+            guard requireInboundAuthorization(remotePeerId, for: env.type) else { return }
             guard let payload = env.payload, let text = decrypt(payload) else { return }
             DispatchQueue.main.async {
                 NotificationManager.shared.handleRemoteDismiss(text)
             }
         case SyncType.notifClear:
+            // Destructive and unencrypted on the wire — authorization is the
+            // only thing standing between a stranger and an empty notification
+            // store, so it is enforced strictly here.
+            guard requireInboundAuthorization(remotePeerId, for: env.type) else { return }
             DispatchQueue.main.async {
                 NotificationManager.shared.handleRemoteClearAll()
             }
         case SyncType.notifAck:
+            guard requireInboundAuthorization(remotePeerId, for: env.type) else { return }
             if let hash = env.hash {
-                handleAck(hash: hash)
+                handleAck(hash: hash, from: remotePeerId)
             }
         case SyncType.notifConfig:
             appLog("Ignored remote notification config", level: .warning)
@@ -968,6 +1127,16 @@ final class SyncManager: NSObject {
         default:
             break
         }
+    }
+
+    /// Logs and rejects data frames from peers the user never authorized.
+    private func requireInboundAuthorization(_ remotePeerId: String, for type: String) -> Bool {
+        if isInboundAuthorized(remotePeerId) { return true }
+        appLog(
+            "Dropped inbound \(type) from unauthorized peer \(remotePeerId.prefix(8)) — authorize it in Settings to accept its data",
+            level: .warning
+        )
+        return false
     }
 
     private func replyAck(to peerId: String, hash: String?) {
@@ -1117,7 +1286,10 @@ final class SyncManager: NSObject {
         let env = SyncEnvelope.make(type: SyncType.ping, peerId: peerId)
         guard let data = encodeFrame(env) else { return }
         let staleCutoff = Date().addingTimeInterval(-Self.pingInterval * 3)
-        for (id, session) in sessions {
+        // Snapshot first: closeSession mutates `sessions`, and mutating a
+        // dictionary while enumerating it traps.
+        for id in Array(sessions.keys) {
+            guard let session = sessions[id] else { continue }
             if session.lastPong < staleCutoff {
                 closeSession(peerId: id, scheduleReconnect: true, keepaliveDriven: true)
                 continue
@@ -1153,6 +1325,15 @@ final class SyncManager: NSObject {
 
     private func encodeFrame(_ env: SyncEnvelope) -> Data? {
         guard let json = try? JSONEncoder().encode(env) else { return nil }
+        // Receivers drop the connection on an oversized frame, which would turn
+        // one too-large item into a permanently failing reliable send.
+        guard json.count <= Self.maxFrameLength else {
+            appLog(
+                "Refusing to send \(env.type): frame is \(json.count / 1024)KB, limit is \(Self.maxFrameLength / 1024)KB",
+                level: .warning
+            )
+            return nil
+        }
         var length = UInt32(json.count).bigEndian
         var out = Data(bytes: &length, count: 4)
         out.append(json)
@@ -1357,28 +1538,41 @@ final class SyncManager: NSObject {
         }
     }
 
-    private func readOneFrame(fd: Int32, timeout: TimeInterval) -> Data? {
+    /// Reads a single length-prefixed frame. `maxLength` defaults to the
+    /// handshake ceiling rather than the full frame limit: hello/welcome are a
+    /// few hundred bytes, so an unauthenticated peer should not be able to make
+    /// us buffer megabytes before it has proven anything.
+    private func readOneFrame(
+        fd: Int32,
+        timeout: TimeInterval,
+        maxLength: Int = SyncManager.maxHandshakeFrameLength
+    ) -> Data? {
         var buffer = Data()
+        var scratch = Data(count: 16384)
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if buffer.count >= 4 {
                 let length: Int = buffer.withUnsafeBytes { raw in
-                    Int(UInt32(bigEndian: raw.load(as: UInt32.self)))
+                    // Same unaligned-read reasoning as drainBuffer.
+                    Int(UInt32(bigEndian: raw.loadUnaligned(as: UInt32.self)))
                 }
-                if length <= 0 || length > Self.maxFrameLength { return nil }
+                if length <= 0 || length > maxLength { return nil }
                 if buffer.count >= 4 + length {
                     return buffer.subdata(in: 4..<(4 + length))
                 }
             }
+            if buffer.count > 4 + maxLength { return nil }
             var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
             let remain = deadline.timeIntervalSinceNow
             guard remain > 0 else { return nil }
             let pr = poll(&pfd, 1, Int32(remain * 1000))
             guard pr > 0 else { return nil }
-            var tmp = [UInt8](repeating: 0, count: 65536)
-            let n = Darwin.recv(fd, &tmp, tmp.count, 0)
+            let n = scratch.withUnsafeMutableBytes { raw -> Int in
+                guard let base = raw.baseAddress else { return -1 }
+                return Darwin.recv(fd, base, raw.count, 0)
+            }
             if n <= 0 { return nil }
-            buffer.append(contentsOf: tmp.prefix(n))
+            buffer.append(scratch.prefix(n))
         }
         return nil
     }

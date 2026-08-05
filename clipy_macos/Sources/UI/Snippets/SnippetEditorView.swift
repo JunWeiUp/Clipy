@@ -36,8 +36,8 @@ struct SnippetEditorView: View {
 
     @ViewBuilder
     private var detailContent: some View {
-        if viewModel.selectedSnippetId != nil {
-            snippetDetail
+        if let snippetId = viewModel.selectedSnippetId {
+            snippetDetail(snippetId: snippetId)
         } else if viewModel.selectedFolderId != nil {
             folderDetail
         } else {
@@ -70,7 +70,7 @@ struct SnippetEditorView: View {
         .id(viewModel.selectedFolderId)
     }
 
-    private var snippetDetail: some View {
+    private func snippetDetail(snippetId: UUID) -> some View {
         Form {
             Section(L10n.t(.snippetTitle)) {
                 LeftAlignedTextField(text: $viewModel.draftTitle) {
@@ -80,14 +80,40 @@ struct SnippetEditorView: View {
             }
 
             Section(L10n.t(.content)) {
-                LeftAlignedTextEditor(text: $viewModel.draftContent) {
-                    viewModel.persistDraftContent()
-                }
-                .frame(minHeight: 200, maxHeight: .infinity, alignment: .topLeading)
+                DebouncedSnippetContentEditor(snippetId: snippetId, viewModel: viewModel)
+                    .frame(minHeight: 200, maxHeight: .infinity, alignment: .topLeading)
             }
         }
         .formStyle(.grouped)
         .padding(AppSpacing.sm)
-        .id(viewModel.selectedSnippetId)
+        .id(snippetId)
+    }
+}
+
+/// Keeps keystrokes in local state so `@Published draftContent` / disk writes
+/// only happen after debounce or when leaving the snippet (blur / selection change).
+private struct DebouncedSnippetContentEditor: View {
+    let snippetId: UUID
+    @ObservedObject var viewModel: SnippetEditorViewModel
+    @State private var localContent: String
+
+    init(snippetId: UUID, viewModel: SnippetEditorViewModel) {
+        self.snippetId = snippetId
+        self.viewModel = viewModel
+        _localContent = State(initialValue: viewModel.draftContent)
+    }
+
+    var body: some View {
+        LeftAlignedTextEditor(text: $localContent, onCommit: commitToDisk)
+            .onDisappear {
+                // Selection change / window close tears this view down via `.id`;
+                // flush here so pending edits are not lost before the next draft loads.
+                commitToDisk(localContent)
+            }
+    }
+
+    private func commitToDisk(_ content: String) {
+        // Capture snippetId so a close that clears selectedSnippetId still saves.
+        viewModel.persistContent(content, for: snippetId)
     }
 }

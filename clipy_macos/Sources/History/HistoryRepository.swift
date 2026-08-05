@@ -39,7 +39,10 @@ final class HistoryRepository {
 
     func migrateFromLegacyJSONIfNeeded() {
         migrationService.migrateFromLegacyJSONIfNeeded { entry in
-            self.insertOrReplaceLocked(entry, preserveExistingMetadata: true)
+            let prepared = self.prepareForStorage(entry).entry
+            return self.queue.sync {
+                self.insertOrReplaceLocked(prepared, preserveExistingMetadata: true)
+            }
         }
     }
 
@@ -138,12 +141,14 @@ final class HistoryRepository {
         item: HistoryItem,
         transform: (inout HistoryEntry) -> Void
     ) -> HistoryEntry? {
-        queue.sync {
-            guard var existing = findMatchingLocked(item: item, contentHash: contentHash) else { return nil }
-            transform(&existing)
-            _ = insertOrReplaceLocked(existing, preserveExistingMetadata: false)
-            return existing
+        guard var existing = queue.sync(execute: { findMatchingLocked(item: item, contentHash: contentHash) }) else {
+            return nil
         }
+        transform(&existing)
+        // Externalization happens between the two lock acquisitions, never inside.
+        let prepared = prepareForStorage(existing).entry
+        queue.sync { _ = insertOrReplaceLocked(prepared, preserveExistingMetadata: false) }
+        return prepared
     }
 
     func delete(contentHash: String?, item: HistoryItem) -> Bool {
@@ -155,8 +160,7 @@ final class HistoryRepository {
     func deleteAll() -> Bool {
         queue.sync {
             guard let db else { return false }
-            guard sqlite3_exec(db, "DELETE FROM history_entries", nil, nil, nil) == SQLITE_OK else { return false }
-            return true
+            return sqliteExec(db, "DELETE FROM history_entries", context: "history deleteAll")
         }
     }
 
@@ -181,7 +185,11 @@ final class HistoryRepository {
                 var stmt: OpaquePointer?
                 if sqlite3_prepare_v2(db, deleteUnpinned, -1, &stmt, nil) == SQLITE_OK {
                     sqlite3_bind_int(stmt, 1, Int32(overflow))
-                    sqlite3_step(stmt)
+                    if sqlite3_step(stmt) != SQLITE_DONE {
+                        sqliteLogFailure(db, "history trim")
+                    }
+                } else {
+                    sqliteLogFailure(db, "history trim prepare")
                 }
                 sqlite3_finalize(stmt)
             }
@@ -274,7 +282,7 @@ final class HistoryRepository {
     }
 
     private func fetchRowidLocked(contentHash: String?, item: HistoryItem) -> Int64? {
-        guard let db else { return nil }
+        guard db != nil else { return nil }
         if let contentHash {
             let sql = "SELECT rowid FROM history_entries WHERE content_hash = ? LIMIT 1"
             return queryRowid(sql: sql) { bindText($0, 1, contentHash) }
@@ -315,11 +323,13 @@ final class HistoryRepository {
     }
 
     @discardableResult
+    /// Writes a row. The entry must already have been through `prepareForStorage`
+    /// — externalizing text writes (and possibly encrypts) a file, which must not
+    /// happen while the DB queue is held or every reader blocks behind it.
     private func insertOrReplaceLocked(_ entry: HistoryEntry, preserveExistingMetadata: Bool) -> Bool {
         guard let db else { return false }
 
-        let prepared = prepareForStorage(entry)
-        var finalEntry = prepared.entry
+        var finalEntry = entry
 
         if let existing = findMatchingLocked(item: entry.item, contentHash: entry.contentHash) {
             if preserveExistingMetadata {
@@ -330,7 +340,9 @@ final class HistoryRepository {
                     finalEntry.searchIndex = existing.searchIndex
                 }
             }
-            deleteMatchingLocked(item: existing.item, contentHash: existing.contentHash)
+            // A failed delete is logged inside; the insert below still runs so the
+            // new copy is not lost, and the duplicate is pruned on the next trim.
+            _ = deleteMatchingLocked(item: existing.item, contentHash: existing.contentHash)
         }
 
         let sql = """
@@ -340,7 +352,10 @@ final class HistoryRepository {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            sqliteLogFailure(db, "history insert prepare")
+            return false
+        }
         defer { sqlite3_finalize(stmt) }
 
         let kind = serializer.itemKind(for: finalEntry.item)
@@ -362,7 +377,11 @@ final class HistoryRepository {
         }
         sqlite3_bind_int(stmt, 13, Int32(finalEntry.useCount))
 
-        return sqlite3_step(stmt) == SQLITE_DONE
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            sqliteLogFailure(db, "history insert")
+            return false
+        }
+        return true
     }
 
     private func deleteMatchingLocked(item: HistoryItem, contentHash: String?) -> Bool {
@@ -370,10 +389,17 @@ final class HistoryRepository {
         if let contentHash {
             let sql = "DELETE FROM history_entries WHERE content_hash = ?"
             var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                sqliteLogFailure(db, "history delete-by-hash prepare")
+                return false
+            }
             defer { sqlite3_finalize(stmt) }
             bindText(stmt, 1, contentHash)
-            return sqlite3_step(stmt) == SQLITE_DONE
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                sqliteLogFailure(db, "history delete-by-hash")
+                return false
+            }
+            return true
         }
 
         let kind = serializer.itemKind(for: item)
@@ -388,7 +414,10 @@ final class HistoryRepository {
         }
 
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            sqliteLogFailure(db, "history delete-matching prepare")
+            return false
+        }
         defer { sqlite3_finalize(stmt) }
 
         switch item {
@@ -401,11 +430,15 @@ final class HistoryRepository {
         case .files(let urls):
             bindText(stmt, 1, serializer.encodeFiles(urls))
         }
-        return sqlite3_step(stmt) == SQLITE_DONE
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            sqliteLogFailure(db, "history delete-matching")
+            return false
+        }
+        return true
     }
 
     private func findMatchingLocked(item: HistoryItem, contentHash: String?) -> HistoryEntry? {
-        guard let db else { return nil }
+        guard db != nil else { return nil }
         if let contentHash {
             let sql = "SELECT * FROM history_entries WHERE content_hash = ? LIMIT 1"
             let rows = queryEntries(sql: sql, bind: { bindText($0, 1, contentHash) }, includeSearchIndex: true)
@@ -487,7 +520,7 @@ final class HistoryRepository {
             LIMIT 1
         )
         """
-        return sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK && sqlite3_changes(db) > 0
+        return sqliteExec(db, sql, context: "history deleteOldestUnpinned") && sqlite3_changes(db) > 0
     }
 
     private func deleteOldestLocked() -> Bool {
@@ -500,7 +533,7 @@ final class HistoryRepository {
             LIMIT 1
         )
         """
-        return sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK && sqlite3_changes(db) > 0
+        return sqliteExec(db, sql, context: "history deleteOldest") && sqlite3_changes(db) > 0
     }
 
     // MARK: - Storage helpers

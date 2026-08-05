@@ -66,6 +66,8 @@ class SnippetManager {
     
     private(set) var folders: [SnippetFolder] = []
     private let storageURL: URL
+    /// Carbon hot-key ids handed out by the current registration pass.
+    private var hotKeyIds: Set<UInt32> = []
     
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -95,29 +97,52 @@ class SnippetManager {
         registerHotKeys()
     }
     
+    /// Registers every shortcut. The handlers capture **ids only** and re-read
+    /// the snippet/folder when fired: capturing the value meant a shortcut kept
+    /// pasting whatever the text was at registration time, since editing content
+    /// deliberately skips re-registration.
     func registerHotKeys() {
         HotKeyManager.shared.unregisterAll()
-        
+        hotKeyIds.removeAll()
+
         for folder in folders {
             if let combo = folder.shortcut {
-                // Use a more stable ID derived from UUID
-                let folderId = folder.id.hashValue32
-                HotKeyManager.shared.register(keyCode: combo.keyCode, modifiers: combo.modifierFlags, id: folderId) { [weak self] in
-                    self?.onHotKeyTriggered?(folder)
+                let folderUUID = folder.id
+                let hotKeyId = allocateHotKeyId(for: folderUUID)
+                HotKeyManager.shared.register(keyCode: combo.keyCode, modifiers: combo.modifierFlags, id: hotKeyId) { [weak self] in
+                    guard let self, let latest = self.folder(id: folderUUID) else { return }
+                    self.onHotKeyTriggered?(latest)
                 }
             }
-            
+
             for snippet in folder.snippets {
                 if let combo = snippet.shortcut {
-                    // Use a more stable ID derived from UUID
-                    let snippetId = snippet.id.hashValue32
-                    HotKeyManager.shared.register(keyCode: combo.keyCode, modifiers: combo.modifierFlags, id: snippetId) { [weak self] in
-                        self?.onHotKeyTriggered?(snippet)
+                    let snippetUUID = snippet.id
+                    let hotKeyId = allocateHotKeyId(for: snippetUUID)
+                    HotKeyManager.shared.register(keyCode: combo.keyCode, modifiers: combo.modifierFlags, id: hotKeyId) { [weak self] in
+                        guard let self, let latest = self.snippet(id: snippetUUID) else { return }
+                        self.onHotKeyTriggered?(latest)
                     }
                 }
             }
         }
         NotificationCenter.default.post(name: .globalHotKeysShouldRegister, object: nil)
+    }
+
+    /// Carbon hot-key ids must be unique within the app. `UUID.hashValue32` folds
+    /// 128 bits into 32, so two snippets can collide and the second registration
+    /// silently replaces the first; probe forward until the id is free.
+    private func allocateHotKeyId(for uuid: UUID) -> UInt32 {
+        var candidate = uuid.hashValue32
+        while hotKeyIds.contains(candidate) {
+            candidate = candidate &+ 1
+        }
+        hotKeyIds.insert(candidate)
+        return candidate
+    }
+
+    private func folder(id: UUID) -> SnippetFolder? {
+        folders.first { $0.id == id }
     }
 
     private func createDefaultSnippets() {

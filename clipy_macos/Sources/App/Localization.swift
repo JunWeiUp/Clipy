@@ -206,6 +206,16 @@ enum L10nKey: String {
     case encryptHistoryAtRest
     case encryptHistoryAtRestDescription
     case historyEncryptionFailed
+    case historyEncryptionInProgress
+    case syncPairingSecret
+    case syncPairingSecretHint
+    case syncPairingSecretDefaultWarning
+    case syncOfflineAuthorizedDevices
+    case syncAddManualDevice
+    case syncManualDeviceHost
+    case syncManualDevicePort
+    case syncManualDeviceHint
+    case syncAdd
     case historyRegexSearch
     case historyDateFilter
     case historyDateFilterAll
@@ -323,7 +333,7 @@ struct L10n {
             .enableLanSync: "启用局域网同步",
             .syncPort: "同步端口：",
             .authorizedDevicesComma: "授权设备（用逗号分隔）：",
-            .syncTargetsHint: "分别勾选要同步剪贴板 / 通知的设备。仅需在本机授权，对方无需勾选即可接收。",
+            .syncTargetsHint: "分别勾选要同步剪贴板 / 通知的设备。授权是双向生效的：只有已授权的设备才能向本机写入内容，所以两端都要勾选对方。",
             .syncClipboardToDevice: "同步剪贴板",
             .syncNotificationsToDevice: "同步通知",
             .close: "关闭",
@@ -490,6 +500,16 @@ struct L10n {
             .encryptHistoryAtRest: "加密本地历史",
             .encryptHistoryAtRestDescription: "使用本机专用密钥 AES-GCM 加密外置的历史文本与媒体文件，密钥仅保存在本机。",
             .historyEncryptionFailed: "无法更新历史加密设置，请重试。",
+            .historyEncryptionInProgress: "正在重新加密历史文件…",
+            .syncPairingSecret: "配对密钥：",
+            .syncPairingSecretHint: "在同一组设备上填写完全相同的密钥。留空则使用内置默认密钥，同网段任何一份本应用都能解密同步内容。",
+            .syncPairingSecretDefaultWarning: "当前使用内置默认密钥，建议设置自定义配对密钥。",
+            .syncOfflineAuthorizedDevices: "离线已授权设备（可删除）",
+            .syncAddManualDevice: "手动添加设备（跨频段/跨子网兜底）",
+            .syncManualDeviceHost: "IP 地址（如 192.168.1.20）",
+            .syncManualDevicePort: "端口",
+            .syncManualDeviceHint: "当自动发现失效（如 2.4G/5G 隔离）时，在对端查看 IP 后在此手动添加。",
+            .syncAdd: "添加",
             .historyRegexSearch: "正则",
             .historyDateFilter: "时间",
             .historyDateFilterAll: "全部",
@@ -596,7 +616,7 @@ struct L10n {
             .enableLanSync: "Enable LAN Sync",
             .syncPort: "Sync Port:",
             .authorizedDevicesComma: "Authorized Devices (comma separated):",
-            .syncTargetsHint: "Choose which devices receive clipboard and/or notifications. Only this device needs to authorize; the other side can receive without checking you.",
+            .syncTargetsHint: "Choose which devices receive clipboard and/or notifications. Authorization works both ways: only authorized devices may write to this Mac, so each side must check the other.",
             .syncClipboardToDevice: "Sync clipboard",
             .syncNotificationsToDevice: "Sync notifications",
             .close: "Close",
@@ -763,6 +783,16 @@ struct L10n {
             .encryptHistoryAtRest: "Encrypt Local History",
             .encryptHistoryAtRestDescription: "Encrypt externalized history text and media files with a device-local AES-GCM key stored on this device only.",
             .historyEncryptionFailed: "Could not update history encryption. Please try again.",
+            .historyEncryptionInProgress: "Re-encrypting history files…",
+            .syncPairingSecret: "Pairing secret:",
+            .syncPairingSecretHint: "Enter the exact same secret on every device in this sync group. Leave it empty to use the built-in default key, which any copy of this app on your network can decrypt.",
+            .syncPairingSecretDefaultWarning: "Using the built-in default key. Set a custom pairing secret for real protection.",
+            .syncOfflineAuthorizedDevices: "Authorized devices that are offline (removable)",
+            .syncAddManualDevice: "Add device manually (across bands / subnets)",
+            .syncManualDeviceHost: "IP address (e.g. 192.168.1.20)",
+            .syncManualDevicePort: "Port",
+            .syncManualDeviceHint: "When automatic discovery fails (e.g. 2.4G/5G isolation), look up the other device's IP and add it here.",
+            .syncAdd: "Add",
             .historyRegexSearch: "Regex",
             .historyDateFilter: "Time",
             .historyDateFilterAll: "All",

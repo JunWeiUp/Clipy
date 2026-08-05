@@ -39,6 +39,7 @@ class KeystrokeOverlay: NSPanel {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var tapContext: Unmanaged<EventTapContext>?
 
     /// Check if Input Monitoring permission is granted.
     static var hasInputMonitoringPermission: Bool {
@@ -63,8 +64,10 @@ class KeystrokeOverlay: NSPanel {
 
         let mask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
 
-        // Store a weak reference via a helper so the C callback can access self
-        let context = Unmanaged.passRetained(EventTapContext(overlay: self)).toOpaque()
+        // Store a weak reference via a helper so the C callback can access self.
+        // The +1 here is balanced in stopMonitoring (or below if tapCreate fails).
+        let contextRef = Unmanaged.passRetained(EventTapContext(overlay: self))
+        let context = contextRef.toOpaque()
 
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -80,10 +83,12 @@ class KeystrokeOverlay: NSPanel {
             userInfo: context
         ) else {
             appLog("KeystrokeOverlay: CGEvent.tapCreate failed (permission revoked or tap disabled by system)", level: .warning)
+            contextRef.release()
             return
         }
 
         eventTap = tap
+        tapContext = contextRef
         let source = CFMachPortCreateRunLoopSource(nil, tap, 0)
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
@@ -97,9 +102,14 @@ class KeystrokeOverlay: NSPanel {
             if let source = runLoopSource {
                 CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
             }
+            // Invalidate before dropping the context: the tap must stop firing
+            // before the refcon it points at goes away.
+            CFMachPortInvalidate(tap)
         }
         eventTap = nil
         runLoopSource = nil
+        tapContext?.release()
+        tapContext = nil
         keystrokeView.clear()
     }
 

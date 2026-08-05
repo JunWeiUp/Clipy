@@ -11,7 +11,8 @@ enum ClipboardBackingStore {
     private static let ttl: TimeInterval = 7 * 24 * 60 * 60
 
     static let directory: URL = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         let dir = appSupport
             .appendingPathComponent("com.sw33tlie.macshot", isDirectory: true)
             .appendingPathComponent(subdirectory, isDirectory: true)

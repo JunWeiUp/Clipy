@@ -38,6 +38,8 @@ final class ScreenshotSessionCoordinator {
     private var crossScreenImage: NSImage?
     /// Caption / window title captured for save-file naming + history.
     private var capturedWindowTitle: String?
+    /// Retains the OCR result window; released via its `onClose`.
+    private var ocrResultController: OCRResultController?
 
     private init() {}
 
@@ -258,15 +260,21 @@ final class ScreenshotSessionCoordinator {
     /// (scroll capture, fullscreen capture): set `copyToPasteboard` true so the
     /// result is pasteable immediately, matching the overlay-confirm experience.
     private func ingestConfirmedImage(_ image: NSImage, windowTitle: String?, copyToPasteboard: Bool) {
-        // PNG for paste/history compatibility (matches ScreenshotExport.exportPNG).
-        guard let pngData = ImageEncoder.encodePNG(image) ?? image.tiffRepresentation else {
-            appLog("Screenshot: failed to encode confirmed image", level: .warning)
-            return
-        }
-        ClipboardManager.shared.ingestCapturedImage(pngData, copyToPasteboard: copyToPasteboard)
-
-        if PreferencesManager.shared.isScreenshotAutoSaveEnabled {
-            _ = ScreenshotSaveService.save(pngData: pngData)
+        // Encoding a 4K/5K capture to PNG takes hundreds of milliseconds and used
+        // to run right here on the main thread, stalling the post-capture UI.
+        let autoSave = PreferencesManager.shared.isScreenshotAutoSaveEnabled
+        Task.detached(priority: .userInitiated) {
+            // PNG for paste/history compatibility (matches ScreenshotExport.exportPNG).
+            guard let pngData = ImageEncoder.encodePNG(image) ?? image.tiffRepresentation else {
+                appLog("Screenshot: failed to encode confirmed image", level: .warning)
+                return
+            }
+            await MainActor.run {
+                ClipboardManager.shared.ingestCapturedImage(pngData, copyToPasteboard: copyToPasteboard)
+            }
+            if autoSave {
+                _ = ScreenshotSaveService.save(pngData: pngData)
+            }
         }
     }
 }
@@ -303,16 +311,13 @@ extension ScreenshotSessionCoordinator: OverlayWindowControllerDelegate {
     func overlayDidRequestOCR(_ controller: OverlayWindowController,
                               result: OCRScanResult,
                               image: NSImage?) {
-        // OCR already ran (Vision); surface the recognized text via clipy1's
-        // simple OCR result path. We copy the text to the clipboard and log it;
-        // a dedicated OCR result window can be added later if desired.
+        // OCR already ran (Vision). Copy the text so the common case needs no
+        // extra click, then show the result window, which also offers per-line
+        // copy, language selection, translation and QR payload actions.
         let text = result.text
         if !text.isEmpty {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
-            appLog("Screenshot OCR: \(text.prefix(120))…", level: .info)
-        } else if let qr = result.qrCodes.first {
-            appLog("Screenshot OCR: detected QR \(qr)", level: .info)
         }
         // OCR is a terminal action: tear down overlays on ALL screens so the
         // other monitors' captures are dismissed too. The originating controller
@@ -320,6 +325,16 @@ extension ScreenshotSessionCoordinator: OverlayWindowControllerDelegate {
         // but every other active controller is still on screen — dismiss them
         // here just like confirm/cancel/pin do. dismiss() is idempotent.
         tearDownOverlays(refocusPreviousApp: true)
+
+        guard !text.isEmpty || !result.qrCodes.isEmpty else {
+            appLog("Screenshot OCR: no text or QR code found", level: .info)
+            return
+        }
+        ocrResultController?.close()
+        let controller = OCRResultController(text: text, image: image, qrCodes: result.qrCodes)
+        controller.onClose = { [weak self] in self?.ocrResultController = nil }
+        ocrResultController = controller
+        controller.show()
     }
 
     func overlayDidRequestUpload(_ controller: OverlayWindowController,

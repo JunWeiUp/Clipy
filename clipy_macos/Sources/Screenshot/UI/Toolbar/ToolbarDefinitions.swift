@@ -96,19 +96,6 @@ enum ToolbarCustomAction: Int {
         return actions
     }
 
-    static var bottomSettingsActions: [ToolbarCustomAction] {
-        bottomToolbarActions
-    }
-
-    static var rightSettingsActions: [ToolbarCustomAction] {
-        var actions: [ToolbarCustomAction] = []
-        #if !OFFLINE
-        actions.append(.upload)
-        #endif
-        actions.append(contentsOf: [.pin, .ocr, .autoRedact, .translate, .record, .scrollCapture, .share])
-        return actions
-    }
-
     var settingsLabel: String {
         switch self {
         #if !OFFLINE

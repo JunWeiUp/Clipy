@@ -57,10 +57,17 @@ class WebcamOverlay: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         containerView.wantsLayer = true
-        containerView.frame = contentView!.bounds
         containerView.autoresizingMask = [.width, .height]
         containerView.panel = self
-        contentView!.addSubview(containerView)
+        // NSPanel synthesizes a contentView, but install our own rather than
+        // force-unwrapping whatever AppKit happens to have created.
+        if let existing = contentView {
+            containerView.frame = existing.bounds
+            existing.addSubview(containerView)
+        } else {
+            containerView.frame = NSRect(origin: .zero, size: frame.size)
+            contentView = containerView
+        }
     }
 
     // MARK: - Public API
