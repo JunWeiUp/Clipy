@@ -14,7 +14,7 @@ struct HistoryPreviewView: View {
             }
         }
         .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppColor.windowChrome)
+        .background(Color.clear)
     }
 
     @ViewBuilder
@@ -67,43 +67,16 @@ struct HistoryPreviewView: View {
             }
 
         case .image(let path):
-            imagePreview(path: path)
+            AsyncHistoryImagePreviewView(path: path)
 
         case .rtf(let path):
-            if let data = HistoryMediaStore.shared.data(at: path),
-               let attributed = rtfAttributedString(from: data) {
-                if attributed.length > HistoryPreviewSupport.swiftUITextThreshold {
-                    PlainTextPreviewRepresentable(text: attributed.string)
-                } else {
-                    ScrollView {
-                        Text(AttributedString(attributed))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(AppSpacing.sm)
-                    }
-                }
-            } else {
-                typePlaceholder(icon: "doc.richtext", label: L10n.t(.historyTypeRTF))
-            }
+            AsyncRTFPreviewView(path: path)
 
         case .pdf(let path):
-            let url = URL(fileURLWithPath: path)
-            if PDFDocument(url: url) != nil {
-                PDFFilePreviewRepresentable(url: url)
-            } else if let data = HistoryMediaStore.shared.data(at: path) {
-                pdfFallback(size: data.count)
-            } else {
-                pdfFallback(size: 0)
-            }
+            AsyncPDFHistoryPreviewView(path: path)
 
         case .html(let path):
-            if let data = HistoryMediaStore.shared.data(at: path),
-               let html = HistoryPreviewSupport.htmlString(from: data) {
-                HTMLPreviewRepresentable(html: html)
-                    .padding(AppSpacing.xs)
-            } else {
-                typePlaceholder(icon: "chevron.left.forwardslash.chevron.right", label: L10n.t(.historyTypeHTML))
-            }
+            AsyncHTMLHistoryPreviewView(path: path)
 
         case .files(let urls):
             filesPreview(urls: urls)
@@ -143,24 +116,9 @@ struct HistoryPreviewView: View {
         let kind = HistoryPreviewSupport.fileKind(for: url)
         switch kind {
         case .image:
-            if let image = NSImage(contentsOf: url) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
-                    .padding(AppSpacing.sm)
-            } else {
-                fileRow(for: url)
-                    .padding(AppSpacing.sm)
-            }
+            AsyncLocalImagePreviewView(url: url)
         case .pdf:
-            if PDFDocument(url: url) != nil {
-                PDFFilePreviewRepresentable(url: url)
-            } else {
-                fileRow(for: url)
-                    .padding(AppSpacing.sm)
-            }
+            AsyncPDFFilePreviewView(url: url)
         case .html:
             HTMLFilePreviewRepresentable(url: url)
                 .padding(AppSpacing.xs)
@@ -173,30 +131,6 @@ struct HistoryPreviewView: View {
                 fileRow(for: url)
                     .padding(AppSpacing.sm)
             }
-        }
-    }
-
-    @ViewBuilder
-    private func imagePreview(path: String) -> some View {
-        if let data = HistoryMediaStore.shared.data(at: path),
-           let image = NSImage(data: data) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
-                .padding(AppSpacing.sm)
-        } else {
-            typePlaceholder(icon: "photo", label: L10n.t(.historyTypeImage))
-        }
-    }
-
-    private func pdfFallback(size: Int) -> some View {
-        VStack(alignment: .leading, spacing: AppSpacing.xs) {
-            typePlaceholder(icon: "doc.fill", label: L10n.t(.historyTypePDF))
-            Text(L10n.format(.historyDataSize, ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)))
-                .font(AppFont.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -216,21 +150,8 @@ struct HistoryPreviewView: View {
             }
         }
         .padding(AppSpacing.xs)
-        .background(AppColor.windowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
-    }
-
-    private func typePlaceholder(icon: String, label: String) -> some View {
-        VStack(spacing: AppSpacing.sm) {
-            Image(systemName: icon)
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-            Text(label)
-                .font(AppFont.body)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, AppSpacing.lg)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.medium))
     }
 
     private func typeLabel(for item: HistoryItem) -> String {
@@ -264,12 +185,258 @@ struct HistoryPreviewView: View {
             return L10n.t(.historyTypeFile)
         }
     }
+}
 
-    private func rtfAttributedString(from data: Data) -> NSAttributedString? {
-        try? NSAttributedString(
-            data: data,
-            options: [.documentType: NSAttributedString.DocumentType.rtf],
-            documentAttributes: nil
-        )
+private struct AsyncRTFPreviewView: View {
+    let path: String
+    @State private var attributed: NSAttributedString?
+    @State private var isLoading = true
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let attributed {
+                if attributed.length > HistoryPreviewSupport.swiftUITextThreshold {
+                    PlainTextPreviewRepresentable(text: attributed.string)
+                } else {
+                    ScrollView {
+                        Text(AttributedString(attributed))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(AppSpacing.sm)
+                    }
+                }
+            } else {
+                previewTypePlaceholder(icon: "doc.richtext", label: L10n.t(.historyTypeRTF))
+            }
+        }
+        .task(id: path) {
+            isLoading = true
+            attributed = nil
+            let loaded = await Task.detached(priority: .utility) { () -> NSAttributedString? in
+                guard let data = HistoryMediaStore.shared.data(at: path) else { return nil }
+                return try? NSAttributedString(
+                    data: data,
+                    options: [.documentType: NSAttributedString.DocumentType.rtf],
+                    documentAttributes: nil
+                )
+            }.value
+            attributed = loaded
+            isLoading = false
+        }
+    }
+}
+
+private struct AsyncHTMLHistoryPreviewView: View {
+    let path: String
+    @State private var html: String?
+    @State private var isLoading = true
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let html {
+                HTMLPreviewRepresentable(html: html)
+                    .padding(AppSpacing.xs)
+            } else {
+                previewTypePlaceholder(
+                    icon: "chevron.left.forwardslash.chevron.right",
+                    label: L10n.t(.historyTypeHTML)
+                )
+            }
+        }
+        .task(id: path) {
+            isLoading = true
+            html = nil
+            let loaded = await Task.detached(priority: .utility) { () -> String? in
+                guard let data = HistoryMediaStore.shared.data(at: path) else { return nil }
+                return HistoryPreviewSupport.htmlString(from: data)
+            }.value
+            html = loaded
+            isLoading = false
+        }
+    }
+}
+
+private enum PDFHistoryLoadResult {
+    case document(URL)
+    case fallback(byteCount: Int)
+}
+
+private struct AsyncPDFHistoryPreviewView: View {
+    let path: String
+    @State private var result: PDFHistoryLoadResult?
+    @State private var isLoading = true
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if case .document(let url) = result {
+                PDFFilePreviewRepresentable(url: url)
+            } else if case .fallback(let size) = result {
+                VStack(alignment: .leading, spacing: AppSpacing.xs) {
+                    previewTypePlaceholder(icon: "doc.fill", label: L10n.t(.historyTypePDF))
+                    Text(L10n.format(.historyDataSize, ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)))
+                        .font(AppFont.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                previewTypePlaceholder(icon: "doc.fill", label: L10n.t(.historyTypePDF))
+            }
+        }
+        .task(id: path) {
+            isLoading = true
+            result = nil
+            let loaded = await Task.detached(priority: .utility) { () -> PDFHistoryLoadResult in
+                let url = URL(fileURLWithPath: path)
+                if PDFDocument(url: url) != nil {
+                    return .document(url)
+                }
+                let byteCount = HistoryMediaStore.shared.data(at: path)?.count ?? 0
+                return .fallback(byteCount: byteCount)
+            }.value
+            result = loaded
+            isLoading = false
+        }
+    }
+}
+
+private func previewTypePlaceholder(icon: String, label: String) -> some View {
+    VStack(spacing: AppSpacing.sm) {
+        Image(systemName: icon)
+            .font(.system(size: 40))
+            .foregroundStyle(.secondary)
+        Text(label)
+            .font(AppFont.body)
+            .foregroundStyle(.secondary)
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.vertical, AppSpacing.lg)
+}
+
+private struct AsyncHistoryImagePreviewView: View {
+    let path: String
+    private let maxPixelSize = 1600
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
+                    .padding(AppSpacing.sm)
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: path) {
+            image = nil
+            let loaded = await Task.detached(priority: .utility) {
+                ImageDownsampler.thumbnail(at: path, maxPixelSize: maxPixelSize)
+            }.value
+            image = loaded
+        }
+    }
+}
+
+private struct AsyncLocalImagePreviewView: View {
+    let url: URL
+    private let maxPixelSize = 1600
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
+                    .padding(AppSpacing.sm)
+            } else {
+                filePreviewPlaceholder
+            }
+        }
+        .task(id: url) {
+            image = nil
+            let loaded = await Task.detached(priority: .utility) {
+                ImageDownsampler.thumbnail(atFileURL: url, maxPixelSize: maxPixelSize)
+            }.value
+            image = loaded
+        }
+    }
+
+    private var filePreviewPlaceholder: some View {
+        HStack(alignment: .top, spacing: AppSpacing.xs) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                .resizable()
+                .frame(width: 32, height: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(url.lastPathComponent)
+                    .font(AppFont.body)
+                    .lineLimit(2)
+                Text(FilePathDisplay.string(for: url))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+        }
+        .padding(AppSpacing.sm)
+    }
+}
+
+/// `PDFDocument(url:)` parses the file to tell whether it is a readable PDF, so
+/// the check runs off the main thread before the real preview is mounted.
+private struct AsyncPDFFilePreviewView: View {
+    let url: URL
+    @State private var isReadable: Bool?
+
+    var body: some View {
+        Group {
+            switch isReadable {
+            case true:
+                PDFFilePreviewRepresentable(url: url)
+            case false:
+                filePreviewPlaceholder
+            case nil:
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: url) {
+            isReadable = nil
+            let readable = await Task.detached(priority: .utility) {
+                PDFDocument(url: url) != nil
+            }.value
+            isReadable = readable
+        }
+    }
+
+    private var filePreviewPlaceholder: some View {
+        HStack(alignment: .top, spacing: AppSpacing.xs) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                .resizable()
+                .frame(width: 32, height: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(url.lastPathComponent)
+                    .font(AppFont.body)
+                    .lineLimit(2)
+                Text(FilePathDisplay.string(for: url))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+        }
+        .padding(AppSpacing.sm)
     }
 }

@@ -4,10 +4,29 @@ let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 
+// MARK: - Screenshot app integration
+// Conformance lets macshot's detached editor window route lifecycle events
+// (show pin / floating thumbnail, restore focus) back into clipy1. Every method
+// has a default no-op, so only the ones clipy1 cares about are overridden here.
+extension AppDelegate: ScreenshotAppIntegration {
+    func showPin(image: NSImage) {
+        PinPanelController.shared.pin(image: image, at: nil, skipIngest: false)
+    }
+
+    func showFloatingThumbnail(image: NSImage, annotationData: CaptureAnnotationData?, historyEntryID: String?) {
+        // Ingest into history + sync; a dedicated floating-thumbnail UX can be added later.
+        if let data = ImageEncoder.encodePNG(image) {
+            ClipboardManager.shared.ingestCapturedImage(data, copyToPasteboard: false)
+        }
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     var menuController: MenuController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        LogManager.shared.startSession()
+        CrashReporter.install()
         setupMainMenu()
         NotificationCenter.default.addObserver(
             self,
@@ -16,6 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
         menuController = MenuController()
+        MemoryFootprintReclaimer.registerIdleHandlers()
         LaunchAtLoginManager.syncWithPreference()
         SyncManager.shared.start()
         print("Clipy clone started!")

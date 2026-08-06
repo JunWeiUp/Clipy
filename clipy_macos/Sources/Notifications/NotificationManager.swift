@@ -1,0 +1,436 @@
+import Foundation
+import AppKit
+import UserNotifications
+
+extension Notification.Name {
+    static let phoneNotificationsDidChange = Notification.Name("phoneNotificationsDidChange")
+}
+
+class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationManager()
+
+    static let pageSize = 100
+
+    private let repository = NotificationRepository.shared
+
+    var allowedPackages: Set<String> = []
+    var notificationSyncEnabled: Bool = true
+    var notificationSound: Bool = true
+    var bannerApps: Set<String> = []
+    var bannerKeywords: [String] = []
+    /// 命中即不弹横幅的屏蔽关键字；优先级高于 bannerApps/bannerKeywords。
+    var blockedKeywords: [String] = []
+
+    /// In-memory notification count, maintained incrementally (+1 on insert,
+    /// -Δ on delete) instead of re-running `SELECT COUNT(*)` on every read.
+    /// Seeded once from the DB at init; afterwards only mutated by the
+    /// upsert/delete paths below. didSet broadcasts to UI (menu bar badge,
+    /// notification window) only when the value actually changes.
+    private(set) var notificationCount: Int = 0 {
+        didSet {
+            guard oldValue != notificationCount else { return }
+            notifyNotificationsChanged()
+        }
+    }
+
+    /// Distinct apps observed in received notifications, for the settings picker.
+    var knownApps: [NotificationRepository.AppIdentity] { repository.fetchUniqueApps() }
+
+    var onNotificationsChanged: (() -> Void)?
+
+    private func notifyNotificationsChanged() {
+        onNotificationsChanged?()
+        NotificationCenter.default.post(name: .phoneNotificationsDidChange, object: nil)
+    }
+
+    private override init() {
+        super.init()
+        loadPreferences()
+        setupNotificationCenter()
+        // Seed the in-memory count once. This is the only COUNT(*) on this
+        // table at steady state; every subsequent change adjusts it by ±Δ.
+        // Done last so DB schema (created in NotificationRepository.init via
+        // `AppDatabase.shared`) is guaranteed ready.
+        notificationCount = repository.count()
+    }
+
+    // MARK: - Models
+
+        struct NotificationEntry: Codable, Identifiable {
+        let id: String
+        let notificationKey: String?
+        let packageName: String
+        let appName: String
+        let title: String
+        let subtitle: String?
+        let body: String
+        let postTime: TimeInterval
+        let groupKey: String?
+        let isClearable: Bool
+        /// Prior WeChat snapshots kept when the live notification slot is reused.
+        let isArchived: Bool
+        let extras: [String: String]?
+
+        init(
+            id: String,
+            notificationKey: String?,
+            packageName: String,
+            appName: String,
+            title: String,
+            subtitle: String?,
+            body: String,
+            postTime: TimeInterval,
+            groupKey: String?,
+            isClearable: Bool,
+            isArchived: Bool = false,
+            extras: [String: String]?
+        ) {
+            self.id = id
+            self.notificationKey = notificationKey
+            self.packageName = packageName
+            self.appName = appName
+            self.title = title
+            self.subtitle = subtitle
+            self.body = body
+            self.postTime = postTime
+            self.groupKey = groupKey
+            self.isClearable = isClearable
+            self.isArchived = isArchived
+            self.extras = extras
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case id, notificationKey, packageName, appName, title, subtitle, body, postTime, groupKey, isClearable, isArchived, extras
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(String.self, forKey: .id)
+            notificationKey = try container.decodeIfPresent(String.self, forKey: .notificationKey)
+            packageName = try container.decode(String.self, forKey: .packageName)
+            appName = try container.decode(String.self, forKey: .appName)
+            title = try container.decode(String.self, forKey: .title)
+            subtitle = try container.decodeIfPresent(String.self, forKey: .subtitle)
+            body = try container.decodeIfPresent(String.self, forKey: .body) ?? ""
+            postTime = try container.decode(TimeInterval.self, forKey: .postTime)
+            groupKey = try container.decodeIfPresent(String.self, forKey: .groupKey)
+            isClearable = try container.decodeIfPresent(Bool.self, forKey: .isClearable) ?? true
+            let decodedExtras = try container.decodeIfPresent([String: String].self, forKey: .extras)
+            extras = decodedExtras
+            let flag = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+            let extrasFlag = decodedExtras?["clipyArchived"] == "true"
+            isArchived = flag || extrasFlag
+        }
+    }
+
+    struct NotificationDismissRequest: Codable {
+        let packageName: String
+        let groupKey: String?
+        let notificationKey: String?
+    }
+
+    // MARK: - Paged reads (UI only)
+
+    func fetchPage(offset: Int, limit: Int = pageSize) -> [NotificationEntry] {
+        repository.fetch(offset: offset, limit: limit)
+    }
+
+    func fetchAllNotifications() -> [NotificationEntry] {
+        repository.fetchAll()
+    }
+
+    func fetchById(_ id: String) -> NotificationEntry? {
+        repository.fetchById(id)
+    }
+
+    // MARK: - UNUserNotificationCenter Setup
+
+    private func setupNotificationCenter() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+
+        let dismissAction = UNNotificationAction(
+            identifier: "DISMISS_ON_PHONE",
+            title: L10n.t(.dismissOnPhone),
+            options: []
+        )
+        let clearAllAction = UNNotificationAction(
+            identifier: "CLEAR_ALL_ON_PHONE",
+            title: L10n.t(.clearAllOnPhone),
+            options: [.destructive]
+        )
+        let copyAction = UNNotificationAction(
+            identifier: "COPY_NOTIFICATION_CONTENT",
+            title: L10n.t(.copyContent),
+            options: []
+        )
+
+        let category = UNNotificationCategory(
+            identifier: "NOTIFICATION_SYNC",
+            actions: [copyAction, dismissAction, clearAllAction],
+            intentIdentifiers: []
+        )
+        center.setNotificationCategories([category])
+
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, error in
+            if let error = error {
+                appLog("Notification permission error: \(error)", level: .warning)
+            }
+        }
+    }
+
+    // MARK: - Handle Remote Notifications
+
+    func handleRemoteNotification(_ decrypted: String, from senderDevice: String) {
+        guard let data = decrypted.data(using: .utf8),
+              let entry = try? JSONDecoder().decode(NotificationEntry.self, from: data) else {
+            appLog("NotificationManager: failed to decode remote notification", level: .error)
+            return
+        }
+
+        // Always ACK after a successful decode so the sender can clear its
+        // pending queue — even when we drop/dedupe and do not show a banner.
+        defer { SyncManager.shared.sendNotificationAck(hash: entry.id, to: senderDevice) }
+
+        if isEmptyNotification(entry) {
+            return
+        }
+
+        guard notificationSyncEnabled else {
+            appLog("NotificationManager: dropped incoming notification, sync disabled", level: .warning)
+            return
+        }
+
+        let isNew = upsertNotification(entry)
+        if isNew && shouldShowBanner(entry) {
+            showSystemNotification(entry)
+        }
+        appLog("NotificationManager: received from \(senderDevice): \(entry.title)")
+    }
+
+    func handleRemoteDismiss(_ decrypted: String) {
+        guard let data = decrypted.data(using: .utf8),
+              let request = try? JSONDecoder().decode(NotificationDismissRequest.self, from: data) else {
+            return
+        }
+
+        // Adjust the in-memory count by the number of rows actually removed.
+        // didSet broadcasts to UI only if the count changed.
+        let removed = repository.delete(matching: request)
+        if removed > 0 { notificationCount -= removed }
+    }
+
+    func handleRemoteClearAll() {
+        repository.deleteAll()
+        notificationCount = 0   // didSet broadcasts
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+    }
+
+    // MARK: - Notification Management
+
+    @discardableResult
+    private func upsertNotification(_ entry: NotificationEntry) -> Bool {
+        guard !isEmptyNotification(entry) else { return false }
+
+        switch repository.upsert(entry) {
+        case .inserted:
+            // +1 net row; didSet broadcasts the count change to UI.
+            notificationCount += 1
+            return true
+        case .replacedDuplicate(let removedId):
+            // Net 0 rows (delete-then-insert, or pure content-equal no-op).
+            // The count is unchanged, but the content did, so the open
+            // notification window still needs a refresh.
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [removedId])
+            notifyNotificationsChanged()
+            return false
+        case .updated:
+            // Same id re-sent (backfill). Count unchanged, content may differ.
+            notifyNotificationsChanged()
+            return false
+        }
+    }
+
+    private func isEmptyNotification(_ entry: NotificationEntry) -> Bool {
+        entry.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        (entry.subtitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        entry.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        (entry.extras ?? [:]).values.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// 对 title/subtitle/body 做大小写不敏感的子串匹配；空白项被忽略。
+    private func matchesKeyword(_ entry: NotificationEntry, keywords: [String]) -> Bool {
+        let lowered = keywords
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+        guard !lowered.isEmpty else { return false }
+        let title = entry.title.lowercased()
+        let subtitle = (entry.subtitle ?? "").lowercased()
+        let body = entry.body.lowercased()
+        for keyword in lowered {
+            if title.contains(keyword) || subtitle.contains(keyword) || body.contains(keyword) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// 收到的通知是否弹出系统横幅。
+    /// - 屏蔽关键字（blockedKeywords）优先：命中则一律不弹，即便白名单命中。
+    /// - 白名单为空（无应用、无关键字）时不弹任何横幅。
+    func shouldShowBanner(_ entry: NotificationEntry) -> Bool {
+        if matchesKeyword(entry, keywords: blockedKeywords) { return false }
+        if bannerApps.isEmpty && bannerKeywords.isEmpty { return false }
+        if bannerApps.contains(entry.packageName) { return true }
+        return matchesKeyword(entry, keywords: bannerKeywords)
+    }
+
+    func showSystemNotification(_ entry: NotificationEntry) {
+        // 内容为空（标题与正文都为空）时不弹横幅、不发声
+        let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = entry.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.isEmpty && body.isEmpty { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = entry.appName
+        content.subtitle = entry.title
+        if !entry.body.isEmpty {
+            content.body = entry.body
+        }
+        content.categoryIdentifier = "NOTIFICATION_SYNC"
+        content.sound = notificationSound ? .default : nil
+        content.userInfo = [
+            "notificationId": entry.id,
+            "packageName": entry.packageName,
+        ]
+
+        let request = UNNotificationRequest(
+            identifier: entry.id,
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                appLog("Failed to show notification: \(error)", level: .error)
+            }
+        }
+    }
+
+    // MARK: - Actions
+
+    func dismissOnRemote(_ entry: NotificationEntry) {
+        let request = NotificationDismissRequest(
+            packageName: entry.packageName,
+            groupKey: entry.groupKey,
+            notificationKey: entry.notificationKey
+        )
+        guard let content = try? JSONEncoder().encode(request),
+              let json = String(data: content, encoding: .utf8) else { return }
+
+        SyncManager.shared.broadcastNotificationMessage(type: "notification/dismiss", content: json, hash: "")
+    }
+
+    func clearAllOnRemote() {
+        SyncManager.shared.broadcastNotificationMessage(type: "notification/clear_all", content: "{}", hash: "")
+    }
+
+    func removeNotification(_ id: String) {
+        let removed = repository.delete(id: id)
+        if removed > 0 { notificationCount -= removed }   // didSet broadcasts
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
+    }
+
+    func clearAllLocal() {
+        repository.deleteAll()
+        notificationCount = 0   // didSet broadcasts
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+    }
+
+    // MARK: - Sync Config
+
+    func syncAllowedPackagesToRemote() {
+        let config: [String: Any] = ["allowedPackages": Array(allowedPackages)]
+        guard let content = try? JSONSerialization.data(withJSONObject: config),
+              let json = String(data: content, encoding: .utf8) else { return }
+        SyncManager.shared.broadcastNotificationMessage(type: "notification/config", content: json, hash: "")
+    }
+
+    private func loadPreferences() {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: "notificationSyncEnabled") == nil {
+            notificationSyncEnabled = true
+        } else {
+            notificationSyncEnabled = defaults.bool(forKey: "notificationSyncEnabled")
+        }
+        if defaults.object(forKey: "notificationSound") == nil {
+            notificationSound = true
+        } else {
+            notificationSound = defaults.bool(forKey: "notificationSound")
+        }
+        if let packages = defaults.stringArray(forKey: "notificationAllowedPackages") {
+            allowedPackages = Set(packages)
+        }
+        if let bannerPackageArray = defaults.stringArray(forKey: "notificationBannerApps") {
+            bannerApps = Set(bannerPackageArray)
+        }
+        if let keywords = defaults.stringArray(forKey: "notificationBannerKeywords") {
+            bannerKeywords = keywords
+        }
+        if let blocked = defaults.stringArray(forKey: "notificationBlockedKeywords") {
+            blockedKeywords = blocked
+        }
+    }
+
+    func savePreferences() {
+        UserDefaults.standard.set(notificationSyncEnabled, forKey: "notificationSyncEnabled")
+        UserDefaults.standard.set(notificationSound, forKey: "notificationSound")
+        UserDefaults.standard.set(Array(allowedPackages), forKey: "notificationAllowedPackages")
+        UserDefaults.standard.set(Array(bannerApps), forKey: "notificationBannerApps")
+        UserDefaults.standard.set(bannerKeywords, forKey: "notificationBannerKeywords")
+        UserDefaults.standard.set(blockedKeywords, forKey: "notificationBlockedKeywords")
+    }
+
+    // MARK: - System Notification Authorization
+
+    func checkNotificationAuthorization(completion: @escaping (UNAuthorizationStatus) -> Void) {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async { completion(settings.authorizationStatus) }
+        }
+    }
+
+    func openSystemNotificationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        let userInfo = response.notification.request.content.userInfo
+        let notificationId = userInfo["notificationId"] as? String
+
+        switch response.actionIdentifier {
+        case "DISMISS_ON_PHONE":
+            if let id = notificationId, let entry = fetchById(id) {
+                dismissOnRemote(entry)
+            }
+        case "CLEAR_ALL_ON_PHONE":
+            clearAllOnRemote()
+        case "COPY_NOTIFICATION_CONTENT":
+            if let id = notificationId, let entry = fetchById(id) {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(entry.body, forType: .string)
+            }
+        default:
+            break
+        }
+
+        completionHandler()
+    }
+}

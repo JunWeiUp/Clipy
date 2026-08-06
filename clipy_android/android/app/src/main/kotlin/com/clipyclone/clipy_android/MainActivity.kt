@@ -9,7 +9,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
-import android.service.notification.NotificationListenerService
+import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -23,11 +23,16 @@ class MainActivity: FlutterActivity() {
     private val PERMISSIONS_CHANNEL = "com.clipyclone.clipy_android/permissions"
     private val STORAGE_CHANNEL = "com.clipyclone.clipy_android/storage"
     private val NOTIFICATIONS_CHANNEL = "com.clipyclone.clipy_android/notifications"
-    private val COLLECTOR_CHANNEL = "com.clipyclone.clipy_android/collector"
     private val CLIPBOARD_CHANNEL = "com.clipyclone.clipy_android/clipboard"
+    private val SYNC_SERVICE_CHANNEL = "com.clipyclone.clipy_android/sync_service"
     private val STORAGE_PERMISSION_REQUEST_CODE = 1001
-    private val COLLECTOR_PERMISSION_REQUEST_CODE = 1002
     private var clipboardChangeListener: ClipboardChangeListener? = null
+    private var notificationsMethodChannel: MethodChannel? = null
+
+    companion object {
+        private const val REBIND_THROTTLE_MS = 30_000L
+        @Volatile private var lastRebindTimeMs: Long = 0
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -56,6 +61,13 @@ class MainActivity: FlutterActivity() {
                     val hasPermission = checkStoragePermission()
                     result.success(hasPermission)
                 }
+                "isBatteryOptimizationExempt" -> {
+                    result.success(isBatteryOptimizationExempt())
+                }
+                "requestBatteryOptimizationExemption" -> {
+                    requestBatteryOptimizationExemption()
+                    result.success(null)
+                }
                 else -> {
                     result.notImplemented()
                 }
@@ -82,15 +94,12 @@ class MainActivity: FlutterActivity() {
         }
 
         val notificationsChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NOTIFICATIONS_CHANNEL)
+        notificationsMethodChannel = notificationsChannel
         ClipyNotificationListenerService.setMethodChannel(notificationsChannel)
         notificationsChannel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "isListenerPermissionGranted" -> {
-                    val enabled = isNotificationListenerEnabled()
-                    if (enabled && ClipyNotificationListenerService.instance == null) {
-                        requestNotificationListenerRebind()
-                    }
-                    result.success(enabled)
+                    result.success(isNotificationListenerEnabled())
                 }
                 "openListenerSettings" -> {
                     val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
@@ -103,8 +112,12 @@ class MainActivity: FlutterActivity() {
                     val notificationKey = call.argument<String>("notificationKey")
                     val listener = ClipyNotificationListenerService.instance
                     if (listener != null && packageName != null) {
-                        listener.dismissNotification(packageName, notificationKey)
-                        result.success(null)
+                        try {
+                            listener.dismissNotification(packageName, notificationKey)
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("DISMISS_FAILED", e.message, null)
+                        }
                     } else {
                         result.error("NO_LISTENER", "NotificationListenerService not running", null)
                     }
@@ -114,8 +127,12 @@ class MainActivity: FlutterActivity() {
                     val notificationKey = call.argument<String>("notificationKey")
                     val listener = ClipyNotificationListenerService.instance
                     if (listener != null && packageName != null) {
-                        listener.openNotification(packageName, notificationKey)
-                        result.success(null)
+                        try {
+                            listener.openNotification(packageName, notificationKey)
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("OPEN_FAILED", e.message, null)
+                        }
                     } else {
                         result.error("NO_LISTENER", "NotificationListenerService not running", null)
                     }
@@ -123,11 +140,16 @@ class MainActivity: FlutterActivity() {
                 "refreshActiveNotifications" -> {
                     val listener = ClipyNotificationListenerService.instance
                     if (listener != null) {
-                        listener.emitActiveNotifications()
-                        result.success(null)
+                        try {
+                            // Return the snapshot to Dart so it can ingest under
+                            // suppressBroadcast without racing async onNotificationPosted.
+                            result.success(listener.collectActiveNotifications())
+                        } catch (e: Exception) {
+                            result.error("REFRESH_FAILED", e.message, null)
+                        }
                     } else if (isNotificationListenerEnabled()) {
                         requestNotificationListenerRebind()
-                        result.success(null)
+                        result.success(emptyList<Map<String, Any?>>())
                     } else {
                         result.error("NO_LISTENER", "NotificationListenerService not running", null)
                     }
@@ -135,21 +157,43 @@ class MainActivity: FlutterActivity() {
                 "clearAllNotifications" -> {
                     val listener = ClipyNotificationListenerService.instance
                     if (listener != null) {
-                        listener.clearAllNotifications()
-                        result.success(null)
+                        try {
+                            listener.clearAllNotifications()
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("CLEAR_FAILED", e.message, null)
+                        }
                     } else {
                         result.error("NO_LISTENER", "NotificationListenerService not running", null)
                     }
                 }
+                "drainNativePendingPosts" -> {
+                    // 拉取并清空 Kotlin 端在 channel=null 期间落盘的通知缓冲。
+                    // 返回 List<String>（每项为通知 JSON），Dart 侧逐条走
+                    // _handleNotificationPosted 完成入库 + 入 pending 同步队列。
+                    try {
+                        val payloads = NativePendingPostStore.drainAll(this)
+                        result.success(payloads)
+                    } catch (e: Exception) {
+                        result.error("DRAIN_FAILED", e.message, null)
+                    }
+                }
                 "getInstalledApps" -> {
-                    result.success(getInstalledAppsList())
+                    Thread {
+                        try {
+                            val apps = getInstalledAppsList()
+                            runOnUiThread { result.success(apps) }
+                        } catch (e: Exception) {
+                            runOnUiThread {
+                                result.error("GET_APPS_FAILED", e.message, null)
+                            }
+                        }
+                    }.start()
                 }
                 "getListenerStatus" -> {
                     val permissionGranted = isNotificationListenerEnabled()
                     val listener = ClipyNotificationListenerService.instance
-                    if (permissionGranted && listener == null) {
-                        requestNotificationListenerRebind()
-                    }
+                    val actuallyConnected = ClipyNotificationListenerService.listenerConnected
                     val activeCount = try {
                         listener?.activeNotifications?.size ?: 0
                     } catch (_: Exception) {
@@ -158,16 +202,24 @@ class MainActivity: FlutterActivity() {
                     result.success(
                         mapOf(
                             "permissionGranted" to permissionGranted,
-                            "serviceConnected" to (ClipyNotificationListenerService.instance != null),
+                            "serviceConnected" to (listener != null && actuallyConnected),
                             "activeNotificationCount" to activeCount,
                         ),
                     )
                 }
                 "requestListenerRebind" -> {
+                    val force = call.argument<Boolean>("force") ?: false
                     if (isNotificationListenerEnabled()) {
-                        requestNotificationListenerRebind()
+                        if (force) {
+                            ClipyNotificationListenerService.forceReconnect(this, reason = "flutter")
+                        } else {
+                            requestNotificationListenerRebind()
+                        }
                     }
                     result.success(null)
+                }
+                "openOemAutostartSettings" -> {
+                    result.success(openOemAutostartSettings())
                 }
                 else -> {
                     result.notImplemented()
@@ -191,164 +243,120 @@ class MainActivity: FlutterActivity() {
             }
         }
 
-        val collectorChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, COLLECTOR_CHANNEL)
-        CollectorEventBridge.setMethodChannel(collectorChannel)
-        collectorChannel.setMethodCallHandler { call, result ->
+        // Foreground service control: SyncManager.start()/stop() call this to
+        // promote the process to a foreground service so the Dart ServerSocket
+        // keeps accepting connections while the Activity is backgrounded.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYNC_SERVICE_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
-                "reloadCollectorConfig" -> {
-                    reloadCollectorService()
-                    result.success(null)
-                }
-                "startForegroundService" -> {
-                    val intent = Intent(this, CollectorForegroundService::class.java).apply {
-                        action = CollectorForegroundService.ACTION_START
+                "startForegroundSync" -> {
+                    try {
+                        val intent = Intent(this, ClipySyncForegroundService::class.java)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(intent)
+                        } else {
+                            startService(intent)
+                        }
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e("ClipyMain", "startForegroundSync failed", e)
+                        result.success(false)
                     }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(intent)
-                    } else {
-                        startService(intent)
+                }
+                "stopForegroundSync" -> {
+                    try {
+                        stopService(Intent(this, ClipySyncForegroundService::class.java))
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e("ClipyMain", "stopForegroundSync failed", e)
+                        result.success(false)
                     }
-                    result.success(null)
-                }
-                "stopForegroundService" -> {
-                    val intent = Intent(this, CollectorForegroundService::class.java).apply {
-                        action = CollectorForegroundService.ACTION_STOP
-                    }
-                    startService(intent)
-                    result.success(null)
-                }
-                "checkPermission" -> {
-                    val permission = call.argument<String>("permission")
-                    result.success(permission?.let { hasPermission(it) } ?: false)
-                }
-                "requestPermission" -> {
-                    val permission = call.argument<String>("permission")
-                    if (permission == null) {
-                        result.error("INVALID_ARGUMENT", "permission is required", null)
-                        return@setMethodCallHandler
-                    }
-                    requestCollectorPermissions(arrayOf(permission))
-                    result.success(null)
-                }
-                "requestPermissions" -> {
-                    val permissions = call.argument<List<String>>("permissions")
-                    if (permissions.isNullOrEmpty()) {
-                        result.error("INVALID_ARGUMENT", "permissions is required", null)
-                        return@setMethodCallHandler
-                    }
-                    requestCollectorPermissions(permissions.toTypedArray())
-                    result.success(null)
-                }
-                "openPermissionSettings" -> {
-                    val type = call.argument<String>("type") ?: ""
-                    openPermissionSettings(type)
-                    result.success(null)
-                }
-                "isBatteryOptimizationIgnored" -> {
-                    result.success(isBatteryOptimizationIgnored())
-                }
-                "requestIgnoreBatteryOptimization" -> {
-                    requestIgnoreBatteryOptimization()
-                    result.success(null)
                 }
                 else -> result.notImplemented()
             }
         }
     }
 
-    private fun hasPermission(permission: String): Boolean {
-        return when (permission) {
-            "notification_listener" -> isNotificationListenerEnabled()
-            else -> ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
-        }
-    }
-
-    private fun requestCollectorPermissions(permissions: Array<String>) {
-        val missing = permissions.filter { !hasPermission(it) }.toTypedArray()
-        if (missing.isEmpty()) return
-        ActivityCompat.requestPermissions(this, missing, COLLECTOR_PERMISSION_REQUEST_CODE)
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray,
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != COLLECTOR_PERMISSION_REQUEST_CODE) return
-        if (grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
-            reloadCollectorService()
-        }
-    }
-
-    private fun reloadCollectorService() {
-        val intent = Intent(this, CollectorForegroundService::class.java).apply {
-            action = CollectorForegroundService.ACTION_RELOAD
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                startForegroundService(intent)
-            } catch (_: Exception) {
-                startService(intent)
-            }
-        } else {
-            startService(intent)
-        }
-    }
-
     override fun onDestroy() {
+        // Only clear if this Activity still owns the channel — a newer Activity may
+        // have already registered its own channel during recreate.
+        ClipyNotificationListenerService.clearMethodChannelIf(notificationsMethodChannel)
+        notificationsMethodChannel = null
         clipboardChangeListener?.detach()
         clipboardChangeListener = null
         super.onDestroy()
-    }
-
-    private fun openPermissionSettings(type: String) {
-        val intent = when (type) {
-            "notification_listener" -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-            "battery" -> Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-            "app_details" -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.fromParts("package", packageName, null)
-            }
-            else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.fromParts("package", packageName, null)
-            }
-        }
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(intent)
-    }
-
-    private fun isBatteryOptimizationIgnored(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
-        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-        return powerManager.isIgnoringBatteryOptimizations(packageName)
-    }
-
-    private fun requestIgnoreBatteryOptimization() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
-        try {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
-            }
-            startActivity(intent)
-        } catch (_: Exception) {
-            openPermissionSettings("battery")
-        }
     }
 
     private fun isNotificationListenerEnabled(): Boolean {
         val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
         if (flat.isNullOrEmpty()) return false
         val cn = ComponentName(this, ClipyNotificationListenerService::class.java)
-        return flat.contains(cn.flattenToString())
+        // MIUI may store either flattenToString or flattenToShortString.
+        return flat.contains(cn.flattenToString()) || flat.contains(cn.flattenToShortString())
     }
 
     private fun requestNotificationListenerRebind() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        val now = System.currentTimeMillis()
+        val elapsed = now - lastRebindTimeMs
+        if (elapsed < REBIND_THROTTLE_MS) {
+            Log.d("ClipyMain", "Skipping soft rebind (throttled, ${elapsed}ms since last call)")
+            return
+        }
+        lastRebindTimeMs = now
+        ClipyNotificationListenerService.softRebind(this, reason = "activity")
+    }
+
+    /** Try Xiaomi/HyperOS autostart page; returns true if an activity was launched. */
+    private fun openOemAutostartSettings(): Boolean {
+        val candidates = listOf(
+            Intent("miui.intent.action.OP_AUTO_START").setPackage("com.miui.securitycenter"),
+            Intent().setComponent(
+                ComponentName(
+                    "com.miui.securitycenter",
+                    "com.miui.permcenter.autostart.AutoStartManagementActivity",
+                ),
+            ),
+            Intent().setComponent(
+                ComponentName(
+                    "com.miui.securitycenter",
+                    "com.miui.permcenter.permissions.PermissionsEditorActivity",
+                ),
+            ).putExtra("extra_pkgname", packageName),
+        )
+        for (intent in candidates) {
             try {
-                val cn = ComponentName(this, ClipyNotificationListenerService::class.java)
-                NotificationListenerService.requestRebind(cn)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (intent.resolveActivity(packageManager) != null) {
+                    startActivity(intent)
+                    Log.i("ClipyMain", "Opened OEM autostart settings: $intent")
+                    return true
+                }
             } catch (e: Exception) {
-                // Some OEM ROMs reject explicit rebind requests.
+                Log.w("ClipyMain", "OEM autostart intent failed: $intent", e)
+            }
+        }
+        return false
+    }
+
+    private fun isBatteryOptimizationExempt(): Boolean {
+        val pm = getSystemService(POWER_SERVICE) as? PowerManager ?: return true
+        return pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun requestBatteryOptimizationExemption() {
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+            intent.data = Uri.parse("package:$packageName")
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (e: Exception) {
+            // Fallback: open general battery optimization settings
+            try {
+                val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+            } catch (e2: Exception) {
+                Log.e("ClipyMain", "Cannot open battery optimization settings", e2)
             }
         }
     }

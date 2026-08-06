@@ -86,6 +86,12 @@ class NotificationEntry {
   final int postTime;
   final String? groupKey;
   final bool isClearable;
+  /// WeChat (and similar) in-place updates: previous snapshot kept with this flag
+  /// so history retains every message while the live slot stays unique.
+  final bool isArchived;
+  /// 同步状态：0 = 待同步（默认），1 = Mac 已 ack 确认送达。
+  /// 仅在本地维护，不随 toJson 序列化到 wire（Mac 侧按 id 去重，不需要此字段）。
+  final int syncState;
   final Map<String, dynamic> extras;
 
   NotificationEntry({
@@ -99,8 +105,42 @@ class NotificationEntry {
     required this.postTime,
     this.groupKey,
     this.isClearable = true,
+    this.isArchived = false,
+    this.syncState = 0,
     this.extras = const {},
   });
+
+  NotificationEntry copyWith({
+    String? id,
+    String? notificationKey,
+    String? packageName,
+    String? appName,
+    String? title,
+    String? subtitle,
+    String? body,
+    int? postTime,
+    String? groupKey,
+    bool? isClearable,
+    bool? isArchived,
+    int? syncState,
+    Map<String, dynamic>? extras,
+  }) {
+    return NotificationEntry(
+      id: id ?? this.id,
+      notificationKey: notificationKey ?? this.notificationKey,
+      packageName: packageName ?? this.packageName,
+      appName: appName ?? this.appName,
+      title: title ?? this.title,
+      subtitle: subtitle ?? this.subtitle,
+      body: body ?? this.body,
+      postTime: postTime ?? this.postTime,
+      groupKey: groupKey ?? this.groupKey,
+      isClearable: isClearable ?? this.isClearable,
+      isArchived: isArchived ?? this.isArchived,
+      syncState: syncState ?? this.syncState,
+      extras: extras ?? this.extras,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -113,10 +153,15 @@ class NotificationEntry {
         'postTime': postTime,
         'groupKey': groupKey,
         'isClearable': isClearable,
+        'isArchived': isArchived,
         'extras': extras,
       };
 
   factory NotificationEntry.fromJson(Map<String, dynamic> json) {
+    final extras = Map<String, dynamic>.from(json['extras'] as Map? ?? {});
+    final archivedFlag = json['isArchived'] == true ||
+        extras['clipyArchived'] == true ||
+        extras['clipyArchived']?.toString() == 'true';
     return NotificationEntry(
       id: json['id'],
       notificationKey: json['notificationKey'],
@@ -129,21 +174,10 @@ class NotificationEntry {
           DateTime.now().millisecondsSinceEpoch,
       groupKey: json['groupKey'],
       isClearable: json['isClearable'] ?? true,
-      extras: Map<String, dynamic>.from(json['extras'] as Map? ?? {}),
+      isArchived: archivedFlag,
+      extras: extras,
     );
   }
-
-  Map<String, dynamic> toCollectorPayload() => {
-        'notificationKey': notificationKey,
-        'packageName': packageName,
-        'appName': appName,
-        'title': title,
-        'subtitle': subtitle,
-        'body': body,
-        'groupKey': groupKey,
-        'isClearable': isClearable,
-        ...extras.map((key, value) => MapEntry('extra_$key', value)),
-      };
 }
 
 class NotificationDismissRequest {
@@ -168,69 +202,6 @@ class NotificationDismissRequest {
       packageName: json['packageName'],
       groupKey: json['groupKey'],
       notificationKey: json['notificationKey'],
-    );
-  }
-}
-
-class CollectorCategories {
-  static const notification = 'notification';
-  static const sms = 'sms';
-  static const call = 'call';
-  static const callLog = 'call_log';
-  static const clipboard = 'clipboard';
-
-  static const all = [
-    sms,
-    call,
-    callLog,
-    clipboard,
-  ];
-}
-
-class CollectorEvent {
-  final String id;
-  final String category;
-  final int timestamp;
-  final String deviceId;
-  final Map<String, dynamic> payload;
-
-  CollectorEvent({
-    required this.id,
-    required this.category,
-    required this.timestamp,
-    required this.deviceId,
-    required this.payload,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'category': category,
-        'timestamp': timestamp,
-        'deviceId': deviceId,
-        'payload': payload,
-      };
-
-  factory CollectorEvent.fromJson(Map<String, dynamic> json) {
-    return CollectorEvent(
-      id: json['id'] as String,
-      category: json['category'] as String,
-      timestamp: (json['timestamp'] as num?)?.toInt() ??
-          DateTime.now().millisecondsSinceEpoch,
-      deviceId: json['deviceId'] as String? ?? '',
-      payload: Map<String, dynamic>.from(json['payload'] as Map? ?? {}),
-    );
-  }
-
-  factory CollectorEvent.fromNotificationEntry(
-    NotificationEntry entry,
-    String deviceId,
-  ) {
-    return CollectorEvent(
-      id: entry.id,
-      category: CollectorCategories.notification,
-      timestamp: entry.postTime,
-      deviceId: deviceId,
-      payload: entry.toCollectorPayload(),
     );
   }
 }

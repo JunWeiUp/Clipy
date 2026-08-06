@@ -7,8 +7,17 @@ cd "${MACOS_PROJECT_DIR}"
 
 # 配置变量
 APP_NAME="ClipyClone"
-BUNDLE_ID="com.yourdomain.ClipyClone"
+# 保留历史默认值：TCC（屏幕录制/麦克风/摄像头/辅助功能）授权是按 Bundle ID 记录的，
+# 改这个值会让已授权的用户全部重新授权。要用自己的标识符时通过环境变量覆盖：
+#   BUNDLE_ID=com.example.Clipy ./build_macos_app.sh
+BUNDLE_ID="${BUNDLE_ID:-com.yourdomain.ClipyClone}"
 EXECUTABLE_NAME="ClipyClone"
+# 调试符号：默认生成 .dSYM，崩溃日志里的地址才能还原成函数名和行号。
+# GENERATE_DSYM=0 可关闭。
+GENERATE_DSYM="${GENERATE_DSYM:-1}"
+# 构建后是否安装到 /Applications 并启动。CI 或只想验证编译时设 0。
+INSTALL_APP="${INSTALL_APP:-1}"
+LAUNCH_APP="${LAUNCH_APP:-1}"
 APP_VERSION="${APP_VERSION:-1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 APP_BUNDLE="${APP_NAME}.app"
@@ -16,84 +25,12 @@ CONTENTS_DIR="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 
-SWIFT_SOURCES=(
-    Sources/Localization.swift
-    Sources/HistoryMediaStore.swift
-    Sources/HistoryThumbnailCache.swift
-    Sources/AppDatabase.swift
-    Sources/HistoryRepository.swift
-    Sources/ClipboardManager.swift
-    Sources/HistorySearchRanker.swift
-    Sources/HistorySearchTypes.swift
-    Sources/HistorySearchIndexBuilder.swift
-    Sources/HistorySearchStateStore.swift
-    Sources/SearchGlobalHotKeyManager.swift
-    Sources/ScreenshotTypes.swift
-    Sources/ScreenCapturePermissionManager.swift
-    Sources/ScreenshotCaptureService.swift
-    Sources/ImageOCRService.swift
-    Sources/CaptureOverlayWindow.swift
-    Sources/CaptureSelectionToolbar.swift
-    Sources/CaptureAnnotationPanel.swift
-    Sources/ScreenshotExport.swift
-    Sources/UIElementDetector.swift
-    Sources/CaptureMagnifierView.swift
-    Sources/ScreenshotSaveService.swift
-    Sources/ScreenshotImageProcessor.swift
-    Sources/ScreenshotCoordinator.swift
-    Sources/ScreenshotEditorViewModel.swift
-    Sources/ScreenshotGlobalHotKeyManager.swift
-    Sources/PinPanelController.swift
-    Sources/SecureStorageCrypto.swift
-    Sources/HistoryKeychain.swift
-    Sources/MenuController.swift
-    Sources/PreferencesManager.swift
-    Sources/SnippetManager.swift
-    Sources/SyncManager.swift
-    Sources/NotificationManager.swift
-    Sources/NotificationRepository.swift
-    Sources/NotificationWindow.swift
-    Sources/DeviceCollectorTypes.swift
-    Sources/DeviceCollectorRepository.swift
-    Sources/DeviceCollectorManager.swift
-    Sources/CollectorWindow.swift
-    Sources/HotKeyManager.swift
-    Sources/SettingsWindow.swift
-    Sources/ScreenshotSettingsWindow.swift
-    Sources/SnippetEditorWindow.swift
-    Sources/ShortcutRecorderView.swift
-    Sources/SearchWindow.swift
-    Sources/WindowSession.swift
-    Sources/LogManager.swift
-    Sources/LogWindow.swift
-    Sources/LaunchAtLoginManager.swift
-    Sources/AccessibilityManager.swift
-    Sources/UI/DesignTokens.swift
-    Sources/UI/AppLanguageObserver.swift
-    Sources/UI/HostingWindow.swift
-    Sources/UI/AppWindowLayout.swift
-    Sources/UI/AppToolbar.swift
-    Sources/UI/StatusBarView.swift
-    Sources/UI/EmptyStateView.swift
-    Sources/UI/CountBadge.swift
-    Sources/UI/RelativeTimeFormatter.swift
-    Sources/UI/ShortcutRecorderRepresentable.swift
-    Sources/UI/LeftAlignedTextInput.swift
-    Sources/UI/SettingsView.swift
-    Sources/UI/ScreenshotSettingsView.swift
-    Sources/UI/SearchView.swift
-    Sources/UI/ScreenshotToolbarView.swift
-    Sources/UI/AnnotationCanvasView.swift
-    Sources/UI/HighlightedText.swift
-    Sources/UI/HistoryPreviewView.swift
-    Sources/UI/HistoryPreviewRepresentables.swift
-    Sources/UI/NotificationView.swift
-    Sources/UI/CollectorView.swift
-    Sources/UI/SnippetEditorViewModel.swift
-    Sources/UI/SnippetEditorSidebarRepresentable.swift
-    Sources/UI/SnippetEditorView.swift
-    Sources/main.swift
-)
+# Collect every Swift source under Sources/ recursively. Adding/moving files
+# anywhere under Sources/ now requires NO build-script edits.
+SWIFT_SOURCES=()
+while IFS= read -r -d '' f; do
+    SWIFT_SOURCES+=("$f")
+done < <(find Sources -type f -name '*.swift' -print0)
 
 echo "🚀 开始构建 ${APP_NAME}.app..."
 
@@ -110,7 +47,6 @@ mkdir -p "${RESOURCES_DIR}"
 echo "🔨 正在编译 Swift 源代码..."
 BUILD_SRC_DIR="$(mktemp -d "${TMPDIR:-/tmp}/clipybuild.XXXXXX")"
 trap 'rm -rf "${BUILD_SRC_DIR}"' EXIT
-mkdir -p "${BUILD_SRC_DIR}/Sources/UI"
 for src in "${SWIFT_SOURCES[@]}"; do
     dest="${BUILD_SRC_DIR}/${src}"
     mkdir -p "$(dirname "${dest}")"
@@ -122,9 +58,17 @@ for src in "${SWIFT_SOURCES[@]}"; do
     BUILD_SRC_PATHS+=("${BUILD_SRC_DIR}/${src}")
 done
 
+SWIFTC_DEBUG_FLAGS=()
+if [ "${GENERATE_DSYM}" = "1" ]; then
+    SWIFTC_DEBUG_FLAGS+=(-g)
+fi
+
 swiftc \
     "${BUILD_SRC_PATHS[@]}" \
     -whole-module-optimization \
+    -target arm64-apple-macos13.0 \
+    -D OFFLINE \
+    "${SWIFTC_DEBUG_FLAGS[@]}" \
     -o "${MACOS_DIR}/${EXECUTABLE_NAME}" \
     -framework AppKit \
     -framework SwiftUI \
@@ -139,7 +83,13 @@ swiftc \
     -framework ScreenCaptureKit \
     -framework UniformTypeIdentifiers \
     -framework PDFKit \
-    -framework WebKit
+    -framework WebKit \
+    -framework Quartz \
+    -framework AVFoundation \
+    -framework VideoToolbox \
+    -framework CoreVideo \
+    -framework CoreMedia \
+    -lcompression
 
 # 4. 准备资源文件
 echo "📦 准备资源文件..."
@@ -181,15 +131,14 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
-    </dict>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Clipy needs local network access to sync clipboard content with your other devices.</string>
     <key>NSScreenCaptureUsageDescription</key>
     <string>Clipy needs screen recording permission to capture screenshots.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Clipy needs microphone access to record voice audio in screen recordings.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Clipy needs camera access to show the webcam overlay in screen recordings.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_clipy-sync._tcp</string>
@@ -204,6 +153,19 @@ if [ ! -f "${MACOS_DIR}/${EXECUTABLE_NAME}" ]; then
     exit 1
 fi
 chmod +x "${MACOS_DIR}/${EXECUTABLE_NAME}"
+
+# 6. 生成 dSYM（必须在签名之前：dsymutil 读取可执行文件，签名后再抽取符号会
+#    让 UUID 与最终二进制不匹配，symbolicate 就失效了）
+if [ "${GENERATE_DSYM}" = "1" ] && command -v dsymutil >/dev/null 2>&1; then
+    DSYM_PATH="${APP_BUNDLE}.dSYM"
+    rm -rf "${DSYM_PATH}"
+    if dsymutil "${MACOS_DIR}/${EXECUTABLE_NAME}" -o "${DSYM_PATH}" 2>/dev/null; then
+        echo "🔍 已生成调试符号: ${MACOS_PROJECT_DIR}/${DSYM_PATH}"
+        echo "   还原崩溃地址: atos -o \"${DSYM_PATH}/Contents/Resources/DWARF/${EXECUTABLE_NAME}\" -l <load_address> <address>"
+    else
+        echo "⚠️ dSYM 生成失败，崩溃日志将只有裸地址"
+    fi
+fi
 
 # 6. 代码签名（TCC 权限绑定 Bundle ID + 证书；ad-hoc 签名每次编译都会变，导致需反复授权）
 resolve_sign_identity() {
@@ -266,7 +228,12 @@ if command -v codesign >/dev/null 2>&1; then
     }
 fi
 
-# 7. 安装到 /Applications（固定路径 + 稳定证书签名，TCC 权限才能跨编译保持）
+# 8. 安装到 /Applications（固定路径 + 稳定证书签名，TCC 权限才能跨编译保持）
+if [ "${INSTALL_APP}" != "1" ]; then
+    echo "✅ 构建完成（未安装）: ${MACOS_PROJECT_DIR}/${APP_BUNDLE}"
+    exit 0
+fi
+
 echo "📦 正在安装到 ${INSTALLED_APP}..."
 rm -rf "${INSTALLED_APP}"
 ditto "${APP_BUNDLE}" "${INSTALLED_APP}"
@@ -285,4 +252,6 @@ else
     echo "   若仍反复要求授权，可执行: tccutil reset ScreenCapture ${BUNDLE_ID} 后重新授权一次"
 fi
 
-open "${INSTALLED_APP}"
+if [ "${LAUNCH_APP}" = "1" ]; then
+    open "${INSTALLED_APP}"
+fi

@@ -16,19 +16,17 @@ struct SettingsView: View {
     @State private var syncEnabled: Bool
     @State private var syncPort: String
     @State private var availablePeers: [DiscoveredPeer] = []
-    @State private var selectedSyncTargets: Set<String> = Set(PreferencesManager.shared.authorizedPeerIds)
-    @State private var notificationSyncEnabled: Bool
-    @State private var notificationSound: Bool
-    @State private var collectorSyncEnabled: Bool
-    @State private var collectorAlertEnabled: Bool
-    @State private var collectorNotificationEnabled: Bool
-    @State private var collectorSmsEnabled: Bool
-    @State private var collectorCallEnabled: Bool
-    @State private var collectorCallLogEnabled: Bool
-    @State private var collectorClipboardEnabled: Bool
-    @State private var collectorLocationEnabled: Bool
-    @State private var collectorSystemEnabled: Bool
+    @State private var clipboardSyncTargets: Set<String> = Set(PreferencesManager.shared.clipboardSyncPeerIds)
+    @State private var notificationSyncTargets: Set<String> = Set(PreferencesManager.shared.notificationSyncPeerIds)
+    @State private var isRefreshingDevices = false
+    // Manual peers (host:port) for cross-band / cross-subnet discovery.
+    @State private var manualPeers: [String] = PreferencesManager.shared.manualSyncPeers
+    @State private var showAddManualPeer = false
+    @State private var manualPeerHost = ""
+    @State private var manualPeerPort = "5566"
     @State private var accessibilityGranted: Bool
+    @State private var isReencryptingHistory = false
+    @State private var syncPairingSecret: String = PreferencesManager.shared.syncPairingSecret
 
     init() {
         let prefs = PreferencesManager.shared
@@ -45,17 +43,6 @@ struct SettingsView: View {
         _searchHistoryShortcut = State(initialValue: prefs.searchHistoryShortcut)
         _syncEnabled = State(initialValue: prefs.isSyncEnabled)
         _syncPort = State(initialValue: "\(prefs.syncPort)")
-        _notificationSyncEnabled = State(initialValue: NotificationManager.shared.notificationSyncEnabled)
-        _notificationSound = State(initialValue: NotificationManager.shared.notificationSound)
-        _collectorSyncEnabled = State(initialValue: prefs.isCollectorSyncEnabled)
-        _collectorAlertEnabled = State(initialValue: prefs.isCollectorAlertEnabled)
-        _collectorNotificationEnabled = State(initialValue: prefs.isCollectorNotificationEnabled)
-        _collectorSmsEnabled = State(initialValue: prefs.isCollectorSmsEnabled)
-        _collectorCallEnabled = State(initialValue: prefs.isCollectorCallEnabled)
-        _collectorCallLogEnabled = State(initialValue: prefs.isCollectorCallLogEnabled)
-        _collectorClipboardEnabled = State(initialValue: prefs.isCollectorClipboardEnabled)
-        _collectorLocationEnabled = State(initialValue: prefs.isCollectorLocationEnabled)
-        _collectorSystemEnabled = State(initialValue: prefs.isCollectorSystemEnabled)
         _accessibilityGranted = State(initialValue: AccessibilityManager.isTrusted)
     }
 
@@ -144,8 +131,14 @@ struct SettingsView: View {
                     }
 
                 Toggle(L10n.t(.encryptHistoryAtRest), isOn: $historyEncryptionEnabled)
+                    .disabled(isReencryptingHistory)
                     .onChange(of: historyEncryptionEnabled) { newValue in
-                        if !ClipboardManager.shared.setHistoryEncryptionEnabled(newValue) {
+                        isReencryptingHistory = true
+                        let started = ClipboardManager.shared.setHistoryEncryptionEnabled(newValue) { _ in
+                            isReencryptingHistory = false
+                        }
+                        if !started {
+                            isReencryptingHistory = false
                             historyEncryptionEnabled = !newValue
                             AlertPresenter.showWarning(
                                 title: L10n.t(.error),
@@ -153,6 +146,14 @@ struct SettingsView: View {
                             )
                         }
                     }
+                if isReencryptingHistory {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(L10n.t(.historyEncryptionInProgress))
+                            .font(AppFont.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Text(L10n.t(.encryptHistoryAtRestDescription))
                     .font(AppFont.caption)
                     .foregroundStyle(.secondary)
@@ -190,6 +191,20 @@ struct SettingsView: View {
                         }
                     }
 
+                SecureField(L10n.t(.syncPairingSecret), text: $syncPairingSecret)
+                    .onSubmit { PreferencesManager.shared.syncPairingSecret = syncPairingSecret }
+                    .onChange(of: syncPairingSecret) { newValue in
+                        PreferencesManager.shared.syncPairingSecret = newValue
+                    }
+                Text(L10n.t(.syncPairingSecretHint))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+                if syncPairingSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(L10n.t(.syncPairingSecretDefaultWarning))
+                        .font(AppFont.caption)
+                        .foregroundStyle(.orange)
+                }
+
                 Text(L10n.t(.authorizedDevices))
                     .font(AppFont.caption)
                     .foregroundStyle(.secondary)
@@ -199,11 +214,50 @@ struct SettingsView: View {
 
                 Text(L10n.format(.syncLocalNameHint, PreferencesManager.shared.deviceName, String(PreferencesManager.shared.syncPeerId.prefix(8))))
 
-                let staleAuthorized = selectedSyncTargets.subtracting(Set(availablePeers.map(\.peerId)))
+                Button {
+                    guard !isRefreshingDevices else { return }
+                    isRefreshingDevices = true
+                    SyncManager.shared.refreshDiscovery()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        availablePeers = SyncManager.shared.availablePeers
+                        isRefreshingDevices = false
+                    }
+                } label: {
+                    HStack {
+                        if isRefreshingDevices {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(L10n.t(.refreshingDevices))
+                        } else {
+                            Text(L10n.t(.refreshDevices))
+                        }
+                    }
+                }
+                .disabled(!syncEnabled || isRefreshingDevices)
+
+                let unionAuthorized = clipboardSyncTargets.union(notificationSyncTargets)
+                let staleAuthorized = unionAuthorized.subtracting(Set(availablePeers.map(\.peerId)))
                 if !staleAuthorized.isEmpty {
-                    Text(L10n.format(.staleAuthorizedDevicesWarning, staleAuthorized.sorted().joined(separator: ", ")))
+                    Text(L10n.t(.syncOfflineAuthorizedDevices))
                         .font(AppFont.caption)
                         .foregroundStyle(.orange)
+                    ForEach(staleAuthorized.sorted(), id: \.self) { peerId in
+                        HStack {
+                            Text(peerId)
+                                .font(AppFont.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button {
+                                clipboardSyncTargets.remove(peerId)
+                                notificationSyncTargets.remove(peerId)
+                                PreferencesManager.shared.removeAuthorizedPeer(peerId)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
 
                 if availablePeers.isEmpty {
@@ -211,78 +265,83 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(availablePeers, id: \.peerId) { peer in
-                        Toggle(isOn: Binding(
-                            get: { selectedSyncTargets.contains(peer.peerId) },
-                            set: { enabled in
-                                if enabled {
-                                    selectedSyncTargets.insert(peer.peerId)
-                                } else {
-                                    selectedSyncTargets.remove(peer.peerId)
-                                }
-                                PreferencesManager.shared.authorizedPeerIds = selectedSyncTargets.sorted()
-                            }
-                        )) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(peer.displayName)
+                            Toggle(isOn: Binding(
+                                get: { clipboardSyncTargets.contains(peer.peerId) },
+                                set: { enabled in
+                                    if enabled {
+                                        clipboardSyncTargets.insert(peer.peerId)
+                                    } else {
+                                        clipboardSyncTargets.remove(peer.peerId)
+                                    }
+                                    PreferencesManager.shared.setClipboardSync(
+                                        peerId: peer.peerId, enabled: enabled)
+                                    if enabled {
+                                        SyncManager.shared.refreshPendingDelivery(for: peer.peerId)
+                                    }
+                                }
+                            )) {
+                                Text(L10n.t(.syncClipboardToDevice))
+                                    .font(AppFont.caption)
+                            }
+                            Toggle(isOn: Binding(
+                                get: { notificationSyncTargets.contains(peer.peerId) },
+                                set: { enabled in
+                                    if enabled {
+                                        notificationSyncTargets.insert(peer.peerId)
+                                    } else {
+                                        notificationSyncTargets.remove(peer.peerId)
+                                    }
+                                    PreferencesManager.shared.setNotificationSync(
+                                        peerId: peer.peerId, enabled: enabled)
+                                    if enabled {
+                                        SyncManager.shared.refreshPendingDelivery(for: peer.peerId)
+                                    }
+                                }
+                            )) {
+                                Text(L10n.t(.syncNotificationsToDevice))
+                                    .font(AppFont.caption)
+                            }
                         }
+                        .padding(.vertical, 2)
                     }
                 }
-            }
 
-            Section {
-                Toggle(L10n.t(.enableCollectorSync), isOn: $collectorSyncEnabled)
-                    .onChange(of: collectorSyncEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorSyncEnabled = newValue
-                        NotificationManager.shared.notificationSyncEnabled = newValue
-                        NotificationManager.shared.savePreferences()
-                    }
+                Divider()
+                Text(L10n.t(.syncAddManualDevice))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+                Text(L10n.t(.syncManualDeviceHint))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
 
-                Toggle(L10n.t(.collectorAlertOnSmsCall), isOn: $collectorAlertEnabled)
-                    .onChange(of: collectorAlertEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorAlertEnabled = newValue
-                    }
+                Button {
+                    manualPeerHost = ""
+                    manualPeerPort = "\(PreferencesManager.shared.syncPort)"
+                    showAddManualPeer = true
+                } label: {
+                    Label(L10n.t(.syncAdd), systemImage: "plus")
+                }
+                .disabled(!syncEnabled)
 
-                Toggle(L10n.t(.collectorCategoryNotification), isOn: $collectorNotificationEnabled)
-                    .onChange(of: collectorNotificationEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorNotificationEnabled = newValue
+                ForEach(manualPeers, id: \.self) { entry in
+                    HStack {
+                        Text(entry)
+                            .font(AppFont.caption)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button(role: .destructive) {
+                            PreferencesManager.shared.removeManualPeer(entry)
+                            manualPeers = PreferencesManager.shared.manualSyncPeers
+                            SyncManager.shared.triggerCrossBandDiscovery()
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
                     }
-                Toggle(L10n.t(.collectorCategorySms), isOn: $collectorSmsEnabled)
-                    .onChange(of: collectorSmsEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorSmsEnabled = newValue
-                    }
-                Toggle(L10n.t(.collectorCategoryCall), isOn: $collectorCallEnabled)
-                    .onChange(of: collectorCallEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorCallEnabled = newValue
-                    }
-                Toggle(L10n.t(.collectorCategoryCallLog), isOn: $collectorCallLogEnabled)
-                    .onChange(of: collectorCallLogEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorCallLogEnabled = newValue
-                    }
-                Toggle(L10n.t(.collectorCategoryClipboard), isOn: $collectorClipboardEnabled)
-                    .onChange(of: collectorClipboardEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorClipboardEnabled = newValue
-                    }
-                Toggle(L10n.t(.collectorCategoryLocation), isOn: $collectorLocationEnabled)
-                    .onChange(of: collectorLocationEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorLocationEnabled = newValue
-                    }
-                Toggle(L10n.t(.collectorCategorySystem), isOn: $collectorSystemEnabled)
-                    .onChange(of: collectorSystemEnabled) { newValue in
-                        PreferencesManager.shared.isCollectorSystemEnabled = newValue
-                    }
-            }
-
-            Section {
-                Toggle(L10n.t(.enableNotificationSync), isOn: $notificationSyncEnabled)
-                    .onChange(of: notificationSyncEnabled) { newValue in
-                        NotificationManager.shared.notificationSyncEnabled = newValue
-                        NotificationManager.shared.savePreferences()
-                    }
-
-                Toggle(L10n.t(.notificationSound), isOn: $notificationSound)
-                    .onChange(of: notificationSound) { newValue in
-                        NotificationManager.shared.notificationSound = newValue
-                        NotificationManager.shared.savePreferences()
-                    }
+                }
             }
 
             Section {
@@ -307,13 +366,63 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .syncAvailableDevicesDidChange)) { notification in
             if let peers = notification.userInfo?["peers"] as? [DiscoveredPeer] {
                 availablePeers = peers
-            } else if let devices = notification.userInfo?["devices"] as? [String] {
+            } else if notification.userInfo?["devices"] is [String] {
+                // Legacy name-only payload carries no peer objects; read the
+                // manager's current list instead.
                 availablePeers = SyncManager.shared.availablePeers
             }
         }
         .onAppear {
             availablePeers = SyncManager.shared.availablePeers
-            selectedSyncTargets = Set(PreferencesManager.shared.authorizedPeerIds)
+            clipboardSyncTargets = Set(PreferencesManager.shared.clipboardSyncPeerIds)
+            notificationSyncTargets = Set(PreferencesManager.shared.notificationSyncPeerIds)
+            manualPeers = PreferencesManager.shared.manualSyncPeers
+            // On-demand device discovery (per sync power plan v2): no periodic
+            // timer drives the list — refresh once when the user opens this
+            // page. Subsequent updates arrive via .syncAvailableDevicesDidChange.
+            if PreferencesManager.shared.isSyncEnabled && !isRefreshingDevices {
+                isRefreshingDevices = true
+                SyncManager.shared.refreshDiscovery()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    availablePeers = SyncManager.shared.availablePeers
+                    isRefreshingDevices = false
+                }
+            }
+        }
+        .sheet(isPresented: $showAddManualPeer) {
+            VStack(spacing: 16) {
+                Text(L10n.t(.syncAddManualDevice)).font(.headline)
+                TextField(L10n.t(.syncManualDeviceHost), text: $manualPeerHost)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Text(L10n.t(.syncManualDevicePort))
+                    TextField("5566", text: $manualPeerPort)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 100)
+                }
+                HStack {
+                    Button(L10n.t(.cancel)) { showAddManualPeer = false }
+                        .keyboardShortcut(.cancelAction)
+                    Spacer()
+                    Button(L10n.t(.syncAdd)) {
+                        let host = manualPeerHost.trimmingCharacters(in: .whitespaces)
+                        let port = Int(manualPeerPort) ?? PreferencesManager.shared.syncPort
+                        guard Self.isValidIPv4(host), (1...65535).contains(port) else { return }
+                        let entry = "\(host):\(port)"
+                        guard !PreferencesManager.shared.manualSyncPeers.contains(entry) else {
+                            showAddManualPeer = false
+                            return
+                        }
+                        PreferencesManager.shared.addManualPeer(entry)
+                        manualPeers = PreferencesManager.shared.manualSyncPeers
+                        showAddManualPeer = false
+                        SyncManager.shared.triggerCrossBandDiscovery()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(20)
+            .frame(width: 340)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             accessibilityGranted = AccessibilityManager.isTrusted
@@ -344,6 +453,15 @@ struct SettingsView: View {
     private func saveHistoryLimit(_ limit: Int) {
         PreferencesManager.shared.historyLimit = limit
         ClipboardManager.shared.applyHistoryLimit()
+    }
+
+    private static func isValidIPv4(_ string: String) -> Bool {
+        let parts = string.split(separator: ".")
+        guard parts.count == 4 else { return false }
+        for part in parts {
+            guard let value = Int(part), (0...255).contains(value) else { return false }
+        }
+        return true
     }
 
     private func saveDeviceName() {

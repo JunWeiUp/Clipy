@@ -21,12 +21,17 @@ final class SearchViewModel: ObservableObject {
     @Published var statusText = ""
 
     private var debounceWorkItem: DispatchWorkItem?
+    private var historyChangeWorkItem: DispatchWorkItem?
     private var historyObserver: NSObjectProtocol?
     private var browseLimit: Int
 
     private var isLoadingMore = false
+    private var searchGeneration = 0
+    private let searchQueue = DispatchQueue(label: "com.clipy.search", qos: .userInitiated)
+    private static let historyChangeDebounce: TimeInterval = 0.25
 
     init() {
+        // First screen is one page; further pages load when the last row appears.
         browseLimit = PreferencesManager.shared.historyLoadCount
     }
 
@@ -40,8 +45,8 @@ final class SearchViewModel: ObservableObject {
         isLoadingMore = true
         let pageSize = PreferencesManager.shared.historyLoadCount
         browseLimit = min(browseLimit + pageSize, ClipboardManager.shared.totalHistoryCount)
+        // Cleared in applySearchResults once the async page lands.
         performSearch(immediate: true)
-        isLoadingMore = false
     }
 
     private var canAutoLoadMore: Bool {
@@ -64,14 +69,42 @@ final class SearchViewModel: ObservableObject {
         dateFilter = snapshot.dateFilter
         useRegex = snapshot.useRegex
         performSearch(immediate: true)
+        registerHistoryChangeObserver()
+    }
+
+    /// Called when the search window is reopened while still cached (within the
+    /// WindowSession teardown window). SwiftUI's `.onAppear` does NOT fire again
+    /// in that case because the view tree is reused, yet `prepareForClose`
+    /// cleared `results` and removed the change observer on close. Without this
+    /// the list would be blank until the user toggled a filter. Re-runs the
+    /// query and re-registers the observer so the reopened window reflects the
+    /// current history (including anything copied while it was closed).
+    func reactivate() {
+        browseLimit = PreferencesManager.shared.historyLoadCount
+        performSearch(immediate: true)
+        registerHistoryChangeObserver()
+    }
+
+    private func registerHistoryChangeObserver() {
         guard historyObserver == nil else { return }
         historyObserver = NotificationCenter.default.addObserver(
             forName: .clipboardHistoryDidChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            self?.scheduleHistoryChangeRefresh()
+        }
+    }
+
+    /// Clipboard churn (rapid copies / remote sync) can fire many notifications;
+    /// coalesce into one search so we don't re-query SQLite on every event.
+    private func scheduleHistoryChangeRefresh() {
+        historyChangeWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
             self?.performSearch(immediate: true)
         }
+        historyChangeWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.historyChangeDebounce, execute: work)
     }
 
     func onDisappear() {
@@ -86,10 +119,13 @@ final class SearchViewModel: ObservableObject {
     func clearLoadedData() {
         debounceWorkItem?.cancel()
         debounceWorkItem = nil
+        historyChangeWorkItem?.cancel()
+        historyChangeWorkItem = nil
         isLoadingMore = false
         results = []
         selectedIDs = []
         statusText = ""
+        // Reset to one page; onAppear/reactivate also re-seed this before fetch.
         browseLimit = PreferencesManager.shared.historyLoadCount
         availableSourceApps = []
         if let observer = historyObserver {
@@ -109,6 +145,7 @@ final class SearchViewModel: ObservableObject {
     }
 
     func onFilterChange() {
+        browseLimit = PreferencesManager.shared.historyLoadCount
         performSearch(immediate: true)
     }
 
@@ -129,10 +166,8 @@ final class SearchViewModel: ObservableObject {
 
     func performSearch(immediate: Bool) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let previousSelection = selectedIDs
         let manager = ClipboardManager.shared
-        availableSourceApps = manager.availableSourceApps()
-        if !sourceAppFilter.isEmpty, !availableSourceApps.contains(sourceAppFilter) {
+        if !sourceAppFilter.isEmpty, !availableSourceApps.contains(sourceAppFilter), !availableSourceApps.isEmpty {
             sourceAppFilter = ""
         }
         let selectedSourceApp = sourceAppFilter.isEmpty ? nil : sourceAppFilter
@@ -142,7 +177,7 @@ final class SearchViewModel: ObservableObject {
             && dateFilter == .all
             && contentCategory == nil
             && !useRegex
-        results = manager.searchHistory(options: SearchHistoryOptions(
+        let options = SearchHistoryOptions(
             query: trimmed,
             typeFilter: typeFilter,
             sourceApp: selectedSourceApp,
@@ -150,8 +185,38 @@ final class SearchViewModel: ObservableObject {
             contentCategory: contentCategory,
             useRegex: useRegex,
             browseLimit: isBrowseMode ? browseLimit : nil
-        ))
-        let totalCount = manager.totalHistoryCount
+        )
+
+        // SQLite fetch (up to historyLimit rows) plus ranking (which may read full
+        // text from disk) can take long on large histories: run off the main thread
+        // and drop stale generations.
+        searchGeneration += 1
+        let generation = searchGeneration
+        searchQueue.async { [weak self] in
+            let sourceApps = manager.availableSourceApps()
+            let searchResults = manager.searchHistory(options: options)
+            DispatchQueue.main.async {
+                guard let self, generation == self.searchGeneration else { return }
+                self.availableSourceApps = sourceApps
+                self.applySearchResults(
+                    searchResults,
+                    trimmed: trimmed,
+                    selectedSourceApp: selectedSourceApp,
+                    totalCount: manager.totalHistoryCount
+                )
+            }
+        }
+    }
+
+    private func applySearchResults(
+        _ searchResults: [HistorySearchResult],
+        trimmed: String,
+        selectedSourceApp: String?,
+        totalCount: Int
+    ) {
+        let previousSelection = selectedIDs
+        results = searchResults
+        isLoadingMore = false
 
         if totalCount == 0 {
             statusText = L10n.t(.noHistory)
@@ -173,7 +238,6 @@ final class SearchViewModel: ObservableObject {
         if selectedIDs.isEmpty {
             selectedIDs = [results.first?.id].compactMap { $0 }.reduce(into: Set()) { $0.insert($1) }
         }
-
     }
 
     var primarySelectedID: HistoryEntry.ID? {
@@ -230,6 +294,22 @@ final class SearchViewModel: ObservableObject {
         performSearch(immediate: true)
     }
 
+    /// 清空全部历史记录（破坏性操作，弹窗确认）。返回是否已执行清理。
+    @discardableResult
+    func clearAllHistory() -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = L10n.t(.clearHistory)
+        alert.informativeText = L10n.t(.clearHistoryConfirm)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.t(.clear))
+        alert.addButton(withTitle: L10n.t(.cancel))
+        guard alert.runModal() == .alertFirstButtonReturn else { return false }
+        ClipboardManager.shared.clearHistory()
+        performSearch(immediate: true)
+        return true
+    }
+
     func togglePinSelected() {
         for id in selectedIDs {
             guard let entry = results.first(where: { $0.id == id })?.entry else { continue }
@@ -259,13 +339,6 @@ final class SearchViewModel: ObservableObject {
 
     func highlightRanges(for result: HistorySearchResult) -> [Range<String.Index>] {
         result.highlightRanges
-    }
-
-    private func matchesSelection(_ lhs: HistoryEntry, _ rhs: HistoryEntry) -> Bool {
-        let lhsHash = lhs.contentHash ?? ""
-        let rhsHash = rhs.contentHash ?? ""
-        if !lhsHash.isEmpty, lhsHash == rhsHash { return true }
-        return lhs.id == rhs.id
     }
 
     private func isShowingAllHistory(
@@ -308,6 +381,14 @@ struct SearchView: View {
                             .onChange(of: viewModel.useRegex) { _ in
                                 viewModel.onFilterChange()
                             }
+                        Button {
+                            viewModel.clearAllHistory()
+                        } label: {
+                            Label(L10n.t(.clearHistory), systemImage: "trash")
+                                .labelStyle(.titleAndIcon)
+                        }
+                        .buttonStyle(.bordered)
+                        .help(L10n.t(.clearHistory))
                     }
 
                     HStack(spacing: AppSpacing.sm) {
@@ -425,8 +506,9 @@ struct SearchView: View {
             }
         }
         .background(
-            HistoryTableDoubleClickHandler(results: viewModel.results.map(\.entry)) { entry in
-                viewModel.applyAction(.pasteAndClose, to: entry)
+            HistoryTableDoubleClickHandler { row in
+                guard viewModel.results.indices.contains(row) else { return }
+                viewModel.applyAction(.pasteAndClose, to: viewModel.results[row].entry)
             }
         )
     }
@@ -476,20 +558,11 @@ struct SearchView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.orange)
                 }
-                if let thumbnail = HistoryThumbnailCache.thumbnail(
-                    for: path,
-                    size: NSSize(width: 72, height: 54)
-                ) {
-                    Image(nsImage: thumbnail)
-                        .resizable()
-                        .frame(width: 72, height: 54)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                } else {
-                    Image(systemName: "photo")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 72, height: 54)
-                }
+                LazyHistoryThumbnailView(
+                    path: path,
+                    size: NSSize(width: 72, height: 54),
+                    placeholderSize: NSSize(width: 72, height: 54)
+                )
                 VStack(alignment: .leading, spacing: 2) {
                     Text(result.entry.listDisplayTitle)
                         .font(AppFont.body)
@@ -524,11 +597,13 @@ struct SearchView: View {
             Image(nsImage: NSWorkspace.shared.icon(forFile: first.path))
                 .resizable()
                 .frame(width: 16, height: 16)
-        } else if case .image(let path) = entry.item, let image = HistoryThumbnailCache.thumbnail(for: path, size: NSSize(width: 16, height: 16)) {
-            Image(nsImage: image)
-                .resizable()
-                .frame(width: 16, height: 16)
-                .clipShape(RoundedRectangle(cornerRadius: 2))
+        } else if case .image(let path) = entry.item {
+            LazyHistoryThumbnailView(
+                path: path,
+                size: NSSize(width: 16, height: 16),
+                placeholderSize: NSSize(width: 16, height: 16),
+                cornerRadius: 2
+            )
         } else {
             Image(systemName: iconName(for: entry.item))
                 .font(.system(size: 12))
@@ -588,34 +663,34 @@ struct SearchView: View {
 }
 
 private struct HistoryTableDoubleClickHandler: NSViewRepresentable {
-    let results: [HistoryEntry]
-    let onDoubleClick: (HistoryEntry) -> Void
+    /// Resolve the clicked row on demand so each table refresh does not copy
+    /// the full results array into the representable.
+    let onDoubleClickRow: (Int) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onDoubleClick: onDoubleClick)
+        Coordinator(onDoubleClickRow: onDoubleClickRow)
     }
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
-        context.coordinator.attach(to: view, results: results)
+        context.coordinator.attach(to: view)
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.attach(to: nsView, results: results)
+        context.coordinator.onDoubleClickRow = onDoubleClickRow
+        context.coordinator.attach(to: nsView)
     }
 
     final class Coordinator: NSObject {
-        var onDoubleClick: (HistoryEntry) -> Void
+        var onDoubleClickRow: (Int) -> Void
         private weak var tableView: NSTableView?
-        private var results: [HistoryEntry] = []
 
-        init(onDoubleClick: @escaping (HistoryEntry) -> Void) {
-            self.onDoubleClick = onDoubleClick
+        init(onDoubleClickRow: @escaping (Int) -> Void) {
+            self.onDoubleClickRow = onDoubleClickRow
         }
 
-        func attach(to view: NSView, results: [HistoryEntry]) {
-            self.results = results
+        func attach(to view: NSView) {
             DispatchQueue.main.async { [weak self] in
                 guard let self, let tableView = self.findTableView(from: view) else { return }
                 guard self.tableView !== tableView else { return }
@@ -627,8 +702,8 @@ private struct HistoryTableDoubleClickHandler: NSViewRepresentable {
 
         @objc private func handleDoubleClick(_ sender: NSTableView) {
             let row = sender.clickedRow
-            guard row >= 0, row < results.count else { return }
-            onDoubleClick(results[row])
+            guard row >= 0 else { return }
+            onDoubleClickRow(row)
         }
 
         private func findTableView(from view: NSView) -> NSTableView? {
@@ -783,6 +858,50 @@ private final class KeyCatcherView: NSView {
         if let coordinator, let window = window {
             coordinator.installMonitor(for: self)
             _ = window
+        }
+    }
+}
+
+private struct LazyHistoryThumbnailView: View {
+    let path: String
+    let size: NSSize
+    let placeholderSize: NSSize
+    var cornerRadius: CGFloat = 4
+
+    @State private var thumbnail: NSImage?
+
+    var body: some View {
+        Group {
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .frame(width: placeholderSize.width, height: placeholderSize.height)
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            } else {
+                Image(systemName: "photo")
+                    .font(.system(size: min(placeholderSize.width, placeholderSize.height) * 0.35))
+                    .foregroundStyle(.secondary)
+                    .frame(width: placeholderSize.width, height: placeholderSize.height)
+            }
+        }
+        .onAppear {
+            loadThumbnailIfNeeded()
+        }
+        .onChange(of: path) { _ in
+            thumbnail = nil
+            loadThumbnailIfNeeded()
+        }
+    }
+
+    private func loadThumbnailIfNeeded() {
+        guard thumbnail == nil else { return }
+        let path = path
+        let size = size
+        DispatchQueue.global(qos: .utility).async {
+            let image = HistoryThumbnailCache.thumbnail(for: path, size: size)
+            DispatchQueue.main.async {
+                self.thumbnail = image
+            }
         }
     }
 }

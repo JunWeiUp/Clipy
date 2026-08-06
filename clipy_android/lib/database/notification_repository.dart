@@ -17,15 +17,41 @@ class NotificationPackageGroup {
   });
 }
 
+/// Result of [NotificationRepository.upsert].
+class NotificationUpsertResult {
+  final bool accepted;
+  /// Local entries removed because this post replaces them (same slot / WeChat
+  /// conversation). Callers should dismiss these on peers before posting new.
+  final List<NotificationEntry> replaced;
+
+  const NotificationUpsertResult({
+    required this.accepted,
+    this.replaced = const [],
+  });
+
+  static const rejected = NotificationUpsertResult(accepted: false);
+}
+
 class NotificationRepository {
   NotificationRepository._();
   static final NotificationRepository instance = NotificationRepository._();
 
   static const duplicateWindowMs = 30000;
+  /// Hard cap so long-running installs don't grow the DB without bound.
+  static const maxRows = 5000;
+  /// WeChat updates the same conversation notification in-place (same person /
+  /// same chat title). Treat those as replacements, not new history rows.
+  static const wechatPackageName = 'com.tencent.mm';
+  int _insertsSinceTrim = 0;
 
   Future<Database> get _db => AppDatabase.instance.database;
 
   NotificationEntry _fromRow(Map<String, Object?> row) {
+    final extras = Map<String, dynamic>.from(
+        jsonDecode(row['extras_json'] as String? ?? '{}') as Map);
+    final archivedCol = (row['is_archived'] as int? ?? 0) == 1;
+    final archivedExtra = extras['clipyArchived'] == true ||
+        extras['clipyArchived']?.toString() == 'true';
     return NotificationEntry(
       id: row['id'] as String,
       notificationKey: row['notification_key'] as String?,
@@ -37,12 +63,19 @@ class NotificationRepository {
       postTime: row['post_time'] as int,
       groupKey: row['group_key'] as String?,
       isClearable: (row['is_clearable'] as int? ?? 1) == 1,
-      extras: Map<String, dynamic>.from(
-          jsonDecode(row['extras_json'] as String? ?? '{}') as Map),
+      isArchived: archivedCol || archivedExtra,
+      syncState: (row['sync_state'] as int? ?? 0),
+      extras: extras,
     );
   }
 
   Map<String, Object?> _toRow(NotificationEntry entry) {
+    final extras = Map<String, dynamic>.from(entry.extras);
+    if (entry.isArchived) {
+      extras['clipyArchived'] = true;
+    } else {
+      extras.remove('clipyArchived');
+    }
     return {
       'id': entry.id,
       'notification_key': entry.notificationKey,
@@ -54,7 +87,9 @@ class NotificationRepository {
       'post_time': entry.postTime,
       'group_key': entry.groupKey,
       'is_clearable': entry.isClearable ? 1 : 0,
-      'extras_json': jsonEncode(entry.extras),
+      'is_archived': entry.isArchived ? 1 : 0,
+      'sync_state': entry.syncState,
+      'extras_json': jsonEncode(extras),
     };
   }
 
@@ -65,9 +100,21 @@ class NotificationRepository {
         entry.extras.values.every((v) => v.toString().trim().isEmpty);
   }
 
-  Future<bool> upsert(NotificationEntry entry) async {
-    if (_isEmpty(entry)) return false;
+  /// Upserts a notification entry.
+  ///
+  /// Returns [NotificationUpsertResult.rejected] when the entry is an exact
+  /// re-send of something we already have (identical content).
+  ///
+  /// WeChat (`com.tencent.mm`) in-place updates: the previous snapshot is kept
+  /// with [NotificationEntry.isArchived]=true and a unique notificationKey, so
+  /// every message stays in history. Other apps still replace the same slot.
+  ///
+  /// [NotificationUpsertResult.replaced] lists entries that were deleted (and
+  /// should be dismissed on peers). Archived WeChat snapshots are not listed.
+  Future<NotificationUpsertResult> upsert(NotificationEntry entry) async {
+    if (_isEmpty(entry)) return NotificationUpsertResult.rejected;
     final db = await _db;
+    final replaced = <NotificationEntry>[];
 
     final byId = await db.query(
       'notifications',
@@ -76,36 +123,99 @@ class NotificationRepository {
       limit: 1,
     );
     if (byId.isNotEmpty) {
-      await db.update('notifications', _toRow(entry), where: 'id = ?', whereArgs: [entry.id]);
-      return true;
+      final existing = _fromRow(byId.first);
+      if (_isDuplicate(existing, entry)) {
+        return NotificationUpsertResult.rejected;
+      }
+      await db.update('notifications', _toRow(entry),
+          where: 'id = ?', whereArgs: [entry.id]);
+      return const NotificationUpsertResult(accepted: true);
+    }
+
+    // Same notification slot (stable Android sbn.key).
+    final key = entry.notificationKey;
+    if (key != null && key.isNotEmpty) {
+      final byKey = await db.query(
+        'notifications',
+        where: 'notification_key = ?',
+        whereArgs: [key],
+        limit: 1,
+      );
+      if (byKey.isNotEmpty) {
+        final existing = _fromRow(byKey.first);
+        if (_isDuplicate(existing, entry)) {
+          return NotificationUpsertResult.rejected;
+        }
+        if (entry.packageName == wechatPackageName) {
+          // Keep prior WeChat message as archived history; free the live key.
+          await _archiveInPlace(db, existing);
+        } else {
+          replaced.add(existing);
+          await db.delete('notifications',
+              where: 'id = ?', whereArgs: [existing.id]);
+        }
+      }
     }
 
     final dupRows = await db.query(
       'notifications',
-      where: 'package_name = ? AND ABS(post_time - ?) <= ?',
-      whereArgs: [entry.packageName, entry.postTime, duplicateWindowMs],
+      where: 'package_name = ?',
+      whereArgs: [entry.packageName],
       orderBy: 'post_time DESC',
-      limit: 20,
+      limit: 50,
     );
     for (final row in dupRows) {
       final existing = _fromRow(row);
       if (_isDuplicate(existing, entry)) {
-        await db.delete('notifications', where: 'id = ?', whereArgs: [existing.id]);
-        break;
+        // Exact content re-send — ignore. Never delete archived WeChat history.
+        return NotificationUpsertResult.rejected;
       }
     }
 
     await db.insert('notifications', _toRow(entry),
         conflictAlgorithm: ConflictAlgorithm.replace);
-    return true;
+    _insertsSinceTrim++;
+    if (_insertsSinceTrim >= 50) {
+      _insertsSinceTrim = 0;
+      await _trimToLimit(db);
+    }
+    return NotificationUpsertResult(accepted: true, replaced: replaced);
   }
 
+  /// Detach a live notification slot so a newer WeChat update can use the same
+  /// Android key, while keeping the old message as a distinct history row.
+  Future<void> _archiveInPlace(Database db, NotificationEntry existing) async {
+    if (existing.isArchived) return;
+    final archived = existing.copyWith(
+      notificationKey: 'clipy-archived:${existing.id}',
+      isArchived: true,
+    );
+    await db.update(
+      'notifications',
+      _toRow(archived),
+      where: 'id = ?',
+      whereArgs: [existing.id],
+    );
+  }
+
+  Future<void> _trimToLimit(Database db) async {
+    final thresholdRow = await db.rawQuery(
+      'SELECT post_time FROM notifications ORDER BY post_time DESC LIMIT 1 OFFSET ?',
+      [maxRows],
+    );
+    if (thresholdRow.isEmpty) return;
+    final threshold = thresholdRow.first['post_time'] as int;
+    await db.delete('notifications', where: 'post_time < ?', whereArgs: [threshold]);
+  }
+
+  /// True when [incoming] is an exact content re-send of [existing].
+  ///
+  /// IMPORTANT: same Android `notificationKey` alone is NOT a duplicate.
+  /// Messaging apps reuse the StatusBarNotification key when a second message
+  /// arrives and the system folds/stacks the notification — content changes
+  /// but the key stays the same. Treating key equality as duplicate dropped
+  /// those folded updates on Xiaomi and similar OEMs.
   bool _isDuplicate(NotificationEntry existing, NotificationEntry incoming) {
-    if (existing.notificationKey != null &&
-        incoming.notificationKey != null &&
-        existing.notificationKey == incoming.notificationKey) {
-      return true;
-    }
     return existing.title.trim() == incoming.title.trim() &&
         (existing.subtitle ?? '').trim() == (incoming.subtitle ?? '').trim() &&
         existing.body.trim() == incoming.body.trim() &&
@@ -177,6 +287,11 @@ class NotificationRepository {
     await (await _db).delete('notifications', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<void> removeByNotificationKey(String key) async {
+    await (await _db).delete('notifications',
+        where: 'notification_key = ?', whereArgs: [key]);
+  }
+
   Future<void> clearAll() async {
     await (await _db).delete('notifications');
   }
@@ -185,5 +300,120 @@ class NotificationRepository {
     final rows = await (await _db).rawQuery(
         'SELECT DISTINCT package_name FROM notifications ORDER BY package_name');
     return rows.map((r) => r['package_name'] as String).toList();
+  }
+
+  // ---- Sync state tracking ----
+
+  /// Mac ack 确认送达后，把对应通知标记为已同步（sync_state=1）。
+  /// 已标记的通知不会被 backfill 重复补发。
+  Future<void> markSynced(String id) async {
+    await (await _db).update(
+      'notifications',
+      {'sync_state': 1},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// 返回当前 pending 同步队列里的全部 notification_id 集合。
+  /// backfill 时用它排除"已在队列里、无需重复补"的通知。
+  Future<Set<String>> fetchPendingSyncIds() async {
+    final rows = await (await _db).query(
+      'pending_notification_sync',
+      columns: ['notification_id'],
+    );
+    return rows.map((r) => r['notification_id'] as String).toSet();
+  }
+
+  /// backfill 数据源：返回 sync_state=0（尚未被 Mac ack）且符合同步条件
+  /// 且在 [withinDays] 天内的通知，按时间正序（先发先补）。
+  ///
+  /// 调用方（NotificationManager._backfillMissingToPendingSync）会进一步
+  /// 过滤掉已在 pending_notification_sync 队列里的条目。
+  Future<List<NotificationEntry>> fetchUnsynced({
+    required bool Function(String packageName) shouldSync,
+    int withinDays = 2,
+    String? selfPackageName,
+  }) async {
+    final cutoff = DateTime.now()
+        .subtract(Duration(days: withinDays))
+        .millisecondsSinceEpoch;
+    final rows = await (await _db).query(
+      'notifications',
+      where: 'sync_state = 0 AND post_time >= ?',
+      whereArgs: [cutoff],
+      orderBy: 'post_time ASC',
+      limit: 200,
+    );
+    final result = <NotificationEntry>[];
+    for (final row in rows) {
+      final entry = _fromRow(row);
+      if (entry.isArchived) continue; // 归档的历史快照不补发
+      if (selfPackageName != null && entry.packageName == selfPackageName) {
+        continue;
+      }
+      if (!shouldSync(entry.packageName)) continue;
+      result.add(entry);
+    }
+    return result;
+  }
+
+  // ---- Pending notification sync (offline delivery queue) ----
+
+  Future<void> insertPendingSync({
+    required String notificationId,
+    required String content,
+    required String hash,
+  }) async {
+    final db = await _db;
+    await db.insert(
+      'pending_notification_sync',
+      {
+        'notification_id': notificationId,
+        'content': content,
+        'hash': hash,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> removePendingSync(String notificationId) async {
+    await (await _db).delete(
+      'pending_notification_sync',
+      where: 'notification_id = ?',
+      whereArgs: [notificationId],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> fetchAllPendingSync() async {
+    return (await _db).query(
+      'pending_notification_sync',
+      orderBy: 'created_at ASC',
+    );
+  }
+
+  /// Remove entries older than [maxAgeDays] and trim to [maxRows].
+  Future<void> cleanOldPendingSync({
+    int maxAgeDays = 7,
+    int maxRows = 500,
+  }) async {
+    final db = await _db;
+    final cutoff = DateTime.now()
+        .subtract(Duration(days: maxAgeDays))
+        .millisecondsSinceEpoch;
+    await db.delete('pending_notification_sync',
+        where: 'created_at < ?', whereArgs: [cutoff]);
+    final count = Sqflite.firstIntValue(await db
+            .rawQuery('SELECT COUNT(*) FROM pending_notification_sync')) ??
+        0;
+    if (count > maxRows) {
+      await db.rawDelete(
+        'DELETE FROM pending_notification_sync WHERE notification_id IN '
+        '(SELECT notification_id FROM pending_notification_sync '
+        'ORDER BY created_at ASC LIMIT ?)',
+        [count - maxRows],
+      );
+    }
   }
 }

@@ -20,20 +20,85 @@ enum AppFont {
     static var emptyState: Font { .system(size: emptyStateSize) }
 }
 
+// MARK: - Crash-safe AppKit text attributes
+
+extension AppFont {
+    /// AppKit's font factories are imported as non-optional but can still hand back nil —
+    /// `monospacedSystemFont` resolves the hidden `.AppleSystemUIFontMonospaced` asset and
+    /// fails on some machines. Swift lets that nil into an attribute dictionary and CoreText
+    /// aborts the process while laying out the string, so route every dictionary through here.
+    static func textAttributes(
+        size: CGFloat,
+        weight: NSFont.Weight = .regular,
+        monospaced: Bool = false,
+        color: NSColor?
+    ) -> [NSAttributedString.Key: Any] {
+        var attributes: [NSAttributedString.Key: Any] = [:]
+        if let font = resolveFont(size: size, weight: weight, monospaced: monospaced) {
+            attributes[.font] = font
+        }
+        if let color {
+            attributes[.foregroundColor] = color
+        }
+        return attributes
+    }
+
+    /// Adds `.font`/`.foregroundColor` only when they actually resolved.
+    static func attributes(font: NSFont?, color: NSColor?) -> [NSAttributedString.Key: Any] {
+        var attributes: [NSAttributedString.Key: Any] = [:]
+        if let font { attributes[.font] = font }
+        if let color { attributes[.foregroundColor] = color }
+        return attributes
+    }
+
+    static func resolveFont(size: CGFloat, weight: NSFont.Weight = .regular, monospaced: Bool = false) -> NSFont? {
+        if monospaced {
+            return firstResolved(
+                // Proportional metrics with tabular digits — same alignment benefit for
+                // numeric readouts without depending on the monospaced font asset.
+                NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight),
+                NSFont.monospacedSystemFont(ofSize: size, weight: weight),
+                NSFont(name: "Menlo", size: size),
+                NSFont.systemFont(ofSize: size)
+            )
+        }
+        return firstResolved(
+            NSFont.systemFont(ofSize: size, weight: weight),
+            NSFont.systemFont(ofSize: size),
+            NSFont(name: "Helvetica", size: size)
+        )
+    }
+
+    private static func firstResolved(_ candidates: NSFont?...) -> NSFont? {
+        candidates.first { $0 != nil } ?? nil
+    }
+}
+
 enum AppRowHeight {
     static let compact: CGFloat = 28
     static let standard: CGFloat = 36
     static let group: CGFloat = 40
 }
 
+/// 标题栏（红黄绿按钮条）相关尺寸，用于 fullSizeContentView 下让出空间。
+enum AppTitleBar {
+    /// 标题栏高度，顶部 padding 用。
+    static let height: CGFloat = 28
+    /// 交通灯按钮的实际占用宽度（含到窗口边缘的间距），左侧 leading 内容让出。
+    static let trafficLightsWidth: CGFloat = 56
+}
+
 enum AppCornerRadius {
     static let small: CGFloat = 4
+    static let medium: CGFloat = 8
+    static let large: CGFloat = 12
     static let badge: CGFloat = 10
 }
 
 enum ScreenshotChrome {
     static let toolbarHeight: CGFloat = 44
     static let barHeight: CGFloat = 40
+    static let secondaryBarHeight: CGFloat = 32
     static let floatingRadius: CGFloat = 12
     static let magnifierSize: CGFloat = 120
     static let snapThreshold: CGFloat = 8
@@ -42,7 +107,7 @@ enum ScreenshotChrome {
 
 enum AppWindowSize {
     static let settings = CGSize(width: 420, height: 560)
-    static let screenshotSettings = CGSize(width: 420, height: 520)
+    static let screenshotSettings = CGSize(width: 460, height: 640)
     static let list = CGSize(width: 720, height: 500)
     static let search = CGSize(width: 1200, height: 800)
     static let editor = CGSize(width: 800, height: 600)
