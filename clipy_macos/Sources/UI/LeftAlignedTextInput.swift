@@ -54,10 +54,13 @@ struct LeftAlignedTextField: NSViewRepresentable {
 
 struct LeftAlignedTextEditor: NSViewRepresentable {
     @Binding var text: String
-    var onTextChange: (() -> Void)?
+    /// Fired with the latest text after typing settles (debounce) or on blur.
+    /// Not invoked on every keystroke — callers use this for persistence.
+    var onCommit: ((String) -> Void)?
+    var commitDebounce: TimeInterval = 0.5
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onTextChange: onTextChange)
+        Coordinator(text: $text, onCommit: onCommit, commitDebounce: commitDebounce)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -89,29 +92,61 @@ struct LeftAlignedTextEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        context.coordinator.onTextChange = onTextChange
+        context.coordinator.onCommit = onCommit
+        context.coordinator.commitDebounce = commitDebounce
         guard let textView = context.coordinator.textView else { return }
         if textView.string != text {
             textView.string = text
         }
         textView.alignment = .left
+        textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.lineFragmentPadding = 0
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding var text: String
-        var onTextChange: (() -> Void)?
+        var onCommit: ((String) -> Void)?
+        var commitDebounce: TimeInterval
         weak var textView: NSTextView?
+        private var commitWorkItem: DispatchWorkItem?
 
-        init(text: Binding<String>, onTextChange: (() -> Void)?) {
+        init(text: Binding<String>, onCommit: ((String) -> Void)?, commitDebounce: TimeInterval) {
             _text = text
-            self.onTextChange = onTextChange
+            self.onCommit = onCommit
+            self.commitDebounce = commitDebounce
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             text = textView.string
-            onTextChange?()
+            scheduleCommit(textView.string)
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            text = textView.string
+            flushCommit(textView.string)
+        }
+
+        private func scheduleCommit(_ value: String) {
+            commitWorkItem?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                self?.onCommit?(value)
+            }
+            commitWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + commitDebounce, execute: work)
+        }
+
+        func flushCommit(_ value: String) {
+            commitWorkItem?.cancel()
+            commitWorkItem = nil
+            onCommit?(value)
+        }
+
+        deinit {
+            // Pending debounce must not fire after the editor is torn down;
+            // the owning view flushes explicitly on disappear when needed.
+            commitWorkItem?.cancel()
         }
     }
 }

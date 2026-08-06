@@ -1,0 +1,2586 @@
+import Cocoa
+
+enum AnnotationTool: Int, CaseIterable {
+    case pencil          // freeform draw
+    case line            // straight line
+    case arrow           // arrow
+    case rectangle       // outlined rect
+    case filledRectangle // filled rect (opaque/redact)
+    case ellipse         // outlined ellipse
+    case marker          // highlighter (semi-transparent wide)
+    case text            // text annotation
+    case number          // auto-incrementing numbered circle
+    case pixelate        // pixelate/blur region
+    case blur            // gaussian blur region
+    case measure         // pixel ruler / measurement line
+    case loupe           // magnifying glass
+    case select          // select & move existing annotations
+    case translateOverlay // translated text painted over original
+    case crop            // crop image (detached editor only)
+    case colorSampler    // pick color from screen
+    case stamp           // emoji or image stamp
+    case highlight       // spotlight: dims everything outside the drawn rect
+}
+
+enum LineStyle: Int, CaseIterable {
+    case solid = 0
+    case dashed = 1
+    case dotted = 2
+
+    func apply(to path: NSBezierPath) {
+        switch self {
+        case .solid: break
+        case .dashed:
+            let pattern: [CGFloat] = [path.lineWidth * 3, path.lineWidth * 2]
+            path.setLineDash(pattern, count: 2, phase: 0)
+        case .dotted:
+            // Zero-length dash + round cap = perfect circles
+            path.lineCapStyle = .round
+            let gap = max(path.lineWidth * 2, 6)
+            let pattern: [CGFloat] = [0, gap]
+            path.setLineDash(pattern, count: 2, phase: 0)
+        }
+    }
+
+    /// Apply with evenly-spaced segments adjusted to fit a known path length.
+    func applyFitted(to path: NSBezierPath, pathLength: CGFloat) {
+        guard pathLength > 0 else { apply(to: path); return }
+        switch self {
+        case .solid: break
+        case .dashed:
+            let dashLen = path.lineWidth * 3
+            let gapLen = path.lineWidth * 2
+            let cycle = dashLen + gapLen
+            let count = max(1, round(pathLength / cycle))
+            let adjustedCycle = pathLength / count
+            let ratio = dashLen / cycle
+            let adjDash = adjustedCycle * ratio
+            let adjGap = adjustedCycle * (1 - ratio)
+            let pattern: [CGFloat] = [adjDash, adjGap]
+            // Center dashes on the path start so the pattern wraps symmetrically
+            path.setLineDash(pattern, count: 2, phase: adjDash / 2)
+        case .dotted:
+            path.lineCapStyle = .round
+            let gap = max(path.lineWidth * 2, 6)
+            let count = max(1, round(pathLength / gap))
+            let adjustedGap = pathLength / count
+            let pattern: [CGFloat] = [0, adjustedGap]
+            // Offset by half a gap so dots are centered on each side, not bunched at the path start
+            path.setLineDash(pattern, count: 2, phase: adjustedGap / 2)
+        }
+    }
+}
+
+enum RectFillStyle: Int, CaseIterable {
+    case stroke = 0         // outline only
+    case strokeAndFill = 1  // outline + semi-transparent fill
+    case fill = 2           // filled only (respects color opacity)
+}
+
+enum NumberFormat: Int, CaseIterable {
+    case decimal = 0    // 1, 2, 3
+    case roman = 1      // I, II, III
+    case alpha = 2      // A, B, C
+    case alphaLower = 3 // a, b, c
+
+    func format(_ number: Int) -> String {
+        switch self {
+        case .decimal: return "\(number)"
+        case .roman: return Self.toRoman(number)
+        case .alpha: return Self.toAlpha(number, uppercase: true)
+        case .alphaLower: return Self.toAlpha(number, uppercase: false)
+        }
+    }
+
+    private static func toRoman(_ n: Int) -> String {
+        let values = [(1000,"M"),(900,"CM"),(500,"D"),(400,"CD"),(100,"C"),(90,"XC"),(50,"L"),(40,"XL"),(10,"X"),(9,"IX"),(5,"V"),(4,"IV"),(1,"I")]
+        var result = ""
+        var remaining = max(1, min(n, 3999))
+        for (value, numeral) in values {
+            while remaining >= value {
+                result += numeral
+                remaining -= value
+            }
+        }
+        return result
+    }
+
+    private static func toAlpha(_ n: Int, uppercase: Bool) -> String {
+        let base = uppercase ? Character("A") : Character("a")
+        let idx = ((max(1, n) - 1) % 26)
+        return String(Character(UnicodeScalar(base.asciiValue! + UInt8(idx))))
+    }
+}
+
+enum CensorMode: Int, CaseIterable {
+    case pixelate = 0
+    case blur = 1
+    case solid = 2
+    case erase = 3
+
+    var label: String {
+        switch self {
+        case .pixelate: return "Pixelate"
+        case .blur: return "Blur"
+        case .solid: return "Solid"
+        case .erase: return "Erase"
+        }
+    }
+}
+
+enum ArrowStyle: Int, CaseIterable {
+    case single = 0     // arrowhead at end only
+    case thick = 1      // solid filled banner arrow shape
+    case double = 2     // arrowheads at both ends
+    case open = 3       // open/unfilled chevron arrowhead
+    case tail = 4       // filled arrowhead at end + circle at start
+    case sketchy = 5    // hand-drawn wobbly shaft with open chevron head
+}
+
+class Annotation {
+    let tool: AnnotationTool
+    var startPoint: NSPoint
+    var endPoint: NSPoint
+    var color: NSColor
+    var strokeWidth: CGFloat
+    var text: String?
+    var attributedText: NSAttributedString?  // rich text (overrides text + style flags)
+    var number: Int?
+    var numberFormat: NumberFormat = .decimal
+    var points: [NSPoint]?
+    var pressures: [CGFloat]?  // per-point pressure (parallel to points), nil = uniform width
+    // Shared reference to the canvas screenshot (never a copy). Pixelate/blur
+    // keep it past the first bake on purpose: moving or resizing the annotation
+    // clears bakedBlurNSImage and re-bakes from this image.
+    var sourceImage: NSImage?
+    var sourceImageBounds: NSRect = .zero  // the bounds the image was drawn into
+    var bakedBlurNSImage: NSImage?    // baked result for pixelate/blur (NSImage avoids CGImage flip issues)
+    var outlineGlowImage: NSImage?   // cached selection outline glow (invalidated on move/change)
+    var outlineGlowRect: NSRect = .zero  // the rect the cached glow covers
+    var textImage: NSImage?   // snapshot of the NSTextView at commit time — drawn as-is, no coord math
+    var textDrawRect: NSRect = .zero  // where to draw textImage in OverlayView coords
+    var fontSize: CGFloat = 20
+    var isBold: Bool = false
+    var isItalic: Bool = false
+    var groupID: UUID?  // for batch undo (e.g. auto-redact)
+    var isUnderline: Bool = false
+    var isStrikethrough: Bool = false
+    var rotation: CGFloat = 0         // rotation angle in radians
+    /// For .highlight: opacity of the dim applied OUTSIDE the highlighted rect
+    /// (0 = no dimming, 1 = fully black). The highlighted region itself stays
+    /// bright. The dim is rendered globally (union of all highlight rects), not
+    /// baked per-annotation.
+    var dimOpacity: CGFloat = 0.55
+
+    var supportsRotation: Bool {
+        switch tool {
+        case .rectangle, .filledRectangle, .ellipse, .stamp, .text, .number:
+            return true
+        default:
+            return false
+        }
+    }
+    var controlPoint: NSPoint? = nil  // optional bend point for line/arrow (legacy single bend)
+    /// Ordered waypoints for multi-anchor lines/arrows: [start, anchor1, anchor2, ..., end].
+    /// When set, overrides startPoint/endPoint/controlPoint for rendering.
+    var anchorPoints: [NSPoint]?
+
+    /// Returns the full ordered path: anchorPoints if set, otherwise [start, end].
+    /// Legacy controlPoint is NOT included — it uses the original bezier rendering.
+    var waypoints: [NSPoint] {
+        if let anchors = anchorPoints, anchors.count >= 2 {
+            return anchors
+        }
+        return [startPoint, endPoint]
+    }
+
+    /// Whether this annotation uses multi-anchor points (vs legacy single bend).
+    var hasMultiAnchor: Bool { anchorPoints != nil && (anchorPoints?.count ?? 0) >= 3 }
+
+    var isRounded: Bool = false       // legacy — kept for compat, see rectCornerRadius
+    var rectCornerRadius: CGFloat = 0 // 0..30, actual corner radius for rect tools
+    var lineStyle: LineStyle = .solid // line/arrow/rect/ellipse stroke style
+    var arrowStyle: ArrowStyle = .single // arrow head style
+    var arrowReversed: Bool = false      // head at start instead of end
+    var rectFillStyle: RectFillStyle = .stroke // rectangle fill mode
+    var stampImage: NSImage?          // rendered emoji or loaded picture for stamp tool
+    /// True when the stamp is a full capture added via "Add Capture" in the editor
+    /// (as opposed to an emoji/image placed with the stamp tool). Capture stamps
+    /// don't update the remembered default stamp size when resized.
+    var isCaptureStamp: Bool = false
+    var measureInPoints: Bool = false  // true = show pt, false = show px
+    var censorMode: CensorMode = .pixelate
+    var textBgColor: NSColor?         // background pill color (nil = no background)
+    var textOutlineColor: NSColor?    // text outline/stroke color (nil = no outline)
+    var textGlyphStrokeColor: NSColor? // per-glyph stroke color drawn around each character (nil = none)
+    var textAlignment: NSTextAlignment = .left // text alignment within the box
+    var fontFamilyName: String?       // font family for text (nil = system default)
+    var outlineColor: NSColor?        // shape/arrow/line outline color (nil = no outline)
+    /// Stable per-annotation seed for deterministic procedural variation
+    /// (e.g. the sketchy arrow style's wobble offsets). Seeded on creation,
+    /// preserved across clone/codable so the same arrow renders identically
+    /// across redraws and reloads.
+    var randomSeed: UInt32 = UInt32.random(in: 1...UInt32.max)
+    /// Magnification factor for loupe annotations.
+    var loupeMagnification: CGFloat = 2.0
+    /// Rooted-magnifier source circle (#197). When non-nil, the loupe is a
+    /// two-circle magnifier: this rect is the SOURCE spot that's sampled, and the
+    /// annotation's bounding box (startPoint/endPoint) is the LENS circle that
+    /// shows the magnified view. The two are connected by a line. nil = legacy
+    /// single-circle loupe that magnifies the region under itself.
+    var loupeSourceRect: NSRect?
+    /// When true, the loupe ring (and connecting line) use `outlineColor` instead
+    /// of the default gray gradient ring.
+    var loupeOutlineEnabled: Bool = false
+
+    init(tool: AnnotationTool, startPoint: NSPoint, endPoint: NSPoint, color: NSColor, strokeWidth: CGFloat) {
+        self.tool = tool
+        self.startPoint = startPoint
+        self.endPoint = endPoint
+        self.color = color
+        self.strokeWidth = strokeWidth
+    }
+
+    // NOTE: When adding new properties, also update CodableAnnotation in AnnotationCodable.swift
+    // (toCodable + fromCodable) so they are preserved in editable history.
+    func clone() -> Annotation {
+        let c = Annotation(tool: tool, startPoint: startPoint, endPoint: endPoint, color: color, strokeWidth: strokeWidth)
+        c.text = text
+        c.attributedText = attributedText
+        c.number = number
+        c.numberFormat = numberFormat
+        c.points = points
+        c.pressures = pressures
+        c.bakedBlurNSImage = bakedBlurNSImage
+        c.textImage = textImage
+        c.textDrawRect = textDrawRect
+        c.fontSize = fontSize
+        c.isBold = isBold
+        c.isItalic = isItalic
+        c.groupID = groupID
+        c.isUnderline = isUnderline
+        c.isStrikethrough = isStrikethrough
+        c.rotation = rotation
+        c.controlPoint = controlPoint
+        c.anchorPoints = anchorPoints
+        c.isRounded = isRounded
+        c.rectCornerRadius = rectCornerRadius
+        c.lineStyle = lineStyle
+        c.arrowStyle = arrowStyle
+        c.arrowReversed = arrowReversed
+        c.rectFillStyle = rectFillStyle
+        c.stampImage = stampImage
+        c.isCaptureStamp = isCaptureStamp
+        c.measureInPoints = measureInPoints
+        c.censorMode = censorMode
+        c.textBgColor = textBgColor
+        c.textOutlineColor = textOutlineColor
+        c.textGlyphStrokeColor = textGlyphStrokeColor
+        c.textAlignment = textAlignment
+        c.fontFamilyName = fontFamilyName
+        c.outlineColor = outlineColor
+        c.randomSeed = randomSeed
+        c.loupeMagnification = loupeMagnification
+        c.loupeSourceRect = loupeSourceRect
+        c.loupeOutlineEnabled = loupeOutlineEnabled
+        c.dimOpacity = dimOpacity
+        return c
+    }
+
+    /// Copy all visual/style properties from another annotation (for undo/redo of property edits).
+    func copyProperties(from src: Annotation) {
+        color = src.color
+        strokeWidth = src.strokeWidth
+        lineStyle = src.lineStyle
+        arrowStyle = src.arrowStyle
+        arrowReversed = src.arrowReversed
+        rectFillStyle = src.rectFillStyle
+        rectCornerRadius = src.rectCornerRadius
+        fontSize = src.fontSize
+        isBold = src.isBold
+        isItalic = src.isItalic
+        isUnderline = src.isUnderline
+        isStrikethrough = src.isStrikethrough
+        textBgColor = src.textBgColor
+        textOutlineColor = src.textOutlineColor
+        textGlyphStrokeColor = src.textGlyphStrokeColor
+        textAlignment = src.textAlignment
+        fontFamilyName = src.fontFamilyName
+        numberFormat = src.numberFormat
+        loupeMagnification = src.loupeMagnification
+        outlineColor = src.outlineColor
+        loupeOutlineEnabled = src.loupeOutlineEnabled
+        // Restore geometry/position too, so this can undo a move/resize as well as
+        // a style edit. For a pure style change the source geometry is identical,
+        // so this is a no-op there.
+        startPoint = src.startPoint
+        endPoint = src.endPoint
+        points = src.points
+        controlPoint = src.controlPoint
+        anchorPoints = src.anchorPoints
+        textDrawRect = src.textDrawRect
+        rotation = src.rotation
+        if tool == .loupe {
+            loupeSourceRect = src.loupeSourceRect
+            bakedBlurNSImage = nil
+            bakeLoupe()
+        } else if tool == .pixelate || tool == .blur {
+            // Position changed — the baked censor must re-render at the new spot.
+            bakedBlurNSImage = nil
+            bakePixelate()
+        }
+        measureInPoints = src.measureInPoints
+        censorMode = src.censorMode
+        dimOpacity = src.dimOpacity
+    }
+
+    var boundingRect: NSRect {
+        if tool == .number {
+            let radius = 8 + strokeWidth * 3
+            let circleRect = NSRect(
+                x: startPoint.x - radius, y: startPoint.y - radius,
+                width: radius * 2, height: radius * 2)
+            let tipRect = NSRect(x: endPoint.x, y: endPoint.y, width: 0, height: 0)
+                .insetBy(dx: -max(2, strokeWidth), dy: -max(2, strokeWidth))
+            return circleRect.union(tipRect)
+        }
+
+        var minX = min(startPoint.x, endPoint.x)
+        var minY = min(startPoint.y, endPoint.y)
+        var maxX = max(startPoint.x, endPoint.x)
+        var maxY = max(startPoint.y, endPoint.y)
+        if let anchors = anchorPoints {
+            for p in anchors {
+                minX = min(minX, p.x); minY = min(minY, p.y)
+                maxX = max(maxX, p.x); maxY = max(maxY, p.y)
+            }
+        }
+        if let cp = controlPoint {
+            minX = min(minX, cp.x); minY = min(minY, cp.y)
+            maxX = max(maxX, cp.x); maxY = max(maxY, cp.y)
+        }
+        return NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    /// Whether this annotation type can be moved
+    var isMovable: Bool {
+        switch tool {
+        case .select, .translateOverlay:
+            return false
+        default:
+            return true
+        }
+    }
+
+    /// Hit-test: returns true if the point is close enough to this annotation
+    func hitTest(point: NSPoint, threshold: CGFloat = 8) -> Bool {
+        // For rotated annotations, un-rotate the test point around the annotation's center
+        var point = point
+        if rotation != 0 && supportsRotation {
+            let center = NSPoint(x: boundingRect.midX, y: boundingRect.midY)
+            let dx = point.x - center.x
+            let dy = point.y - center.y
+            let cosR = cos(-rotation)
+            let sinR = sin(-rotation)
+            point = NSPoint(x: center.x + dx * cosR - dy * sinR,
+                            y: center.y + dx * sinR + dy * cosR)
+        }
+        switch tool {
+        case .pencil, .marker:
+            guard let points = points else { return false }
+            let strokeRadius = (tool == .marker ? strokeWidth * 6 : strokeWidth) / 2
+            let effectiveThreshold = max(threshold, strokeRadius)
+            for p in points {
+                if hypot(p.x - point.x, p.y - point.y) < effectiveThreshold { return true }
+            }
+            return false
+        case .line, .measure:
+            if hasMultiAnchor {
+                return distanceToPolyline(point: point, waypoints: waypoints) < threshold
+            }
+            if let cp = controlPoint {
+                return distanceToQuadCurve(point: point, from: startPoint, control: cp, to: endPoint) < threshold
+            }
+            return distanceToLineSegment(point: point, from: startPoint, to: endPoint) < threshold
+        case .arrow:
+            if arrowStyle == .thick {
+                let totalLen = hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y)
+                let sizeScale = min(1.0, max(0.2, totalLen / 120))
+                // Match the actual drawn shape width: shaft is strokeWidth*1.5, head is strokeWidth*3
+                let shaftHalf = max(4, strokeWidth * 1.5) * sizeScale
+                let hitThreshold = max(threshold, shaftHalf + 4)
+                if hasMultiAnchor {
+                    return distanceToPolyline(point: point, waypoints: waypoints) < hitThreshold
+                }
+                if let cp = controlPoint {
+                    return distanceToQuadCurve(point: point, from: startPoint, control: cp, to: endPoint) < hitThreshold
+                }
+                return distanceToLineSegment(point: point, from: startPoint, to: endPoint) < hitThreshold
+            }
+            if hasMultiAnchor {
+                return distanceToPolyline(point: point, waypoints: waypoints) < threshold
+            }
+            if let cp = controlPoint {
+                return distanceToQuadCurve(point: point, from: startPoint, control: cp, to: endPoint) < threshold
+            }
+            return distanceToLineSegment(point: point, from: startPoint, to: endPoint) < threshold
+        case .rectangle, .filledRectangle:
+            let rect = boundingRect
+            if tool == .filledRectangle || rectFillStyle == .fill || rectFillStyle == .strokeAndFill {
+                return rect.insetBy(dx: -threshold, dy: -threshold).contains(point)
+            }
+            // For outlined rect, check proximity to edges
+            let outer = rect.insetBy(dx: -threshold, dy: -threshold)
+            let inner = rect.insetBy(dx: threshold, dy: threshold)
+            return outer.contains(point) && (inner.width < 0 || inner.height < 0 || !inner.contains(point))
+        case .ellipse:
+            let rect = boundingRect
+            guard rect.width > 0, rect.height > 0 else { return false }
+            let cx = rect.midX, cy = rect.midY
+            let rx = rect.width / 2, ry = rect.height / 2
+            let nx = (point.x - cx) / rx, ny = (point.y - cy) / ry
+            let d = nx * nx + ny * ny
+            if rectFillStyle == .fill || rectFillStyle == .strokeAndFill {
+                return d <= 1.0 + (threshold / min(rx, ry))
+            }
+            let rNorm = threshold / min(rx, ry)
+            return abs(d - 1.0) < rNorm * 2
+        case .loupe:
+            let rect = boundingRect
+            guard rect.width > 0, rect.height > 0 else { return false }
+            let cx = rect.midX, cy = rect.midY
+            let rx = rect.width / 2, ry = rect.height / 2
+            let nx = (point.x - cx) / rx, ny = (point.y - cy) / ry
+            let d = nx * nx + ny * ny
+            let rNorm = threshold / min(rx, ry)
+            if d <= (1.0 + rNorm) * (1.0 + rNorm) { return true }
+            // Two-circle loupe: also hit the rooted source circle.
+            if let src = loupeSourceRect, src.width > 0, src.height > 0 {
+                let sr = min(src.width, src.height) / 2 + threshold
+                if hypot(point.x - src.midX, point.y - src.midY) <= sr { return true }
+            }
+            return false
+        case .text:
+            return textDrawRect.insetBy(dx: -threshold, dy: -threshold).contains(point)
+        case .number:
+            let radius = 8 + strokeWidth * 3 + threshold
+            if hypot(point.x - startPoint.x, point.y - startPoint.y) < radius {
+                return true
+            }
+            let pointerDistance = hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y)
+            guard pointerDistance > 4 else { return false }
+            let pointerThreshold = max(threshold, strokeWidth * 2)
+            return distanceToLineSegment(point: point, from: startPoint, to: endPoint) < pointerThreshold
+        case .stamp, .pixelate, .blur, .highlight:
+            return boundingRect.insetBy(dx: -threshold, dy: -threshold).contains(point)
+        default:
+            return false
+        }
+    }
+
+    /// Move this annotation by a delta
+    func move(dx: CGFloat, dy: CGFloat) {
+        startPoint.x += dx
+        startPoint.y += dy
+        endPoint.x += dx
+        endPoint.y += dy
+        if textDrawRect != .zero {
+            textDrawRect.origin.x += dx
+            textDrawRect.origin.y += dy
+        }
+        if var pts = points {
+            for i in 0..<pts.count {
+                pts[i].x += dx
+                pts[i].y += dy
+            }
+            points = pts
+        }
+        
+        if var cp = controlPoint {
+            cp.x += dx; cp.y += dy
+            controlPoint = cp
+        }
+        if var anchors = anchorPoints {
+            for i in 0..<anchors.count {
+                anchors[i].x += dx
+                anchors[i].y += dy
+            }
+            anchorPoints = anchors
+        }
+        // NOTE: loupeSourceRect is intentionally NOT moved here. The standard
+        // annotation drag moves the LENS only (the source stays rooted, #197).
+        // Moving the source is handled separately (drag the small source circle).
+        // Clear baked image so it re-renders at the new position
+        if tool == .loupe || tool == .pixelate {
+            bakedBlurNSImage = nil
+        }
+        // Shift the cached glow rect instead of invalidating — the glow shape
+        // doesn't change during a move, only its position.
+        if outlineGlowImage != nil {
+            outlineGlowRect.origin.x += dx
+            outlineGlowRect.origin.y += dy
+        }
+    }
+
+    // MARK: - Geometry helpers
+
+    /// Approximate the arc length of a cubic bezier by sampling.
+    static func approxBezierLength(from p0: NSPoint, cp1: NSPoint, cp2: NSPoint, to p3: NSPoint, steps: Int = 30) -> CGFloat {
+        var length: CGFloat = 0
+        var prev = p0
+        for i in 1...steps {
+            let t = CGFloat(i) / CGFloat(steps)
+            let u = 1 - t
+            let x = u*u*u*p0.x + 3*u*u*t*cp1.x + 3*u*t*t*cp2.x + t*t*t*p3.x
+            let y = u*u*u*p0.y + 3*u*u*t*cp1.y + 3*u*t*t*cp2.y + t*t*t*p3.y
+            length += hypot(x - prev.x, y - prev.y)
+            prev = NSPoint(x: x, y: y)
+        }
+        return length
+    }
+
+    private func distanceToQuadCurve(point: NSPoint, from a: NSPoint, control c: NSPoint, to b: NSPoint) -> CGFloat {
+        // The curve is drawn as a cubic bezier with cp1 == cp2 == c (NSBezierPath.curve),
+        // so sample the cubic formula to match the actual rendered path.
+        let steps = 40
+        var minDist = CGFloat.greatestFiniteMagnitude
+        for i in 0...steps {
+            let t = CGFloat(i) / CGFloat(steps)
+            let u = 1 - t
+            let px = u*u*u*a.x + 3*u*u*t*c.x + 3*u*t*t*c.x + t*t*t*b.x
+            let py = u*u*u*a.y + 3*u*u*t*c.y + 3*u*t*t*c.y + t*t*t*b.y
+            let d = hypot(point.x - px, point.y - py)
+            if d < minDist { minDist = d }
+        }
+        return minDist
+    }
+
+    private func distanceToLineSegment(point: NSPoint, from a: NSPoint, to b: NSPoint) -> CGFloat {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let lenSq = dx * dx + dy * dy
+        if lenSq < 0.001 { return hypot(point.x - a.x, point.y - a.y) }
+        var t = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lenSq
+        t = max(0, min(1, t))
+        let proj = NSPoint(x: a.x + t * dx, y: a.y + t * dy)
+        return hypot(point.x - proj.x, point.y - proj.y)
+    }
+
+    /// Minimum distance from a point to the smooth curve through waypoints.
+    private func distanceToPolyline(point: NSPoint, waypoints pts: [NSPoint]) -> CGFloat {
+        guard pts.count >= 2 else { return .greatestFiniteMagnitude }
+        if pts.count == 2 {
+            return distanceToLineSegment(point: point, from: pts[0], to: pts[1])
+        }
+        // Sample the Catmull-Rom spline for distance check
+        let steps = pts.count * 15
+        var minDist = CGFloat.greatestFiniteMagnitude
+        var prev = pts[0]
+        for s in 1...steps {
+            let t = CGFloat(s) / CGFloat(steps)
+            let totalSegments = CGFloat(pts.count - 1)
+            let segF = t * totalSegments
+            let seg = min(Int(segF), pts.count - 2)
+            let localT = segF - CGFloat(seg)
+
+            let p0 = seg > 0 ? pts[seg - 1] : pts[seg]
+            let p1 = pts[seg]
+            let p2 = pts[seg + 1]
+            let p3 = seg + 2 < pts.count ? pts[seg + 2] : pts[seg + 1]
+
+            let cp1 = NSPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
+            let cp2 = NSPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
+
+            let u = 1 - localT
+            let px = u*u*u*p1.x + 3*u*u*localT*cp1.x + 3*u*localT*localT*cp2.x + localT*localT*localT*p2.x
+            let py = u*u*u*p1.y + 3*u*u*localT*cp1.y + 3*u*localT*localT*cp2.y + localT*localT*localT*p2.y
+            let cur = NSPoint(x: px, y: py)
+
+            let d = distanceToLineSegment(point: point, from: prev, to: cur)
+            if d < minDist { minDist = d }
+            prev = cur
+        }
+        return minDist
+    }
+
+    func draw(in context: NSGraphicsContext) {
+        NSGraphicsContext.current = context
+
+        // Apply rotation around annotation center
+        if rotation != 0 && supportsRotation {
+            let center = NSPoint(x: boundingRect.midX, y: boundingRect.midY)
+            let xform = NSAffineTransform()
+            xform.translateX(by: center.x, yBy: center.y)
+            xform.rotate(byRadians: rotation)
+            xform.translateX(by: -center.x, yBy: -center.y)
+            context.cgContext.saveGState()
+            xform.concat()
+        }
+
+        switch tool {
+        case .pencil:
+            drawFreeform(alpha: color.alphaComponent, width: strokeWidth)
+        case .line:
+            drawStraightLine()
+        case .arrow:
+            drawArrow()
+        case .rectangle:
+            drawRectangle()
+        case .filledRectangle:
+            drawRectangle(forceFilled: true)
+        case .ellipse:
+            drawEllipse()
+        case .marker:
+            drawFreeform(alpha: 0.35, width: strokeWidth * 6)
+        case .text:
+            drawText()
+        case .number:
+            drawNumber()
+        case .pixelate:
+            drawCensor(in: context)
+        case .blur:
+            // Legacy: existing blur annotations from before the merge
+            censorMode = .blur
+            drawCensor(in: context)
+        case .measure:
+            drawMeasure()
+        case .loupe:
+            drawLoupe(in: context)
+        case .select:
+            break  // not a drawable tool
+        case .crop:
+            break  // handled separately in OverlayView
+        case .translateOverlay:
+            drawTranslateOverlay()
+        case .colorSampler:
+            break  // preview-only tool, no annotation drawn
+        case .stamp:
+            drawStamp()
+        case .highlight:
+            drawHighlight()
+        }
+
+        if rotation != 0 && supportsRotation {
+            context.cgContext.restoreGState()
+        }
+    }
+
+    // MARK: - Drawing methods
+
+    private func drawFreeform(alpha: CGFloat, width: CGFloat) {
+        guard let points = points, !points.isEmpty else { return }
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+
+        // Single point: draw a filled circle (dot)
+        if points.count == 1 {
+            let p = points[0]
+            let r = width / 2
+            ctx.setAlpha(alpha)
+            color.withAlphaComponent(1.0).setFill()
+            ctx.fillEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: width, height: width))
+            ctx.setAlpha(1.0)
+            return
+        }
+
+        // For dotted freeform, place dots at evenly-spaced arc-length positions
+        // to avoid uneven spacing caused by segment boundaries in the polyline.
+        if lineStyle == .dotted {
+            ctx.setAlpha(alpha)
+            ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+            color.withAlphaComponent(1.0).setFill()
+
+            // Compute cumulative arc lengths
+            var cumLengths: [CGFloat] = [0]
+            for i in 1..<points.count {
+                cumLengths.append(cumLengths[i - 1] + hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y))
+            }
+            let totalLength = cumLengths.last!
+            guard totalLength > 0 else {
+                ctx.endTransparencyLayer()
+                ctx.setAlpha(1.0)
+                return
+            }
+
+            let gap = max(width * 2, 6)
+            let count = max(1, round(totalLength / gap))
+            let spacing = totalLength / count
+            let dotRadius = width / 2
+
+            var segIdx = 0
+            var dist: CGFloat = 0
+            while dist <= totalLength + 0.01 {
+                // Find the segment containing this distance
+                while segIdx < points.count - 2 && cumLengths[segIdx + 1] < dist {
+                    segIdx += 1
+                }
+                let segStart = cumLengths[segIdx]
+                let segLen = cumLengths[segIdx + 1] - segStart
+                let t: CGFloat = segLen > 0 ? (dist - segStart) / segLen : 0
+                let x = points[segIdx].x + t * (points[segIdx + 1].x - points[segIdx].x)
+                let y = points[segIdx].y + t * (points[segIdx + 1].y - points[segIdx].y)
+                let dotRect = NSRect(x: x - dotRadius, y: y - dotRadius, width: dotRadius * 2, height: dotRadius * 2)
+                NSBezierPath(ovalIn: dotRect).fill()
+                dist += spacing
+            }
+
+            ctx.endTransparencyLayer()
+            ctx.setAlpha(1.0)
+            return
+        }
+
+        // Variable-width stroke (pressure sensitive)
+        if let pressures = pressures, pressures.count == points.count, lineStyle == .solid {
+            ctx.setAlpha(alpha)
+            ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+            color.withAlphaComponent(1.0).setFill()
+
+            // Map raw pressure (0–1) to a usable width range:
+            // - Minimum 20% of stroke width even at lightest touch
+            // - Power curve (0.6) compresses the range so light/medium pressure
+            //   differences are subtle, heavy pressure stands out
+            let minFraction: CGFloat = 0.2
+            func pressureWidth(_ p: CGFloat) -> CGFloat {
+                let mapped = minFraction + pow(min(max(p, 0), 1), 0.6) * (1.0 - minFraction)
+                return max(width * mapped, 0.5)
+            }
+
+            // Draw filled circles at each point + connecting quads for smooth width transitions
+            for i in 0..<points.count {
+                let r = pressureWidth(pressures[i]) / 2
+                ctx.fillEllipse(in: CGRect(x: points[i].x - r, y: points[i].y - r, width: r * 2, height: r * 2))
+
+                if i > 0 {
+                    let p0 = points[i - 1]
+                    let p1 = points[i]
+                    let r0 = pressureWidth(pressures[i - 1]) / 2
+                    let r1 = pressureWidth(pressures[i]) / 2
+
+                    let dx = p1.x - p0.x
+                    let dy = p1.y - p0.y
+                    let len = hypot(dx, dy)
+                    guard len > 0.1 else { continue }
+                    // Normal perpendicular to the line segment
+                    let nx = -dy / len
+                    let ny = dx / len
+
+                    // Build a quad connecting the two circles
+                    let quad = NSBezierPath()
+                    quad.move(to: NSPoint(x: p0.x + nx * r0, y: p0.y + ny * r0))
+                    quad.line(to: NSPoint(x: p1.x + nx * r1, y: p1.y + ny * r1))
+                    quad.line(to: NSPoint(x: p1.x - nx * r1, y: p1.y - ny * r1))
+                    quad.line(to: NSPoint(x: p0.x - nx * r0, y: p0.y - ny * r0))
+                    quad.close()
+                    quad.fill()
+                }
+            }
+
+            ctx.endTransparencyLayer()
+            ctx.setAlpha(1.0)
+            return
+        }
+
+        // Use a transparency layer so self-overlapping segments don't compound alpha
+        ctx.setAlpha(alpha)
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        let path = NSBezierPath()
+        path.lineWidth = width
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        lineStyle.apply(to: path)
+        color.withAlphaComponent(1.0).setStroke()
+        path.move(to: points[0])
+        for i in 1..<points.count {
+            path.line(to: points[i])
+        }
+        path.stroke()
+        ctx.endTransparencyLayer()
+        ctx.setAlpha(1.0)
+    }
+
+    /// Build a smooth Catmull-Rom spline path through the given points.
+    /// For 2 points: straight line. For 3+: smooth curves through all points.
+    private static func smoothPath(through pts: [NSPoint]) -> NSBezierPath {
+        let path = NSBezierPath()
+        guard pts.count >= 2 else { return path }
+        path.move(to: pts[0])
+        if pts.count == 2 {
+            path.line(to: pts[1])
+            return path
+        }
+        // Catmull-Rom → cubic Bezier conversion
+        // For each segment i→i+1, compute control points from surrounding points
+        for i in 0..<(pts.count - 1) {
+            let p0 = i > 0 ? pts[i - 1] : pts[i]
+            let p1 = pts[i]
+            let p2 = pts[i + 1]
+            let p3 = i + 2 < pts.count ? pts[i + 2] : pts[i + 1]
+
+            let cp1 = NSPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
+            let cp2 = NSPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
+            path.curve(to: p2, controlPoint1: cp1, controlPoint2: cp2)
+        }
+        return path
+    }
+
+    /// Approximate length of a smooth path through waypoints.
+    private static func smoothPathLength(_ pts: [NSPoint]) -> CGFloat {
+        guard pts.count >= 2 else { return 0 }
+        if pts.count == 2 {
+            return hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
+        }
+        // Sample the Catmull-Rom spline
+        let steps = pts.count * 20
+        var length: CGFloat = 0
+        var prev = pts[0]
+        for s in 1...steps {
+            let t = CGFloat(s) / CGFloat(steps)
+            let totalSegments = CGFloat(pts.count - 1)
+            let segF = t * totalSegments
+            let seg = min(Int(segF), pts.count - 2)
+            let localT = segF - CGFloat(seg)
+
+            let p0 = seg > 0 ? pts[seg - 1] : pts[seg]
+            let p1 = pts[seg]
+            let p2 = pts[seg + 1]
+            let p3 = seg + 2 < pts.count ? pts[seg + 2] : pts[seg + 1]
+
+            let cp1 = NSPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
+            let cp2 = NSPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
+
+            let u = 1 - localT
+            let px = u*u*u*p1.x + 3*u*u*localT*cp1.x + 3*u*localT*localT*cp2.x + localT*localT*localT*p2.x
+            let py = u*u*u*p1.y + 3*u*u*localT*cp1.y + 3*u*localT*localT*cp2.y + localT*localT*localT*p2.y
+            let cur = NSPoint(x: px, y: py)
+            length += hypot(cur.x - prev.x, cur.y - prev.y)
+            prev = cur
+        }
+        return length
+    }
+
+    private func drawStraightLine() {
+        // Multi-anchor: smooth Catmull-Rom spline
+        if hasMultiAnchor {
+            let pts = waypoints
+            let path = Self.smoothPath(through: pts)
+            path.lineWidth = strokeWidth
+            path.lineCapStyle = .round
+            if lineStyle != .solid {
+                lineStyle.applyFitted(to: path, pathLength: Self.smoothPathLength(pts))
+            }
+            // Outline: same path stroked wider first, then normal on top
+            if let oc = outlineColor {
+                path.lineWidth = strokeWidth + 6
+                oc.setStroke(); path.stroke()
+                path.lineWidth = strokeWidth
+            }
+            color.setStroke(); path.stroke()
+            return
+        }
+
+        // Legacy: straight line or single bezier bend
+        let path = NSBezierPath()
+        path.lineWidth = strokeWidth
+        path.lineCapStyle = .round
+        if lineStyle != .solid {
+            let length: CGFloat
+            if let cp = controlPoint {
+                length = Annotation.approxBezierLength(from: startPoint, cp1: cp, cp2: cp, to: endPoint)
+            } else {
+                length = hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y)
+            }
+            lineStyle.applyFitted(to: path, pathLength: length)
+        }
+        path.move(to: startPoint)
+        if let cp = controlPoint {
+            path.curve(to: endPoint, controlPoint1: cp, controlPoint2: cp)
+        } else {
+            path.line(to: endPoint)
+        }
+        // Outline: same path stroked wider first, then normal on top
+        if let oc = outlineColor {
+            path.lineWidth = strokeWidth + 6
+            oc.setStroke(); path.stroke()
+            path.lineWidth = strokeWidth
+        }
+        color.setStroke(); path.stroke()
+    }
+
+    private func drawArrow() {
+        // Thick style is a completely different shape — handle separately
+        if arrowStyle == .thick {
+            drawThickArrow()
+            return
+        }
+        // Sketchy style is hand-drawn — also a different shape pipeline
+        if arrowStyle == .sketchy {
+            drawSketchyArrow()
+            return
+        }
+
+        let pts = arrowReversed ? waypoints.reversed() : waypoints
+        guard pts.count >= 2 else { return }
+        let firstPt = pts.first!
+        let lastPt = pts.last!
+
+        let fullArrowLen: CGFloat = max(14, strokeWidth * 5)
+        let totalLen = hypot(lastPt.x - firstPt.x, lastPt.y - firstPt.y)
+        let maxHead = totalLen * 0.45
+        let arrowLen: CGFloat = min(fullArrowLen, max(4, maxHead))
+        let arrowAngle: CGFloat = .pi / 6
+
+        // End arrowhead angle
+        let endAngle: CGFloat
+        if hasMultiAnchor {
+            let preLast = pts.count >= 2 ? pts[pts.count - 2] : firstPt
+            endAngle = atan2(lastPt.y - preLast.y, lastPt.x - preLast.x)
+        } else if let cp = controlPoint {
+            endAngle = atan2(lastPt.y - cp.y, lastPt.x - cp.x)
+        } else {
+            endAngle = atan2(lastPt.y - firstPt.y, lastPt.x - firstPt.x)
+        }
+        let ep1 = NSPoint(x: lastPt.x - arrowLen * cos(endAngle - arrowAngle),
+                           y: lastPt.y - arrowLen * sin(endAngle - arrowAngle))
+        let ep2 = NSPoint(x: lastPt.x - arrowLen * cos(endAngle + arrowAngle),
+                           y: lastPt.y - arrowLen * sin(endAngle + arrowAngle))
+        let endBase = NSPoint(x: (ep1.x + ep2.x) / 2, y: (ep1.y + ep2.y) / 2)
+
+        // Start arrowhead geometry (for double style)
+        var startBase = firstPt
+        var sp1 = firstPt, sp2 = firstPt
+        if arrowStyle == .double {
+            let startAngle: CGFloat
+            if hasMultiAnchor {
+                let postFirst = pts.count >= 2 ? pts[1] : lastPt
+                startAngle = atan2(firstPt.y - postFirst.y, firstPt.x - postFirst.x)
+            } else if let cp = controlPoint {
+                startAngle = atan2(firstPt.y - cp.y, firstPt.x - cp.x)
+            } else {
+                startAngle = atan2(firstPt.y - lastPt.y, firstPt.x - lastPt.x)
+            }
+            sp1 = NSPoint(x: firstPt.x - arrowLen * cos(startAngle - arrowAngle),
+                           y: firstPt.y - arrowLen * sin(startAngle - arrowAngle))
+            sp2 = NSPoint(x: firstPt.x - arrowLen * cos(startAngle + arrowAngle),
+                           y: firstPt.y - arrowLen * sin(startAngle + arrowAngle))
+            startBase = NSPoint(x: (sp1.x + sp2.x) / 2, y: (sp1.y + sp2.y) / 2)
+        }
+
+        // Tail circle radius
+        let tailRadius: CGFloat = max(4, strokeWidth * 2)
+        let lineStart = arrowStyle == .double ? startBase : firstPt
+
+        // Draw the line shaft
+        let path: NSBezierPath
+        if hasMultiAnchor {
+            // Multi-anchor: smooth Catmull-Rom spline
+            var shaftPts = pts
+            shaftPts[0] = lineStart
+            shaftPts[shaftPts.count - 1] = endBase
+            path = Self.smoothPath(through: shaftPts)
+        } else {
+            // Legacy: straight or single bezier bend
+            path = NSBezierPath()
+            path.move(to: lineStart)
+            if let cp = controlPoint {
+                path.curve(to: endBase, controlPoint1: cp, controlPoint2: cp)
+            } else {
+                path.line(to: endBase)
+            }
+        }
+        path.lineWidth = strokeWidth
+        path.lineCapStyle = .round
+        if lineStyle != .solid {
+            let length = hasMultiAnchor ? Self.smoothPathLength(pts) :
+                (controlPoint != nil ? Annotation.approxBezierLength(from: lineStart, cp1: controlPoint!, cp2: controlPoint!, to: endBase) :
+                 hypot(endBase.x - lineStart.x, endBase.y - lineStart.y))
+            lineStyle.applyFitted(to: path, pathLength: length)
+        }
+        // Outline: draw wider stroke behind everything
+        let outlineW: CGFloat = 3
+        if let oc = outlineColor {
+            oc.setStroke()
+            oc.setFill()
+            let outlinePath = path.copy() as! NSBezierPath
+            outlinePath.lineWidth = strokeWidth + outlineW * 2
+            outlinePath.lineCapStyle = .round
+            outlinePath.stroke()
+            // Outline arrowheads
+            switch arrowStyle {
+            case .single, .tail:
+                let h = NSBezierPath(); h.move(to: lastPt); h.line(to: ep1); h.line(to: ep2); h.close()
+                h.lineWidth = outlineW * 2; h.lineJoinStyle = .round; h.stroke(); h.fill()
+            case .double:
+                let eh = NSBezierPath(); eh.move(to: lastPt); eh.line(to: ep1); eh.line(to: ep2); eh.close()
+                eh.lineWidth = outlineW * 2; eh.lineJoinStyle = .round; eh.stroke(); eh.fill()
+                let sh = NSBezierPath(); sh.move(to: firstPt); sh.line(to: sp1); sh.line(to: sp2); sh.close()
+                sh.lineWidth = outlineW * 2; sh.lineJoinStyle = .round; sh.stroke(); sh.fill()
+            case .open:
+                let h = NSBezierPath(); h.lineWidth = strokeWidth + outlineW * 2
+                h.lineCapStyle = .round; h.lineJoinStyle = .round
+                h.move(to: ep1); h.line(to: lastPt); h.line(to: ep2); h.stroke()
+            case .thick, .sketchy: break  // handled by early returns above
+            }
+            if arrowStyle == .tail {
+                let cr = NSRect(x: firstPt.x - tailRadius - outlineW, y: firstPt.y - tailRadius - outlineW,
+                                width: (tailRadius + outlineW) * 2, height: (tailRadius + outlineW) * 2)
+                NSBezierPath(ovalIn: cr).fill()
+            }
+        }
+
+        color.setStroke()
+        path.stroke()
+
+        // Draw arrowhead(s)
+        color.setFill()
+        color.setStroke()
+        switch arrowStyle {
+        case .single, .tail:
+            let head = NSBezierPath()
+            head.move(to: lastPt)
+            head.line(to: ep1)
+            head.line(to: ep2)
+            head.close()
+            head.fill()
+        case .double:
+            let endHead = NSBezierPath()
+            endHead.move(to: lastPt)
+            endHead.line(to: ep1)
+            endHead.line(to: ep2)
+            endHead.close()
+            endHead.fill()
+            let startHead = NSBezierPath()
+            startHead.move(to: firstPt)
+            startHead.line(to: sp1)
+            startHead.line(to: sp2)
+            startHead.close()
+            startHead.fill()
+        case .open:
+            let head = NSBezierPath()
+            head.lineWidth = strokeWidth
+            head.lineCapStyle = .round
+            head.lineJoinStyle = .round
+            head.move(to: ep1)
+            head.line(to: lastPt)
+            head.line(to: ep2)
+            head.stroke()
+        case .thick, .sketchy:
+            break // handled by early returns above
+        }
+
+        // Tail: circle at start
+        if arrowStyle == .tail {
+            let circleRect = NSRect(x: firstPt.x - tailRadius, y: firstPt.y - tailRadius,
+                                    width: tailRadius * 2, height: tailRadius * 2)
+            NSBezierPath(ovalIn: circleRect).fill()
+        }
+    }
+
+    private func drawThickArrow() {
+        let pts = arrowReversed ? waypoints.reversed() : waypoints
+        let firstPt = pts.first ?? startPoint
+        let lastPt = pts.last ?? endPoint
+        let totalLen = hasMultiAnchor ? Self.smoothPathLength(pts) : hypot(lastPt.x - firstPt.x, lastPt.y - firstPt.y)
+        guard totalLen > 1 else { return }
+
+        // End angle: direction of the last segment approaching the tip
+        let preLast = pts.count >= 2 ? pts[pts.count - 2] : firstPt
+        let endAngle: CGFloat
+        if hasMultiAnchor {
+            endAngle = atan2(lastPt.y - preLast.y, lastPt.x - preLast.x)
+        } else if let cp = controlPoint {
+            endAngle = atan2(lastPt.y - cp.y, lastPt.x - cp.x)
+        } else {
+            endAngle = atan2(lastPt.y - firstPt.y, lastPt.x - firstPt.x)
+        }
+        let epx = -sin(endAngle), epy = cos(endAngle)
+
+        // Start angle: direction leaving the tail
+        let postFirst = pts.count >= 2 ? pts[1] : lastPt
+        let startAngle: CGFloat
+        if hasMultiAnchor {
+            startAngle = atan2(postFirst.y - firstPt.y, postFirst.x - firstPt.x)
+        } else if let cp = controlPoint {
+            startAngle = atan2(cp.y - firstPt.y, cp.x - firstPt.x)
+        } else {
+            startAngle = endAngle
+        }
+        let spx = -sin(startAngle), spy = cos(startAngle)
+
+        // Sizing — the arrow's cross-section (shaft + head width) should never
+        // exceed the arrow's length. Scale everything down proportionally.
+        let rawTailHalf = max(2, strokeWidth * 0.5)
+        let rawShaftHalf = max(4, strokeWidth * 1.5)
+        let rawHeadHalf = rawShaftHalf * 2.0
+        let maxCrossSection = rawHeadHalf * 2  // full head width
+        let fitScale = min(1.0, totalLen / max(1, maxCrossSection * 1.5))
+        let tailHalf = rawTailHalf * fitScale
+        let shaftHalf = rawShaftHalf * fitScale
+        let headHalf = rawHeadHalf * fitScale
+        let headLen = min(totalLen * 0.35, headHalf * 1.8)
+        let r: CGFloat = min(headLen * 0.22, headHalf * 0.3)  // corner rounding
+
+        // Head base point
+        let headBase = NSPoint(x: lastPt.x - headLen * cos(endAngle),
+                               y: lastPt.y - headLen * sin(endAngle))
+
+        // Sample points along the shaft (tail → headBase), offset perpendicular for taper
+        // More samples for multi-anchor curves to avoid self-intersection at tight bends
+        let steps = hasMultiAnchor ? max(64, pts.count * 32) : 64
+        var leftPts: [NSPoint] = []
+        var rightPts: [NSPoint] = []
+
+        for i in 0...steps {
+            let t = CGFloat(i) / CGFloat(steps)
+            let bx, by, tx, ty: CGFloat
+
+            if hasMultiAnchor {
+                // Sample a modified curve where the last point is headBase
+                var shaftPts = pts
+                shaftPts[shaftPts.count - 1] = headBase
+                let totalSegs = CGFloat(shaftPts.count - 1)
+                let segF = t * totalSegs
+                let seg = min(Int(segF), shaftPts.count - 2)
+                let lt = segF - CGFloat(seg)
+                let p0 = seg > 0 ? shaftPts[seg - 1] : shaftPts[seg]
+                let p1 = shaftPts[seg]
+                let p2 = shaftPts[seg + 1]
+                let p3 = seg + 2 < shaftPts.count ? shaftPts[seg + 2] : shaftPts[seg + 1]
+                let cp1 = NSPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
+                let cp2 = NSPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
+                let u = 1 - lt
+                bx = u*u*u*p1.x + 3*u*u*lt*cp1.x + 3*u*lt*lt*cp2.x + lt*lt*lt*p2.x
+                by = u*u*u*p1.y + 3*u*u*lt*cp1.y + 3*u*lt*lt*cp2.y + lt*lt*lt*p2.y
+                tx = 3*u*u*(cp1.x-p1.x) + 6*u*lt*(cp2.x-cp1.x) + 3*lt*lt*(p2.x-cp2.x)
+                ty = 3*u*u*(cp1.y-p1.y) + 6*u*lt*(cp2.y-cp1.y) + 3*lt*lt*(p2.y-cp2.y)
+            } else if let cp = controlPoint {
+                let mt = 1.0 - t
+                bx = mt * mt * firstPt.x + 2 * mt * t * cp.x + t * t * headBase.x
+                by = mt * mt * firstPt.y + 2 * mt * t * cp.y + t * t * headBase.y
+                tx = 2 * (1 - t) * (cp.x - firstPt.x) + 2 * t * (headBase.x - cp.x)
+                ty = 2 * (1 - t) * (cp.y - firstPt.y) + 2 * t * (headBase.y - cp.y)
+            } else {
+                bx = firstPt.x + t * (headBase.x - firstPt.x)
+                by = firstPt.y + t * (headBase.y - firstPt.y)
+                tx = headBase.x - firstPt.x
+                ty = headBase.y - firstPt.y
+            }
+
+            let tLen = max(hypot(tx, ty), 0.001)
+            let nx = -ty / tLen, ny = tx / tLen
+            let half = tailHalf + (shaftHalf - tailHalf) * t
+            leftPts.append(NSPoint(x: bx + nx * half, y: by + ny * half))
+            rightPts.append(NSPoint(x: bx - nx * half, y: by - ny * half))
+        }
+
+        // Head wing points (the 3 triangle corners)
+        let endPoint = lastPt
+        let headLeft  = NSPoint(x: headBase.x + epx * headHalf, y: headBase.y + epy * headHalf)
+        let headRight = NSPoint(x: headBase.x - epx * headHalf, y: headBase.y - epy * headHalf)
+        let shaftLeftEnd  = leftPts.last!
+        let shaftRightEnd = rightPts.last!
+
+        // Helper: point along segment from A to B at distance d from A
+        func along(_ a: NSPoint, _ b: NSPoint, _ d: CGFloat) -> NSPoint {
+            let len = max(hypot(b.x - a.x, b.y - a.y), 0.001)
+            let t = min(d / len, 0.45)
+            return NSPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+        }
+
+        // Build single unified path
+        let path = NSBezierPath()
+
+        // Left shaft edge (tail → head base)
+        path.move(to: leftPts[0])
+        for p in leftPts.dropFirst() { path.line(to: p) }
+
+        // Corner 1: left wing (shaftLeftEnd → headLeft → endPoint)
+        // Approach headLeft from shaft side, curve through headLeft, continue toward tip
+        let wL1 = along(headLeft, shaftLeftEnd, r)   // before the corner, on shaft→wing edge
+        let wL2 = along(headLeft, endPoint, r)        // after the corner, on wing→tip edge
+        path.line(to: wL1)
+        path.curve(to: wL2, controlPoint1: headLeft, controlPoint2: headLeft)
+
+        // Corner 2: tip (headLeft → endPoint → headRight)
+        let tL = along(endPoint, headLeft, r)         // before tip, on left wing→tip edge
+        let tR = along(endPoint, headRight, r)        // after tip, on tip→right wing edge
+        path.line(to: tL)
+        path.curve(to: tR, controlPoint1: endPoint, controlPoint2: endPoint)
+
+        // Corner 3: right wing (endPoint → headRight → shaftRightEnd)
+        let wR1 = along(headRight, endPoint, r)       // before the corner, on tip→wing edge
+        let wR2 = along(headRight, shaftRightEnd, r)  // after the corner, on wing→shaft edge
+        path.line(to: wR1)
+        path.curve(to: wR2, controlPoint1: headRight, controlPoint2: headRight)
+
+        // Right shaft edge (head base → tail)
+        path.line(to: shaftRightEnd)
+        for p in rightPts.reversed().dropFirst() { path.line(to: p) }
+
+        path.close()
+
+        // Outline: stroke the unified shape behind the fill
+        if let oc = outlineColor {
+            oc.setStroke()
+            path.lineWidth = 6
+            path.lineJoinStyle = .round
+            path.stroke()
+        }
+
+        color.setFill()
+        path.fill()
+    }
+
+    /// Hand-drawn arrow style. The shaft follows the user's actual line/curve,
+    /// with deterministic wobble and pressure variation. The head is an open
+    /// chevron separated slightly from the shaft so it feels drawn by hand.
+    private func drawSketchyArrow() {
+        let pts = arrowReversed ? waypoints.reversed() : waypoints
+        guard pts.count >= 2 else { return }
+        let firstPt = pts.first!
+        let lastPt = pts.last!
+
+        let totalLen = hasMultiAnchor
+            ? Self.smoothPathLength(pts)
+            : (controlPoint != nil
+                ? Self.approxBezierLength(from: firstPt, cp1: controlPoint!, cp2: controlPoint!, to: lastPt)
+                : hypot(lastPt.x - firstPt.x, lastPt.y - firstPt.y))
+        guard totalLen > 4 else { return }
+
+        func sampleBase(at t: CGFloat) -> (point: NSPoint, tangent: CGVector) {
+            let t = max(0, min(1, t))
+            if hasMultiAnchor {
+                let totalSegments = CGFloat(pts.count - 1)
+                let segF = t * totalSegments
+                let seg = min(Int(segF), pts.count - 2)
+                let lt = segF - CGFloat(seg)
+                let p0 = seg > 0 ? pts[seg - 1] : pts[seg]
+                let p1 = pts[seg]
+                let p2 = pts[seg + 1]
+                let p3 = seg + 2 < pts.count ? pts[seg + 2] : pts[seg + 1]
+                let cp1 = NSPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
+                let cp2 = NSPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
+                let u = 1 - lt
+                let x = u*u*u*p1.x + 3*u*u*lt*cp1.x + 3*u*lt*lt*cp2.x + lt*lt*lt*p2.x
+                let y = u*u*u*p1.y + 3*u*u*lt*cp1.y + 3*u*lt*lt*cp2.y + lt*lt*lt*p2.y
+                let tx = 3*u*u*(cp1.x - p1.x) + 6*u*lt*(cp2.x - cp1.x) + 3*lt*lt*(p2.x - cp2.x)
+                let ty = 3*u*u*(cp1.y - p1.y) + 6*u*lt*(cp2.y - cp1.y) + 3*lt*lt*(p2.y - cp2.y)
+                return (NSPoint(x: x, y: y), CGVector(dx: tx, dy: ty))
+            }
+            if let cp = controlPoint {
+                let u = 1 - t
+                let x = u*u*firstPt.x + 2*u*t*cp.x + t*t*lastPt.x
+                let y = u*u*firstPt.y + 2*u*t*cp.y + t*t*lastPt.y
+                let tx = 2*u*(cp.x - firstPt.x) + 2*t*(lastPt.x - cp.x)
+                let ty = 2*u*(cp.y - firstPt.y) + 2*t*(lastPt.y - cp.y)
+                return (NSPoint(x: x, y: y), CGVector(dx: tx, dy: ty))
+            }
+            return (
+                NSPoint(
+                    x: firstPt.x + (lastPt.x - firstPt.x) * t,
+                    y: firstPt.y + (lastPt.y - firstPt.y) * t),
+                CGVector(dx: lastPt.x - firstPt.x, dy: lastPt.y - firstPt.y)
+            )
+        }
+
+        var rng = SketchyRNG(seed: randomSeed)
+        let wobblePhaseA = rng.cgFloat(in: 0...(2 * .pi))
+        let wobblePhaseB = rng.cgFloat(in: 0...(2 * .pi))
+        let pressurePhase = rng.cgFloat(in: 0...(2 * .pi))
+        let wobbleAmp = min(max(strokeWidth * 0.18, 0.45), 1.8)
+        let baseWidth = max(1.2, strokeWidth)
+        let headLen = min(max(baseWidth * 4.3, 13), totalLen * 0.27)
+        let headGap = min(max(baseWidth * 0.28, 1.5), max(2, totalLen * 0.025))
+        let shaftEndLen = max(0, totalLen - headLen - headGap)
+        let headBaseLen = max(0, totalLen - headLen)
+        let steps = max(12, min(140, Int(totalLen / 6)))
+
+        func point(atDistance distance: CGFloat) -> (point: NSPoint, tangent: CGVector) {
+            sampleBase(at: totalLen > 0 ? distance / totalLen : 0)
+        }
+
+        func sketchPoint(distance: CGFloat, pass: Int) -> NSPoint {
+            let sampled = point(atDistance: distance)
+            let tangentLen = max(hypot(sampled.tangent.dx, sampled.tangent.dy), 0.001)
+            let nx = -sampled.tangent.dy / tangentLen
+            let ny = sampled.tangent.dx / tangentLen
+            let progress = totalLen > 0 ? distance / totalLen : 0
+            let taper = pow(sin(progress * .pi), 0.85)
+            let wobble =
+                sin(progress * 8.5 + wobblePhaseA + CGFloat(pass) * 0.63) * wobbleAmp +
+                sin(progress * 19.0 + wobblePhaseB + CGFloat(pass) * 1.19) * wobbleAmp * 0.24
+            return NSPoint(
+                x: sampled.point.x + nx * wobble * taper,
+                y: sampled.point.y + ny * wobble * taper)
+        }
+
+        func strokeSketchLine(color strokeColor: NSColor, extraWidth: CGFloat, pass: Int) {
+            guard shaftEndLen > 2 else { return }
+            strokeColor.setStroke()
+            var prev = sketchPoint(distance: 0, pass: pass)
+            for i in 1...steps {
+                let progress = CGFloat(i) / CGFloat(steps)
+                let distance = shaftEndLen * progress
+                let cur = sketchPoint(distance: distance, pass: pass)
+                let endTaper = 0.92 + 0.08 * sin(progress * .pi)
+                let widthVariation = endTaper * (0.91 + 0.16 * sin(progress * 2.15 * .pi + pressurePhase))
+                let segment = NSBezierPath()
+                segment.lineWidth = baseWidth * widthVariation + extraWidth
+                segment.lineCapStyle = .round
+                segment.lineJoinStyle = .round
+                segment.move(to: prev)
+                segment.line(to: cur)
+                segment.stroke()
+                prev = cur
+            }
+        }
+
+        if let oc = outlineColor {
+            strokeSketchLine(color: oc, extraWidth: 6, pass: 0)
+        }
+        strokeSketchLine(color: color, extraWidth: 0, pass: 0)
+
+        // Sample the shaft tangent at the nose so the head aligns with the line direction.
+        let headDirSample = point(atDistance: totalLen)
+        let tangentLen = max(hypot(headDirSample.tangent.dx, headDirSample.tangent.dy), 0.001)
+        let dir = CGVector(dx: headDirSample.tangent.dx / tangentLen, dy: headDirSample.tangent.dy / tangentLen)
+        let normal = CGVector(dx: -dir.dy, dy: dir.dx)
+        // Nose tends to overshoot the shaft end a little, like a quick pen flick.
+        let noseExtend = rng.cgFloat(in: (headLen * 0.04)...(headLen * 0.14))
+        let noseLateral = rng.cgFloat(in: -headLen * 0.05...headLen * 0.05)
+        let nose = NSPoint(
+            x: lastPt.x + dir.dx * noseExtend + normal.dx * noseLateral,
+            y: lastPt.y + dir.dy * noseExtend + normal.dy * noseLateral)
+
+        // Two chevron legs, deliberately uneven in length, angle, and base spread.
+        // A typical real-life sketched chevron has noticeably different legs.
+        let baseSpread = max(baseWidth * 2.6, 8)
+        let leftLen = headLen * rng.cgFloat(in: 0.92...1.18)
+        let rightLen = headLen * rng.cgFloat(in: 0.78...1.08)
+        let leftSpread = baseSpread * rng.cgFloat(in: 0.95...1.25)
+        let rightSpread = baseSpread * rng.cgFloat(in: 0.85...1.15)
+        // Each leg can tilt a bit off the perfect mirror — adds asymmetry.
+        let leftAngleSkew = rng.cgFloat(in: -0.18...0.18)
+        let rightAngleSkew = rng.cgFloat(in: -0.18...0.18)
+        // The two leg endpoints, splayed off the back of the nose with skew.
+        let leftBase = NSPoint(
+            x: nose.x - dir.dx * leftLen + normal.dx * leftSpread
+                + dir.dx * leftAngleSkew * leftSpread,
+            y: nose.y - dir.dy * leftLen + normal.dy * leftSpread
+                + dir.dy * leftAngleSkew * leftSpread)
+        let rightBase = NSPoint(
+            x: nose.x - dir.dx * rightLen - normal.dx * rightSpread
+                + dir.dx * rightAngleSkew * rightSpread,
+            y: nose.y - dir.dy * rightLen - normal.dy * rightSpread
+                + dir.dy * rightAngleSkew * rightSpread)
+        // Bow magnitude scales with leg length so it's actually visible. Sign is
+        // independent per leg so they don't mirror each other.
+        let leftBow = rng.cgFloat(in: 0.10...0.22) * leftLen
+            * (rng.next() & 1 == 0 ? 1 : -1)
+        let rightBow = rng.cgFloat(in: 0.10...0.22) * rightLen
+            * (rng.next() & 1 == 0 ? 1 : -1)
+        // Bow position along the leg (0.5 = midpoint, biased so the curve peaks
+        // slightly off-center for a more natural stroke).
+        let leftBowPos = rng.cgFloat(in: 0.40...0.62)
+        let rightBowPos = rng.cgFloat(in: 0.40...0.62)
+        // Tiny tangential nudge on the bow control to break the perfect arc shape.
+        let leftBowTan = rng.cgFloat(in: -0.08...0.08) * leftLen
+        let rightBowTan = rng.cgFloat(in: -0.08...0.08) * rightLen
+
+        func drawHeadChevron(color strokeColor: NSColor, width: CGFloat) {
+            strokeColor.setStroke()
+            // Left leg: quadratic bezier with a noticeably-bowed mid control.
+            let lmx = nose.x + (leftBase.x - nose.x) * leftBowPos
+            let lmy = nose.y + (leftBase.y - nose.y) * leftBowPos
+            let leftCtrl = NSPoint(
+                x: lmx + normal.dx * leftBow + dir.dx * leftBowTan,
+                y: lmy + normal.dy * leftBow + dir.dy * leftBowTan)
+            let leftPath = NSBezierPath()
+            leftPath.lineWidth = width
+            leftPath.lineCapStyle = .round
+            leftPath.lineJoinStyle = .round
+            leftPath.move(to: nose)
+            leftPath.curve(to: leftBase, controlPoint1: leftCtrl, controlPoint2: leftCtrl)
+            leftPath.stroke()
+            // Right leg: same idea, independent bow direction.
+            let rmx = nose.x + (rightBase.x - nose.x) * rightBowPos
+            let rmy = nose.y + (rightBase.y - nose.y) * rightBowPos
+            let rightCtrl = NSPoint(
+                x: rmx + normal.dx * rightBow + dir.dx * rightBowTan,
+                y: rmy + normal.dy * rightBow + dir.dy * rightBowTan)
+            let rightPath = NSBezierPath()
+            rightPath.lineWidth = width
+            rightPath.lineCapStyle = .round
+            rightPath.lineJoinStyle = .round
+            rightPath.move(to: nose)
+            rightPath.curve(to: rightBase, controlPoint1: rightCtrl, controlPoint2: rightCtrl)
+            rightPath.stroke()
+        }
+
+        if let oc = outlineColor {
+            drawHeadChevron(color: oc, width: baseWidth + 6)
+        }
+        drawHeadChevron(color: color, width: baseWidth)
+    }
+
+    /// Tiny deterministic PRNG (xorshift32) so sketchy arrows look the same
+    /// across redraws while still varying between instances.
+    private struct SketchyRNG {
+        var state: UInt32
+        init(seed: UInt32) { self.state = seed }
+        mutating func next() -> UInt32 {
+            var x = state
+            x ^= x << 13
+            x ^= x >> 17
+            x ^= x << 5
+            state = x
+            return x
+        }
+        mutating func cgFloat(in range: ClosedRange<CGFloat>) -> CGFloat {
+            let n = CGFloat(next()) / CGFloat(UInt32.max)
+            return range.lowerBound + n * (range.upperBound - range.lowerBound)
+        }
+        mutating func bool() -> Bool { next() & 1 == 0 }
+    }
+
+    private func drawRectangle(forceFilled: Bool = false) {
+        let rect = boundingRect
+        guard rect.width > 0, rect.height > 0 else { return }
+        let cornerRadius: CGFloat = rectCornerRadius > 0 ? rectCornerRadius : (isRounded ? min(rect.width, rect.height) * 0.2 : 0)
+        let style = forceFilled ? RectFillStyle.fill : rectFillStyle
+
+        // When outline is active, force solid style (dashed/dotted disabled in UI)
+        let effectiveLineStyle = outlineColor != nil ? .solid : lineStyle
+
+        let rectPerimeter: CGFloat = {
+            let r = min(cornerRadius, min(rect.width, rect.height) / 2)
+            return 2 * (rect.width - 2 * r) + 2 * (rect.height - 2 * r) + 2 * .pi * r
+        }()
+
+        switch style {
+        case .fill:
+            if let oc = outlineColor {
+                let outlinePath = NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
+                outlinePath.lineWidth = strokeWidth + 6
+                outlinePath.lineJoinStyle = cornerRadius > 0 ? .round : .miter
+                oc.setStroke()
+                outlinePath.stroke()
+            }
+            color.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+
+        case .strokeAndFill:
+            let fillAlpha = color.alphaComponent * 0.5
+            color.withAlphaComponent(fillAlpha).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+            let path = NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
+            path.lineWidth = strokeWidth
+            path.lineJoinStyle = cornerRadius > 0 ? .round : .miter
+            if effectiveLineStyle != .solid {
+                effectiveLineStyle.applyFitted(to: path, pathLength: rectPerimeter)
+            }
+            if let oc = outlineColor {
+                path.lineWidth = strokeWidth + 6
+                oc.setStroke(); path.stroke()
+                path.lineWidth = strokeWidth
+            }
+            color.setStroke()
+            path.stroke()
+
+        case .stroke:
+            if cornerRadius < 1 && (effectiveLineStyle == .dotted || effectiveLineStyle == .dashed) {
+                if effectiveLineStyle == .dotted {
+                    drawDottedRectPerSide(rect: rect)
+                } else {
+                    drawDashedRectPerSide(rect: rect)
+                }
+            } else {
+                let path = NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
+                path.lineWidth = strokeWidth
+                path.lineJoinStyle = cornerRadius > 0 ? .round : .miter
+                if effectiveLineStyle != .solid {
+                    effectiveLineStyle.applyFitted(to: path, pathLength: rectPerimeter)
+                }
+                if let oc = outlineColor {
+                    path.lineWidth = strokeWidth + 6
+                    oc.setStroke(); path.stroke()
+                    path.lineWidth = strokeWidth
+                }
+                color.setStroke()
+                path.stroke()
+            }
+        }
+    }
+
+    /// Draw a dotted rectangle with dots guaranteed at every corner.
+    /// Each side is drawn independently so dots tile evenly per-side.
+    private func drawDottedRectPerSide(rect: NSRect) {
+        let dotRadius = strokeWidth / 2
+        let idealGap = max(strokeWidth * 2, 6)
+        color.setFill()
+
+        // Corner points (bottom-left origin, clockwise: BL → TL → TR → BR)
+        let corners = [
+            NSPoint(x: rect.minX, y: rect.minY),  // bottom-left
+            NSPoint(x: rect.minX, y: rect.maxY),  // top-left
+            NSPoint(x: rect.maxX, y: rect.maxY),  // top-right
+            NSPoint(x: rect.maxX, y: rect.minY),  // bottom-right
+        ]
+
+        for i in 0..<4 {
+            let p0 = corners[i]
+            let p1 = corners[(i + 1) % 4]
+            let sideLen = hypot(p1.x - p0.x, p1.y - p0.y)
+            guard sideLen > 0 else { continue }
+
+            // Number of segments (gaps between dots). At least 1 so we get dots at both ends.
+            let n = max(1, Int(round(sideLen / idealGap)))
+            let step = sideLen / CGFloat(n)
+            let dx = (p1.x - p0.x) / sideLen
+            let dy = (p1.y - p0.y) / sideLen
+
+            // Draw dots from p0 to p1 (inclusive of p0, exclusive of p1 to avoid double-drawing corners)
+            for j in 0..<n {
+                let t = CGFloat(j) * step
+                let x = p0.x + dx * t
+                let y = p0.y + dy * t
+                let dotRect = NSRect(x: x - dotRadius, y: y - dotRadius, width: strokeWidth, height: strokeWidth)
+                NSBezierPath(ovalIn: dotRect).fill()
+            }
+        }
+    }
+
+    /// Draw a dashed rectangle with dashes evenly distributed per side.
+    /// Each side is inset by half the stroke width so corners don't overlap.
+    private func drawDashedRectPerSide(rect: NSRect) {
+        let idealDash = strokeWidth * 3
+        let idealGap = strokeWidth * 2
+        let idealCycle = idealDash + idealGap
+        let hw = strokeWidth / 2  // half stroke width — inset to avoid corner overlap
+        color.setStroke()
+
+        // Corners inset by half stroke width along each side's direction
+        let sides: [(NSPoint, NSPoint)] = [
+            // bottom: left→right
+            (NSPoint(x: rect.minX + hw, y: rect.minY), NSPoint(x: rect.maxX - hw, y: rect.minY)),
+            // left: bottom→top
+            (NSPoint(x: rect.minX, y: rect.minY + hw), NSPoint(x: rect.minX, y: rect.maxY - hw)),
+            // top: left→right
+            (NSPoint(x: rect.minX + hw, y: rect.maxY), NSPoint(x: rect.maxX - hw, y: rect.maxY)),
+            // right: bottom→top
+            (NSPoint(x: rect.maxX, y: rect.minY + hw), NSPoint(x: rect.maxX, y: rect.maxY - hw)),
+        ]
+
+        for (p0, p1) in sides {
+            let sideLen = hypot(p1.x - p0.x, p1.y - p0.y)
+            guard sideLen > 0 else { continue }
+
+            let path = NSBezierPath()
+            path.lineWidth = strokeWidth
+            path.lineCapStyle = .butt
+            path.move(to: p0)
+            path.line(to: p1)
+
+            let n = max(1, round(sideLen / idealCycle))
+            let adjustedCycle = sideLen / n
+            let ratio = idealDash / idealCycle
+            let dash = adjustedCycle * ratio
+            let gap = adjustedCycle - dash
+            let pattern: [CGFloat] = [dash, gap]
+            path.setLineDash(pattern, count: 2, phase: dash / 2)
+            path.stroke()
+        }
+    }
+
+    private func drawEllipse() {
+        let rect = boundingRect
+        guard rect.width > 0, rect.height > 0 else { return }
+
+        // When outline is active, force solid style (dashed/dotted disabled in UI)
+        let effectiveLineStyle = outlineColor != nil ? .solid : lineStyle
+
+        let ellipsePerimeter: CGFloat = {
+            let a = rect.width / 2, b = rect.height / 2
+            return CGFloat.pi * (3 * (a + b) - sqrt((3 * a + b) * (a + 3 * b)))
+        }()
+
+        switch rectFillStyle {
+        case .fill:
+            if let oc = outlineColor {
+                let outlinePath = NSBezierPath(ovalIn: rect)
+                outlinePath.lineWidth = strokeWidth + 6
+                oc.setStroke()
+                outlinePath.stroke()
+            }
+            color.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+
+        case .strokeAndFill:
+            let fillAlpha = color.alphaComponent * 0.5
+            color.withAlphaComponent(fillAlpha).setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            let path = NSBezierPath(ovalIn: rect)
+            path.lineWidth = strokeWidth
+            if effectiveLineStyle != .solid {
+                effectiveLineStyle.applyFitted(to: path, pathLength: ellipsePerimeter)
+            }
+            if let oc = outlineColor {
+                path.lineWidth = strokeWidth + 6
+                oc.setStroke(); path.stroke()
+                path.lineWidth = strokeWidth
+            }
+            color.setStroke()
+            path.stroke()
+
+        case .stroke:
+            let path = NSBezierPath(ovalIn: rect)
+            path.lineWidth = strokeWidth
+            if effectiveLineStyle != .solid {
+                effectiveLineStyle.applyFitted(to: path, pathLength: ellipsePerimeter)
+            }
+            if let oc = outlineColor {
+                path.lineWidth = strokeWidth + 6
+                oc.setStroke(); path.stroke()
+                path.lineWidth = strokeWidth
+            }
+            color.setStroke()
+            path.stroke()
+        }
+    }
+
+    private func drawText() {
+        guard let image = textImage, textDrawRect != .zero else { return }
+        let pad: CGFloat = 4
+        let pillRect = textDrawRect.insetBy(dx: -pad, dy: -pad)
+        let cornerR: CGFloat = 4
+
+        // Background pill
+        if let bg = textBgColor {
+            bg.setFill()
+            NSBezierPath(roundedRect: pillRect, xRadius: cornerR, yRadius: cornerR).fill()
+        }
+
+        // Outline
+        if let outline = textOutlineColor {
+            outline.setStroke()
+            let outlinePath = NSBezierPath(roundedRect: pillRect, xRadius: cornerR, yRadius: cornerR)
+            outlinePath.lineWidth = 2
+            outlinePath.stroke()
+        }
+
+        image.draw(in: textDrawRect)
+    }
+
+    /// Re-render the text image from attributedText with current formatting properties.
+    /// Call after changing fontSize, bold, italic, font family, alignment, etc. on a committed text annotation.
+    func reRenderTextImage() {
+        guard tool == .text, let attrText = attributedText, textDrawRect != .zero else { return }
+
+        // Rebuild attributed string with updated properties
+        let mutable = NSMutableAttributedString(attributedString: attrText)
+        let range = NSRange(location: 0, length: mutable.length)
+
+        var font: NSFont
+        if let familyName = fontFamilyName, familyName != "System",
+           let familyFont = NSFont(name: familyName, size: fontSize) {
+            font = familyFont
+        } else {
+            font = NSFont.systemFont(ofSize: fontSize)
+        }
+        if isBold && isItalic {
+            font = NSFontManager.shared.convert(font, toHaveTrait: [.boldFontMask, .italicFontMask])
+        } else if isBold {
+            font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        } else if isItalic {
+            font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+        }
+        mutable.addAttribute(.font, value: font, range: range)
+
+        if isUnderline {
+            mutable.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+        } else {
+            mutable.removeAttribute(.underlineStyle, range: range)
+        }
+        if isStrikethrough {
+            mutable.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+        } else {
+            mutable.removeAttribute(.strikethroughStyle, range: range)
+        }
+        let paraStyle = NSMutableParagraphStyle()
+        paraStyle.alignment = textAlignment
+        mutable.addAttribute(.paragraphStyle, value: paraStyle, range: range)
+
+        // Per-glyph outline drawn OUTSIDE the fill (issue #257). AppKit's
+        // built-in .strokeWidth draws a centered stroke that eats the fill, so
+        // we express the outline as a custom attribute rendered by
+        // OutlineTextLayoutManager (stroke-underneath + fill-on-top). Same
+        // renderer as the live editor, so committed/live appearance matches.
+        OutlineTextRenderer.applyOutline(textGlyphStrokeColor, to: mutable, range: range)
+
+        attributedText = mutable
+
+        // Calculate new size using the current textDrawRect width
+        let inset: CGFloat = 4
+        let drawWidth = textDrawRect.width - inset * 2
+        let boundingRect = mutable.boundingRect(
+            with: NSSize(width: drawWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading])
+        let newHeight = max(textDrawRect.height, ceil(boundingRect.height) + inset * 2)
+        let imgSize = NSSize(width: textDrawRect.width, height: newHeight)
+
+        // Re-render image through the outline layout manager so the per-glyph
+        // outline is drawn outside the fill (matches the live editor).
+        textImage = OutlineTextRenderer.renderImage(mutable, size: imgSize, inset: inset)
+
+        // Update draw rect height (keep top edge fixed in AppKit coords: maxY stays the same)
+        let heightDelta = newHeight - textDrawRect.height
+        if heightDelta != 0 {
+            textDrawRect = NSRect(
+                x: textDrawRect.minX, y: textDrawRect.minY - heightDelta,
+                width: textDrawRect.width, height: newHeight)
+            startPoint = textDrawRect.origin
+            endPoint = NSPoint(x: textDrawRect.maxX, y: textDrawRect.maxY)
+        }
+
+        outlineGlowImage = nil
+    }
+
+    private func drawNumber() {
+        guard let number = number else { return }
+        let radius: CGFloat = 8 + strokeWidth * 3
+        let outlineWidth: CGFloat = 3
+        let center = startPoint
+
+        let dx = endPoint.x - startPoint.x
+        let dy = endPoint.y - startPoint.y
+        let dist = hypot(dx, dy)
+        var coneFillPath: NSBezierPath?
+        var coneOutlinePath: NSBezierPath?
+        if dist > radius + outlineWidth {
+            let angle = atan2(dy, dx)
+            let baseHalfWidth = radius * 0.55
+            let perpAngle = angle + .pi / 2
+
+            let fillBaseL = NSPoint(x: center.x + baseHalfWidth * cos(perpAngle),
+                                    y: center.y + baseHalfWidth * sin(perpAngle))
+            let fillBaseR = NSPoint(x: center.x - baseHalfWidth * cos(perpAngle),
+                                    y: center.y - baseHalfWidth * sin(perpAngle))
+
+            func circleIntersection(from tip: NSPoint, to innerBase: NSPoint) -> NSPoint {
+                let vx = innerBase.x - tip.x
+                let vy = innerBase.y - tip.y
+                let fx = tip.x - center.x
+                let fy = tip.y - center.y
+                let outlineRadius = radius + outlineWidth
+                let a = vx * vx + vy * vy
+                let b = 2 * (fx * vx + fy * vy)
+                let c = fx * fx + fy * fy - outlineRadius * outlineRadius
+                let disc = b * b - 4 * a * c
+                guard a > 0, disc >= 0 else { return innerBase }
+                let root = sqrt(disc)
+                let candidates = [(-b - root) / (2 * a), (-b + root) / (2 * a)]
+                    .filter { $0 >= 0 && $0 <= 1 }
+                    .sorted()
+                guard let t = candidates.first else { return innerBase }
+                return NSPoint(x: tip.x + vx * t, y: tip.y + vy * t)
+            }
+
+            let outlineBaseL = circleIntersection(from: endPoint, to: fillBaseL)
+            let outlineBaseR = circleIntersection(from: endPoint, to: fillBaseR)
+
+            let cone = NSBezierPath()
+            cone.move(to: fillBaseL)
+            cone.line(to: endPoint)
+            cone.line(to: fillBaseR)
+            cone.close()
+            coneFillPath = cone
+
+            let outline = NSBezierPath()
+            outline.move(to: outlineBaseL)
+            outline.line(to: endPoint)
+            outline.line(to: outlineBaseR)
+            coneOutlinePath = outline
+        }
+
+        let circleRect = NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+        if let oc = outlineColor {
+            oc.setFill()
+            NSBezierPath(ovalIn: circleRect.insetBy(dx: -outlineWidth, dy: -outlineWidth)).fill()
+        }
+        color.setFill()
+        NSBezierPath(ovalIn: circleRect).fill()
+
+        if let coneFillPath {
+            if let oc = outlineColor, let coneOutlinePath {
+                coneOutlinePath.lineWidth = outlineWidth * 2
+                coneOutlinePath.lineJoinStyle = .round
+                oc.setStroke()
+                coneOutlinePath.stroke()
+            }
+            color.setFill()
+            coneFillPath.fill()
+        }
+
+        // Choose contrasting text color: black for light backgrounds, white for dark
+        let textColor: NSColor = {
+            guard let rgb = color.usingColorSpace(.sRGB) else { return .white }
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            rgb.getRed(&r, green: &g, blue: &b, alpha: &a)
+            let luminance = 0.299 * r + 0.587 * g + 0.114 * b
+            return luminance > 0.6 ? .black : .white
+        }()
+        let fontSize = radius * 1.1
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: fontSize),
+            .foregroundColor: textColor
+        ]
+        let str = numberFormat.format(number) as NSString
+        let size = str.size(withAttributes: attrs)
+        str.draw(at: NSPoint(x: center.x - size.width / 2, y: center.y - size.height / 2), withAttributes: attrs)
+    }
+
+    private func drawStamp() {
+        guard let image = stampImage else { return }
+        let rect = boundingRect
+        guard rect.width > 0, rect.height > 0 else { return }
+        image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0, respectFlipped: true, hints: [.interpolation: NSNumber(value: NSImageInterpolation.high.rawValue)])
+    }
+
+    private func drawMeasure() {
+        let dx = endPoint.x - startPoint.x
+        let dy = endPoint.y - startPoint.y
+        let distance = hypot(dx, dy)
+        guard distance > 1 else { return }
+
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+
+        // Main measurement line
+        let lineColor = color
+        let path = NSBezierPath()
+        path.lineWidth = 1.5
+        path.lineCapStyle = .round
+        lineColor.setStroke()
+        path.move(to: startPoint)
+        path.line(to: endPoint)
+        path.stroke()
+
+        // Perpendicular end caps (small ticks at each end)
+        let angle = atan2(dy, dx)
+        let perpAngle = angle + .pi / 2
+        let capLength: CGFloat = 6
+        let capDx = capLength * cos(perpAngle)
+        let capDy = capLength * sin(perpAngle)
+
+        let capPath = NSBezierPath()
+        capPath.lineWidth = 1.5
+        capPath.lineCapStyle = .round
+        lineColor.setStroke()
+        // Start cap
+        capPath.move(to: NSPoint(x: startPoint.x - capDx, y: startPoint.y - capDy))
+        capPath.line(to: NSPoint(x: startPoint.x + capDx, y: startPoint.y + capDy))
+        // End cap
+        capPath.move(to: NSPoint(x: endPoint.x - capDx, y: endPoint.y - capDy))
+        capPath.line(to: NSPoint(x: endPoint.x + capDx, y: endPoint.y + capDy))
+        capPath.stroke()
+
+        // Dimension label
+        let unit = measureInPoints ? "pt" : "px"
+        let s = measureInPoints ? 1.0 : scale
+        let dispDistance = Int(distance * s)
+        let dispWidth = Int(abs(dx) * s)
+        let dispHeight = Int(abs(dy) * s)
+        let labelText: String
+        if dispWidth < 3 {
+            labelText = "\(dispHeight)\(unit)"
+        } else if dispHeight < 3 {
+            labelText = "\(dispWidth)\(unit)"
+        } else {
+            labelText = "\(dispDistance)\(unit) (\(dispWidth) × \(dispHeight))"
+        }
+
+        let fontSize: CGFloat = 11
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .semibold),
+            .foregroundColor: NSColor.white,
+        ]
+        let str = labelText as NSString
+        let strSize = str.size(withAttributes: attrs)
+
+        // Position label at midpoint, offset perpendicular to the line
+        let midX = (startPoint.x + endPoint.x) / 2
+        let midY = (startPoint.y + endPoint.y) / 2
+        let offsetDist: CGFloat = 12
+        let labelX = midX + offsetDist * cos(perpAngle) - strSize.width / 2
+        let labelY = midY + offsetDist * sin(perpAngle) - strSize.height / 2
+
+        // Background pill for readability
+        let padding: CGFloat = 4
+        let bgRect = NSRect(
+            x: labelX - padding,
+            y: labelY - padding / 2,
+            width: strSize.width + padding * 2,
+            height: strSize.height + padding
+        )
+        NSColor(white: 0.0, alpha: 0.75).setFill()
+        NSBezierPath(roundedRect: bgRect, xRadius: 4, yRadius: 4).fill()
+
+        str.draw(at: NSPoint(x: labelX, y: labelY), withAttributes: attrs)
+    }
+
+    // MARK: - Shared region crop
+
+    /// Render the source image region matching boundingRect into a new NSImage.
+    /// Uses NSImage drawing which handles all coordinate transforms correctly.
+    private func cropRegionFromSource() -> NSImage? {
+        guard let sourceImage = sourceImage else { return nil }
+        let rect = boundingRect
+        guard rect.width > 4, rect.height > 4 else { return nil }
+
+        let srcBounds = sourceImageBounds
+        let regionImage = NSImage(size: rect.size, flipped: false) { _ in
+            sourceImage.draw(in: NSRect(x: -rect.minX, y: -rect.minY,
+                                         width: srcBounds.width, height: srcBounds.height),
+                             from: .zero, operation: .copy, fraction: 1.0)
+            return true
+        }
+        return regionImage
+    }
+
+    // MARK: - Pixelate
+
+    /// Bake the processed image from source, then release the source screenshot reference.
+    /// Called once when the annotation is finalized (mouseUp).
+    /// Bake the censored region (pixelate, blur, or solid fill).
+    /// Called by commitAnnotation() on finalization. Also handles legacy `.blur` tool.
+    func bakePixelate() {
+        // Legacy blur annotations + unified pixelate tool
+        guard (tool == .pixelate || tool == .blur), bakedBlurNSImage == nil else { return }
+        // Legacy .blur tool → set censorMode so drawing dispatches correctly
+        if tool == .blur { censorMode = .blur }
+
+        let mode = censorMode
+        let rect = boundingRect
+
+        // Solid mode: no source image needed — just a filled rect
+        if mode == .solid {
+            let img = NSImage(size: rect.size, flipped: false) { drawRect in
+                self.color.setFill()
+                NSBezierPath(rect: drawRect).fill()
+                return true
+            }
+            bakedBlurNSImage = img
+            return
+        }
+
+        // Erase mode: sample edge colors and fill with smooth gradient
+        if mode == .erase {
+            guard let _ = sourceImage else { return }
+            bakedBlurNSImage = bakeErase()
+            return
+        }
+
+        guard let _ = sourceImage, let regionImage = cropRegionFromSource() else { return }
+        guard let tiffData = regionImage.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let cgImage = bitmap.cgImage else { return }
+
+        if mode == .blur {
+            guard let blurredCG = applyGaussianBlur(to: cgImage) else { return }
+            bakedBlurNSImage = NSImage(cgImage: blurredCG, size: rect.size)
+        } else {
+            // Pixelate: down-sample → up-scale with nearest-neighbor
+            let pixelBlock = 8
+            let tinyW = max(1, cgImage.width / pixelBlock)
+            let tinyH = max(1, cgImage.height / pixelBlock)
+            let cs = cgImage.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+            let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+
+            guard let ctx1 = CGContext(data: nil, width: tinyW, height: tinyH,
+                                        bitsPerComponent: 8, bytesPerRow: 0, space: cs, bitmapInfo: bitmapInfo) else { return }
+            ctx1.interpolationQuality = .low
+            ctx1.draw(cgImage, in: CGRect(x: 0, y: 0, width: tinyW, height: tinyH))
+            guard let tiny1 = ctx1.makeImage() else { return }
+
+            let tinyW2 = max(1, tinyW / 2)
+            let tinyH2 = max(1, tinyH / 2)
+            guard let ctx2 = CGContext(data: nil, width: tinyW2, height: tinyH2,
+                                        bitsPerComponent: 8, bytesPerRow: 0, space: cs, bitmapInfo: bitmapInfo) else { return }
+            ctx2.interpolationQuality = .low
+            ctx2.draw(tiny1, in: CGRect(x: 0, y: 0, width: tinyW2, height: tinyH2))
+            guard let tiny2 = ctx2.makeImage() else { return }
+
+            let finalW = max(1, Int(rect.width * 2))
+            let finalH = max(1, Int(rect.height * 2))
+            guard let ctx3 = CGContext(data: nil, width: finalW, height: finalH,
+                                        bitsPerComponent: 8, bytesPerRow: 0, space: cs, bitmapInfo: bitmapInfo) else { return }
+            ctx3.interpolationQuality = .none
+            ctx3.draw(tiny2, in: CGRect(x: 0, y: 0, width: finalW, height: finalH))
+
+            guard let pixelatedCG = ctx3.makeImage() else { return }
+            bakedBlurNSImage = NSImage(cgImage: pixelatedCG, size: rect.size)
+        }
+    }
+
+    /// Unified censor drawing — dispatches based on censorMode.
+    private func drawCensor(in context: NSGraphicsContext) {
+        let rect = boundingRect
+        guard rect.width > 4, rect.height > 4 else { return }
+
+        // Baked (finalized) — draw the result
+        if let baked = bakedBlurNSImage {
+            baked.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+            return
+        }
+
+        // Live preview while drawing
+        switch censorMode {
+        case .pixelate:
+            NSColor.black.withAlphaComponent(0.3).setFill()
+            NSBezierPath(rect: rect).fill()
+        case .blur:
+            NSColor.white.withAlphaComponent(0.35).setFill()
+            NSBezierPath(rect: rect).fill()
+        case .solid:
+            color.setFill()
+            NSBezierPath(rect: rect).fill()
+            return  // no border for solid
+        case .erase:
+            // Subtle crosshatch pattern to indicate erase area
+            NSColor(white: 0.5, alpha: 0.2).setFill()
+            NSBezierPath(rect: rect).fill()
+        }
+
+        let border = NSBezierPath(rect: rect)
+        border.lineWidth = 1.5
+        let pattern: [CGFloat] = [4, 4]
+        border.setLineDash(pattern, count: 2, phase: 0)
+        NSColor.white.withAlphaComponent(censorMode == .blur ? 0.7 : 0.5).setStroke()
+        border.stroke()
+    }
+
+    /// Highlight (spotlight) only draws its own thin border — the dimming of the
+    /// area OUTSIDE the rect is rendered globally as a single union pass (see
+    /// `Annotation.drawHighlightDim`), so overlapping highlights don't stack.
+    private func drawHighlight() {
+        let rect = boundingRect
+        guard rect.width > 1, rect.height > 1 else { return }
+        let border = NSBezierPath(rect: rect)
+        border.lineWidth = 1.5
+        // Border style follows lineStyle: .solid = clean rect, .dashed = dashes.
+        if lineStyle == .dashed {
+            border.setLineDash([4, 4], count: 2, phase: 0)
+        }
+        NSColor.white.withAlphaComponent(0.6).setStroke()
+        border.stroke()
+    }
+
+    /// Draw a single dim layer covering `bounds` MINUS the union of all
+    /// `highlightRects` (so a pixel inside ANY highlight stays bright). Drawn
+    /// once per render pass — AFTER the screenshot/censor effects and BEFORE the
+    /// regular shape annotations, so shapes stay readable over the dimming.
+    /// No-op when there are no highlight rects.
+    ///
+    /// Uses fill + destination-out punch-through (not an even-odd combined path):
+    /// even-odd would re-dim the OVERLAP of two highlights (a point inside the
+    /// outer rect + two inner rects has odd winding). Clearing each rect from an
+    /// already-dimmed layer is idempotent, giving a true union of bright regions.
+    static func drawHighlightDim(highlightRects: [NSRect], in bounds: NSRect, opacity: CGFloat) {
+        let rects = highlightRects.compactMap { r -> NSRect? in
+            let i = r.intersection(bounds)
+            return (i.width > 1 && i.height > 1) ? i : nil
+        }
+        guard !rects.isEmpty, bounds.width > 0, bounds.height > 0, opacity > 0,
+              let ctx = NSGraphicsContext.current?.cgContext else { return }
+
+        ctx.saveGState()
+        // Clip to the bounds so the dim never spills outside the canvas/selection.
+        ctx.clip(to: bounds)
+        // Build the dim in an isolated transparency layer so the destination-out
+        // punch-through only clears the DIM, not the screenshot already drawn
+        // beneath it in this context.
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        // 1) Dim the whole area.
+        ctx.setFillColor(NSColor.black.withAlphaComponent(min(1, opacity)).cgColor)
+        ctx.fill(bounds)
+        // 2) Punch the bright holes (union — overlaps clear once, idempotent).
+        ctx.setBlendMode(.destinationOut)
+        ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+        for r in rects { ctx.fill(r) }
+        ctx.endTransparencyLayer()
+        ctx.restoreGState()
+    }
+
+    /// Convenience: draw the union highlight dim for all `.highlight` annotations
+    /// in `list` (optionally including an in-progress one) over `bounds`. The dim
+    /// opacity is taken from the strongest (max) highlight so a stack reads as one
+    /// consistent dim. No-op when there are no highlights. Call this AFTER the
+    /// screenshot/censor effects and BEFORE the regular shape annotations.
+    static func drawHighlightDim(for list: [Annotation], extra: Annotation? = nil, in bounds: NSRect) {
+        var rects: [NSRect] = []
+        var opacity: CGFloat = 0
+        for a in list where a.tool == .highlight {
+            rects.append(a.boundingRect)
+            opacity = max(opacity, a.dimOpacity)
+        }
+        if let extra, extra.tool == .highlight {
+            rects.append(extra.boundingRect)
+            opacity = max(opacity, extra.dimOpacity)
+        }
+        guard !rects.isEmpty else { return }
+        drawHighlightDim(highlightRects: rects, in: bounds, opacity: opacity)
+    }
+
+    /// Erase mode: sample the border pixels around the rect from the source image,
+    /// then fill each pixel by interpolating from the nearest edge colors.
+    /// Per-row left/right colors and per-column top/bottom colors are blended
+    /// so gradients and solid colors are both reproduced perfectly.
+    private func bakeErase() -> NSImage? {
+        guard let src = sourceImage, let srcBounds = sourceImageBounds as NSRect? else { return nil }
+        let rect = boundingRect
+        guard rect.width > 2, rect.height > 2 else { return nil }
+
+        // Render the source region with some padding into a bitmap for pixel sampling
+        let samplePad: CGFloat = 4  // pixels outside the rect to sample
+        let sampleRect = NSRect(
+            x: rect.minX - samplePad, y: rect.minY - samplePad,
+            width: rect.width + samplePad * 2, height: rect.height + samplePad * 2)
+
+        let regionImage = NSImage(size: sampleRect.size, flipped: false) { _ in
+            src.draw(in: NSRect(x: -(sampleRect.minX - srcBounds.minX),
+                                y: -(sampleRect.minY - srcBounds.minY),
+                                width: srcBounds.width, height: srcBounds.height),
+                     from: .zero, operation: .copy, fraction: 1.0)
+            return true
+        }
+        guard let tiffData = regionImage.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData) else { return nil }
+
+        let bmpW = bitmap.pixelsWide, bmpH = bitmap.pixelsHigh
+        guard bmpW > 4, bmpH > 4 else { return nil }
+
+        // Inner rect in bitmap pixel coords
+        let scaleX = CGFloat(bmpW) / sampleRect.width
+        let scaleY = CGFloat(bmpH) / sampleRect.height
+        let ix = Int(samplePad * scaleX)
+        let iy = Int(samplePad * scaleY)
+        let iw = Int(rect.width * scaleX)
+        let ih = Int(rect.height * scaleY)
+        guard iw > 0, ih > 0 else { return nil }
+
+        func samplePixel(_ x: Int, _ y: Int) -> (r: CGFloat, g: CGFloat, b: CGFloat) {
+            let cx = max(0, min(bmpW - 1, x))
+            let cy = max(0, min(bmpH - 1, y))
+            var pixel: [Int] = [0, 0, 0, 0]
+            bitmap.getPixel(&pixel, atX: cx, y: cy)
+            return (CGFloat(pixel[0]) / 255, CGFloat(pixel[1]) / 255, CGFloat(pixel[2]) / 255)
+        }
+
+        // Sample left and right edge colors per row (just outside the rect)
+        var leftColors = [(r: CGFloat, g: CGFloat, b: CGFloat)]()
+        var rightColors = [(r: CGFloat, g: CGFloat, b: CGFloat)]()
+        for row in 0..<ih {
+            let sy = iy + row
+            // Average a few pixels outside the left/right edge
+            var lr: CGFloat = 0, lg: CGFloat = 0, lb: CGFloat = 0
+            var rr: CGFloat = 0, rg: CGFloat = 0, rb: CGFloat = 0
+            let n = max(1, min(ix, 3))  // sample up to 3 pixels
+            for d in 1...n {
+                let l = samplePixel(ix - d, sy)
+                lr += l.r; lg += l.g; lb += l.b
+                let r = samplePixel(ix + iw - 1 + d, sy)
+                rr += r.r; rg += r.g; rb += r.b
+            }
+            leftColors.append((lr / CGFloat(n), lg / CGFloat(n), lb / CGFloat(n)))
+            rightColors.append((rr / CGFloat(n), rg / CGFloat(n), rb / CGFloat(n)))
+        }
+
+        // Sample top and bottom edge colors per column
+        var topColors = [(r: CGFloat, g: CGFloat, b: CGFloat)]()
+        var bottomColors = [(r: CGFloat, g: CGFloat, b: CGFloat)]()
+        for col in 0..<iw {
+            let sx = ix + col
+            var tr: CGFloat = 0, tg: CGFloat = 0, tb: CGFloat = 0
+            var br: CGFloat = 0, bg: CGFloat = 0, bb: CGFloat = 0
+            let n = max(1, min(iy, 3))
+            for d in 1...n {
+                let t = samplePixel(sx, iy + ih - 1 + d)
+                tr += t.r; tg += t.g; tb += t.b
+                let b = samplePixel(sx, iy - d)
+                br += b.r; bg += b.g; bb += b.b
+            }
+            topColors.append((tr / CGFloat(n), tg / CGFloat(n), tb / CGFloat(n)))
+            bottomColors.append((br / CGFloat(n), bg / CGFloat(n), bb / CGFloat(n)))
+        }
+
+        // Render the fill: for each pixel, blend horizontal interpolation (left↔right)
+        // with vertical interpolation (bottom↔top)
+        let outW = iw, outH = ih
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+        guard let ctx = CGContext(data: nil, width: outW, height: outH,
+                                  bitsPerComponent: 8, bytesPerRow: outW * 4,
+                                  space: cs, bitmapInfo: bitmapInfo),
+              let outData = ctx.data else { return nil }
+        let outPtr = outData.bindMemory(to: UInt8.self, capacity: outW * outH * 4)
+
+        for row in 0..<outH {
+            let ty = CGFloat(row) / max(1, CGFloat(outH - 1))  // 0 = bottom, 1 = top
+            let lc = leftColors[row], rc = rightColors[row]
+            for col in 0..<outW {
+                let tx = CGFloat(col) / max(1, CGFloat(outW - 1))  // 0 = left, 1 = right
+                let tc = topColors[col], bc = bottomColors[col]
+                // Horizontal lerp from left/right edge colors for this row
+                let hr = lc.r + (rc.r - lc.r) * tx
+                let hg = lc.g + (rc.g - lc.g) * tx
+                let hb = lc.b + (rc.b - lc.b) * tx
+                // Vertical lerp from bottom/top edge colors for this column
+                let vr = bc.r + (tc.r - bc.r) * ty
+                let vg = bc.g + (tc.g - bc.g) * ty
+                let vb = bc.b + (tc.b - bc.b) * ty
+                // Average horizontal and vertical
+                let off = (row * outW + col) * 4
+                outPtr[off]   = UInt8(max(0, min(255, (hr + vr) * 0.5 * 255)))
+                outPtr[off+1] = UInt8(max(0, min(255, (hg + vg) * 0.5 * 255)))
+                outPtr[off+2] = UInt8(max(0, min(255, (hb + vb) * 0.5 * 255)))
+                outPtr[off+3] = 255
+            }
+        }
+
+        guard let resultCG = ctx.makeImage() else { return nil }
+        return NSImage(cgImage: resultCG, size: rect.size)
+    }
+
+    /// Lazily created and intentionally releasable. The Gaussian-blur path
+    /// (mosaic/blur/loupe) can feed this CIContext a full-screenshot image,
+    /// pinning 30-80MB of IOSurface/texture pool that never shrinks on its
+    /// own. Making it releasable lets the reclaimer return that memory when
+    /// the app is idle or after a screenshot session ends.
+    private static var _ciContext: CIContext?
+    private static var ciContext: CIContext {
+        if let ctx = _ciContext { return ctx }
+        let ctx = CIContext()
+        _ciContext = ctx
+        return ctx
+    }
+    /// Drop the shared CIContext so its IOSurface/texture pool is returned to
+    /// the system. Re-creating it on next use costs only tens of ms.
+    static func releaseContext() { _ciContext = nil }
+
+    private func applyGaussianBlur(to cgImage: CGImage) -> CGImage? {
+        let w = cgImage.width
+        let h = cgImage.height
+        let radius = max(10.0, min(Double(w), Double(h)) * 0.03)
+
+        let ciImage = CIImage(cgImage: cgImage)
+
+        guard let clamp = CIFilter(name: "CIAffineClamp") else { return nil }
+        clamp.setValue(ciImage, forKey: kCIInputImageKey)
+        clamp.setValue(NSAffineTransform(), forKey: kCIInputTransformKey)
+        guard let clamped = clamp.outputImage else { return nil }
+
+        guard let blur = CIFilter(name: "CIGaussianBlur") else { return nil }
+        blur.setValue(clamped, forKey: kCIInputImageKey)
+        blur.setValue(radius, forKey: kCIInputRadiusKey)
+        guard let output = blur.outputImage else { return nil }
+
+        let outputRect = CGRect(x: 0, y: 0, width: w, height: h)
+        return Annotation.ciContext.createCGImage(output, from: outputRect)
+    }
+
+    // MARK: - Loupe (Magnifying Glass)
+
+    // MARK: - Loupe (Magnifying Glass)
+
+    func bakeLoupe() {
+        guard tool == .loupe else { return }
+        if let live = generateLoupeImage() {
+            bakedBlurNSImage = live
+        }
+        // Do NOT set self.sourceImage = nil so that if the user moves it later, it can still magnify!
+    }
+
+    private func generateLoupeImage() -> NSImage? {
+        // Real-time geometric magnification of the source underlying the circle
+        guard let image = sourceImage else { return nil }
+
+        let bounds = sourceImageBounds
+        let imageSize = image.size
+        let scaleX = imageSize.width / bounds.width
+        let scaleY = imageSize.height / bounds.height
+        
+        let rect = boundingRect
+        let scale = max(1.1, loupeMagnification)
+        
+        // Always force a perfect circle
+        let size = min(rect.width, rect.height)
+        guard size > 10 else { return nil }
+
+        // Two-circle magnifier: sample under the rooted SOURCE circle. Legacy
+        // single loupe: sample under itself.
+        let centerX: CGFloat
+        let centerY: CGFloat
+        if let src = loupeSourceRect {
+            centerX = src.midX
+            centerY = src.midY
+        } else {
+            centerX = rect.origin.x + rect.width / 2
+            centerY = rect.origin.y + rect.height / 2
+        }
+
+        let srcSize = size / scale
+        let srcX = centerX - srcSize / 2
+        let srcY = centerY - srcSize / 2
+        
+        // Extract the original region.
+        // NSImage and the overlay view share the same coordinate system (Y=0 at bottom),
+        // so no Y-flip is needed — just scale directly.
+        let cropRect = NSRect(
+            x: srcX * scaleX,
+            y: srcY * scaleY,
+            width: srcSize * scaleX,
+            height: srcSize * scaleY
+        )
+        
+        let magnifiedImage = NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
+            if let ctx = NSGraphicsContext.current {
+                ctx.imageInterpolation = .high
+            }
+            image.draw(in: NSRect(x: 0, y: 0, width: size, height: size),
+                       from: cropRect,
+                       operation: .copy,
+                       fraction: 1.0)
+            return true
+        }
+        
+        return magnifiedImage
+    }
+
+    // Cached loupe chrome objects (shared across all loupe annotations)
+    private static let loupeOuterShadow: NSShadow = {
+        let s = NSShadow()
+        s.shadowColor = NSColor.black.withAlphaComponent(0.4)
+        s.shadowOffset = NSSize(width: 0, height: -6)
+        s.shadowBlurRadius = 14
+        return s
+    }()
+    private static let loupeInnerShadow: NSShadow = {
+        let s = NSShadow()
+        s.shadowColor = NSColor.black.withAlphaComponent(0.5)
+        s.shadowOffset = NSSize(width: 0, height: -3)
+        s.shadowBlurRadius = 6
+        return s
+    }()
+    private static let loupeGradient: CGGradient? = {
+        let colors = [
+            NSColor.white.withAlphaComponent(0.95).cgColor,
+            NSColor(white: 0.7, alpha: 0.85).cgColor,
+        ] as CFArray
+        return CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB)!, colors: colors, locations: [0.0, 1.0])
+    }()
+
+    /// Outline ring thickness used both for the colored ring and (so preview ==
+    /// committed) the selection chrome.
+    static let loupeOutlineWidth: CGFloat = 4.0
+
+    /// The circular lens rect (the magnified circle) for this loupe.
+    var loupeLensSquareRect: NSRect {
+        let rect = boundingRect
+        let size = min(rect.width, rect.height)
+        return NSRect(x: rect.origin.x + (rect.width - size) / 2,
+                      y: rect.origin.y + (rect.height - size) / 2,
+                      width: size, height: size)
+    }
+
+    /// Two-circle loupe invariant: the source circle frames exactly the region
+    /// the lens magnifies, so its diameter = lensDiameter / magnification. Resize
+    /// the source (keeping it centered) to satisfy this. No-op for a single loupe.
+    func syncLoupeSourceToMagnification() {
+        guard tool == .loupe, let src = loupeSourceRect else { return }
+        let lensSize = loupeLensSquareRect.width
+        let mag = max(1.1, loupeMagnification)
+        let newSize = lensSize / mag
+        let cx = src.midX, cy = src.midY
+        loupeSourceRect = NSRect(x: cx - newSize / 2, y: cy - newSize / 2,
+                                 width: newSize, height: newSize)
+    }
+
+    private func drawLoupe(in context: NSGraphicsContext) {
+        let rect = boundingRect
+        guard rect.width > 10, rect.height > 10 else { return }
+
+        let squareRect = loupeLensSquareRect
+        let size = squareRect.width
+        let colored = loupeOutlineEnabled
+        let ringColor = outlineColor ?? .systemRed
+
+        // Two-circle (rooted) magnifier: draw the connecting line + source ring
+        // first, behind the lens. The lens samples the region under the SOURCE
+        // circle, magnified to fill the lens.
+        if let src = loupeSourceRect, src.width > 4, src.height > 4 {
+            let srcCenter = NSPoint(x: src.midX, y: src.midY)
+            let lensCenter = NSPoint(x: squareRect.midX, y: squareRect.midY)
+            let lineColor = colored ? ringColor : NSColor.white
+            let lineWidth = colored ? Self.loupeOutlineWidth * 0.6 : 2.0
+            let srcRadius = min(src.width, src.height) / 2
+            let lensRadius = size / 2
+
+            // Connecting line: trim each end to the circle's circumference so it
+            // touches the edges instead of running into the centers.
+            let dx = lensCenter.x - srcCenter.x
+            let dy = lensCenter.y - srcCenter.y
+            let dist = hypot(dx, dy)
+            if dist > srcRadius + lensRadius {
+                let ux = dx / dist, uy = dy / dist
+                let from = NSPoint(x: srcCenter.x + ux * srcRadius, y: srcCenter.y + uy * srcRadius)
+                let to = NSPoint(x: lensCenter.x - ux * lensRadius, y: lensCenter.y - uy * lensRadius)
+                let line = NSBezierPath()
+                line.move(to: from)
+                line.line(to: to)
+                line.lineWidth = lineWidth
+                lineColor.setStroke()
+                line.stroke()
+            }
+
+            // Source ring (outline only — shows the real, un-magnified spot).
+            let srcSize = min(src.width, src.height)
+            let srcSquare = NSRect(x: srcCenter.x - srcSize / 2, y: srcCenter.y - srcSize / 2,
+                                   width: srcSize, height: srcSize)
+            let srcRing = NSBezierPath(ovalIn: srcSquare)
+            srcRing.lineWidth = colored ? Self.loupeOutlineWidth : 2.0
+            (colored ? ringColor : NSColor.white).setStroke()
+            srcRing.stroke()
+        }
+
+        // Source center to sample the magnified content from. With a source rect,
+        // sample under it; otherwise sample under the lens itself (legacy loupe).
+        let sampleCenter: NSPoint
+        if let src = loupeSourceRect {
+            sampleCenter = NSPoint(x: src.midX, y: src.midY)
+        } else {
+            sampleCenter = NSPoint(x: rect.midX, y: rect.midY)
+        }
+
+        let path = NSBezierPath(ovalIn: squareRect)
+
+        // 1. Outer drop shadow
+        context.saveGraphicsState()
+        Self.loupeOuterShadow.set()
+        NSColor.white.setFill()
+        path.fill()
+        context.restoreGraphicsState()
+
+        // 2. Magnified content clipped to circle
+        context.saveGraphicsState()
+        path.addClip()
+
+        if let baked = bakedBlurNSImage {
+            baked.draw(in: squareRect, from: NSRect(origin: .zero, size: baked.size),
+                       operation: .sourceOver, fraction: 1.0)
+        } else if let image = sourceImage {
+            // Draw directly from source without creating an intermediate image.
+            let imgSize = image.size
+            let scaleX = imgSize.width / sourceImageBounds.width
+            let scaleY = imgSize.height / sourceImageBounds.height
+            let magnification = max(1.1, loupeMagnification)
+            let srcSize = size / magnification
+            let fromRect = NSRect(
+                x: (sampleCenter.x - srcSize/2) * scaleX,
+                y: (sampleCenter.y - srcSize/2) * scaleY,
+                width: srcSize * scaleX,
+                height: srcSize * scaleY
+            )
+            context.imageInterpolation = .high
+            image.draw(in: squareRect, from: fromRect, operation: .copy, fraction: 1.0)
+        }
+        context.restoreGraphicsState()
+
+        // 3. Border ring — colored solid ring, or the default gray gradient.
+        let cgCtx = context.cgContext
+        let borderWidth: CGFloat = Self.loupeOutlineWidth
+        if colored {
+            context.saveGraphicsState()
+            let ring = NSBezierPath(ovalIn: squareRect.insetBy(dx: borderWidth / 2, dy: borderWidth / 2))
+            ring.lineWidth = borderWidth
+            ringColor.setStroke()
+            ring.stroke()
+            context.restoreGraphicsState()
+        } else {
+            let innerPath = NSBezierPath(ovalIn: squareRect.insetBy(dx: borderWidth, dy: borderWidth))
+            let ringPath = NSBezierPath()
+            ringPath.append(path)
+            ringPath.append(innerPath.reversed)
+            cgCtx.saveGState()
+            ringPath.addClip()
+            if let gradient = Self.loupeGradient {
+                cgCtx.drawLinearGradient(
+                    gradient,
+                    start: CGPoint(x: squareRect.midX, y: squareRect.maxY),
+                    end:   CGPoint(x: squareRect.midX, y: squareRect.minY),
+                    options: []
+                )
+            }
+            cgCtx.restoreGState()
+        }
+
+        // 4. Inner shadow
+        context.saveGraphicsState()
+        Self.loupeInnerShadow.set()
+        let holeRect = squareRect.insetBy(dx: -30, dy: -30)
+        let innerHole = NSBezierPath(rect: holeRect)
+        innerHole.append(NSBezierPath(ovalIn: squareRect).reversed)
+        path.addClip()
+        NSColor.black.withAlphaComponent(0.8).setFill()
+        innerHole.fill()
+        context.restoreGraphicsState()
+    }
+
+    // MARK: - Translate overlay
+
+    private func drawTranslateOverlay() {
+        guard let translatedText = text, !translatedText.isEmpty else { return }
+
+        let rect = boundingRect
+        guard rect.width > 2, rect.height > 2 else { return }
+
+        // Background: use `color` (sampled avg color stored at creation time)
+        // with a slight blur-like fill behind text
+        let bgColor = color
+        let bgPath = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
+        bgColor.setFill()
+        bgPath.fill()
+
+        // Determine contrasting text color
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        bgColor.usingColorSpace(.deviceRGB)?.getRed(&r, green: &g, blue: &b, alpha: &a)
+        let luminance = 0.299 * r + 0.587 * g + 0.114 * b
+        let textColor: NSColor = luminance > 0.55 ? .black : .white
+
+        // Fit text into the rect — start at stored fontSize, shrink if needed
+        let hPad: CGFloat = 3
+        let vPad: CGFloat = 2
+        let availW = rect.width - hPad * 2
+        let availH = rect.height - vPad * 2
+
+        var fs = max(8, fontSize)
+        var attrStr: NSAttributedString
+        repeat {
+            let font = NSFont.systemFont(ofSize: fs, weight: .medium)
+            attrStr = NSAttributedString(string: translatedText, attributes: [
+                .font: font,
+                .foregroundColor: textColor,
+            ])
+            let needed = attrStr.boundingRect(
+                with: NSSize(width: availW, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            )
+            if needed.height <= availH || fs <= 8 { break }
+            fs -= 1
+        } while fs > 8
+
+        // Draw text top-aligned within the block
+        let textRect = NSRect(
+            x: rect.minX + hPad,
+            y: rect.minY + vPad,
+            width: availW,
+            height: availH
+        )
+        attrStr.draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading])
+    }
+}

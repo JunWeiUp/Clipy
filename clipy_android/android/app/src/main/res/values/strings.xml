@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fgs_notification_title">Clipy 局域网同步</string>
+    <string name="fgs_notification_text">正在保持局域网同步服务运行</string>
+    <string name="fgs_channel_name">局域网同步</string>
+    <string name="fgs_channel_desc">用于在应用退到后台时保持设备间同步连接</string>
+</resources>

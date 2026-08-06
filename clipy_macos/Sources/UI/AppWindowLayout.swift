@@ -3,6 +3,11 @@ import SwiftUI
 enum AppColor {
     static var windowChrome: Color { Color(nsColor: .windowBackgroundColor) }
     static var windowBackground: Color { Color(nsColor: .textBackgroundColor) }
+
+    /// 统一强调色：单一冷色，遵循「One accent color」。
+    static var accent: Color { Color(nsColor: .controlAccentColor) }
+    static var separator: Color { Color(nsColor: .separatorColor) }
+    static var secondaryLabel: Color { Color(nsColor: .secondaryLabelColor) }
 }
 
 /// 统一的窗口顶栏容器，与 AppToolbar 使用相同背景与内边距。
@@ -12,9 +17,11 @@ struct AppWindowHeader<Content: View>: View {
     var body: some View {
         content()
             .padding(.horizontal, AppSpacing.sm)
-            .padding(.vertical, AppSpacing.xs)
+            // 顶部让出标题栏高度，内容位于交通灯按钮下方一行。
+            .padding(.top, AppTitleBar.height)
+            .padding(.bottom, AppSpacing.xs)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AppColor.windowChrome)
+            .background(.thinMaterial)
     }
 }
 
@@ -35,7 +42,8 @@ struct AppListWindowLayout<Toolbar: View, Content: View>: View {
                 StatusBarView(text: statusText)
             }
         }
-        .background(AppColor.windowBackground)
+        // 内容区透出窗口底层（underWindowBackground）的毛玻璃。
+        .background(Color.clear)
     }
 }
 
@@ -46,8 +54,11 @@ struct AppFormWindowLayout<Content: View>: View {
     var body: some View {
         content()
             .formStyle(.grouped)
-            .padding(AppSpacing.sm)
+            // 顶部让出标题栏高度，避免 grouped 表单头被交通灯按钮遮挡。
+            .padding(.top, AppTitleBar.height)
+            .padding(.horizontal, AppSpacing.sm)
+            .padding(.bottom, AppSpacing.sm)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(AppColor.windowBackground)
+            .background(Color.clear)
     }
 }

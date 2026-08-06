@@ -1,5 +1,6 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+import '../log_manager.dart';
 import '../storage_paths.dart';
 import 'legacy_migration.dart';
 
@@ -8,7 +9,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'clipy.db';
-  static const schemaVersion = 1;
+  static const schemaVersion = 5;
 
   Database? _db;
 
@@ -25,6 +26,49 @@ class AppDatabase {
       path,
       version: schemaVersion,
       onCreate: _onCreate,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        appLog('AppDatabase: upgrade from $oldVersion to $newVersion');
+        if (oldVersion < 2) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS pending_notification_sync (
+              notification_id TEXT PRIMARY KEY,
+              content TEXT NOT NULL,
+              hash TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            )
+          ''');
+        }
+        if (oldVersion < 3) {
+          // Reliable delivery queue for text/plain (clipboard) frames awaiting
+          // ACK. Per sync power plan v2 — survives restart so content copied
+          // just before a crash/quit still reaches the peer on next reappearance.
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS pending_text_sync (
+              hash TEXT NOT NULL,
+              data TEXT NOT NULL,
+              type TEXT NOT NULL,
+              target_peer_id TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              UNIQUE(target_peer_id, hash)
+            )
+          ''');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_peer ON pending_text_sync(target_peer_id)');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_hash ON pending_text_sync(hash)');
+        }
+        if (oldVersion < 4) {
+          await db.execute(
+              'ALTER TABLE notifications ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
+        }
+        if (oldVersion < 5) {
+          // sync_state: 0 = 待同步（默认），1 = Mac 已 ack 确认送达。
+          // 用于 refreshActiveNotifications 的 backfill：只把 sync_state=0
+          // 且不在 pending_notification_sync 队列里的通知补发，已 ack 的不重复补。
+          await db.execute(
+              'ALTER TABLE notifications ADD COLUMN sync_state INTEGER NOT NULL DEFAULT 0');
+        }
+      },
     );
     await LegacyMigration.runIfNeeded(db);
     return db;
@@ -56,6 +100,8 @@ class AppDatabase {
         post_time INTEGER NOT NULL,
         group_key TEXT,
         is_clearable INTEGER NOT NULL DEFAULT 1,
+        is_archived INTEGER NOT NULL DEFAULT 0,
+        sync_state INTEGER NOT NULL DEFAULT 0,
         extras_json TEXT NOT NULL DEFAULT '{}',
         synced_at INTEGER
       )
@@ -64,21 +110,6 @@ class AppDatabase {
         'CREATE INDEX idx_notifications_package_time ON notifications(package_name, post_time DESC)');
     await db.execute(
         'CREATE INDEX idx_notifications_post_time ON notifications(post_time DESC)');
-
-    await db.execute('''
-      CREATE TABLE collector_events (
-        id TEXT PRIMARY KEY,
-        category TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        device_id TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        synced INTEGER NOT NULL DEFAULT 0
-      )
-    ''');
-    await db.execute(
-        'CREATE INDEX idx_collector_category_time ON collector_events(category, timestamp DESC)');
-    await db.execute(
-        'CREATE INDEX idx_collector_synced ON collector_events(synced)');
 
     await db.execute('''
       CREATE TABLE file_transfers (
@@ -103,5 +134,29 @@ class AppDatabase {
     ''');
     await db.execute(
         'CREATE INDEX idx_app_logs_created ON app_logs(created_at DESC)');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pending_notification_sync (
+        notification_id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pending_text_sync (
+        hash TEXT NOT NULL,
+        data TEXT NOT NULL,
+        type TEXT NOT NULL,
+        target_peer_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(target_peer_id, hash)
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_peer ON pending_text_sync(target_peer_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_hash ON pending_text_sync(hash)');
   }
 }

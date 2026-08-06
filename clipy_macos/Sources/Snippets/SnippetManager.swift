@@ -1,0 +1,412 @@
+import AppKit
+import Foundation
+
+struct ShortcutCombo: Codable {
+    var keyCode: Int
+    var modifierFlags: UInt
+    
+    var displayString: String {
+        var str = ""
+        if modifierFlags & NSEvent.ModifierFlags.control.rawValue != 0 { str += "⌃" }
+        if modifierFlags & NSEvent.ModifierFlags.option.rawValue != 0 { str += "⌥" }
+        if modifierFlags & NSEvent.ModifierFlags.shift.rawValue != 0 { str += "⇧" }
+        if modifierFlags & NSEvent.ModifierFlags.command.rawValue != 0 { str += "⌘" }
+        
+        // Simplified key mapping
+        let keyMap: [Int: String] = [
+            0x00: "A", 0x01: "S", 0x02: "D", 0x03: "F", 0x04: "H", 0x05: "G", 0x06: "Z", 0x07: "X",
+            0x08: "C", 0x09: "V", 0x0B: "B", 0x0C: "Q", 0x0D: "W", 0x0E: "E", 0x0F: "R", 0x10: "Y",
+            0x11: "T", 0x12: "1", 0x13: "2", 0x14: "3", 0x15: "4", 0x16: "6", 0x17: "5", 0x18: "=",
+            0x19: "9", 0x1A: "7", 0x1B: "-", 0x1C: "8", 0x1D: "0", 0x1E: "]", 0x1F: "O", 0x20: "U",
+            0x21: "[", 0x22: "I", 0x23: "P", 0x24: "⏎", 0x25: "L", 0x26: "J", 0x27: "'", 0x28: "K",
+            0x29: ";", 0x2B: ",", 0x2C: "/", 0x2D: "N", 0x2E: "M", 0x2F: ".", 0x30: "⇥", 0x31: "␣",
+            0x32: "`", 0x33: "⌫", 0x35: "⎋"
+        ]
+        str += keyMap[keyCode] ?? "?"
+        return str
+    }
+}
+
+struct Snippet: Codable, Identifiable {
+    let id: UUID
+    var title: String
+    var content: String
+    var shortcut: ShortcutCombo?
+}
+
+struct SnippetFolder: Codable, Identifiable {
+    let id: UUID
+    var title: String
+    var snippets: [Snippet]
+    var isEnabled: Bool = true
+    var shortcut: ShortcutCombo?
+}
+
+final class SnippetMenuReference: NSObject {
+    let snippetId: UUID
+
+    init(snippetId: UUID) {
+        self.snippetId = snippetId
+    }
+}
+
+extension UUID {
+    var hashValue32: UInt32 {
+        let (u0, u1, u2, u3, u4, u5, u6, u7, u8, u9, u10, u11, u12, u13, u14, u15) = self.uuid
+        let part0 = UInt32(u0) | (UInt32(u1) << 8) | (UInt32(u2) << 16) | (UInt32(u3) << 24)
+        let part1 = UInt32(u4) | (UInt32(u5) << 8) | (UInt32(u6) << 16) | (UInt32(u7) << 24)
+        let part2 = UInt32(u8) | (UInt32(u9) << 8) | (UInt32(u10) << 16) | (UInt32(u11) << 24)
+        let part3 = UInt32(u12) | (UInt32(u13) << 8) | (UInt32(u14) << 16) | (UInt32(u15) << 24)
+        return part0 ^ part1 ^ part2 ^ part3
+    }
+}
+
+class SnippetManager {
+    static let shared = SnippetManager()
+    
+    private(set) var folders: [SnippetFolder] = []
+    private let storageURL: URL
+    /// Carbon hot-key ids handed out by the current registration pass.
+    private var hotKeyIds: Set<UInt32> = []
+    
+    private let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
+    
+    private let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
+    
+    var onSnippetsChanged: (([SnippetFolder]) -> Void)?
+    var onHotKeyTriggered: ((Any) -> Void)?
+
+    private init() {
+        let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        let appSupport = paths[0].appendingPathComponent("ClipyClone")
+        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        self.storageURL = appSupport.appendingPathComponent("snippets.json")
+        
+        loadSnippets()
+        if folders.isEmpty {
+            createDefaultSnippets()
+        }
+        registerHotKeys()
+    }
+    
+    /// Registers every shortcut. The handlers capture **ids only** and re-read
+    /// the snippet/folder when fired: capturing the value meant a shortcut kept
+    /// pasting whatever the text was at registration time, since editing content
+    /// deliberately skips re-registration.
+    func registerHotKeys() {
+        HotKeyManager.shared.unregisterAll()
+        hotKeyIds.removeAll()
+
+        for folder in folders {
+            if let combo = folder.shortcut {
+                let folderUUID = folder.id
+                let hotKeyId = allocateHotKeyId(for: folderUUID)
+                HotKeyManager.shared.register(keyCode: combo.keyCode, modifiers: combo.modifierFlags, id: hotKeyId) { [weak self] in
+                    guard let self, let latest = self.folder(id: folderUUID) else { return }
+                    self.onHotKeyTriggered?(latest)
+                }
+            }
+
+            for snippet in folder.snippets {
+                if let combo = snippet.shortcut {
+                    let snippetUUID = snippet.id
+                    let hotKeyId = allocateHotKeyId(for: snippetUUID)
+                    HotKeyManager.shared.register(keyCode: combo.keyCode, modifiers: combo.modifierFlags, id: hotKeyId) { [weak self] in
+                        guard let self, let latest = self.snippet(id: snippetUUID) else { return }
+                        self.onHotKeyTriggered?(latest)
+                    }
+                }
+            }
+        }
+        NotificationCenter.default.post(name: .globalHotKeysShouldRegister, object: nil)
+    }
+
+    /// Carbon hot-key ids must be unique within the app. `UUID.hashValue32` folds
+    /// 128 bits into 32, so two snippets can collide and the second registration
+    /// silently replaces the first; probe forward until the id is free.
+    private func allocateHotKeyId(for uuid: UUID) -> UInt32 {
+        var candidate = uuid.hashValue32
+        while hotKeyIds.contains(candidate) {
+            candidate = candidate &+ 1
+        }
+        hotKeyIds.insert(candidate)
+        return candidate
+    }
+
+    private func folder(id: UUID) -> SnippetFolder? {
+        folders.first { $0.id == id }
+    }
+
+    private func createDefaultSnippets() {
+        let greetings = SnippetFolder(id: UUID(), title: "Greetings", snippets: [
+            Snippet(id: UUID(), title: "Hi", content: "Hi there!"),
+            Snippet(id: UUID(), title: "Hello", content: "Hello,"),
+            Snippet(id: UUID(), title: "Regards", content: "Regards,")
+        ])
+        let work = SnippetFolder(id: UUID(), title: "Work", snippets: [
+            Snippet(id: UUID(), title: "Thanks", content: "Thank you!"),
+            Snippet(id: UUID(), title: "Check", content: "I'll check it."),
+            Snippet(id: UUID(), title: "Email", content: "My Email: example@gmail.com")
+        ])
+        folders = [greetings, work]
+        saveSnippets()
+    }
+    
+    func loadSnippets() {
+        if let data = try? Data(contentsOf: storageURL),
+           let savedFolders = try? decoder.decode([SnippetFolder].self, from: data) {
+            self.folders = savedFolders
+        }
+    }
+    
+    /// - Parameter reregisterHotKeys: 正文/标题等不改变快捷键映射时可传 `false`，避免每次按键全局注销再注册快捷键。
+    func saveSnippets(reregisterHotKeys: Bool = true) {
+        let dirURL = storageURL.deletingLastPathComponent()
+        do {
+            try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+            let data = try encoder.encode(folders)
+            try data.write(to: storageURL, options: [.atomic])
+            if reregisterHotKeys {
+                registerHotKeys()
+            }
+            onSnippetsChanged?(folders)
+        } catch {
+            NSLog("SnippetManager: failed to save snippets — \(error.localizedDescription)")
+        }
+    }
+    
+    func updateFolderTitle(id: UUID, title: String) {
+        if let index = folders.firstIndex(where: { $0.id == id }) {
+            folders[index].title = title
+            saveSnippets(reregisterHotKeys: false)
+        }
+    }
+    
+    func updateFolderShortcut(id: UUID, shortcut: ShortcutCombo?) {
+        if let index = folders.firstIndex(where: { $0.id == id }) {
+            folders[index].shortcut = shortcut
+            saveSnippets()
+        }
+    }
+    
+    func updateSnippetTitle(id: UUID, title: String) {
+        for fIndex in 0..<folders.count {
+            if let sIndex = folders[fIndex].snippets.firstIndex(where: { $0.id == id }) {
+                folders[fIndex].snippets[sIndex].title = title
+                saveSnippets(reregisterHotKeys: false)
+                return
+            }
+        }
+    }
+    
+    func updateSnippetContent(id: UUID, content: String) {
+        for fIndex in 0..<folders.count {
+            if let sIndex = folders[fIndex].snippets.firstIndex(where: { $0.id == id }) {
+                folders[fIndex].snippets[sIndex].content = content
+                saveSnippets(reregisterHotKeys: false)
+                return
+            }
+        }
+    }
+    
+    func updateSnippetShortcut(id: UUID, shortcut: ShortcutCombo?) {
+        for fIndex in 0..<folders.count {
+            if let sIndex = folders[fIndex].snippets.firstIndex(where: { $0.id == id }) {
+                folders[fIndex].snippets[sIndex].shortcut = shortcut
+                saveSnippets()
+                return
+            }
+        }
+    }
+    
+    func deleteFolder(id: UUID) {
+        folders.removeAll(where: { $0.id == id })
+        saveSnippets()
+    }
+    
+    func deleteSnippet(id: UUID) {
+        for i in 0..<folders.count {
+            folders[i].snippets.removeAll(where: { $0.id == id })
+        }
+        saveSnippets()
+    }
+
+    func snippet(id: UUID) -> Snippet? {
+        for folder in folders {
+            if let snippet = folder.snippets.first(where: { $0.id == id }) {
+                return snippet
+            }
+        }
+        return nil
+    }
+    
+    func addFolder(title: String) {
+        let newFolder = SnippetFolder(id: UUID(), title: title, snippets: [])
+        folders.append(newFolder)
+        saveSnippets()
+    }
+    
+    @discardableResult
+    func addSnippet(to folderId: UUID, title: String, content: String) -> Snippet? {
+        if let index = folders.firstIndex(where: { $0.id == folderId }) {
+            let newSnippet = Snippet(id: UUID(), title: title, content: content)
+            folders[index].snippets.append(newSnippet)
+            saveSnippets()
+            return newSnippet
+        }
+        return nil
+    }
+
+    @discardableResult
+    func addSnippetToDefaultFolder(title: String, content: String) -> Snippet? {
+        if folders.isEmpty {
+            addFolder(title: L10n.t(.snippets))
+        }
+        guard let folderId = folders.first?.id else { return nil }
+        return addSnippet(to: folderId, title: title, content: content)
+    }
+    
+    /// 调整根级文件夹顺序（`dropIndex` 为拖放目标插入位置，与 `NSOutlineView` 一致）。
+    func reorderFolder(from fromIndex: Int, toDropIndex dropIndex: Int) {
+        guard folders.indices.contains(fromIndex) else { return }
+        var destination = min(max(0, dropIndex), folders.count)
+        let item = folders.remove(at: fromIndex)
+        if fromIndex < destination {
+            destination -= 1
+        }
+        destination = max(0, min(destination, folders.count))
+        folders.insert(item, at: destination)
+        saveSnippets(reregisterHotKeys: false)
+    }
+    
+    /// 在同一文件夹内调整片段顺序。
+    func reorderSnippet(inFolderId folderId: UUID, from fromIndex: Int, toDropIndex dropIndex: Int) {
+        guard let fIndex = folders.firstIndex(where: { $0.id == folderId }) else { return }
+        var list = folders[fIndex].snippets
+        guard list.indices.contains(fromIndex) else { return }
+        var destination = min(max(0, dropIndex), list.count)
+        let item = list.remove(at: fromIndex)
+        if fromIndex < destination {
+            destination -= 1
+        }
+        destination = max(0, min(destination, list.count))
+        list.insert(item, at: destination)
+        folders[fIndex].snippets = list
+        saveSnippets(reregisterHotKeys: false)
+    }
+    
+    func updateSnippet(folderId: UUID, snippetId: UUID, title: String, content: String) {
+        if let fIndex = folders.firstIndex(where: { $0.id == folderId }),
+           let sIndex = folders[fIndex].snippets.firstIndex(where: { $0.id == snippetId }) {
+            folders[fIndex].snippets[sIndex].title = title
+            folders[fIndex].snippets[sIndex].content = content
+            saveSnippets()
+        }
+    }
+
+    /// Serializes all snippet folders to XML compatible with `importFromXML`.
+    func exportToXMLString() -> String {
+        var lines: [String] = []
+        lines.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+        lines.append("<snippets>")
+        for folder in folders {
+            lines.append("<folder>")
+            lines.append("<title>\(SnippetManager.xmlEscape(folder.title))</title>")
+            for snippet in folder.snippets {
+                lines.append("<snippet>")
+                lines.append("<title>\(SnippetManager.xmlEscape(snippet.title))</title>")
+                lines.append("<content>\(SnippetManager.xmlEscape(snippet.content))</content>")
+                lines.append("</snippet>")
+            }
+            lines.append("</folder>")
+        }
+        lines.append("</snippets>")
+        return lines.joined(separator: "\n")
+    }
+
+    private static func xmlEscape(_ string: String) -> String {
+        string
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
+    }
+
+    func importFromXML(_ xmlString: String) {
+        guard let data = xmlString.data(using: .utf8) else { return }
+        let parser = XMLParser(data: data)
+        let delegate = SnippetXMLDelegate()
+        parser.delegate = delegate
+        if parser.parse() {
+            // Append imported folders
+            self.folders.append(contentsOf: delegate.importedFolders)
+            saveSnippets()
+        }
+    }
+}
+
+class SnippetXMLDelegate: NSObject, XMLParserDelegate {
+    var importedFolders: [SnippetFolder] = []
+    private var currentFolder: SnippetFolder?
+    private var currentSnippet: Snippet?
+    private var currentElement = ""
+    private var currentText = ""
+    
+    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String : String] = [:]) {
+        currentElement = elementName
+        currentText = ""
+        
+        if elementName == "folder" {
+            currentFolder = SnippetFolder(id: UUID(), title: "", snippets: [])
+        } else if elementName == "snippet" {
+            currentSnippet = Snippet(id: UUID(), title: "", content: "")
+        }
+    }
+    
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        currentText += string
+    }
+    
+    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+        let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&apos;", with: "'")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&amp;", with: "&")
+
+        if elementName == "title" {
+            if var snippet = currentSnippet {
+                snippet.title = text
+                currentSnippet = snippet
+            } else if var folder = currentFolder {
+                folder.title = text
+                currentFolder = folder
+            }
+        } else if elementName == "content" {
+            if var snippet = currentSnippet {
+                snippet.content = text
+                currentSnippet = snippet
+            }
+        } else if elementName == "snippet" {
+            if let snippet = currentSnippet {
+                currentFolder?.snippets.append(snippet)
+            }
+            currentSnippet = nil
+        } else if elementName == "folder" {
+            if let folder = currentFolder {
+                importedFolders.append(folder)
+            }
+            currentFolder = nil
+        }
+    }
+}
