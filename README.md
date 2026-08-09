@@ -153,11 +153,13 @@ Clipy uses a LAN-first protocol v2 for clipboard history and notifications:
 
 - **Discovery** — `/24` TCP port scan + manual `IP:port` peers (cross-subnet / dual-band).
 - **Transport** — raw TCP with a 4-byte big-endian length prefix per JSON envelope (`v: 2`, max 2 MB/frame).
-- **Messages** — `history`, `notif.post` / `dismiss` / `clear` / `ack`, `hello` / `welcome`, `ping` / `pong`, `ack`.
-- **Encryption** — AES-GCM 256-bit on payloads.
+- **Messages** — `history`, `history.fetch`, `notif.post` / `dismiss` / `clear` / `ack`, `hello` / `welcome`, `ping` / `pong`, `ack`.
+- **Encryption** — AES-GCM 256-bit on payloads (HKDF when a pairing secret is set).
 - **Authorization** — outbound clipboard/notification push only to peers in each device's authorized list.
-- **Reliability** — history frames require `ack`; bounded offline queue + endpoint cache for reconnect.
+- **Reliability** — history frames require `ack` after persist; bounded offline queue + endpoint cache for reconnect.
 - **Loop prevention** — content hashes prevent rebroadcast loops.
+
+Full wire notes, headless Android channel rules, and code map: [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
 ## 📁 Project structure
 

@@ -95,6 +95,23 @@ final class HistoryRepository {
         }
     }
 
+    /// Returns the most recent `limit` text-type entries (newest first) as
+    /// (plain text, content hash, date). Used to answer a `history.fetch`
+    /// request from a peer that just (re)appeared and wants to catch up on what
+    /// it missed while offline. Skips pinned-bias ordering — strictly by date —
+    /// so a freshly-restarted Android gets chronological history.
+    func fetchRecentTexts(limit: Int = 200) -> [(text: String, hash: String?, date: Date)] {
+        let entries = fetchFiltered(
+            filters: SearchHistoryFilters(typeFilter: .text),
+            includeSearchIndex: false,
+            limit: limit
+        )
+        return entries.compactMap { entry in
+            guard let text = entry.resolvedText, !text.isEmpty else { return nil }
+            return (text, entry.contentHash, entry.date)
+        }
+    }
+
     func findFileEntryMatchingPlainText(_ text: String, recentLimit: Int = 100) -> HistoryEntry? {
         queue.sync {
             let entries = fetchLocked(

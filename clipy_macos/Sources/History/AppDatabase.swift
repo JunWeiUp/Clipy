@@ -91,6 +91,21 @@ final class AppDatabase {
         );
         CREATE INDEX IF NOT EXISTS idx_phone_notifications_order ON phone_notifications(post_time DESC);
         CREATE INDEX IF NOT EXISTS idx_phone_notifications_package_time ON phone_notifications(package_name, post_time DESC);
+
+        -- Reliable delivery queue for sync frames (history/notif.post) awaiting
+        -- ACK. Persisted so content copied just before a quit/crash still reaches
+        -- the peer on next reappearance — the in-memory queue was lost on every
+        -- process exit. Mirrors the Android `pending_text_sync` table.
+        CREATE TABLE IF NOT EXISTS pending_sync (
+            peer_id TEXT NOT NULL,
+            hash TEXT NOT NULL,
+            type TEXT NOT NULL,
+            data BLOB NOT NULL,
+            enqueue_at REAL NOT NULL,
+            PRIMARY KEY (peer_id, hash)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pending_sync_peer ON pending_sync(peer_id);
+        CREATE INDEX IF NOT EXISTS idx_pending_sync_hash ON pending_sync(hash);
         """
         sqliteExec(db, sql, context: "schema creation")
     }

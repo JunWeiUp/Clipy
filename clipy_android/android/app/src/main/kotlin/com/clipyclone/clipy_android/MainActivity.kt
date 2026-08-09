@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
@@ -15,16 +14,15 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.clipyclone.clipy_android/open_folder"
     private val PERMISSIONS_CHANNEL = "com.clipyclone.clipy_android/permissions"
-    private val STORAGE_CHANNEL = "com.clipyclone.clipy_android/storage"
-    private val NOTIFICATIONS_CHANNEL = "com.clipyclone.clipy_android/notifications"
-    private val CLIPBOARD_CHANNEL = "com.clipyclone.clipy_android/clipboard"
-    private val SYNC_SERVICE_CHANNEL = "com.clipyclone.clipy_android/sync_service"
+    private val NOTIFICATIONS_CHANNEL = ClipyApplication.NOTIFICATIONS_CHANNEL
+    private val CLIPBOARD_CHANNEL = ClipyApplication.CLIPBOARD_CHANNEL
     private val STORAGE_PERMISSION_REQUEST_CODE = 1001
     private var clipboardChangeListener: ClipboardChangeListener? = null
     private var notificationsMethodChannel: MethodChannel? = null
@@ -36,7 +34,11 @@ class MainActivity: FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        
+
+        // When Application skipped warm-start (sync off), cache this engine so
+        // a later FGS start shares one isolate / :5566 bind.
+        (application as? ClipyApplication)?.adoptEngineIfNeeded(flutterEngine)
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             if (call.method == "openFolder") {
                 val path = call.argument<String>("path")
@@ -74,158 +76,11 @@ class MainActivity: FlutterActivity() {
             }
         }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, STORAGE_CHANNEL).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "getAppStorageDirectory" -> {
-                    result.success(filesDir.absolutePath)
-                }
-                "getDownloadsDirectory" -> {
-                    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                    if (downloadsDir != null) {
-                        result.success(downloadsDir.absolutePath)
-                    } else {
-                        result.error("NOT_FOUND", "Downloads directory not found", null)
-                    }
-                }
-                else -> {
-                    result.notImplemented()
-                }
-            }
-        }
-
-        val notificationsChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NOTIFICATIONS_CHANNEL)
-        notificationsMethodChannel = notificationsChannel
-        ClipyNotificationListenerService.setMethodChannel(notificationsChannel)
-        notificationsChannel.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "isListenerPermissionGranted" -> {
-                    result.success(isNotificationListenerEnabled())
-                }
-                "openListenerSettings" -> {
-                    val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    startActivity(intent)
-                    result.success(null)
-                }
-                "dismissNotification" -> {
-                    val packageName = call.argument<String>("packageName")
-                    val notificationKey = call.argument<String>("notificationKey")
-                    val listener = ClipyNotificationListenerService.instance
-                    if (listener != null && packageName != null) {
-                        try {
-                            listener.dismissNotification(packageName, notificationKey)
-                            result.success(null)
-                        } catch (e: Exception) {
-                            result.error("DISMISS_FAILED", e.message, null)
-                        }
-                    } else {
-                        result.error("NO_LISTENER", "NotificationListenerService not running", null)
-                    }
-                }
-                "openNotification" -> {
-                    val packageName = call.argument<String>("packageName")
-                    val notificationKey = call.argument<String>("notificationKey")
-                    val listener = ClipyNotificationListenerService.instance
-                    if (listener != null && packageName != null) {
-                        try {
-                            listener.openNotification(packageName, notificationKey)
-                            result.success(null)
-                        } catch (e: Exception) {
-                            result.error("OPEN_FAILED", e.message, null)
-                        }
-                    } else {
-                        result.error("NO_LISTENER", "NotificationListenerService not running", null)
-                    }
-                }
-                "refreshActiveNotifications" -> {
-                    val listener = ClipyNotificationListenerService.instance
-                    if (listener != null) {
-                        try {
-                            // Return the snapshot to Dart so it can ingest under
-                            // suppressBroadcast without racing async onNotificationPosted.
-                            result.success(listener.collectActiveNotifications())
-                        } catch (e: Exception) {
-                            result.error("REFRESH_FAILED", e.message, null)
-                        }
-                    } else if (isNotificationListenerEnabled()) {
-                        requestNotificationListenerRebind()
-                        result.success(emptyList<Map<String, Any?>>())
-                    } else {
-                        result.error("NO_LISTENER", "NotificationListenerService not running", null)
-                    }
-                }
-                "clearAllNotifications" -> {
-                    val listener = ClipyNotificationListenerService.instance
-                    if (listener != null) {
-                        try {
-                            listener.clearAllNotifications()
-                            result.success(null)
-                        } catch (e: Exception) {
-                            result.error("CLEAR_FAILED", e.message, null)
-                        }
-                    } else {
-                        result.error("NO_LISTENER", "NotificationListenerService not running", null)
-                    }
-                }
-                "drainNativePendingPosts" -> {
-                    // 拉取并清空 Kotlin 端在 channel=null 期间落盘的通知缓冲。
-                    // 返回 List<String>（每项为通知 JSON），Dart 侧逐条走
-                    // _handleNotificationPosted 完成入库 + 入 pending 同步队列。
-                    try {
-                        val payloads = NativePendingPostStore.drainAll(this)
-                        result.success(payloads)
-                    } catch (e: Exception) {
-                        result.error("DRAIN_FAILED", e.message, null)
-                    }
-                }
-                "getInstalledApps" -> {
-                    Thread {
-                        try {
-                            val apps = getInstalledAppsList()
-                            runOnUiThread { result.success(apps) }
-                        } catch (e: Exception) {
-                            runOnUiThread {
-                                result.error("GET_APPS_FAILED", e.message, null)
-                            }
-                        }
-                    }.start()
-                }
-                "getListenerStatus" -> {
-                    val permissionGranted = isNotificationListenerEnabled()
-                    val listener = ClipyNotificationListenerService.instance
-                    val actuallyConnected = ClipyNotificationListenerService.listenerConnected
-                    val activeCount = try {
-                        listener?.activeNotifications?.size ?: 0
-                    } catch (_: Exception) {
-                        0
-                    }
-                    result.success(
-                        mapOf(
-                            "permissionGranted" to permissionGranted,
-                            "serviceConnected" to (listener != null && actuallyConnected),
-                            "activeNotificationCount" to activeCount,
-                        ),
-                    )
-                }
-                "requestListenerRebind" -> {
-                    val force = call.argument<Boolean>("force") ?: false
-                    if (isNotificationListenerEnabled()) {
-                        if (force) {
-                            ClipyNotificationListenerService.forceReconnect(this, reason = "flutter")
-                        } else {
-                            requestNotificationListenerRebind()
-                        }
-                    }
-                    result.success(null)
-                }
-                "openOemAutostartSettings" -> {
-                    result.success(openOemAutostartSettings())
-                }
-                else -> {
-                    result.notImplemented()
-                }
-            }
-        }
+        // storage / NLS core / sync_service already registered by PlatformChannels
+        // on the Application engine. Only attach UI-only notification methods.
+        PlatformChannels.attachActivityHandlers(this, flutterEngine)
+        notificationsMethodChannel =
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NOTIFICATIONS_CHANNEL)
 
         val clipboardChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CLIPBOARD_CHANNEL)
         clipboardChangeListener = ClipboardChangeListener(this)
@@ -239,62 +94,46 @@ class MainActivity: FlutterActivity() {
                     clipboardChangeListener?.detach()
                     result.success(null)
                 }
-                else -> result.notImplemented()
-            }
-        }
-
-        // Foreground service control: SyncManager.start()/stop() call this to
-        // promote the process to a foreground service so the Dart ServerSocket
-        // keeps accepting connections while the Activity is backgrounded.
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYNC_SERVICE_CHANNEL).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "startForegroundSync" -> {
-                    try {
-                        val intent = Intent(this, ClipySyncForegroundService::class.java)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            startForegroundService(intent)
-                        } else {
-                            startService(intent)
-                        }
-                        result.success(true)
-                    } catch (e: Exception) {
-                        Log.e("ClipyMain", "startForegroundSync failed", e)
-                        result.success(false)
-                    }
-                }
-                "stopForegroundSync" -> {
-                    try {
-                        stopService(Intent(this, ClipySyncForegroundService::class.java))
-                        result.success(true)
-                    } catch (e: Exception) {
-                        Log.e("ClipyMain", "stopForegroundSync failed", e)
-                        result.success(false)
-                    }
+                "setText" -> {
+                    val text = call.argument<String>("text") ?: ""
+                    val ok = (application as? ClipyApplication)?.setClipboardText(text) == true
+                    result.success(ok)
                 }
                 else -> result.notImplemented()
             }
         }
     }
 
+    /**
+     * Reuse the Application-cached engine when ready so UI and sync share one
+     * isolate / one ServerSocket. If the cache is not ready yet, return null and
+     * let FlutterActivity create a normal engine (user can still open the app).
+     */
+    override fun getCachedEngineId(): String? {
+        val app = application as? ClipyApplication ?: return null
+        return if (app.engineReady) ClipyApplication.ENGINE_ID else null
+    }
+
+    /** Keep the sole cached engine alive after Activity teardown (FGS / reuse). */
+    override fun shouldDestroyEngineWithHost(): Boolean {
+        return FlutterEngineCache.getInstance().get(ClipyApplication.ENGINE_ID) == null
+    }
+
     override fun onDestroy() {
-        // Only clear if this Activity still owns the channel — a newer Activity may
-        // have already registered its own channel during recreate.
-        ClipyNotificationListenerService.clearMethodChannelIf(notificationsMethodChannel)
+        // Keep NLS MethodChannel attached: after force-kill recovery the engine
+        // stays alive without Activity, and clearing here would send posts only
+        // into NativePendingPostStore until the UI opens again.
         notificationsMethodChannel = null
         clipboardChangeListener?.detach()
         clipboardChangeListener = null
         super.onDestroy()
+        // Do not destroy the cached engine — FGS keeps sync alive.
     }
 
-    private fun isNotificationListenerEnabled(): Boolean {
-        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
-        if (flat.isNullOrEmpty()) return false
-        val cn = ComponentName(this, ClipyNotificationListenerService::class.java)
-        // MIUI may store either flattenToString or flattenToShortString.
-        return flat.contains(cn.flattenToString()) || flat.contains(cn.flattenToShortString())
-    }
+    fun isNotificationListenerEnabledPublic(): Boolean =
+        PlatformChannels.isNotificationListenerEnabled(application as ClipyApplication)
 
-    private fun requestNotificationListenerRebind() {
+    fun requestNotificationListenerRebindPublic() {
         val now = System.currentTimeMillis()
         val elapsed = now - lastRebindTimeMs
         if (elapsed < REBIND_THROTTLE_MS) {
@@ -306,7 +145,7 @@ class MainActivity: FlutterActivity() {
     }
 
     /** Try Xiaomi/HyperOS autostart page; returns true if an activity was launched. */
-    private fun openOemAutostartSettings(): Boolean {
+    fun openOemAutostartSettingsPublic(): Boolean {
         val candidates = listOf(
             Intent("miui.intent.action.OP_AUTO_START").setPackage("com.miui.securitycenter"),
             Intent().setComponent(
@@ -361,7 +200,7 @@ class MainActivity: FlutterActivity() {
         }
     }
 
-    private fun getInstalledAppsList(): List<Map<String, Any>> {
+    fun getInstalledAppsListPublic(): List<Map<String, Any>> {
         val pm = packageManager
         val apps = mutableListOf<Map<String, Any>>()
         @Suppress("DEPRECATION")

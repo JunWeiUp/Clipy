@@ -153,11 +153,13 @@ Clipy 使用面向局域网的协议 v2 处理剪贴板历史与通知：
 
 - **设备发现** —— `/24` TCP 端口扫描 + 手动 `IP:端口`（可跨子网 / 双频段）。
 - **传输方式** —— 原生 TCP，每条 JSON 信封带 4 字节大端长度前缀（`v: 2`，单帧上限 2 MB）。
-- **消息类型** —— `history`、`notif.post` / `dismiss` / `clear` / `ack`、`hello` / `welcome`、`ping` / `pong`、`ack`。
-- **加密** —— AES-GCM 256 位（payload）。
+- **消息类型** —— `history`、`history.fetch`、`notif.post` / `dismiss` / `clear` / `ack`、`hello` / `welcome`、`ping` / `pong`、`ack`。
+- **加密** —— AES-GCM 256 位（配置配对密钥时走 HKDF）。
 - **授权** —— 仅向本机授权列表中的设备推送剪贴板/通知。
-- **可靠投递** —— 历史帧需 `ack`；有界离线队列 + 端点缓存用于重连。
+- **可靠投递** —— 历史帧需在落库成功后 `ack`；有界离线队列 + 端点缓存用于重连。
 - **环路防止** —— 内容哈希避免重复广播。
+
+完整线协议、无 UI 保活通道规则与代码地图见 [`docs/PROTOCOL.md`](docs/PROTOCOL.md)。
 
 ## 📁 项目结构
 

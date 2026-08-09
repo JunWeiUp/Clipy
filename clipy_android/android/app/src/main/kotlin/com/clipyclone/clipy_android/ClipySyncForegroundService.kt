@@ -7,60 +7,167 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import io.flutter.embedding.engine.FlutterEngineCache
+import io.flutter.plugin.common.MethodChannel
 
 /**
- * 纯保活服务：自身不做任何业务逻辑，只为提升进程优先级到「前台服务」，
- * 让运行在 Flutter 引擎里的 SyncManager ServerSocket 在 Activity 退到
- * 后台后仍能继续 accept 入站连接，避免 Doze / App Standby 冻结网络 IO。
+ * Keeps the process elevated while Dart [SyncManager] owns ServerSocket :5566.
  *
- * 生命周期由 Dart 端 SyncManager.start()/stop() 通过 MethodChannel 控制。
+ * On [START_STICKY] rebuild (process death), calls [ClipyApplication.ensureEngine]
+ * so main() re-runs and sync rebinds without opening the UI. Periodic
+ * [syncTick] nudges Dart reconnect / pending flush while backgrounded.
+ *
+ * WakeLock is held with a timeout and renewed on activity so the CPU can sleep
+ * if ticks stop; FGS sticky still keeps the process eligible for restart.
  */
 class ClipySyncForegroundService : Service() {
 
     companion object {
+        private const val TAG = "ClipyFGS"
         private const val CHANNEL_ID = "clipy_sync_foreground"
         private const val NOTIFICATION_ID = 0x7101
+        /** Fallback / busy interval when Dart does not return a delay. */
+        private const val SYNC_TICK_BUSY_MS = 30_000L
+        private const val SYNC_TICK_IDLE_MS = 90_000L
+        private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
     }
 
-    /// Partial wake lock: the FGS keeps the *process* alive but the CPU can
-    /// still suspend in Doze, causing the Dart event loop (and thus the
-    /// ServerSocket accept loop) to stall — peers can no longer connect.
-    /// Holding a PARTIAL_WAKE_LOCK ensures the CPU stays awake to process
-    /// inbound TCP handshakes while the Activity is backgrounded.
-    /// Released in onDestroy / stopForegroundSync to avoid battery drain
-    /// when sync is off.
     private var wakeLock: PowerManager.WakeLock? = null
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val syncTickRunnable = object : Runnable {
+        override fun run() {
+            renewWakeLock()
+            invokeSyncTick()
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundCompat()
-        acquireWakeLock()
-        // START_STICKY: 进程被回收后系统会尝试重建并重新投递空 Intent，
-        // 让 SyncManager 在 Flutter 引擎重启时能再次拉起本服务。
+        renewWakeLock()
+        Log.i(TAG, "onStartCommand: intent=${if (intent == null) "null(sticky rebuild)" else "explicit"}")
+        (application as? ClipyApplication)?.drainHeadlessClipboard()
+        (application as? ClipyApplication)?.ensureEngine()
+        invokeSyncControlFireAndForget("ensureSyncStarted")
+        startSyncTicks()
         return START_STICKY
     }
 
     override fun onDestroy() {
+        stopSyncTicks()
         releaseWakeLock()
         super.onDestroy()
     }
 
-    private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
+    private fun startSyncTicks() {
+        mainHandler.removeCallbacks(syncTickRunnable)
+        mainHandler.postDelayed(syncTickRunnable, SYNC_TICK_BUSY_MS)
+    }
+
+    private fun stopSyncTicks() {
+        mainHandler.removeCallbacks(syncTickRunnable)
+    }
+
+    private fun scheduleNextTick(delayMs: Long) {
+        val clamped = delayMs.coerceIn(SYNC_TICK_BUSY_MS, SYNC_TICK_IDLE_MS)
+        mainHandler.removeCallbacks(syncTickRunnable)
+        mainHandler.postDelayed(syncTickRunnable, clamped)
+    }
+
+    private fun invokeSyncTick() {
+        (application as? ClipyApplication)?.drainHeadlessClipboard()
+
+        val engine = FlutterEngineCache.getInstance().get(ClipyApplication.ENGINE_ID)
+        if (engine == null) {
+            Log.w(TAG, "syncTick skipped: engine not ready")
+            (application as? ClipyApplication)?.ensureEngine()
+            scheduleNextTick(SYNC_TICK_BUSY_MS)
+            return
+        }
+        try {
+            MethodChannel(
+                engine.dartExecutor.binaryMessenger,
+                ClipyApplication.SYNC_CONTROL_CHANNEL,
+            ).invokeMethod(
+                "syncTick",
+                null,
+                object : MethodChannel.Result {
+                    override fun success(result: Any?) {
+                        val delay = when (result) {
+                            is Number -> result.toLong()
+                            else -> SYNC_TICK_BUSY_MS
+                        }
+                        scheduleNextTick(delay)
+                    }
+
+                    override fun error(
+                        errorCode: String,
+                        errorMessage: String?,
+                        errorDetails: Any?,
+                    ) {
+                        Log.w(TAG, "syncTick error: $errorCode $errorMessage")
+                        scheduleNextTick(SYNC_TICK_BUSY_MS)
+                    }
+
+                    override fun notImplemented() {
+                        scheduleNextTick(SYNC_TICK_BUSY_MS)
+                    }
+                },
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "syncTick invoke failed", e)
+            scheduleNextTick(SYNC_TICK_BUSY_MS)
+        }
+    }
+
+    private fun invokeSyncControlFireAndForget(method: String) {
+        (application as? ClipyApplication)?.drainHeadlessClipboard()
+
+        val engine = FlutterEngineCache.getInstance().get(ClipyApplication.ENGINE_ID)
+        if (engine == null) {
+            Log.w(TAG, "$method skipped: engine not ready")
+            (application as? ClipyApplication)?.ensureEngine()
+            return
+        }
+        try {
+            MethodChannel(
+                engine.dartExecutor.binaryMessenger,
+                ClipyApplication.SYNC_CONTROL_CHANNEL,
+            ).invokeMethod(method, null)
+        } catch (e: Exception) {
+            Log.w(TAG, "$method invoke failed", e)
+        }
+    }
+
+    /** Acquire or refresh a timed partial wake lock. */
+    private fun renewWakeLock() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
+        try {
+            wakeLock?.let { held ->
+                if (held.isHeld) held.release()
+            }
+        } catch (_: Exception) {
+        }
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Clipy:SyncWakeLock").apply {
             setReferenceCounted(false)
-            acquire()
+            acquire(WAKE_LOCK_TIMEOUT_MS)
         }
     }
 
     private fun releaseWakeLock() {
-        wakeLock?.let { if (it.isHeld) it.release() }
+        try {
+            wakeLock?.let { if (it.isHeld) it.release() }
+        } catch (_: Exception) {
+        }
         wakeLock = null
     }
 
@@ -75,11 +182,11 @@ class ClipySyncForegroundService : Service() {
             .setShowWhen(false)
             .build()
 
-        // Android 10+ 需要显式声明 foregroundServiceType。
-        // dataSync 覆盖局域网同步场景，且 targetSdk=34 强制要求声明类型。
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-        } else 0
+        } else {
+            0
+        }
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
     }
 
@@ -87,8 +194,6 @@ class ClipySyncForegroundService : Service() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
-        // IMPORTANCE_LOW: 不响铃、不弹出，仅在通知栏静默展示，
-        // 降低对用户的打扰，同时满足 FGS 必须有可见通知的硬性要求。
         val channel = NotificationChannel(
             CHANNEL_ID,
             getString(getChannelNameRes()),

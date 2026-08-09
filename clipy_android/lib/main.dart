@@ -479,27 +479,38 @@ class _ManualPeerSectionState extends State<ManualPeerSection> {
   }
 }
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+/// Whether core managers finished bootstrap in this isolate.
+bool _coreBootstrapped = false;
+
+/// Completes when SyncManager.init (and friends) finish — FGS may call
+/// ensureSyncStarted while bootstrap is still in flight.
+Completer<void> _coreBootstrapComplete = Completer<void>();
+
+Future<void> _bootstrapCore() async {
+  if (_coreBootstrapped) {
+    await _coreBootstrapComplete.future;
+    return;
+  }
+  _coreBootstrapped = true;
 
   try {
     await AppDatabase.instance.database;
   } catch (e) {
     debugPrint('AppDatabase init error: $e');
   }
-  
+
   try {
     await ClipboardManager.instance.init();
   } catch (e) {
     debugPrint('ClipboardManager init error: $e');
   }
-  
+
   try {
     await SyncManager.instance.init();
   } catch (e) {
     debugPrint('SyncManager init error: $e');
   }
-  
+
   try {
     await NotificationManager.instance.init();
   } catch (e) {
@@ -511,13 +522,61 @@ void main() async {
   } catch (e) {
     debugPrint('NotificationHealthMonitor init error: $e');
   }
-  
+
+  if (!_coreBootstrapComplete.isCompleted) {
+    _coreBootstrapComplete.complete();
+  }
+}
+
+/// Single entrypoint for UI and for Application-cached engine (FGS / boot).
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Register before awaiting bootstrap so sticky-rebuild nudges wait on init.
+  const MethodChannel('com.clipyclone.clipy_android/sync_control')
+      .setMethodCallHandler((call) async {
+    if (call.method == 'ensureSyncStarted') {
+      try {
+        await _coreBootstrapComplete.future;
+        await SyncManager.instance.ensureStartedIfEnabled();
+      } catch (e) {
+        debugPrint('ensureSyncStarted error: $e');
+      }
+      return true;
+    }
+    if (call.method == 'syncTick') {
+      // Return next delay ms for FGS adaptive scheduling (busy 30s / idle 90s).
+      const busyMs = 30000;
+      try {
+        await _coreBootstrapComplete.future;
+        final nextMs = await SyncManager.instance.onSyncTick();
+        await NotificationManager.instance.drainNativePendingPosts();
+        return nextMs;
+      } catch (e) {
+        debugPrint('syncTick error: $e');
+        return busyMs;
+      }
+    }
+    if (call.method == 'drainNotificationInbox') {
+      try {
+        await _coreBootstrapComplete.future;
+        await NotificationManager.instance.drainNativePendingPosts();
+      } catch (e) {
+        debugPrint('drainNotificationInbox error: $e');
+      }
+      return true;
+    }
+    return null;
+  });
+
+  await _bootstrapCore();
+
   try {
     await AppLanguageController.instance.init();
   } catch (e) {
     debugPrint('AppLanguageController init error: $e');
   }
-  
+
   runApp(const MyApp());
 }
 

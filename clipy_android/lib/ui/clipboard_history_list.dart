@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../app_localizations.dart';
 import '../clipboard_manager.dart';
+import '../log_manager.dart';
 import '../models.dart';
 import '../sync_manager.dart';
 
@@ -17,12 +19,17 @@ class PaginatedClipboardHistoryList extends StatefulWidget {
 class _PaginatedClipboardHistoryListState
     extends State<PaginatedClipboardHistoryList> {
   static const _pageSize = 50;
+  // Coalesce a burst of ClipboardManager notifications (e.g. a reconnect-driven
+  // pending-frame resend that fires one notify per frame) into a single list
+  // rebuild. Without this, N notifies => N full clear+rebuild passes — a visible
+  // refresh storm.
+  static const _refreshDebounce = Duration(milliseconds: 300);
 
   final ScrollController _scrollController = ScrollController();
   final List<HistoryEntry> _entries = [];
   bool _loading = false;
   bool _hasMore = true;
-  bool _pendingRefresh = false;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
@@ -35,16 +42,26 @@ class _PaginatedClipboardHistoryListState
   @override
   void dispose() {
     ClipboardManager.instance.removeListener(_refreshFromDb);
+    _refreshTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
 
   void _refreshFromDb() {
     if (!mounted) return;
-    if (_loading) {
-      _pendingRefresh = true;
-      return;
-    }
+    // Debounce: a rapid burst of notifications only schedules one rebuild once
+    // the burst settles. Each new notification reschedules the timer.
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer(_refreshDebounce, _applyRefresh);
+  }
+
+  void _applyRefresh() {
+    if (!mounted) return;
+    // If a load is in progress, do nothing here — the debounce timer in
+    // _refreshFromDb will re-fire _applyRefresh once the current load settles
+    // and the next notification arrives. This avoids the old _pendingRefresh
+    // self-recursion that caused the endless refresh cascade.
+    if (_loading) return;
     _hasMore = true;
     _loadMore(reset: true);
   }
@@ -61,21 +78,55 @@ class _PaginatedClipboardHistoryListState
     if (_loading) return;
     _loading = true;
     final offset = reset ? 0 : _entries.length;
-    final page = await ClipboardManager.instance.fetchPage(
-      offset: offset,
-      limit: _pageSize,
-    );
-    if (!mounted) return;
+    List<HistoryEntry> page;
+    try {
+      page = await ClipboardManager.instance.fetchPage(
+        offset: offset,
+        limit: _pageSize,
+      );
+    } catch (e) {
+      // Database not ready / locked / corrupted — must reset _loading or the
+      // UI spins forever (empty list + _loading=true renders an endless
+      // CircularProgressIndicator at the bottom of an empty ListView).
+      appLog('_loadMore fetchPage error: $e', level: 'warning');
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _hasMore = false;
+        });
+      }
+      return;
+    }
+    if (!mounted) {
+      _loading = false;
+      return;
+    }
     setState(() {
-      if (reset) _entries.clear();
+      if (reset) {
+        if (_entriesSameContent(page)) {
+          _loading = false;
+          return;
+        }
+        _entries.clear();
+      }
       _entries.addAll(page);
       _hasMore = page.length == _pageSize;
       _loading = false;
     });
-    if (_pendingRefresh) {
-      _pendingRefresh = false;
-      _loadMore(reset: true);
+  }
+
+  /// True if [page] contains the same content hashes as the currently
+  /// displayed entries (order-independent). Used to suppress a pointless
+  /// rebuild during a notify storm. Order-insensitive because insertBatch uses
+  /// INSERT OR IGNORE (existing rows keep their created_at), but a genuinely
+  // new entry landing at the top is a real change worth showing.
+  bool _entriesSameContent(List<HistoryEntry> page) {
+    if (page.length != _entries.length) return false;
+    final current = _entries.map((e) => e.contentHash).toSet();
+    for (final e in page) {
+      if (!current.contains(e.contentHash)) return false;
     }
+    return true;
   }
 
   Future<void> _showSendTextSheet(BuildContext context, String text) async {
@@ -131,7 +182,13 @@ class _PaginatedClipboardHistoryListState
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    if (_entries.isEmpty && !_loading) {
+    // Empty + loading: show a centered spinner instead of an empty ListView
+    // with a bottom CircularProgressIndicator (which looks like endless
+    // spinning on a blank screen — the "一直转圈圈" symptom).
+    if (_entries.isEmpty && _loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_entries.isEmpty) {
       return Center(
         child: Text(
           l10n.noClipboardHistory,

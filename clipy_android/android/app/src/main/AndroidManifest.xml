@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Boot: restore LAN sync after reboot via BootReceiver → FGS → FlutterEngine. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Foreground service: keeps the Flutter process alive so SyncManager's
          ServerSocket keeps accepting inbound handshakes while the Activity is
          backgrounded. Without this, Android freezes the process network IO and
@@ -18,7 +20,7 @@
 
     <application
         android:label="Clipy Android"
-        android:name="${applicationName}"
+        android:name=".ClipyApplication"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"
         android:requestLegacyExternalStorage="true">
@@ -64,13 +66,21 @@
             </intent-filter>
         </service>
 
-        <!-- Foreground service that holds the process alive for LAN sync while
-             the app is backgrounded. Started/stopped by SyncManager via
-             MethodChannel; does not run any business logic itself. -->
+        <!-- Holds process alive; on START_STICKY rebuild calls ensureEngine. -->
         <service
             android:name=".ClipySyncForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Boot restore when flutter.syncEnabled is true. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
     <queries>
         <intent>
