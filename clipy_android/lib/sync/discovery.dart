@@ -37,6 +37,7 @@ extension SyncDiscoveryMethods on SyncManager {
     _discoveredPeers
       ..clear()
       ..addAll(kept);
+    await _rewriteEndpointCache(kept.values.toList());
     _emitPeers();
     triggerCrossBandDiscovery();
     _isRefreshingDiscovery = false;
@@ -191,6 +192,27 @@ extension SyncDiscoveryMethods on SyncManager {
     await prefs.setString(SyncManager._endpointCacheKey, jsonEncode(list));
   }
 
+  /// Replace disk cache with only live peers (user refresh prunes ghosts).
+  Future<void> _rewriteEndpointCache(List<DiscoveredPeer> peers) async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
+    final list = peers
+        .map((p) => <String, dynamic>{
+              'peerId': p.peerId,
+              'name': p.displayName,
+              'host': p.host,
+              'port': p.port,
+              'ts': now,
+            })
+        .toList();
+    if (list.isEmpty) {
+      await prefs.remove(SyncManager._endpointCacheKey);
+    } else {
+      await prefs.setString(SyncManager._endpointCacheKey, jsonEncode(list));
+    }
+    appLog('endpoint cache pruned to ${list.length} live peer(s) after refresh');
+  }
+
   Future<List<Map<String, dynamic>>> _readEndpointCache() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(SyncManager._endpointCacheKey);
@@ -207,15 +229,14 @@ extension SyncDiscoveryMethods on SyncManager {
     }
   }
 
+  /// Dial cached endpoints for reconnect; list only after handshake succeeds.
   Future<void> _loadEndpointCache() async {
     for (final e in await _readEndpointCache()) {
       final id = e['peerId'] as String?;
-      final name = e['name'] as String?;
       final host = e['host'] as String?;
       final p = e['port'] as int?;
-      if (id == null || name == null || host == null || p == null) continue;
+      if (id == null || host == null || p == null) continue;
       if (id == peerId) continue;
-      _recordPeer(id, name, host, p);
       unawaited(_dial(host, p, reason: 'cache'));
     }
   }

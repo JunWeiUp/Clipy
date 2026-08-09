@@ -50,7 +50,9 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
 ## Discovery
 
 - Scan local `/24` for TCP **5566** + optional manual `IP:port`.
-- Endpoint cache key: `clipy.peerEndpoints.v2` (SharedPreferences / UserDefaults).
+- Endpoint cache key: `clipy.peerEndpoints.v2` (SharedPreferences / UserDefaults), TTL 24h.
+- User **refresh** prunes the disk cache to **live sessions only** (offline ghosts are forgotten across restart).
+- On sync **start**, cache is used only to **dial** known hosts; peers appear in the LAN device list after handshake succeeds (not pre-filled from cache).
 - Connectivity / path changes may re-trigger discovery (debounced).
 
 ## Session

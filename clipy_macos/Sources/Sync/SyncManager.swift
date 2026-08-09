@@ -146,7 +146,9 @@ final class SyncManager: NSObject {
                 }
             }
             self.discoveredPeers = kept
+            let keptList = Array(kept.values)
             self.peersLock.unlock()
+            self.rewriteEndpointCache(keeping: keptList)
             self.notifyPeersChanged()
             self.scheduleDiscovery(immediate: true)
             self.syncQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.isRefreshingDiscovery = false }
