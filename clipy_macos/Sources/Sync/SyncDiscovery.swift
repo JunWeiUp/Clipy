@@ -102,8 +102,24 @@ extension SyncManager {
         var entries = loadEndpointCacheEntries()
         entries.removeAll { $0.peerId == peerId }
         entries.append(CachedEndpoint(peerId: peerId, name: name, host: host, port: port, ts: Date().timeIntervalSince1970))
+        writeEndpointCacheEntries(entries)
+    }
+
+    /// Replace disk cache with only the given live peers (user refresh prunes ghosts).
+    func rewriteEndpointCache(keeping peers: [DiscoveredPeer]) {
+        let now = Date().timeIntervalSince1970
+        let entries = peers.map {
+            CachedEndpoint(peerId: $0.peerId, name: $0.displayName, host: $0.host, port: $0.port, ts: now)
+        }
+        writeEndpointCacheEntries(entries)
+        appLog("endpoint cache pruned to \(entries.count) live peer(s) after refresh")
+    }
+
+    func writeEndpointCacheEntries(_ entries: [CachedEndpoint]) {
         if let data = try? JSONEncoder().encode(entries) {
             UserDefaults.standard.set(data, forKey: Self.endpointCacheKey)
+        } else if entries.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.endpointCacheKey)
         }
     }
 
@@ -114,9 +130,9 @@ extension SyncManager {
         return decoded.filter { $0.ts >= cutoff }
     }
 
+    /// Dial cached endpoints for reconnect; do not list them until handshake succeeds.
     func loadEndpointCache() {
         for entry in loadEndpointCacheEntries() where entry.peerId != peerId {
-            recordPeer(peerId: entry.peerId, name: entry.name, host: entry.host, port: entry.port)
             dial(host: entry.host, port: entry.port, reason: "cache")
         }
     }
