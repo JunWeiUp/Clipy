@@ -1,34 +1,15 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Mirror of SyncManager._hkdfSha256 (kept in sync by this test).
-Uint8List hkdfSha256({
-  required List<int> ikm,
-  required List<int> salt,
-  required List<int> info,
-  required int length,
-}) {
-  final prk = Hmac(sha256, salt).convert(ikm).bytes;
-  final out = <int>[];
-  var block = <int>[];
-  var counter = 1;
-  while (out.length < length) {
-    block = Hmac(sha256, prk).convert([...block, ...info, counter]).bytes;
-    out.addAll(block);
-    counter++;
-  }
-  return Uint8List.fromList(out.sublist(0, length));
-}
+import 'package:clipy_android/sync/crypto.dart';
 
 void main() {
   test('HKDF-SHA256 matches CryptoKit HKDF<SHA256>.deriveKey', () {
-    final key = hkdfSha256(
+    final key = SyncCrypto.hkdfSha256(
       ikm: utf8.encode('hunter2'),
-      salt: utf8.encode('clipy.sync.v2.hkdf'),
-      info: utf8.encode('aes-256-gcm'),
+      salt: utf8.encode(SyncCrypto.keyDerivationSalt),
+      info: utf8.encode(SyncCrypto.keyDerivationInfo),
       length: 32,
     );
     final hex = key.map((b) => b.toRadixString(16).padLeft(2, '0')).join();

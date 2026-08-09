@@ -84,7 +84,7 @@ class NotificationManager {
     if (isEnabled) {
       // 先消费 Kotlin 端在 channel=null 期间（锁屏 / 进程被回收）落盘的通知，
       // 再 refresh active 通知。两者都走 _handleNotificationPosted，由 upsert 去重保证幂等。
-      unawaited(_drainNativePendingPosts());
+      unawaited(drainNativePendingPosts());
       unawaited(refreshActiveNotifications());
     }
   }
@@ -235,7 +235,8 @@ class NotificationManager {
   /// 每条 JSON 走标准的 [_handleNotificationPosted] 路径：upsert 入库 +
   /// （若未被 suppress）insertPendingSync + 即时广播。upsert 的去重保证
   /// 同一条通知即使被内存队列 flush 和本方法各投递一次也只入库一次。
-  Future<void> _drainNativePendingPosts() async {
+  /// Public so FGS / Application can drain after headless bootstrap.
+  Future<void> drainNativePendingPosts() async {
     try {
       final list = await _channel
           .invokeMethod<List<dynamic>>('drainNativePendingPosts');

@@ -237,5 +237,26 @@ class AppStrings {
   String get clearAll => _t('清空', 'Clear All');
   String get copyContent => _t('复制内容', 'Copy Content');
 
+  // Sync diagnostics card
+  String get syncDiagnostics => _t('同步诊断', 'Sync Diagnostics');
+  String get diagPeerId => _t('设备 ID', 'Peer ID');
+  String get diagServerStatus => _t('服务状态', 'Server');
+  String get diagRunning => _t('运行中', 'Running');
+  String get diagStopped => _t('已停止', 'Stopped');
+  String get diagAuthorizedTargets => _t('已授权剪贴板目标', 'Authorized clipboard targets');
+  String get diagConnectedPeers => _t('已连接设备', 'Connected peers');
+  String get diagSyncOff => _t('局域网同步未开启', 'LAN sync is off');
+  String get diagServerNotBound => _t('服务端口未绑定，请尝试重启同步', 'Server socket not bound — try restarting sync');
+  String get diagNoPairingSecret =>
+      _t('未设置配对密钥（两端都留空可工作，但只要一端设了密钥就会全部失败）',
+         'No pairing secret set (both empty works, but if one side sets a secret all sync fails silently)');
+  String get diagNoAuthTargets =>
+      _t('未授权任何剪贴板目标——请在上方勾选设备，否则历史不会被投递',
+         'No authorized clipboard target — check a device above or history will never be delivered');
+  String get diagNoConnection =>
+      _t('暂无设备连接，请确认对端已开启同步且在同一局域网',
+         'No device connected — make sure the peer has sync on and is on the same LAN');
+  String get diagAllGood => _t('同步状态正常', 'Sync looks healthy');
+
   String _t(String zh, String en) => language == AppLanguage.zh ? zh : en;
 }

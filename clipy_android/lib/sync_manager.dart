@@ -1,22 +1,31 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:crypto/crypto.dart';
-import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'clipboard_manager.dart';
+import 'database/clipboard_repository.dart';
 import 'database/notification_repository.dart';
+import 'database/pending_sync_repository.dart';
 import 'database/pending_text_sync_repository.dart';
 import 'log_manager.dart';
 import 'notification_manager.dart';
+import 'sync/crypto.dart';
+import 'sync/protocol.dart';
+
+export 'sync/protocol.dart' show SyncEnvelope, SyncType;
+
+part 'sync/discovery.dart';
+part 'sync/session.dart';
+part 'sync/reliability.dart';
+
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -56,97 +65,6 @@ class DiscoveredPeer {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Protocol v2
-// ---------------------------------------------------------------------------
-
-class _SyncEnvelope {
-  static const int version = 2;
-
-  final int v;
-  final String type;
-  final String msgId;
-  final String peerId;
-  final String? name;
-  final int? port;
-  final double ts;
-  final String? hash;
-  final String? payload;
-
-  _SyncEnvelope({
-    required this.v,
-    required this.type,
-    required this.msgId,
-    required this.peerId,
-    this.name,
-    this.port,
-    required this.ts,
-    this.hash,
-    this.payload,
-  });
-
-  factory _SyncEnvelope.make({
-    required String type,
-    required String peerId,
-    String? name,
-    int? port,
-    String? hash,
-    String? payload,
-  }) {
-    return _SyncEnvelope(
-      v: version,
-      type: type,
-      msgId: const Uuid().v4(),
-      peerId: peerId,
-      name: name,
-      port: port,
-      ts: DateTime.now().millisecondsSinceEpoch / 1000.0,
-      hash: hash,
-      payload: payload,
-    );
-  }
-
-  factory _SyncEnvelope.fromJson(Map<String, dynamic> json) {
-    return _SyncEnvelope(
-      v: json['v'] as int? ?? 0,
-      type: json['type'] as String? ?? '',
-      msgId: json['msgId'] as String? ?? '',
-      peerId: json['peerId'] as String? ?? '',
-      name: json['name'] as String?,
-      port: json['port'] as int?,
-      ts: (json['ts'] as num?)?.toDouble() ?? 0,
-      hash: json['hash'] as String?,
-      payload: json['payload'] as String?,
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-        'v': v,
-        'type': type,
-        'msgId': msgId,
-        'peerId': peerId,
-        if (name != null) 'name': name,
-        if (port != null) 'port': port,
-        'ts': ts,
-        if (hash != null) 'hash': hash,
-        if (payload != null) 'payload': payload,
-      };
-}
-
-class _SyncType {
-  static const hello = 'hello';
-  static const welcome = 'welcome';
-  static const history = 'history';
-  static const notifPost = 'notif.post';
-  static const notifDismiss = 'notif.dismiss';
-  static const notifClear = 'notif.clear';
-  static const notifAck = 'notif.ack';
-  static const notifConfig = 'notif.config';
-  static const ping = 'ping';
-  static const pong = 'pong';
-  static const ack = 'ack';
-}
-
 class _PendingFrame {
   final String peerId;
   final List<int> data;
@@ -171,10 +89,6 @@ class _Session {
   final BytesBuilder buffer = BytesBuilder(copy: false);
   DateTime lastPong = DateTime.now();
   StreamSubscription<List<int>>? subscription;
-  // Role decided at handshake: the lexicographically smaller peerId is the
-  // "client" and owns keepalive-driven reconnects (pong timeout, EOF). This
-  // breaks the reconnect storm where both sides independently redial each
-  // other. Both endpoints compute the same result from the same two peerIds.
   final bool isClient;
 
   _Session({
@@ -197,14 +111,6 @@ class SyncManager with WidgetsBindingObserver {
   static const MethodChannel _fgsChannel =
       MethodChannel('com.clipyclone.clipy_android/sync_service');
 
-  static const int _maxFrameLength = 2 * 1024 * 1024;
-  /// Shipped fallback secret. Recoverable from the binary, so it only keeps
-  /// existing installs working; real confidentiality comes from a user-set
-  /// pairing secret. Must stay in step with SyncManager.legacySharedSecret
-  /// on the macOS side.
-  static const String _hardcodedSecret = 'ClipySyncSecret2026';
-  static const String _keyDerivationSalt = 'clipy.sync.v2.hkdf';
-  static const String _keyDerivationInfo = 'aes-256-gcm';
   static const String _pairingSecretKey = 'clipy.sync.pairingSecret';
   static const String _endpointCacheKey = 'clipy.peerEndpoints.v2';
   static const Duration _endpointCacheTtl = Duration(hours: 24);
@@ -215,9 +121,11 @@ class SyncManager with WidgetsBindingObserver {
   static const Duration _pingInterval = Duration(seconds: 30);
   static const Duration _pendingTtl = Duration(hours: 24);
   static const int _pendingMax = 80;
-  static const int _scanConcurrency = 48;
+  static const int _scanConcurrency = 24;
   static const Duration _dialDedupTtl = Duration(seconds: 4);
   static const Duration _minReconnectInterval = Duration(seconds: 2);
+  static const int _syncTickBusyMs = 30000;
+  static const int _syncTickIdleMs = 90000;
 
   final Map<String, DiscoveredPeer> _discoveredPeers = {};
   final _devicesChangedController = StreamController<List<String>>.broadcast();
@@ -238,14 +146,7 @@ class SyncManager with WidgetsBindingObserver {
   final Map<String, double> _reconnectBackoffSec = {};
   final Map<String, Timer> _reconnectTimers = {};
   final Map<String, DateTime> _lastDialAt = {};
-  // Per-peer hashes delivered on the current session but not yet ACKed. Prevents
-  // a reconnect (new _performHandshake → _flushPending) from re-sending the
-  // whole pending batch before the previous ACK arrives. Cleared on ACK and on
-  // session close (so a real disconnect still allows legitimate redelivery).
   final Map<String, Set<String>> _inFlightHashes = {};
-  // Debounce: minimum gap between two reconnect attempts to the same peerId.
-  // Caps data-driven reconnects (deliver write failures) so they can't stack
-  // with the client's keepalive reconnect into a storm.
   final Map<String, DateTime> _lastReconnectAttempt = {};
 
   Timer? _scanDebounceTimer;
@@ -260,12 +161,22 @@ class SyncManager with WidgetsBindingObserver {
   List<String> notificationSyncPeerIds = [];
   String peerId = '';
   String displayName = 'Android';
-  /// Shared pairing secret; must match the macOS peer's value verbatim.
-  String pairingSecret = '';
-  String? _cachedKeySecret;
-  encrypt.Key? _cachedKey;
+  final SyncCrypto _crypto = SyncCrypto();
+  String get pairingSecret => _crypto.pairingSecret;
+  set pairingSecret(String v) => _crypto.pairingSecret = v;
 
-  /// Union of clipboard + notification outbound targets.
+  final _lastHistoryFetchAt = <String, DateTime>{};
+  /// Catch-up only — must not match FGS syncTick (30s) or Mac will replay
+  /// ~200 history frames every tick.
+  static const _historyFetchThrottle = Duration(minutes: 15);
+  static const _pendingAckRetryAge = Duration(seconds: 45);
+  final _lastHistoryFetchResponse = <String, DateTime>{};
+  static const _historyFetchRespondThrottle = Duration(seconds: 30);
+  static const _historyFetchRespondLimit = 200;
+
+  DateTime? _lastSyncTickDiscovery;
+  static const _syncTickDiscoveryMinGap = Duration(minutes: 5);
+
   List<String> get authorizedPeerIds =>
       {...clipboardSyncPeerIds, ...notificationSyncPeerIds}.toList()..sort();
 
@@ -392,8 +303,60 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
+
+  /// Called from FGS / Application after process rebuild. Idempotent.
+  Future<void> ensureStartedIfEnabled() async {
+    if (!isEnabled) return;
+    if (_server != null) return;
+    await start();
+  }
+
+  /// FGS tick: reconnect missing peers and flush pending. Does **not**
+  /// send history.fetch (that caused Mac to push 200 entries every 30s).
+  ///
+  /// Returns next delay in ms: busy 30s or idle 90s.
+  Future<int> onSyncTick() async {
+    if (!isEnabled) return _syncTickIdleMs;
+    if (_server == null) {
+      await start();
+      return _syncTickBusyMs;
+    }
+    var busy = false;
+    var needDiscovery = false;
+    final authorized = authorizedPeerIds;
+    for (final id in authorized) {
+      if (_sessions.containsKey(id)) {
+        final pending = await PendingSyncRepository.instance.pendingHashes(id);
+        if (pending.isNotEmpty ||
+            (_inFlightHashes[id]?.isNotEmpty ?? false)) {
+          busy = true;
+        }
+        unawaited(_flushPending(id));
+      } else {
+        busy = true;
+        needDiscovery = true;
+        final cached = _discoveredPeers[id];
+        if (cached != null) {
+          unawaited(_dial(cached.host, cached.port, reason: 'syncTick'));
+        }
+      }
+    }
+    if (needDiscovery) {
+      final now = DateTime.now();
+      final last = _lastSyncTickDiscovery;
+      if (last == null || now.difference(last) >= _syncTickDiscoveryMinGap) {
+        _lastSyncTickDiscovery = now;
+        appLog('syncTick full_scan (authorized peers missing session)');
+        triggerCrossBandDiscovery();
+      }
+    }
+    final next = busy ? _syncTickBusyMs : _syncTickIdleMs;
+    return next;
+  }
+
   Future<void> start() async {
     appLog('SyncManager v2 starting...');
+    unawaited(PendingSyncRepository.instance.cleanOld());
     unawaited(PendingTextSyncRepository.instance.cleanOld());
     unawaited(NotificationRepository.instance.cleanOldPendingSync());
     final ok = await _startServer();
@@ -466,10 +429,40 @@ class SyncManager with WidgetsBindingObserver {
       }
       if (wasOffline && isEnabled) {
         wasOffline = false;
-        appLog('Network restored; rediscovering');
-        unawaited(refreshDiscovery());
+        unawaited(_recoverAfterNetworkRestore());
       }
     });
+  }
+
+  /// Prefer endpoint-cache dials; full /24 scan only when authorized peers
+  /// have no cached host (avoids Wi-Fi spikes on every brief offline blip).
+  Future<void> _recoverAfterNetworkRestore() async {
+    await _loadEndpointCache();
+    final missing =
+        authorizedPeerIds.where((id) => !_sessions.containsKey(id)).toList();
+    if (missing.isEmpty) {
+      appLog('Network restored; sessions intact, skip discovery');
+      return;
+    }
+    var cacheDialCount = 0;
+    final noCache = <String>[];
+    for (final id in missing) {
+      final cached = _discoveredPeers[id];
+      if (cached != null) {
+        cacheDialCount++;
+        unawaited(_dial(cached.host, cached.port, reason: 'cache_dial'));
+      } else {
+        noCache.add(id);
+      }
+    }
+    if (noCache.isEmpty) {
+      appLog('Network restored; cache_dial only ($cacheDialCount)');
+      return;
+    }
+    appLog(
+        'Network restored; full_scan (no cache for ${noCache.length}, '
+        'cache_dial=$cacheDialCount)');
+    await refreshDiscovery();
   }
 
   void _startPingTimer() {
@@ -478,8 +471,8 @@ class SyncManager with WidgetsBindingObserver {
   }
 
   Future<void> _sendPings() async {
-    final env = _SyncEnvelope.make(type: _SyncType.ping, peerId: peerId);
-    final data = _encodeFrame(env);
+    final env = SyncEnvelope.make(type: SyncType.ping, peerId: peerId);
+    final data = syncEncodeFrame(env);
     if (data == null) return;
     final stale = DateTime.now().subtract(_pingInterval * 3);
     final ids = _sessions.keys.toList();
@@ -496,542 +489,22 @@ class SyncManager with WidgetsBindingObserver {
         appLog('ping send failed to ${id.substring(0, id.length.clamp(0, 8))}: $e',
             level: 'warning');
         await _closeSession(id, scheduleReconnect: true, keepaliveDriven: true);
+        continue;
       }
-    }
-  }
-
-  // -----------------------------------------------------------------------
-  // Server
-  // -----------------------------------------------------------------------
-
-  Future<bool> _startServer() async {
-    try {
-      await _server?.close();
-      _server = await ServerSocket.bind(InternetAddress.anyIPv4, port);
-      appLog('Listening on 0.0.0.0:$port');
-      _server!.listen(_onInbound, onError: (e) {
-        appLog('Server error: $e', level: 'error');
-      });
-      return true;
-    } catch (e) {
-      appLog('Failed to bind :$port — $e', level: 'error');
-      return false;
-    }
-  }
-
-  void _onInbound(Socket socket) {
-    final host = socket.remoteAddress.address;
-    appLog('Inbound from $host');
-    unawaited(_performHandshake(socket, host: host, inbound: true,
-        onHandshakeFailure: (f) {
-      appLog('Inbound handshake failed from $host: $f', level: 'warning');
-    }));
-  }
-
-  // -----------------------------------------------------------------------
-  // Discovery
-  // -----------------------------------------------------------------------
-
-  Future<void> refreshDiscovery() async {
-    if (!isEnabled) return;
-    if (_isRefreshingDiscovery) return;
-    _isRefreshingDiscovery = true;
-    // Keep peers that still have a live session. Clearing them would hide
-    // connected devices forever: rediscovery skips already-connected hosts,
-    // so _recordPeer is never called again for those sessions.
-    final cache = await _readEndpointCache();
-    final cacheById = <String, Map<String, dynamic>>{
-      for (final e in cache)
-        if (e['peerId'] is String) e['peerId'] as String: e,
-    };
-    final kept = <String, DiscoveredPeer>{};
-    for (final entry in _sessions.entries) {
-      final id = entry.key;
-      final session = entry.value;
-      final existing = _discoveredPeers[id];
-      if (existing != null) {
-        kept[id] = existing;
-      } else {
-        final name = (cacheById[id]?['name'] as String?) ?? id;
-        kept[id] = DiscoveredPeer(
-          peerId: id,
-          displayName: name,
-          host: session.host,
-          port: session.port,
-        );
-      }
-    }
-    _discoveredPeers
-      ..clear()
-      ..addAll(kept);
-    _emitPeers();
-    triggerCrossBandDiscovery();
-    _isRefreshingDiscovery = false;
-  }
-
-  void triggerCrossBandDiscovery() {
-    if (!isEnabled) return;
-    _scanDebounceTimer?.cancel();
-    _scanDebounceTimer = Timer(_discoveryDebounce, () {
-      unawaited(_runDiscovery());
-    });
-  }
-
-  Future<void> _runDiscovery() async {
-    if (!isEnabled || _discoveryRunning) return;
-    _discoveryRunning = true;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final manual = prefs.getStringList('manualSyncPeers') ?? [];
-      for (final entry in manual) {
-        final parts = entry.split(':');
-        if (parts.isEmpty || parts.first.isEmpty) continue;
-        final host = parts.first;
-        final p = parts.length >= 2 ? int.tryParse(parts[1]) ?? port : port;
-        unawaited(_dial(host, p, reason: 'manual'));
-      }
-
-      final cached = await _readEndpointCache();
-      for (final e in cached) {
-        if (e['peerId'] == peerId) continue;
-        final host = e['host'] as String?;
-        final p = e['port'] as int?;
-        if (host == null || p == null) continue;
-        unawaited(_dial(host, p, reason: 'cache'));
-      }
-
-      final myIPs = await _enumerateLocalIPv4s();
-      final connectedHosts = _sessions.values.map((s) => s.host).toSet();
-      final candidates = <String>{};
-      final subnets = <String>{};
-      for (final ip in myIPs) {
-        final parts = ip.split('.');
-        if (parts.length != 4) continue;
-        final a = int.tryParse(parts[0]);
-        final b = int.tryParse(parts[1]);
-        final c = int.tryParse(parts[2]);
-        if (a == null || b == null || c == null) continue;
-        if (!_isLanIPv4(a, b)) continue;
-        subnets.add('$a.$b.$c.0/24');
-        for (var d = 1; d <= 254; d++) {
-          final candidate = '$a.$b.$c.$d';
-          if (myIPs.contains(candidate)) continue;
-          if (connectedHosts.contains(candidate)) continue;
-          candidates.add(candidate);
-        }
-      }
-
-      final list = candidates.toList()..sort();
-      final subnetList =
-          subnets.isEmpty ? '<none>' : (subnets.toList()..sort()).join(', ');
-      appLog('Subnet scan: ${list.length} hosts on :$port (subnets: $subnetList)');
-
-      // Aggregate stats across all /24 workers (mirrors the Mac side's ScanStats).
-      // `timeout` dominating connectFailures is the VPN/route-hijack tell-tale.
-      var attempted = 0;
-      final connectFail = <String, int>{};
-      final handshakeFail = <String, int>{};
-      void cf(String label) => connectFail[label] = (connectFail[label] ?? 0) + 1;
-      void hf(String label) => handshakeFail[label] = (handshakeFail[label] ?? 0) + 1;
-
-      var index = 0;
-      Future<void> worker() async {
-        while (true) {
-          if (index >= list.length) return;
-          final host = list[index++];
-          attempted++;
-          await _dial(host, port, reason: 'scan', timeout: _scanConnectTimeout,
-              onConnectFailure: cf, onHandshakeFailure: hf);
-        }
-      }
-
-      await Future.wait(
-          List.generate(_scanConcurrency, (_) => worker()));
-
-      // connect_ok = attempted - connectFailures (those that got past TCP).
-      final connectOkCount = attempted - connectFail.values.fold(0, (a, b) => a + b);
-      final hsFailTotal = handshakeFail.values.fold(0, (a, b) => a + b);
-      final hsOk = connectOkCount - hsFailTotal;
-      final cfStr = connectFail.entries.map((e) => '${e.key}=${e.value}').join(',');
-      final hfStr = handshakeFail.entries.map((e) => '${e.key}=${e.value}').join(',');
-      appLog('Subnet scan finished: attempted=$attempted connect_ok=$connectOkCount '
-          'handshake_ok=${hsOk < 0 ? 0 : hsOk} | connect_fail{$cfStr} handshake_fail{$hfStr}');
-    } finally {
-      _discoveryRunning = false;
-    }
-  }
-
-  Future<List<String>> _enumerateLocalIPv4s() async {
-    final result = <String>[];
-    final diagParts = <String>[];
-    try {
-      for (final iface in await NetworkInterface.list(
-          type: InternetAddressType.IPv4, includeLinkLocal: false)) {
-        for (final addr in iface.addresses) {
-          final ip = addr.address;
-          final parts = ip.split('.').map(int.tryParse).toList();
-          if (parts.length != 4 || parts.any((p) => p == null)) {
-            diagParts.add('${iface.name}=$ip[ignored]');
-            continue;
-          }
-          final lan = _isLanIPv4(parts[0]!, parts[1]!);
-          diagParts.add('${iface.name}=$ip[${lan ? "LAN" : "ignored"}]');
-          if (!lan) continue;
-          result.add(ip);
-        }
-      }
-    } catch (e) {
-      appLog('enumerate IPv4 failed: $e', level: 'warning');
-    }
-    // A VPN tun0 carrying 10.8.0.x shows up as [LAN] here — that is the
-    // tell-tale sign of route hijack starving the real wlan0 subnet.
-    appLog('Discovery local interfaces: ${diagParts.isEmpty ? "<none>" : diagParts.join(", ")}');
-    return result.toSet().toList()..sort();
-  }
-
-  Future<List<String>> localIPv4Addresses() => _enumerateLocalIPv4s();
-
-  bool _isLanIPv4(int a, int b) {
-    if (a == 10) return true;
-    if (a == 192 && b == 168) return true;
-    if (a == 172 && b >= 16 && b <= 31) return true;
-    if (a == 169 && b == 254) return true;
-    return false;
-  }
-
-  // -----------------------------------------------------------------------
-  // Dial / handshake / session
-  // -----------------------------------------------------------------------
-
-  /// Maps a SocketException's osError (errno) to a coarse failure label for
-  /// diagnostics. Mirrors the Mac side's ConnectFailure. `timeout` covers VPN
-  /// route hijack and firewall — when it dominates the scan summary, that's the
-  /// VPN tell-tale.
-  String _classifyConnectError(Object e) {
-    if (e is SocketException) {
-      final code = e.osError?.errorCode;
-      if (code == null) return 'other';
-      // ECONNREFUSED (111), ECONNRESET (104)
-      if (code == 111 || code == 104) return 'refused';
-      // EHOSTUNREACH (113), ENETUNREACH (101)
-      if (code == 113 || code == 101) return 'unreachable';
-      return 'other';
-    }
-    return 'other';
-  }
-
-  Future<void> _dial(String host, int peerPort,
-      {required String reason,
-      Duration? timeout,
-      void Function(String connectFailure)? onConnectFailure,
-      void Function(String hsFailure)? onHandshakeFailure}) async {
-    final key = '$host:$peerPort';
-    final now = DateTime.now();
-    final last = _lastDialAt[key];
-    if (last != null &&
-        now.difference(last) < _dialDedupTtl &&
-        reason == 'scan') {
-      return;
-    }
-    _lastDialAt[key] = now;
-
-    if (_sessions.values.any((s) => s.host == host)) return;
-
-    Socket? socket;
-    try {
-      socket = await Socket.connect(
-        host,
-        peerPort,
-        timeout: timeout ?? _connectTimeout,
-      );
-    } catch (e) {
-      // SocketException with null osError + message "Connection timed out" or
-      // "Connecting timed out" is the Dart-side timeout path (scanConnectTimeout).
-      final isTimeout = (e is SocketException) &&
-          (e.osError == null) &&
-          (e.message.toLowerCase().contains('timed out'));
-      final label = isTimeout ? 'timeout' : _classifyConnectError(e);
-      if (reason == 'scan') {
-        onConnectFailure?.call(label);
-      } else {
-        appLog('Dial $reason $host:$peerPort failed: connect($label)',
-            level: 'warning');
-      }
-      return;
-    }
-    await _performHandshake(socket, host: host, inbound: false,
-        onHandshakeFailure: reason == 'scan'
-            ? onHandshakeFailure
-            : (f) {
-                appLog('Dial $reason $host:$peerPort failed: handshake($f)',
-                    level: 'warning');
-              });
-  }
-
-  Future<void> _performHandshake(Socket socket,
-      {required String host,
-      required bool inbound,
-      void Function(String failure)? onHandshakeFailure}) async {
-    final hello = _SyncEnvelope.make(
-      type: _SyncType.hello,
-      peerId: peerId,
-      name: displayName,
-      port: port,
-    );
-    final helloData = _encodeFrame(hello);
-    if (helloData == null) {
-      onHandshakeFailure?.call('writeFail');
-      await socket.close();
-      return;
-    }
-
-    // Socket is single-subscription: attach one listener for handshake + session.
-    final buffer = BytesBuilder(copy: false);
-    final firstFrame = Completer<List<int>?>();
-    var handshakeDone = false;
-    String? adoptedPeerId;
-
-    late final StreamSubscription<List<int>> subscription;
-    subscription = socket.listen(
-      (chunk) {
-        if (!handshakeDone) {
-          buffer.add(chunk);
-          final frame = _tryTakeFrame(buffer);
-          if (frame != null && !firstFrame.isCompleted) {
-            firstFrame.complete(frame);
-          }
-          return;
-        }
-        final id = adoptedPeerId;
-        if (id == null) return;
-        final session = _sessions[id];
-        if (session == null) return;
-        session.buffer.add(chunk);
-        _drainBuffer(id);
-      },
-      onError: (e) {
-        if (!firstFrame.isCompleted) firstFrame.complete(null);
-        final id = adoptedPeerId;
-        if (id != null) {
-          appLog('Socket error from ${id.substring(0, id.length.clamp(0, 8))}: $e',
-              level: 'warning');
-          unawaited(
-              _closeSession(id, scheduleReconnect: true, keepaliveDriven: true));
-        }
-      },
-      onDone: () {
-        if (!firstFrame.isCompleted) firstFrame.complete(null);
-        final id = adoptedPeerId;
-        if (id != null) {
-          appLog('Socket closed by peer ${id.substring(0, id.length.clamp(0, 8))}');
-          unawaited(_closeSession(id, scheduleReconnect: false));
-        }
-      },
-      cancelOnError: true,
-    );
-
-    try {
-      socket.add(helloData);
-      await socket.flush();
-    } catch (_) {
-      onHandshakeFailure?.call('writeFail');
-      await subscription.cancel();
-      try {
-        await socket.close();
-      } catch (_) {}
-      return;
-    }
-
-    final frame = await firstFrame.future.timeout(
-      _handshakeTimeout,
-      onTimeout: () => null,
-    );
-    if (frame == null) {
-      onHandshakeFailure?.call('readTimeout');
-      await subscription.cancel();
-      try {
-        await socket.close();
-      } catch (_) {}
-      return;
-    }
-
-    final env = _decodeEnvelope(frame);
-    if (env == null) {
-      onHandshakeFailure?.call('readTimeout');
-      await subscription.cancel();
-      try {
-        await socket.close();
-      } catch (_) {}
-      return;
-    }
-    if (env.v != _SyncEnvelope.version) {
-      onHandshakeFailure?.call('versionMismatch');
-      await subscription.cancel();
-      try {
-        await socket.close();
-      } catch (_) {}
-      return;
-    }
-    if (env.type != _SyncType.hello && env.type != _SyncType.welcome) {
-      onHandshakeFailure?.call('badType');
-      await subscription.cancel();
-      try {
-        await socket.close();
-      } catch (_) {}
-      return;
-    }
-    if (env.peerId.isEmpty || env.peerId == peerId) {
-      onHandshakeFailure?.call('selfHandshake');
-      await subscription.cancel();
-      try {
-        await socket.close();
-      } catch (_) {}
-      return;
-    }
-
-    if (env.type == _SyncType.hello) {
-      final welcome = _SyncEnvelope.make(
-        type: _SyncType.welcome,
-        peerId: peerId,
-        name: displayName,
-        port: port,
-      );
-      final data = _encodeFrame(welcome);
-      if (data != null) {
-        try {
-          socket.add(data);
-          await socket.flush();
-        } catch (e) {
-          appLog('welcome send failed to ${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}: $e',
-              level: 'warning');
-        }
-      }
-    }
-
-    final existing = _sessions[env.peerId];
-    if (existing != null) {
-      appLog('Duplicate session for ${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}, dropping new socket (existing @ ${existing.host})',
-          level: 'warning');
-      await subscription.cancel();
-      try {
-        await socket.close();
-      } catch (_) {}
-      _recordPeer(env.peerId, env.name ?? env.peerId, existing.host, existing.port);
-      return;
-    }
-
-    final name = env.name ?? env.peerId;
-    final peerPort = env.port ?? port;
-    final session = _Session(
-      peerId: env.peerId,
-      host: host,
-      port: peerPort,
-      socket: socket,
-      isClient: peerId.compareTo(env.peerId) < 0,
-    );
-    session.subscription = subscription;
-    // Any leftover bytes after the handshake frame belong to the session.
-    if (buffer.length > 0) {
-      session.buffer.add(buffer.takeBytes());
-    }
-    _sessions[env.peerId] = session;
-    adoptedPeerId = env.peerId;
-    handshakeDone = true;
-
-    _reconnectBackoffSec[env.peerId] = 1;
-    _reconnectTimers.remove(env.peerId)?.cancel();
-    _recordPeer(env.peerId, name, host, peerPort);
-    await _persistEndpoint(env.peerId, name, host, peerPort);
-    if (session.buffer.length > 0) {
-      _drainBuffer(env.peerId);
-    }
-    await _flushPending(env.peerId);
-    appLog(
-        'Session up with $name (${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}) @ $host:$peerPort');
-  }
-
-  List<int>? _tryTakeFrame(BytesBuilder buffer) {
-    final bytes = buffer.toBytes();
-    if (bytes.length < 4) {
-      buffer.clear();
-      buffer.add(bytes);
-      return null;
-    }
-    final length = ByteData.sublistView(Uint8List.fromList(bytes.sublist(0, 4)))
-        .getUint32(0, Endian.big);
-    if (length <= 0 || length > _maxFrameLength) {
-      buffer.clear();
-      return null;
-    }
-    if (bytes.length < 4 + length) {
-      buffer.clear();
-      buffer.add(bytes);
-      return null;
-    }
-    final frame = bytes.sublist(4, 4 + length);
-    final rest = bytes.sublist(4 + length);
-    buffer.clear();
-    if (rest.isNotEmpty) buffer.add(rest);
-    return frame;
-  }
-
-  void _recordPeer(String id, String name, String host, int peerPort) {
-    _discoveredPeers[id] = DiscoveredPeer(
-      peerId: id,
-      displayName: name,
-      host: host,
-      port: peerPort,
-    );
-    _emitPeers();
-  }
-
-  void _emitPeers() {
-    _devicesChangedController.add(availableDeviceNames);
-    _peersChangedController.add(availablePeers);
-  }
-
-  void _drainBuffer(String peerId) {
-    final session = _sessions[peerId];
-    if (session == null) return;
-    final bytes = session.buffer.takeBytes();
-    var offset = 0;
-    final remaining = BytesBuilder(copy: false);
-
-    while (true) {
-      if (bytes.length - offset < 4) {
-        remaining.add(bytes.sublist(offset));
-        break;
-      }
-      final length = ByteData.sublistView(
-              Uint8List.fromList(bytes.sublist(offset, offset + 4)))
-          .getUint32(0, Endian.big);
-      if (length <= 0 || length > _maxFrameLength) {
-        unawaited(_closeSession(peerId, scheduleReconnect: true, keepaliveDriven: true));
-        return;
-      }
-      if (bytes.length - offset < 4 + length) {
-        remaining.add(bytes.sublist(offset));
-        break;
-      }
-      final frame = bytes.sublist(offset + 4, offset + 4 + length);
-      offset += 4 + length;
-      _handleFrame(frame, from: peerId, host: session.host);
-    }
-    if (remaining.length > 0) {
-      session.buffer.add(remaining.takeBytes());
+      unawaited(_retryStalePendingHistory(id));
     }
   }
 
   void _handleFrame(List<int> data,
       {required String from, required String host}) {
-    final env = _decodeEnvelope(data);
-    if (env == null || env.v != _SyncEnvelope.version) return;
+    final env = syncDecodeEnvelope(data);
+    if (env == null || env.v != SyncEnvelope.version) return;
 
     switch (env.type) {
-      case _SyncType.ping:
+      case SyncType.ping:
         final pong =
-            _SyncEnvelope.make(type: _SyncType.pong, peerId: peerId);
-        final d = _encodeFrame(pong);
+            SyncEnvelope.make(type: SyncType.pong, peerId: peerId);
+        final d = syncEncodeFrame(pong);
         final session = _sessions[from];
         if (d != null && session != null) {
           try {
@@ -1042,23 +515,35 @@ class SyncManager with WidgetsBindingObserver {
           }
         }
         break;
-      case _SyncType.pong:
+      case SyncType.pong:
         final session = _sessions[from];
         if (session != null) session.lastPong = DateTime.now();
         break;
-      case _SyncType.ack:
-        if (env.hash != null) _handleAck(env.hash!);
+      case SyncType.ack:
+        if (env.hash != null) _handleAck(env.hash!, from: from);
         break;
-      case _SyncType.history:
+      case SyncType.history:
         final payload = env.payload;
         if (payload == null) return;
         final text = _decrypt(payload);
-        if (text == null) return;
-        unawaited(
-            ClipboardManager.instance.handleRemoteSync(text, env.hash ?? ''));
-        _replyAck(from, env.hash);
+        if (text == null) {
+          appLog('history decrypt failed from ${from.substring(0, from.length.clamp(0, 8))}',
+              level: 'warning');
+          return;
+        }
+        unawaited(() async {
+          final ok = await ClipboardManager.instance
+              .handleRemoteSync(text, env.hash ?? '');
+          if (ok) {
+            _replyAck(from, env.hash);
+          } else {
+            appLog(
+                'history persist failed; withholding ACK hash=${(env.hash ?? '').substring(0, (env.hash ?? '').length.clamp(0, 8))}',
+                level: 'warning');
+          }
+        }());
         break;
-      case _SyncType.notifPost:
+      case SyncType.notifPost:
         final payload = env.payload;
         if (payload == null) return;
         final text = _decrypt(payload);
@@ -1066,27 +551,30 @@ class SyncManager with WidgetsBindingObserver {
         NotificationManager.instance
             .handleRemoteNotification(text, env.peerId);
         break;
-      case _SyncType.notifDismiss:
+      case SyncType.notifDismiss:
         final payload = env.payload;
         if (payload == null) return;
         final text = _decrypt(payload);
         if (text == null) return;
         NotificationManager.instance.handleRemoteDismiss(text);
         break;
-      case _SyncType.notifClear:
+      case SyncType.notifClear:
         NotificationManager.instance.clearAll();
         break;
-      case _SyncType.notifAck:
+      case SyncType.notifAck:
         if (env.hash != null) {
-          _handleAck(env.hash!);
+          _handleAck(env.hash!, from: from);
           NotificationManager.instance.handleAck(env.hash!);
         }
         break;
-      case _SyncType.notifConfig:
+      case SyncType.notifConfig:
         appLog('Ignored remote notification config', level: 'warning');
         break;
-      case _SyncType.hello:
-      case _SyncType.welcome:
+      case SyncType.historyFetch:
+        unawaited(_respondToHistoryFetch(from));
+        break;
+      case SyncType.hello:
+      case SyncType.welcome:
         if (env.name != null && env.port != null) {
           _recordPeer(env.peerId, env.name!, host, env.port!);
         }
@@ -1094,11 +582,57 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
+  /// Replay recent text history to a peer that just (re)appeared (mirrors Mac).
+  Future<void> _respondToHistoryFetch(String remotePeerId) async {
+    if (!clipboardSyncPeerIds.contains(remotePeerId) &&
+        !authorizedPeerIds.contains(remotePeerId)) {
+      appLog(
+          'history.fetch from unauthorized ${remotePeerId.substring(0, remotePeerId.length.clamp(0, 8))}; ignoring',
+          level: 'warning');
+      return;
+    }
+    final last = _lastHistoryFetchResponse[remotePeerId];
+    final now = DateTime.now();
+    if (last != null && now.difference(last) < _historyFetchRespondThrottle) {
+      return;
+    }
+    _lastHistoryFetchResponse[remotePeerId] = now;
+    final session = _sessions[remotePeerId];
+    if (session == null) return;
+    final recent = await ClipboardRepository.instance
+        .fetchRecentTexts(limit: _historyFetchRespondLimit);
+    appLog(
+        'sync.ack history.fetch from ${remotePeerId.substring(0, remotePeerId.length.clamp(0, 8))}: pushing ${recent.length} text entries');
+    // Oldest first so the peer's list ends with the newest on top after ingest.
+    for (final entry in recent.reversed) {
+      final payload = _encrypt(entry.text);
+      if (payload == null) continue;
+      final env = SyncEnvelope.make(
+        type: SyncType.history,
+        peerId: peerId,
+        name: displayName,
+        hash: entry.hash,
+        payload: payload,
+      );
+      final data = syncEncodeFrame(env);
+      if (data == null) continue;
+      try {
+        session.socket.add(data);
+      } catch (e) {
+        appLog('history.fetch push failed: $e', level: 'warning');
+        return;
+      }
+    }
+    try {
+      await session.socket.flush();
+    } catch (_) {}
+  }
+
   void _replyAck(String peerId, String? hash) {
     if (hash == null || hash.isEmpty) return;
     final env =
-        _SyncEnvelope.make(type: _SyncType.ack, peerId: this.peerId, hash: hash);
-    final data = _encodeFrame(env);
+        SyncEnvelope.make(type: SyncType.ack, peerId: this.peerId, hash: hash);
+    final data = syncEncodeFrame(env);
     final session = _sessions[peerId];
     if (data == null || session == null) return;
     try {
@@ -1109,78 +643,18 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _closeSession(String peerId,
-      {required bool scheduleReconnect, bool keepaliveDriven = false}) async {
-    final session = _sessions.remove(peerId);
-    if (session == null) return;
-    await session.subscription?.cancel();
-    try {
-      await session.socket.close();
-    } catch (_) {}
-    // Drop the in-flight marks for this peer: the session is gone, so ACKs for
-    // anything sent on it will never return. Clearing allows a reconnect to
-    // legitimately redeliver still-pending items.
-    _inFlightHashes.remove(peerId);
-    appLog('Session closed with ${peerId.substring(0, peerId.length.clamp(0, 8))}');
-    if (!scheduleReconnect) return;
-    // Keepalive-driven close (pong timeout / socket error / frame corruption):
-    // only the client role redials, so both sides don't reconnect each other.
-    // Data-driven close (deliver write fail) bypasses this — both roles may
-    // reconnect, throttled by _scheduleReconnect's debounce.
-    if (keepaliveDriven && !session.isClient) return;
-    _scheduleReconnect(peerId);
-  }
-
-  void _scheduleReconnect(String peerId) {
-    if (!isEnabled) return;
-    if (_reconnectTimers.containsKey(peerId)) return;
-    // Debounce: don't fire another reconnect attempt within the min interval.
-    // This caps data-driven reconnects (deliver write failures) so they can't
-    // pile on top of the client's keepalive reconnect.
-    final now = DateTime.now();
-    final last = _lastReconnectAttempt[peerId];
-    if (last != null && now.difference(last) < _minReconnectInterval) return;
-    _lastReconnectAttempt[peerId] = now;
-    final delay = _reconnectBackoffSec[peerId] ?? 1.0;
-    _reconnectBackoffSec[peerId] =
-        (delay * 2).clamp(1, 30).toDouble();
-    appLog('Reconnect scheduled for ${peerId.substring(0, peerId.length.clamp(0, 8))} in ${delay.round()}s');
-    _reconnectTimers[peerId] = Timer(Duration(seconds: delay.round()), () {
-      _reconnectTimers.remove(peerId);
-      if (_sessions.containsKey(peerId)) return;
-      final peer = _discoveredPeers[peerId];
-      if (peer != null) {
-        unawaited(_dial(peer.host, peer.port, reason: 'reconnect'));
-      } else {
-        triggerCrossBandDiscovery();
-      }
-    });
-  }
-
-  // -----------------------------------------------------------------------
-  // Broadcast APIs
-  // -----------------------------------------------------------------------
-
   Future<void> broadcastSync(String content, String hash) async {
     if (!isEnabled) return;
     final payload = _encrypt(content);
     if (payload == null) return;
-    final env = _SyncEnvelope.make(
-      type: _SyncType.history,
+    final env = SyncEnvelope.make(
+      type: SyncType.history,
       peerId: peerId,
       name: displayName,
       hash: hash,
       payload: payload,
     );
     await _fanout(env, requireAuth: true);
-    for (final id in clipboardSyncPeerIds) {
-      unawaited(PendingTextSyncRepository.instance.insert(
-        hash: hash,
-        data: content,
-        type: _SyncType.history,
-        targetPeerId: id,
-      ));
-    }
   }
 
   Future<void> broadcastNotificationMessage({
@@ -1191,11 +665,11 @@ class SyncManager with WidgetsBindingObserver {
     final wire = _mapNotificationType(type) ?? type;
     final payload = _encrypt(content);
     if (payload == null &&
-        wire != _SyncType.notifAck &&
-        wire != _SyncType.notifClear) {
+        wire != SyncType.notifAck &&
+        wire != SyncType.notifClear) {
       return;
     }
-    final env = _SyncEnvelope.make(
+    final env = SyncEnvelope.make(
       type: wire,
       peerId: peerId,
       name: displayName,
@@ -1203,259 +677,8 @@ class SyncManager with WidgetsBindingObserver {
       payload: payload,
     );
     // notif.ack does not require auth; other notif frames use notification list.
-    final requireAuth = wire != _SyncType.notifAck;
+    final requireAuth = wire != SyncType.notifAck;
     await _fanout(env, requireAuth: requireAuth);
-  }
-
-  String? _mapNotificationType(String apiType) {
-    switch (apiType) {
-      case 'notification/post':
-        return _SyncType.notifPost;
-      case 'notification/dismiss':
-        return _SyncType.notifDismiss;
-      case 'notification/clear_all':
-        return _SyncType.notifClear;
-      case 'notification/ack':
-        return _SyncType.notifAck;
-      case 'notification/config':
-        return _SyncType.notifConfig;
-      default:
-        return null;
-    }
-  }
-
-  List<String> _authIdsForType(String type) {
-    switch (type) {
-      case _SyncType.history:
-        return clipboardSyncPeerIds;
-      case _SyncType.notifPost:
-      case _SyncType.notifDismiss:
-      case _SyncType.notifClear:
-      case _SyncType.notifConfig:
-        return notificationSyncPeerIds;
-      default:
-        return authorizedPeerIds;
-    }
-  }
-
-  Future<void> _fanout(_SyncEnvelope env, {required bool requireAuth}) async {
-    final data = _encodeFrame(env);
-    if (data == null) return;
-    final auth = _authIdsForType(env.type);
-    final targets = requireAuth
-        ? availablePeers
-            .where((p) => auth.contains(p.peerId))
-            .map((p) => p.peerId)
-            .toList()
-        : _discoveredPeers.keys.toList();
-
-    if (targets.isEmpty) {
-      if (env.type == _SyncType.history || env.type == _SyncType.notifPost) {
-        for (final id in auth) {
-          _enqueuePending(data, env.type, id, env.hash);
-        }
-      }
-      triggerCrossBandDiscovery();
-      return;
-    }
-
-    for (final id in targets) {
-      await _deliver(data, type: env.type, peerId: id, hash: env.hash);
-    }
-  }
-
-  Future<bool> _deliver(List<int> data,
-      {required String type,
-      required String peerId,
-      String? hash}) async {
-    final session = _sessions[peerId];
-    if (session != null) {
-      try {
-        session.socket.add(data);
-        await session.socket.flush();
-        return true;
-      } catch (_) {
-        await _closeSession(peerId, scheduleReconnect: true);
-      }
-    }
-    _enqueuePending(data, type, peerId, hash);
-    final peer = _discoveredPeers[peerId];
-    if (peer != null) {
-      unawaited(_dial(peer.host, peer.port, reason: 'deliver'));
-    } else {
-      triggerCrossBandDiscovery();
-    }
-    _scheduleReconnect(peerId);
-    return false;
-  }
-
-  void _enqueuePending(
-      List<int> data, String type, String peerId, String? hash) {
-    final cutoff = DateTime.now().subtract(_pendingTtl);
-    _pendingQueue.removeWhere((f) => f.enqueueAt.isBefore(cutoff));
-    if (hash != null && hash.isNotEmpty) {
-      _pendingQueue.removeWhere((f) => f.peerId == peerId && f.hash == hash);
-    }
-    final perPeer = _pendingQueue.where((f) => f.peerId == peerId).length;
-    if (perPeer >= _pendingMax) return;
-    _pendingQueue.add(_PendingFrame(
-      peerId: peerId,
-      data: data,
-      type: type,
-      hash: hash,
-      enqueueAt: DateTime.now(),
-    ));
-  }
-
-  Future<void> _flushPending(String peerId) async {
-    final session = _sessions[peerId];
-    if (session == null) return;
-
-    final allowClipboard = clipboardSyncPeerIds.contains(peerId);
-    final allowNotification = notificationSyncPeerIds.contains(peerId);
-
-    final cutoff = DateTime.now().subtract(_pendingTtl);
-    final due = _pendingQueue
-        .where((f) => f.peerId == peerId && !f.enqueueAt.isBefore(cutoff))
-        .where((f) {
-          if (f.type == _SyncType.history) return allowClipboard;
-          if (f.type == _SyncType.notifPost ||
-              f.type == _SyncType.notifDismiss ||
-              f.type == _SyncType.notifClear ||
-              f.type == _SyncType.notifConfig) {
-            return allowNotification;
-          }
-          return true;
-        })
-        .toList();
-    if (due.isNotEmpty) {
-      appLog('Flushing ${due.length} pending frame(s) to $peerId');
-      for (final frame in due) {
-        // Skip hashes already delivered on this session and awaiting ACK.
-        if ((frame.type == _SyncType.history || frame.type == _SyncType.notifPost) &&
-            frame.hash != null &&
-            (_inFlightHashes[peerId]?.contains(frame.hash) ?? false)) {
-          continue;
-        }
-        try {
-          session.socket.add(frame.data);
-          if (frame.type == _SyncType.history ||
-              frame.type == _SyncType.notifPost) {
-            if (frame.hash != null) {
-              _inFlightHashes.putIfAbsent(peerId, () => <String>{}).add(frame.hash!);
-            }
-          } else {
-            _pendingQueue.remove(frame);
-          }
-        } catch (e) {
-          appLog('flushPending ${frame.type} send failed to ${peerId.substring(0, peerId.length.clamp(0, 8))}: $e',
-              level: 'warning');
-          return;
-        }
-      }
-    }
-
-    // Persisted text frames (SQLite) — clipboard auth only
-    if (allowClipboard) {
-      final persisted =
-          await PendingTextSyncRepository.instance.fetchByPeer(peerId);
-      for (final entry in persisted) {
-        // Skip text frames already delivered on this session and awaiting ACK.
-        if (_inFlightHashes[peerId]?.contains(entry.hash) ?? false) continue;
-        final payload = _encrypt(entry.data);
-        if (payload == null) continue;
-        final env = _SyncEnvelope.make(
-          type: _SyncType.history,
-          peerId: this.peerId,
-          name: displayName,
-          hash: entry.hash,
-          payload: payload,
-        );
-        final data = _encodeFrame(env);
-        if (data == null) continue;
-        try {
-          session.socket.add(data);
-          _inFlightHashes.putIfAbsent(peerId, () => <String>{}).add(entry.hash);
-        } catch (e) {
-          appLog('flushPending history(persisted) send failed to ${peerId.substring(0, peerId.length.clamp(0, 8))}: $e',
-              level: 'warning');
-          return;
-        }
-      }
-    }
-
-    // Persisted notification posts (SQLite offline queue) — notification auth only
-    if (!allowNotification) return;
-    final notifPending =
-        await NotificationRepository.instance.fetchAllPendingSync();
-    if (notifPending.isNotEmpty) {
-      appLog(
-          'Flushing ${notifPending.length} pending notification(s) to $peerId');
-    }
-    for (final row in notifPending) {
-      final content = row['content'] as String? ?? '';
-      final hash = (row['hash'] as String?) ??
-          (row['notification_id'] as String?) ??
-          '';
-      if (content.isEmpty || hash.isEmpty) continue;
-      // Skip notifications already delivered on this session and awaiting ACK.
-      if (_inFlightHashes[peerId]?.contains(hash) ?? false) continue;
-      final payload = _encrypt(content);
-      if (payload == null) continue;
-      final env = _SyncEnvelope.make(
-        type: _SyncType.notifPost,
-        peerId: this.peerId,
-        name: displayName,
-        hash: hash,
-        payload: payload,
-      );
-      final data = _encodeFrame(env);
-      if (data == null) continue;
-      try {
-        session.socket.add(data);
-        _inFlightHashes.putIfAbsent(peerId, () => <String>{}).add(hash);
-      } catch (e) {
-        appLog('flushPending notif.post send failed to ${peerId.substring(0, peerId.length.clamp(0, 8))}: $e',
-            level: 'warning');
-        return;
-      }
-    }
-  }
-
-  void _handleAck(String hash) {
-    if (hash.isEmpty) return;
-    final before = _pendingQueue.length;
-    _pendingQueue.removeWhere((f) => f.hash == hash);
-    if (_pendingQueue.length != before) {
-      appLog('ACK cleared pending for hash ${hash.substring(0, hash.length.clamp(0, 8))}');
-    }
-    // Clear the in-flight mark so future flushes may redeliver if needed.
-    for (final set in _inFlightHashes.values) {
-      set.remove(hash);
-    }
-    unawaited(PendingTextSyncRepository.instance.removeByHash(hash));
-  }
-
-  Future<bool> sendTextToPeer(String content, {required String peerId}) async {
-    if (!isEnabled) return false;
-    final hash = sha256.convert(utf8.encode(content)).toString();
-    final payload = _encrypt(content);
-    if (payload == null) return false;
-    final env = _SyncEnvelope.make(
-      type: _SyncType.history,
-      peerId: this.peerId,
-      name: displayName,
-      hash: hash,
-      payload: payload,
-    );
-    final data = _encodeFrame(env);
-    if (data == null) return false;
-    return _deliver(data, type: env.type, peerId: peerId, hash: hash);
-  }
-
-  Future<bool> sendFileToPeer(File file, {required String peerId}) async {
-    appLog('sendFileToPeer stubbed in sync v2', level: 'warning');
-    return false;
   }
 
   Future<void> setClipboardSyncTarget(String peerId,
@@ -1526,81 +749,17 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Codec / crypto
-  // -----------------------------------------------------------------------
 
-  List<int>? _encodeFrame(_SyncEnvelope env) {
-    try {
-      final jsonBytes = utf8.encode(jsonEncode(env.toJson()));
-      final header = ByteData(4)..setUint32(0, jsonBytes.length, Endian.big);
-      return [...header.buffer.asUint8List(), ...jsonBytes];
-    } catch (_) {
-      return null;
-    }
-  }
-
-  _SyncEnvelope? _decodeEnvelope(List<int> data) {
-    try {
-      final map = jsonDecode(utf8.decode(data)) as Map<String, dynamic>;
-      return _SyncEnvelope.fromJson(map);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// HKDF-SHA256 (RFC 5869), mirroring CryptoKit's `HKDF<SHA256>.deriveKey`
-  /// so both ends land on the same 32-byte transport key.
-  static Uint8List _hkdfSha256({
-    required List<int> ikm,
-    required List<int> salt,
-    required List<int> info,
-    required int length,
-  }) {
-    final prk = Hmac(sha256, salt).convert(ikm).bytes;
-    final out = <int>[];
-    var block = <int>[];
-    var counter = 1;
-    while (out.length < length) {
-      block = Hmac(sha256, prk).convert([...block, ...info, counter]).bytes;
-      out.addAll(block);
-      counter++;
-    }
-    return Uint8List.fromList(out.sublist(0, length));
-  }
-
-  /// A user-set pairing secret is stretched with HKDF; with none configured we
-  /// keep the legacy SHA256(shipped secret) so unpaired installs keep syncing.
-  encrypt.Key _key() {
-    final secret = pairingSecret;
-    if (_cachedKeySecret == secret && _cachedKey != null) return _cachedKey!;
-    final Uint8List bytes;
-    if (secret.isEmpty) {
-      bytes = Uint8List.fromList(
-          sha256.convert(utf8.encode(_hardcodedSecret)).bytes);
-    } else {
-      bytes = _hkdfSha256(
-        ikm: utf8.encode(secret),
-        salt: utf8.encode(_keyDerivationSalt),
-        info: utf8.encode(_keyDerivationInfo),
-        length: 32,
-      );
-    }
-    final key = encrypt.Key(bytes);
-    _cachedKeySecret = secret;
-    _cachedKey = key;
-    return key;
-  }
+  String? _encrypt(String text) => _crypto.encryptText(text);
+  String? _decrypt(String text) => _crypto.decryptText(text);
 
   Future<void> updatePairingSecret(String secret) async {
     final next = secret.trim();
     if (next == pairingSecret) return;
     pairingSecret = next;
-    _cachedKeySecret = null;
-    _cachedKey = null;
+    _crypto.clearKeyCache();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_pairingSecretKey, next);
-    // Live sessions negotiated under the old key can no longer be read.
     if (isEnabled) {
       await stop();
       await Future.delayed(const Duration(seconds: 1));
@@ -1608,88 +767,7 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
-  String? _encrypt(String text) {
-    try {
-      final key = _key();
-      // GCM must never reuse a nonce under the same key — a fixed all-zero IV
-      // (the old `IV.fromLength(12)`) leaks the authentication subkey.
-      final rng = Random.secure();
-      final iv = encrypt.IV(
-          Uint8List.fromList(List<int>.generate(12, (_) => rng.nextInt(256))));
-      final encrypter =
-          encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.gcm));
-      final encrypted = encrypter.encrypt(text, iv: iv);
-      final combined = Uint8List.fromList([...iv.bytes, ...encrypted.bytes]);
-      return base64Encode(combined);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  String? _decrypt(String base64String) {
-    try {
-      final key = _key();
-      final data = base64Decode(base64String);
-      if (data.length <= 28) return null;
-      final iv = encrypt.IV(data.sublist(0, 12));
-      final encryptedBytes = data.sublist(12);
-      final encrypter =
-          encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.gcm));
-      return encrypter.decrypt(encrypt.Encrypted(encryptedBytes), iv: iv);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  // Kept for any external callers that used the old static helpers.
   static String? encryptStatic(String text) => instance._encrypt(text);
   static String? decryptStatic(String text) => instance._decrypt(text);
 
-  // -----------------------------------------------------------------------
-  // Endpoint cache
-  // -----------------------------------------------------------------------
-
-  Future<void> _persistEndpoint(
-      String peerId, String name, String host, int port) async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = await _readEndpointCache();
-    list.removeWhere((e) => e['peerId'] == peerId);
-    list.add({
-      'peerId': peerId,
-      'name': name,
-      'host': host,
-      'port': port,
-      'ts': DateTime.now().millisecondsSinceEpoch / 1000.0,
-    });
-    await prefs.setString(_endpointCacheKey, jsonEncode(list));
-  }
-
-  Future<List<Map<String, dynamic>>> _readEndpointCache() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_endpointCacheKey);
-    if (raw == null) return [];
-    try {
-      final list = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
-      final cutoff = DateTime.now()
-          .subtract(_endpointCacheTtl)
-          .millisecondsSinceEpoch /
-          1000.0;
-      return list.where((e) => ((e['ts'] as num?)?.toDouble() ?? 0) >= cutoff).toList();
-    } catch (_) {
-      return [];
-    }
-  }
-
-  Future<void> _loadEndpointCache() async {
-    for (final e in await _readEndpointCache()) {
-      final id = e['peerId'] as String?;
-      final name = e['name'] as String?;
-      final host = e['host'] as String?;
-      final p = e['port'] as int?;
-      if (id == null || name == null || host == null || p == null) continue;
-      if (id == peerId) continue;
-      _recordPeer(id, name, host, p);
-      unawaited(_dial(host, p, reason: 'cache'));
-    }
-  }
 }

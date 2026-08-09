@@ -9,7 +9,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'clipy.db';
-  static const schemaVersion = 5;
+  static const schemaVersion = 6;
 
   Database? _db;
 
@@ -67,6 +67,9 @@ class AppDatabase {
           // 且不在 pending_notification_sync 队列里的通知补发，已 ack 的不重复补。
           await db.execute(
               'ALTER TABLE notifications ADD COLUMN sync_state INTEGER NOT NULL DEFAULT 0');
+        }
+        if (oldVersion < 6) {
+          await _createPendingSyncTable(db);
         }
       },
     );
@@ -158,5 +161,25 @@ class AppDatabase {
         'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_peer ON pending_text_sync(target_peer_id)');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_hash ON pending_text_sync(hash)');
+
+    await _createPendingSyncTable(db);
+  }
+
+  static Future<void> _createPendingSyncTable(Database db) async {
+    // Encoded frames awaiting ACK — mirrors macOS pending_sync.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pending_sync (
+        peer_id TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        type TEXT NOT NULL,
+        data BLOB NOT NULL,
+        enqueue_at INTEGER NOT NULL,
+        PRIMARY KEY (peer_id, hash)
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_pending_sync_peer ON pending_sync(peer_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_pending_sync_enqueue ON pending_sync(enqueue_at)');
   }
 }

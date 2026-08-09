@@ -265,25 +265,125 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     }
   }
 
-  Future<void> handleRemoteSync(String text, String hash) async {
-    // Always refresh history (delete + re-insert) even when hash repeats,
-    // so Mac re-copies move the item to the top on Android.
+  /// SharedPreferences key read by Kotlin FGS when there is no Activity —
+  /// MethodChannel replies often never arrive until the UI attaches.
+  static const _headlessClipboardKey = 'clipy.headlessClipboard';
+
+  /// Returns true when history row is durable. Clipboard is best-effort and
+  /// must NEVER block the ACK path after force-kill (headless engine).
+  Future<bool> handleRemoteSync(String text, String hash) async {
+    if (text.isEmpty) return false;
     final effectiveHash = hash.isNotEmpty
         ? hash
-        : (_contentHashForItem(HistoryItem(type: 'text', value: text)) ?? text.hashCode.toString());
-    _rememberRemoteHash(effectiveHash);
-    _lastText = text;
+        : (_contentHashForItem(HistoryItem(type: 'text', value: text)) ??
+            text.hashCode.toString());
 
-    final item = HistoryItem(type: 'text', value: text);
-    final entry = HistoryEntry(
-      item: item,
-      date: DateTime.now(),
-      sourceApp: 'Remote Sync',
-      contentHash: effectiveHash,
-    );
+    try {
+      final latest = await ClipboardRepository.instance.latestEntry();
+      if (latest != null && latest.contentHash == effectiveHash) {
+        _rememberRemoteHash(effectiveHash);
+        _lastText = text;
+        unawaited(_writeSystemClipboard(text));
+        appLog(
+            'handleRemoteSync: already latest hash=${effectiveHash.substring(0, effectiveHash.length.clamp(0, 8))}');
+        return true;
+      }
 
-    await _addToHistory(entry, broadcast: false);
-    await Clipboard.setData(ClipboardData(text: text));
+      _rememberRemoteHash(effectiveHash);
+      _lastText = text;
+
+      final item = HistoryItem(type: 'text', value: text);
+      final entry = HistoryEntry(
+        item: item,
+        date: DateTime.now(),
+        sourceApp: 'Remote Sync',
+        contentHash: effectiveHash,
+      );
+
+      await _addToHistory(entry, broadcast: false);
+      // Queue + non-blocking write so ACK is not stuck until UI opens.
+      unawaited(_writeSystemClipboard(text));
+      appLog(
+          'handleRemoteSync: stored hash=${effectiveHash.substring(0, effectiveHash.length.clamp(0, 8))}');
+      return true;
+    } catch (e) {
+      appLog('handleRemoteSync failed: $e', level: 'error');
+      return false;
+    }
+  }
+
+  /// Fast path: MethodChannel (may hang headless). Fallback: prefs for FGS drain.
+  Future<void> _writeSystemClipboard(String text) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_headlessClipboardKey, text);
+    } catch (e) {
+      appLog('headless clipboard prefs write failed: $e', level: 'warning');
+    }
+
+    try {
+      final native = await _clipboardChannel
+          .invokeMethod<bool>('setText', {'text': text}).timeout(
+        const Duration(milliseconds: 400),
+        onTimeout: () => false,
+      );
+      if (native == true) {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove(_headlessClipboardKey);
+        } catch (_) {}
+        return;
+      }
+    } catch (e) {
+      appLog('native setText failed/timeout: $e', level: 'warning');
+    }
+    try {
+      await Clipboard.setData(ClipboardData(text: text))
+          .timeout(const Duration(milliseconds: 400));
+    } catch (e) {
+      appLog('Flutter Clipboard.setData failed/timeout: $e', level: 'warning');
+    }
+  }
+
+  /// Batch catch-up path: ingest multiple remote history frames in one DB
+  /// transaction with a single notifyListeners, instead of N. Used when a peer
+  /// answers our `history.fetch` (or flushes a large pending backlog on
+  /// reconnect) — without this each frame triggers insert + notifyListeners,
+  /// and the list clears+rebuilds on every notify (a visible refresh storm).
+  ///
+  /// Dedup: drops any frame whose hash already exists in the DB, so a replay
+  /// is idempotent. We also skip setting the system clipboard here (a bulk
+  /// catch-up must NOT clobber the user's current clipboard with a random old
+  /// entry) and skip broadcast (these came *from* a peer — broadcasting would
+  /// echo them right back).
+  Future<void> handleRemoteSyncBatch(List<({String text, String hash})> items) async {
+    if (items.isEmpty) return;
+    // Pre-filter against existing hashes to avoid a pointless transaction.
+    // insertBatch itself also uses INSERT OR IGNORE as a second line of defense
+    // (in case two batches race or a hash slips through normalization), and it
+    // does NOT bump created_at on existing rows — so a fetch replay is truly
+    // idempotent: existing entries keep their position and the UI never rebuilds.
+    final existingHashes = await ClipboardRepository.instance.existingHashes(
+        items.map((e) => e.hash).toList());
+    final toInsert = <HistoryEntry>[];
+    for (final item in items) {
+      if (item.text.isEmpty) continue;
+      if (existingHashes.contains(item.hash)) continue;
+      _rememberRemoteHash(item.hash);
+      toInsert.add(HistoryEntry(
+        item: HistoryItem(type: 'text', value: item.text),
+        date: DateTime.now(),
+        sourceApp: 'Remote Sync',
+        contentHash: item.hash,
+      ));
+    }
+    if (toInsert.isEmpty) return;
+    final inserted = await ClipboardRepository.instance.insertBatch(toInsert);
+    appLog('handleRemoteSyncBatch: ${items.length} received, ${toInsert.length} new (post-dedup), $inserted inserted');
+    if (inserted == 0) return; // all were IGNORE'd (race / normalization drift)
+    await ClipboardRepository.instance.trimToLimit(_historyLimit);
+    onHistoryChanged?.call();
+    notifyListeners();
   }
 
   Future<void> clearHistory() async {
