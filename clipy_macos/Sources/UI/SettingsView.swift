@@ -217,7 +217,8 @@ struct SettingsView: View {
                 Button {
                     guard !isRefreshingDevices else { return }
                     isRefreshingDevices = true
-                    SyncManager.shared.refreshDiscovery()
+                    // User refresh: prune ghosts + full /24 scan.
+                    SyncManager.shared.refreshDiscovery(pruneCache: true, scanFullSubnet: true)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                         availablePeers = SyncManager.shared.availablePeers
                         isRefreshingDevices = false
@@ -235,50 +236,53 @@ struct SettingsView: View {
                 }
                 .disabled(!syncEnabled || isRefreshingDevices)
 
-                let unionAuthorized = clipboardSyncTargets.union(notificationSyncTargets)
-                let staleAuthorized = unionAuthorized.subtracting(Set(availablePeers.map(\.peerId)))
-                if !staleAuthorized.isEmpty {
-                    Text(L10n.t(.syncOfflineAuthorizedDevices))
-                        .font(AppFont.caption)
-                        .foregroundStyle(.orange)
-                    ForEach(staleAuthorized.sorted(), id: \.self) { peerId in
-                        HStack {
-                            Text(peerId)
-                                .font(AppFont.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button {
-                                clipboardSyncTargets.remove(peerId)
-                                notificationSyncTargets.remove(peerId)
-                                PreferencesManager.shared.removeAuthorizedPeer(peerId)
-                            } label: {
-                                Image(systemName: "trash")
-                                    .foregroundStyle(.red)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-
-                if availablePeers.isEmpty {
+                let authDeviceRows = Self.authDeviceRows(
+                    availablePeers: availablePeers,
+                    clipboard: clipboardSyncTargets,
+                    notification: notificationSyncTargets
+                )
+                if authDeviceRows.isEmpty {
                     Text(L10n.t(.noDevicesFound))
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(availablePeers, id: \.peerId) { peer in
+                    ForEach(authDeviceRows, id: \.peerId) { row in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(peer.displayName)
+                            HStack {
+                                Text(row.displayName)
+                                Spacer()
+                                Text(row.isOnline ? L10n.t(.deviceOnline) : L10n.t(.deviceOffline))
+                                    .font(AppFont.caption)
+                                    .foregroundStyle(row.isOnline ? .green : .secondary)
+                                if clipboardSyncTargets.contains(row.peerId)
+                                    || notificationSyncTargets.contains(row.peerId) {
+                                    Button {
+                                        clipboardSyncTargets.remove(row.peerId)
+                                        notificationSyncTargets.remove(row.peerId)
+                                        PreferencesManager.shared.removeAuthorizedPeer(row.peerId)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .foregroundStyle(.red)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            if let hostPort = row.hostPort {
+                                Text(hostPort)
+                                    .font(AppFont.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                             Toggle(isOn: Binding(
-                                get: { clipboardSyncTargets.contains(peer.peerId) },
+                                get: { clipboardSyncTargets.contains(row.peerId) },
                                 set: { enabled in
                                     if enabled {
-                                        clipboardSyncTargets.insert(peer.peerId)
+                                        clipboardSyncTargets.insert(row.peerId)
                                     } else {
-                                        clipboardSyncTargets.remove(peer.peerId)
+                                        clipboardSyncTargets.remove(row.peerId)
                                     }
                                     PreferencesManager.shared.setClipboardSync(
-                                        peerId: peer.peerId, enabled: enabled)
+                                        peerId: row.peerId, enabled: enabled)
                                     if enabled {
-                                        SyncManager.shared.refreshPendingDelivery(for: peer.peerId)
+                                        SyncManager.shared.refreshPendingDelivery(for: row.peerId)
                                     }
                                 }
                             )) {
@@ -286,17 +290,17 @@ struct SettingsView: View {
                                     .font(AppFont.caption)
                             }
                             Toggle(isOn: Binding(
-                                get: { notificationSyncTargets.contains(peer.peerId) },
+                                get: { notificationSyncTargets.contains(row.peerId) },
                                 set: { enabled in
                                     if enabled {
-                                        notificationSyncTargets.insert(peer.peerId)
+                                        notificationSyncTargets.insert(row.peerId)
                                     } else {
-                                        notificationSyncTargets.remove(peer.peerId)
+                                        notificationSyncTargets.remove(row.peerId)
                                     }
                                     PreferencesManager.shared.setNotificationSync(
-                                        peerId: peer.peerId, enabled: enabled)
+                                        peerId: row.peerId, enabled: enabled)
                                     if enabled {
-                                        SyncManager.shared.refreshPendingDelivery(for: peer.peerId)
+                                        SyncManager.shared.refreshPendingDelivery(for: row.peerId)
                                     }
                                 }
                             )) {
@@ -377,16 +381,9 @@ struct SettingsView: View {
             clipboardSyncTargets = Set(PreferencesManager.shared.clipboardSyncPeerIds)
             notificationSyncTargets = Set(PreferencesManager.shared.notificationSyncPeerIds)
             manualPeers = PreferencesManager.shared.manualSyncPeers
-            // On-demand device discovery (per sync power plan v2): no periodic
-            // timer drives the list — refresh once when the user opens this
-            // page. Subsequent updates arrive via .syncAvailableDevicesDidChange.
-            if PreferencesManager.shared.isSyncEnabled && !isRefreshingDevices {
-                isRefreshingDevices = true
-                SyncManager.shared.refreshDiscovery()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                    availablePeers = SyncManager.shared.availablePeers
-                    isRefreshingDevices = false
-                }
+            // Dial authorized cache only — do not prune or /24-scan on open.
+            if PreferencesManager.shared.isSyncEnabled {
+                SyncManager.shared.triggerCrossBandDiscovery()
             }
         }
         .sheet(isPresented: $showAddManualPeer) {
@@ -435,6 +432,34 @@ struct SettingsView: View {
     }
 
     private static let historyLimitRange = 1...1000
+
+    private struct AuthDeviceRow: Identifiable {
+        var id: String { peerId }
+        let peerId: String
+        let displayName: String
+        let hostPort: String?
+        let isOnline: Bool
+    }
+
+    /// Authorized peers (always) ∪ currently discovered (for new checkboxes).
+    private static func authDeviceRows(
+        availablePeers: [DiscoveredPeer],
+        clipboard: Set<String>,
+        notification: Set<String>
+    ) -> [AuthDeviceRow] {
+        let onlineIds = Set(availablePeers.map(\.peerId))
+        let ids = clipboard.union(notification).union(onlineIds)
+        let sync = SyncManager.shared
+        return ids.sorted().map { peerId in
+            let online = availablePeers.first(where: { $0.peerId == peerId })
+            return AuthDeviceRow(
+                peerId: peerId,
+                displayName: online?.displayName ?? sync.resolvedPeerLabel(peerId: peerId),
+                hostPort: online.map { "\($0.host):\($0.port)" } ?? sync.resolvedPeerHostPort(peerId: peerId),
+                isOnline: online != nil
+            )
+        }
+    }
 
     private func commitHistoryLimitText() {
         let trimmed = historyLimitText.trimmingCharacters(in: .whitespaces)

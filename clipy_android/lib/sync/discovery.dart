@@ -5,13 +5,15 @@ extension SyncDiscoveryMethods on SyncManager {
   // Discovery
   // -----------------------------------------------------------------------
 
-  Future<void> refreshDiscovery() async {
+  /// - [pruneCache]: drop unauthorized ghosts (user refresh).
+  /// - [scanFullSubnet]: dial entire /24 (user refresh only).
+  Future<void> refreshDiscovery({
+    bool pruneCache = true,
+    bool scanFullSubnet = true,
+  }) async {
     if (!isEnabled) return;
     if (_isRefreshingDiscovery) return;
     _isRefreshingDiscovery = true;
-    // Keep peers that still have a live session. Clearing them would hide
-    // connected devices forever: rediscovery skips already-connected hosts,
-    // so _recordPeer is never called again for those sessions.
     final cache = await _readEndpointCache();
     final cacheById = <String, Map<String, dynamic>>{
       for (final e in cache)
@@ -37,24 +39,38 @@ extension SyncDiscoveryMethods on SyncManager {
     _discoveredPeers
       ..clear()
       ..addAll(kept);
-    await _rewriteEndpointCache(kept.values.toList());
+    if (pruneCache) {
+      await _rewriteEndpointCacheAfterRefresh(kept.values.toList(), cache);
+    }
     _emitPeers();
-    triggerCrossBandDiscovery();
+    triggerCrossBandDiscovery(scanFullSubnet: scanFullSubnet);
     _isRefreshingDiscovery = false;
   }
 
-  void triggerCrossBandDiscovery() {
+  void triggerCrossBandDiscovery({bool scanFullSubnet = false}) {
     if (!isEnabled) return;
     _scanDebounceTimer?.cancel();
     _scanDebounceTimer = Timer(SyncManager._discoveryDebounce, () {
-      unawaited(_runDiscovery());
+      unawaited(_runDiscovery(scanFullSubnet: scanFullSubnet));
     });
   }
 
-  Future<void> _runDiscovery() async {
+  Future<void> _runDiscovery({bool scanFullSubnet = false}) async {
     if (!isEnabled || _discoveryRunning) return;
     _discoveryRunning = true;
     try {
+      final auth = authorizedPeerIds.toSet();
+      final cached = await _readEndpointCache();
+      for (final e in cached) {
+        final id = e['peerId'] as String?;
+        if (id == null || id == peerId) continue;
+        if (!auth.contains(id)) continue;
+        final host = e['host'] as String?;
+        final p = e['port'] as int?;
+        if (host == null || p == null) continue;
+        unawaited(_dial(host, p, reason: 'cache', peerId: id));
+      }
+
       final prefs = await SharedPreferences.getInstance();
       final manual = prefs.getStringList('manualSyncPeers') ?? [];
       for (final entry in manual) {
@@ -62,17 +78,12 @@ extension SyncDiscoveryMethods on SyncManager {
         if (parts.isEmpty || parts.first.isEmpty) continue;
         final host = parts.first;
         final p = parts.length >= 2 ? int.tryParse(parts[1]) ?? port : port;
-        unawaited(_dial(host, p, reason: 'manual'));
+        final id = _resolvePeerId(host, p);
+        if (id == null || !auth.contains(id)) continue;
+        unawaited(_dial(host, p, reason: 'manual', peerId: id));
       }
 
-      final cached = await _readEndpointCache();
-      for (final e in cached) {
-        if (e['peerId'] == peerId) continue;
-        final host = e['host'] as String?;
-        final p = e['port'] as int?;
-        if (host == null || p == null) continue;
-        unawaited(_dial(host, p, reason: 'cache'));
-      }
+      if (!scanFullSubnet) return;
 
       final myIPs = await _enumerateLocalIPv4s();
       final connectedHosts = _sessions.values.map((s) => s.host).toSet();
@@ -192,25 +203,68 @@ extension SyncDiscoveryMethods on SyncManager {
     await prefs.setString(SyncManager._endpointCacheKey, jsonEncode(list));
   }
 
-  /// Replace disk cache with only live peers (user refresh prunes ghosts).
-  Future<void> _rewriteEndpointCache(List<DiscoveredPeer> peers) async {
+  /// Keep live sessions + authorized peers from previous cache; drop unauthorized ghosts.
+  Future<void> _rewriteEndpointCacheAfterRefresh(
+    List<DiscoveredPeer> livePeers,
+    List<Map<String, dynamic>> previousCache,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
-    final list = peers
-        .map((p) => <String, dynamic>{
-              'peerId': p.peerId,
-              'name': p.displayName,
-              'host': p.host,
-              'port': p.port,
-              'ts': now,
-            })
-        .toList();
+    final auth = authorizedPeerIds.toSet();
+    final liveIds = livePeers.map((p) => p.peerId).toSet();
+    final list = <Map<String, dynamic>>[
+      for (final p in livePeers)
+        {
+          'peerId': p.peerId,
+          'name': p.displayName,
+          'host': p.host,
+          'port': p.port,
+          'ts': now,
+        },
+    ];
+    for (final e in previousCache) {
+      final id = e['peerId'] as String?;
+      if (id == null || liveIds.contains(id) || !auth.contains(id)) continue;
+      list.add(Map<String, dynamic>.from(e));
+    }
     if (list.isEmpty) {
       await prefs.remove(SyncManager._endpointCacheKey);
     } else {
       await prefs.setString(SyncManager._endpointCacheKey, jsonEncode(list));
     }
-    appLog('endpoint cache pruned to ${list.length} live peer(s) after refresh');
+    appLog(
+        'endpoint cache pruned to ${list.length} peer(s) after refresh (live+authorized)');
+  }
+
+  String resolvedPeerLabel(String peerId) {
+    final online = _discoveredPeers[peerId];
+    if (online != null) return online.displayName;
+    return peerId.length <= 8 ? peerId : peerId.substring(0, 8);
+  }
+
+  Future<String?> resolvedPeerHostPort(String peerId) async {
+    final online = _discoveredPeers[peerId];
+    if (online != null) return '${online.host}:${online.port}';
+    for (final e in await _readEndpointCache()) {
+      if (e['peerId'] == peerId) {
+        final host = e['host'];
+        final p = e['port'];
+        if (host is String && p != null) return '$host:$p';
+      }
+    }
+    return null;
+  }
+
+  Future<String> resolvedPeerLabelAsync(String peerId) async {
+    final online = _discoveredPeers[peerId];
+    if (online != null) return online.displayName;
+    for (final e in await _readEndpointCache()) {
+      if (e['peerId'] == peerId) {
+        final name = e['name'];
+        if (name is String && name.isNotEmpty) return name;
+      }
+    }
+    return peerId.length <= 8 ? peerId : peerId.substring(0, 8);
   }
 
   Future<List<Map<String, dynamic>>> _readEndpointCache() async {
@@ -229,15 +283,16 @@ extension SyncDiscoveryMethods on SyncManager {
     }
   }
 
-  /// Dial cached endpoints for reconnect; list only after handshake succeeds.
+  /// Dial cached endpoints for authorized peers only.
   Future<void> _loadEndpointCache() async {
+    final auth = authorizedPeerIds.toSet();
     for (final e in await _readEndpointCache()) {
       final id = e['peerId'] as String?;
       final host = e['host'] as String?;
       final p = e['port'] as int?;
       if (id == null || host == null || p == null) continue;
-      if (id == peerId) continue;
-      unawaited(_dial(host, p, reason: 'cache'));
+      if (id == peerId || !auth.contains(id)) continue;
+      unawaited(_dial(host, p, reason: 'cache', peerId: id));
     }
   }
 

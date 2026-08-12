@@ -32,9 +32,10 @@ class ClipyApplication : Application() {
         const val CLIPBOARD_CHANNEL = "com.clipyclone.clipy_android/clipboard"
         const val STORAGE_CHANNEL = "com.clipyclone.clipy_android/storage"
         const val NOTIFICATIONS_CHANNEL = "com.clipyclone.clipy_android/notifications"
-        private const val MAX_CREATE_ATTEMPTS = 6
         private const val FLUTTER_PREFS = "FlutterSharedPreferences"
         private const val KEY_SYNC_ENABLED = "flutter.syncEnabled"
+        /** Cap for the inter-retry backoff when engine creation keeps failing. */
+        private const val ENGINE_RETRY_MAX_BACKOFF_MS = 60_000L
     }
 
     val engineReady: Boolean
@@ -89,14 +90,16 @@ class ClipyApplication : Application() {
     /**
      * Create and cache the sole FlutterEngine (default entrypoint). Safe to call
      * repeatedly from FGS sticky rebuilds. Must run on the main thread.
+     *
+     * Never permanently gives up: a transient failure (low memory, loader not
+     * ready during sticky rebuild) is retried with exponential backoff capped
+     * at [ENGINE_RETRY_MAX_BACKOFF_MS]. Giving up would strand the FGS alive
+     * but with no isolate, so :5566 never binds and Mac sees connect(refused)
+     * forever.
      */
     fun ensureEngine() {
         if (FlutterEngineCache.getInstance().get(ENGINE_ID) != null) return
         if (creating) return
-        if (createAttempts >= MAX_CREATE_ATTEMPTS) {
-            Log.e(TAG, "ensureEngine: exceeded $MAX_CREATE_ATTEMPTS attempts, giving up")
-            return
-        }
         creating = true
         createAttempts++
         createEngine()
@@ -138,15 +141,18 @@ class ClipyApplication : Application() {
                     Log.w(TAG, "drainNotificationInbox invoke failed", e)
                 }
             }, 1500L)
+            createAttempts = 0
+            creating = false
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create FlutterEngine (attempt=$attempt)", e)
+            val backoff = (2000L * (1L shl minOf(attempt, 5)))
+                .coerceAtMost(ENGINE_RETRY_MAX_BACKOFF_MS)
             mainHandler.postDelayed({
                 creating = false
                 ensureEngine()
-            }, 2000L)
+            }, backoff)
             return
         }
-        creating = false
     }
 
     fun startForegroundSyncService(): Boolean {

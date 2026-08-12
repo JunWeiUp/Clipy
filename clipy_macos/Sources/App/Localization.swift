@@ -211,6 +211,8 @@ enum L10nKey: String {
     case syncPairingSecretHint
     case syncPairingSecretDefaultWarning
     case syncOfflineAuthorizedDevices
+    case deviceOnline
+    case deviceOffline
     case syncAddManualDevice
     case syncManualDeviceHost
     case syncManualDevicePort
@@ -333,7 +335,7 @@ struct L10n {
             .enableLanSync: "启用局域网同步",
             .syncPort: "同步端口：",
             .authorizedDevicesComma: "授权设备（用逗号分隔）：",
-            .syncTargetsHint: "分别勾选要同步剪贴板 / 通知的设备。授权是双向生效的：只有已授权的设备才能向本机写入内容，所以两端都要勾选对方。",
+            .syncTargetsHint: "分别勾选要向哪些设备同步剪贴板 / 通知。只需本机授权即可发送，对方无需勾选也能接收。设备列表「发送文本 / 发送文件」连本机授权也不需要。",
             .syncClipboardToDevice: "同步剪贴板",
             .syncNotificationsToDevice: "同步通知",
             .close: "关闭",
@@ -505,6 +507,8 @@ struct L10n {
             .syncPairingSecretHint: "在同一组设备上填写完全相同的密钥。留空则使用内置默认密钥，同网段任何一份本应用都能解密同步内容。",
             .syncPairingSecretDefaultWarning: "当前使用内置默认密钥，建议设置自定义配对密钥。",
             .syncOfflineAuthorizedDevices: "离线已授权设备（可删除）",
+            .deviceOnline: "在线",
+            .deviceOffline: "离线",
             .syncAddManualDevice: "手动添加设备（跨频段/跨子网兜底）",
             .syncManualDeviceHost: "IP 地址（如 192.168.1.20）",
             .syncManualDevicePort: "端口",
@@ -616,7 +620,7 @@ struct L10n {
             .enableLanSync: "Enable LAN Sync",
             .syncPort: "Sync Port:",
             .authorizedDevicesComma: "Authorized Devices (comma separated):",
-            .syncTargetsHint: "Choose which devices receive clipboard and/or notifications. Authorization works both ways: only authorized devices may write to this Mac, so each side must check the other.",
+            .syncTargetsHint: "Choose which devices receive clipboard and/or notifications. Authorization is one-sided: authorize on this device to send; the peer can receive without authorizing you. Device-list Send Text / Send File needs no authorization at all.",
             .syncClipboardToDevice: "Sync clipboard",
             .syncNotificationsToDevice: "Sync notifications",
             .close: "Close",
@@ -788,6 +792,8 @@ struct L10n {
             .syncPairingSecretHint: "Enter the exact same secret on every device in this sync group. Leave it empty to use the built-in default key, which any copy of this app on your network can decrypt.",
             .syncPairingSecretDefaultWarning: "Using the built-in default key. Set a custom pairing secret for real protection.",
             .syncOfflineAuthorizedDevices: "Authorized devices that are offline (removable)",
+            .deviceOnline: "Online",
+            .deviceOffline: "Offline",
             .syncAddManualDevice: "Add device manually (across bands / subnets)",
             .syncManualDeviceHost: "IP address (e.g. 192.168.1.20)",
             .syncManualDevicePort: "Port",

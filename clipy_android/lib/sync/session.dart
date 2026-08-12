@@ -10,11 +10,23 @@ extension SyncSessionMethods on SyncManager {
       await _server?.close();
       _server = await ServerSocket.bind(InternetAddress.anyIPv4, port);
       appLog('Listening on 0.0.0.0:$port');
-      _server!.listen(_onInbound, onError: (e) {
-        appLog('Server error: $e', level: 'error');
-      });
+      // `onDone` must null out `_server` — otherwise the field stays non-null
+      // after the listening stream closes, and `onSyncTick` would skip the
+      // rebind, leaving :5566 refusing connections with the FGS alive.
+      _server!.listen(
+        _onInbound,
+        onError: (e) {
+          appLog('Server error: $e', level: 'error');
+          _server = null;
+        },
+        onDone: () {
+          appLog('Server socket closed (onDone)', level: 'warning');
+          _server = null;
+        },
+      );
       return true;
     } catch (e) {
+      _server = null;
       appLog('Failed to bind :$port — $e', level: 'error');
       return false;
     }
@@ -50,11 +62,32 @@ extension SyncSessionMethods on SyncManager {
     return 'other';
   }
 
+  String? _resolvePeerId(String host, int peerPort) {
+    for (final e in _sessions.entries) {
+      if (e.value.host == host) return e.key;
+    }
+    for (final p in _discoveredPeers.values) {
+      if (p.host == host && p.port == peerPort) return p.peerId;
+    }
+    return null;
+  }
+
+  bool _allowsProactiveDial(String reason, String? peerId) {
+    if (reason == 'scan' || reason == 'direct') return true;
+    if (peerId == null || peerId.isEmpty) return false;
+    return authorizedPeerIds.contains(peerId);
+  }
+
   Future<void> _dial(String host, int peerPort,
       {required String reason,
+      String? peerId,
       Duration? timeout,
       void Function(String connectFailure)? onConnectFailure,
       void Function(String hsFailure)? onHandshakeFailure}) async {
+    final resolved =
+        peerId ?? (reason == 'scan' ? null : _resolvePeerId(host, peerPort));
+    if (!_allowsProactiveDial(reason, resolved)) return;
+
     final key = '$host:$peerPort';
     final now = DateTime.now();
     final last = _lastDialAt[key];
@@ -298,6 +331,7 @@ extension SyncSessionMethods on SyncManager {
     try {
       session.socket.add(data);
       await session.socket.flush();
+      _beginHistoryFetchCatchUp(id);
       appLog(
           'sync.session history.fetch → ${id.substring(0, id.length.clamp(0, 8))}');
     } catch (e) {
@@ -389,6 +423,9 @@ extension SyncSessionMethods on SyncManager {
     // anything sent on it will never return. Clearing allows a reconnect to
     // legitimately redeliver still-pending items.
     _inFlightHashes.remove(peerId);
+    // Persist any buffered fetch catch-up before the socket is gone (ACKs may
+    // fail; store still runs).
+    await _flushHistoryFetchCatchUp(peerId);
     appLog('Session closed with ${peerId.substring(0, peerId.length.clamp(0, 8))}');
     if (!scheduleReconnect) return;
     // Keepalive-driven close (pong timeout / socket error / frame corruption):
@@ -416,12 +453,23 @@ extension SyncSessionMethods on SyncManager {
     _reconnectTimers[peerId] = Timer(Duration(seconds: delay.round()), () {
       _reconnectTimers.remove(peerId);
       if (_sessions.containsKey(peerId)) return;
-      final peer = _discoveredPeers[peerId];
-      if (peer != null) {
-        unawaited(_dial(peer.host, peer.port, reason: 'reconnect'));
-      } else {
-        triggerCrossBandDiscovery();
-      }
+      unawaited(() async {
+        final reason = await _hasDirectPending(peerId) ? 'direct' : 'reconnect';
+        final peer = _discoveredPeers[peerId];
+        if (peer != null) {
+          await _dial(peer.host, peer.port, reason: reason, peerId: peerId);
+          return;
+        }
+        for (final e in await _readEndpointCache()) {
+          if (e['peerId'] != peerId) continue;
+          final host = e['host'] as String?;
+          final p = e['port'] as int?;
+          if (host == null || p == null) return;
+          await _dial(host, p, reason: reason, peerId: peerId);
+          return;
+        }
+        triggerCrossBandDiscovery(scanFullSubnet: false);
+      }());
     });
   }
 

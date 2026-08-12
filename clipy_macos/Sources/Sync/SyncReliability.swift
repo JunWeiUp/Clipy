@@ -12,6 +12,10 @@ extension SyncManager {
         }
     }
 
+    func isQueueableSyncType(_ type: String) -> Bool {
+        type == SyncType.history || type == SyncType.historyDirect || type == SyncType.notifPost
+    }
+
     func fanoutReliable(_ env: SyncEnvelope, requireAuth: Bool, allowWithoutClipboardSync: Bool = false) {
         if !allowWithoutClipboardSync && !PreferencesManager.shared.isSyncEnabled { return }
         guard let data = encodeFrame(env) else { return }
@@ -22,10 +26,10 @@ extension SyncManager {
             if env.type == SyncType.history {
                 appLog("history frame not delivered: no authorized clipboard sync target — enable clipboard sync for the target device in Settings", level: .warning)
             }
-            scheduleDiscovery(immediate: false)
+            scheduleDiscovery(immediate: false, scanFullSubnet: false)
             return
         }
-        let queueable = env.type == SyncType.history || env.type == SyncType.notifPost
+        let queueable = isQueueableSyncType(env.type)
         syncQueue.async { [weak self] in
             guard let self else { return }
             var needsDiscovery = false
@@ -41,24 +45,30 @@ extension SyncManager {
                     needsDiscovery = true
                 }
             }
-            if needsDiscovery { self.scheduleDiscovery(immediate: false) }
+            if needsDiscovery { self.scheduleDiscovery(immediate: false, scanFullSubnet: false) }
         }
     }
 
-    func sendEnvelope(_ env: SyncEnvelope, to targetId: String, reliable: Bool, completion: ((Bool) -> Void)? = nil) {
+    func sendEnvelope(_ env: SyncEnvelope, to targetId: String, reliable: Bool, dialReason: String = "deliver", completion: ((Bool) -> Void)? = nil) {
         guard let data = encodeFrame(env) else { completion?(false); return }
         syncQueue.async { [weak self] in
             guard let self else { if let completion { DispatchQueue.main.async { completion(false) } }; return }
-            let delivered = self.deliver(data: data, type: env.type, peerId: targetId, hash: env.hash, reliable: reliable)
+            let delivered = self.deliver(data: data, type: env.type, peerId: targetId, hash: env.hash, reliable: reliable, dialReason: dialReason)
             if let completion { DispatchQueue.main.async { completion(delivered) } }
         }
     }
 
-    @discardableResult func deliver(data: Data, type: String, peerId: String, hash: String?, reliable: Bool) -> Bool {
+    @discardableResult func deliver(data: Data, type: String, peerId: String, hash: String?, reliable: Bool, dialReason: String = "deliver") -> Bool {
         if let session = sessions[peerId], writeAll(session.fd, data) { return true }
         if reliable { enqueuePending(data: data, type: type, peerId: peerId, hash: hash) }
-        if let peer = peerSnapshot(peerId) { dial(host: peer.host, port: peer.port, reason: "deliver") }
-        else { scheduleDiscovery(immediate: false) }
+        let reason = (type == SyncType.historyDirect) ? "direct" : dialReason
+        if let peer = peerSnapshot(peerId) {
+            dial(host: peer.host, port: peer.port, reason: reason, peerId: peerId)
+        } else if let cached = cachedEndpoint(for: peerId) {
+            dial(host: cached.host, port: cached.port, reason: reason, peerId: peerId)
+        } else {
+            scheduleDiscovery(immediate: false, scanFullSubnet: false)
+        }
         scheduleReconnect(peerId: peerId)
         return false
     }
@@ -74,21 +84,28 @@ extension SyncManager {
         let due = PendingSyncRepository.shared.fetchDue(forPeer: peerId, ttl: Self.pendingQueueTTL).filter {
             switch $0.type {
             case SyncType.history: return allowClipboard
+            case SyncType.historyDirect: return true // device-list send: no auth
             case SyncType.notifPost, SyncType.notifDismiss, SyncType.notifClear, SyncType.notifConfig: return allowNotification
             default: return true
             }
         }
         guard !due.isEmpty else { return }
-        let dropped = due.filter { ($0.type == SyncType.history || $0.type == SyncType.notifPost) && (inFlightHashes[peerId]?.contains($0.hash) ?? false) }.count
+        let dropped = due.filter { isQueueableSyncType($0.type) && (inFlightHashes[peerId]?.contains($0.hash) ?? false) }.count
         appLog("Flushing \(due.count) pending frame(s) to \(peerId)\(dropped > 0 ? " (skipped \(dropped) in-flight)" : "")")
         for frame in due {
-            let needsAck = frame.type == SyncType.history || frame.type == SyncType.notifPost
+            let needsAck = isQueueableSyncType(frame.type)
             if needsAck, inFlightHashes[peerId]?.contains(frame.hash) ?? false { continue }
             if writeAll(session.fd, frame.data) {
                 if needsAck { if inFlightHashes[peerId] == nil { inFlightHashes[peerId] = [] }; inFlightHashes[peerId]?.insert(frame.hash) }
                 else { PendingSyncRepository.shared.remove(peerId: peerId, hash: frame.hash) }
             } else { appLog("flushPending \(frame.type) send failed to \(peerId.prefix(8)); frame retained", level: .warning) }
         }
+    }
+
+    /// True when peer has a queued device-list direct send (reconnect may dial without auth).
+    func hasDirectPending(for peerId: String) -> Bool {
+        PendingSyncRepository.shared.fetchDue(forPeer: peerId, ttl: Self.pendingQueueTTL)
+            .contains { $0.type == SyncType.historyDirect }
     }
 
     func refreshPendingDelivery(for peerId: String) {
@@ -125,8 +142,14 @@ extension SyncManager {
             guard let self else { return }
             self.pendingReconnects.removeValue(forKey: peerId)
             guard self.sessions[peerId] == nil else { return }
-            if let peer = self.peerSnapshot(peerId) { self.dial(host: peer.host, port: peer.port, reason: "reconnect") }
-            else { self.scheduleDiscovery(immediate: false) }
+            let reason = self.hasDirectPending(for: peerId) ? "direct" : "reconnect"
+            if let peer = self.peerSnapshot(peerId) {
+                self.dial(host: peer.host, port: peer.port, reason: reason, peerId: peerId)
+            } else if let cached = self.cachedEndpoint(for: peerId) {
+                self.dial(host: cached.host, port: cached.port, reason: reason, peerId: peerId)
+            } else {
+                self.scheduleDiscovery(immediate: false, scanFullSubnet: false)
+            }
         }
         pendingReconnects[peerId] = work
         syncQueue.asyncAfter(deadline: .now() + delay, execute: work)
@@ -135,10 +158,12 @@ extension SyncManager {
     func retryStalePendingHistory(for peerId: String) {
         let due = PendingSyncRepository.shared.fetchDue(forPeer: peerId, ttl: Self.pendingQueueTTL)
         let cutoff = Date().addingTimeInterval(-Self.pendingAckRetryAge)
-        let staleCount = due.filter { $0.type == SyncType.history && $0.enqueueAt <= cutoff }.count
-        guard staleCount > 0 else { return }
-        for frame in due where frame.type == SyncType.history && frame.enqueueAt <= cutoff { inFlightHashes[peerId]?.remove(frame.hash) }
-        appLog("Retrying \(staleCount) stale pending history frame(s) to \(peerId.prefix(8)) (no ACK ≥\(Int(Self.pendingAckRetryAge))s)")
+        let stale = due.filter {
+            ($0.type == SyncType.history || $0.type == SyncType.historyDirect) && $0.enqueueAt <= cutoff
+        }
+        guard !stale.isEmpty else { return }
+        for frame in stale { inFlightHashes[peerId]?.remove(frame.hash) }
+        appLog("Retrying \(stale.count) stale pending history frame(s) to \(peerId.prefix(8)) (no ACK ≥\(Int(Self.pendingAckRetryAge))s)")
         flushPending(for: peerId)
     }
 }

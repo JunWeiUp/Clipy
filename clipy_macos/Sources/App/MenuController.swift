@@ -765,7 +765,7 @@ class MenuController: NSObject {
     }
 
     @objc private func refreshLanDevices() {
-        SyncManager.shared.refreshDiscovery()
+        SyncManager.shared.refreshDiscovery(pruneCache: true, scanFullSubnet: true)
         // 菜单打开期间走设备区增量更新（由 onDevicesChanged 回调驱动），
         // 不再触发整张菜单重建；1s 后补一次增量以兜底慢响应的设备。
         if isMenuOpen {

@@ -100,6 +100,14 @@ class _Session {
   });
 }
 
+/// Buffers `history` frames after we send `history.fetch`, so catch-up can
+/// ingest via [ClipboardManager.handleRemoteSyncBatch] instead of N clipboard writes.
+class _HistoryFetchCatchUp {
+  final List<({String text, String hash})> items = [];
+  Timer? debounce;
+  Timer? maxWait;
+}
+
 // ---------------------------------------------------------------------------
 // SyncManager
 // ---------------------------------------------------------------------------
@@ -173,6 +181,11 @@ class SyncManager with WidgetsBindingObserver {
   final _lastHistoryFetchResponse = <String, DateTime>{};
   static const _historyFetchRespondThrottle = Duration(seconds: 30);
   static const _historyFetchRespondLimit = 200;
+
+  /// Per-peer coalesce after we send `history.fetch` (silence debounce + hard max).
+  final Map<String, _HistoryFetchCatchUp> _historyFetchCatchUp = {};
+  static const _historyFetchCatchUpDebounce = Duration(seconds: 2);
+  static const _historyFetchCatchUpMaxWait = Duration(seconds: 8);
 
   DateTime? _lastSyncTickDiscovery;
   static const _syncTickDiscoveryMinGap = Duration(minutes: 5);
@@ -317,8 +330,11 @@ class SyncManager with WidgetsBindingObserver {
   /// Returns next delay in ms: busy 30s or idle 90s.
   Future<int> onSyncTick() async {
     if (!isEnabled) return _syncTickIdleMs;
+    // Zombie-socket guard: `_startServer`'s `onDone`/`onError` null out
+    // `_server` when the listening stream closes, so a null check here is a
+    // reliable liveness signal and triggers a rebind without platform re-entry.
     if (_server == null) {
-      await start();
+      await _rebindServer();
       return _syncTickBusyMs;
     }
     var busy = false;
@@ -337,7 +353,8 @@ class SyncManager with WidgetsBindingObserver {
         needDiscovery = true;
         final cached = _discoveredPeers[id];
         if (cached != null) {
-          unawaited(_dial(cached.host, cached.port, reason: 'syncTick'));
+          unawaited(_dial(cached.host, cached.port,
+              reason: 'syncTick', peerId: id));
         }
       }
     }
@@ -346,8 +363,9 @@ class SyncManager with WidgetsBindingObserver {
       final last = _lastSyncTickDiscovery;
       if (last == null || now.difference(last) >= _syncTickDiscoveryMinGap) {
         _lastSyncTickDiscovery = now;
-        appLog('syncTick full_scan (authorized peers missing session)');
-        triggerCrossBandDiscovery();
+        // Authorized cache dial only — full /24 is user refresh.
+        appLog('syncTick authorized cache dial (peers missing session)');
+        triggerCrossBandDiscovery(scanFullSubnet: false);
       }
     }
     final next = busy ? _syncTickBusyMs : _syncTickIdleMs;
@@ -371,6 +389,25 @@ class SyncManager with WidgetsBindingObserver {
     triggerCrossBandDiscovery();
   }
 
+  /// Re-bind the listening socket and auxiliary loops WITHOUT calling back
+  /// into the platform (i.e. no `_startForegroundService()`). Safe to call
+  /// from within an inbound `syncTick` MethodChannel handler — `start()`
+  /// would otherwise re-enter Kotlin (`startForegroundSync`) while the outer
+  /// `syncTick` Result is still pending, risking a deadlocked tick loop.
+  /// `start()` is still used for user/init paths where FGS may not be up yet.
+  Future<void> _rebindServer() async {
+    appLog('Rebinding ServerSocket (no platform re-entry)...');
+    final ok = await _startServer();
+    if (!ok) {
+      appLog('Server failed to rebind', level: 'error');
+      return;
+    }
+    _startConnectivityMonitoring();
+    _startPingTimer();
+    await _loadEndpointCache();
+    triggerCrossBandDiscovery();
+  }
+
   Future<void> stop() async {
     appLog('SyncManager v2 stopping...');
     _connectivitySub?.cancel();
@@ -384,6 +421,14 @@ class SyncManager with WidgetsBindingObserver {
     }
     _reconnectTimers.clear();
     _reconnectBackoffSec.clear();
+    for (final e in _historyFetchCatchUp.entries) {
+      e.value.debounce?.cancel();
+      e.value.maxWait?.cancel();
+      if (e.value.items.isNotEmpty) {
+        unawaited(_ingestHistoryFetchCatchUp(e.key, List.of(e.value.items)));
+      }
+    }
+    _historyFetchCatchUp.clear();
     for (final s in _sessions.values) {
       await s.subscription?.cancel();
       try {
@@ -434,8 +479,7 @@ class SyncManager with WidgetsBindingObserver {
     });
   }
 
-  /// Prefer endpoint-cache dials; full /24 scan only when authorized peers
-  /// have no cached host (avoids Wi-Fi spikes on every brief offline blip).
+  /// Authorized cache dials only — full /24 scan is user refresh.
   Future<void> _recoverAfterNetworkRestore() async {
     await _loadEndpointCache();
     final missing =
@@ -445,24 +489,28 @@ class SyncManager with WidgetsBindingObserver {
       return;
     }
     var cacheDialCount = 0;
-    final noCache = <String>[];
+    final disk = await _readEndpointCache();
+    final byId = {
+      for (final e in disk)
+        if (e['peerId'] is String) e['peerId'] as String: e,
+    };
     for (final id in missing) {
-      final cached = _discoveredPeers[id];
-      if (cached != null) {
+      final mem = _discoveredPeers[id];
+      if (mem != null) {
         cacheDialCount++;
-        unawaited(_dial(cached.host, cached.port, reason: 'cache_dial'));
-      } else {
-        noCache.add(id);
+        unawaited(
+            _dial(mem.host, mem.port, reason: 'cache_dial', peerId: id));
+        continue;
+      }
+      final e = byId[id];
+      final host = e?['host'] as String?;
+      final p = e?['port'] as int?;
+      if (host != null && p != null) {
+        cacheDialCount++;
+        unawaited(_dial(host, p, reason: 'cache_dial', peerId: id));
       }
     }
-    if (noCache.isEmpty) {
-      appLog('Network restored; cache_dial only ($cacheDialCount)');
-      return;
-    }
-    appLog(
-        'Network restored; full_scan (no cache for ${noCache.length}, '
-        'cache_dial=$cacheDialCount)');
-    await refreshDiscovery();
+    appLog('Network restored; authorized cache_dial count=$cacheDialCount');
   }
 
   void _startPingTimer() {
@@ -523,6 +571,7 @@ class SyncManager with WidgetsBindingObserver {
         if (env.hash != null) _handleAck(env.hash!, from: from);
         break;
       case SyncType.history:
+      case SyncType.historyDirect:
         final payload = env.payload;
         if (payload == null) return;
         final text = _decrypt(payload);
@@ -531,14 +580,18 @@ class SyncManager with WidgetsBindingObserver {
               level: 'warning');
           return;
         }
+        final hash = env.hash ?? '';
+        if (_bufferHistoryFetchCatchUp(from, text, hash)) {
+          break;
+        }
         unawaited(() async {
           final ok = await ClipboardManager.instance
-              .handleRemoteSync(text, env.hash ?? '');
+              .handleRemoteSync(text, hash);
           if (ok) {
-            _replyAck(from, env.hash);
+            _replyAck(from, hash.isEmpty ? null : hash);
           } else {
             appLog(
-                'history persist failed; withholding ACK hash=${(env.hash ?? '').substring(0, (env.hash ?? '').length.clamp(0, 8))}',
+                'history persist failed; withholding ACK hash=${hash.substring(0, hash.length.clamp(0, 8))}',
                 level: 'warning');
           }
         }());
@@ -582,10 +635,61 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
+  /// Open a short coalesce window for [peerId] after we send `history.fetch`.
+  void _beginHistoryFetchCatchUp(String peerId) {
+    final prev = _historyFetchCatchUp.remove(peerId);
+    prev?.debounce?.cancel();
+    prev?.maxWait?.cancel();
+    if (prev != null && prev.items.isNotEmpty) {
+      unawaited(_ingestHistoryFetchCatchUp(peerId, prev.items));
+    }
+    final buf = _HistoryFetchCatchUp();
+    _historyFetchCatchUp[peerId] = buf;
+    buf.maxWait = Timer(_historyFetchCatchUpMaxWait, () {
+      unawaited(_flushHistoryFetchCatchUp(peerId));
+    });
+  }
+
+  /// Returns true when the frame was buffered for catch-up (caller must not
+  /// also run the live single-item path).
+  bool _bufferHistoryFetchCatchUp(String peerId, String text, String hash) {
+    final buf = _historyFetchCatchUp[peerId];
+    if (buf == null) return false;
+    buf.items.add((text: text, hash: hash));
+    buf.debounce?.cancel();
+    buf.debounce = Timer(_historyFetchCatchUpDebounce, () {
+      unawaited(_flushHistoryFetchCatchUp(peerId));
+    });
+    return true;
+  }
+
+  Future<void> _flushHistoryFetchCatchUp(String peerId) async {
+    final buf = _historyFetchCatchUp.remove(peerId);
+    if (buf == null) return;
+    buf.debounce?.cancel();
+    buf.maxWait?.cancel();
+    if (buf.items.isEmpty) return;
+    await _ingestHistoryFetchCatchUp(peerId, buf.items);
+  }
+
+  Future<void> _ingestHistoryFetchCatchUp(
+      String peerId, List<({String text, String hash})> items) async {
+    appLog(
+        'history.fetch catch-up flush ${peerId.substring(0, peerId.length.clamp(0, 8))}: ${items.length} frames');
+    try {
+      await ClipboardManager.instance.handleRemoteSyncBatch(items);
+      for (final item in items) {
+        if (item.hash.isNotEmpty) _replyAck(peerId, item.hash);
+      }
+    } catch (e) {
+      appLog('history.fetch catch-up flush failed: $e', level: 'error');
+      // Withhold ACKs so sender can retry via pending / next fetch.
+    }
+  }
+
   /// Replay recent text history to a peer that just (re)appeared (mirrors Mac).
   Future<void> _respondToHistoryFetch(String remotePeerId) async {
-    if (!clipboardSyncPeerIds.contains(remotePeerId) &&
-        !authorizedPeerIds.contains(remotePeerId)) {
+    if (!clipboardSyncPeerIds.contains(remotePeerId)) {
       appLog(
           'history.fetch from unauthorized ${remotePeerId.substring(0, remotePeerId.length.clamp(0, 8))}; ignoring',
           level: 'warning');

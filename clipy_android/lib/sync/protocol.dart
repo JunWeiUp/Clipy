@@ -81,6 +81,8 @@ class SyncType {
   static const hello = 'hello';
   static const welcome = 'welcome';
   static const history = 'history';
+  /// Device-list one-shot text send; no mutual authorization required.
+  static const historyDirect = 'history.direct';
   static const historyFetch = 'history.fetch';
   static const notifPost = 'notif.post';
   static const notifDismiss = 'notif.dismiss';

@@ -152,13 +152,15 @@ class AppStrings {
       _t('配对密钥已更新，同步已重启', 'Pairing secret updated and sync restarted');
   String get authorizedDevices => _t('授权设备', 'Authorized Devices');
   String get syncTargetsHint => _t(
-        '分别勾选要同步剪贴板 / 通知的设备。仅需在本机授权，对方无需勾选即可接收。',
-        'Choose which devices receive clipboard and/or notifications. Only this device needs to authorize; the other side can receive without checking you.',
+        '分别勾选要向哪些设备同步剪贴板 / 通知。只需本机授权即可发送，对方无需勾选也能接收。设备列表「发送文本 / 发送文件」连本机授权也不需要。',
+        'Choose which devices receive clipboard and/or notifications. Authorization is one-sided: authorize on this device to send; the peer can receive without authorizing you. Device-list Send Text / Send File needs no authorization at all.',
       );
   String get syncClipboardToDevice => _t('同步剪贴板', 'Sync clipboard');
   String get syncNotificationsToDevice => _t('同步通知', 'Sync notifications');
   String get offlineAuthorizedDevices =>
       _t('离线已授权设备（可删除）', 'Offline authorized devices (tap to remove)');
+  String get deviceOnline => _t('在线', 'Online');
+  String get deviceOffline => _t('离线', 'Offline');
   String get syncLocalNameHint => _t(
         '本机名称：%s，设备 ID：%s…。勾选后即向该设备推送对应内容，对方无需勾选即可接收。',
         'Device: %s (ID: %s…). Check a capability to push; they can receive without checking you.',
