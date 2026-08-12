@@ -61,13 +61,36 @@ extension SyncManager {
         return serviceGeneration
     }
 
-    func dial(host: String, port: UInt16, reason: String, timeout: TimeInterval = SyncManager.connectTimeout) {
+    func dial(host: String, port: UInt16, reason: String, peerId: String? = nil, timeout: TimeInterval = SyncManager.connectTimeout) {
         scanQueue.async { [weak self] in
-            self?.dialOnScanQueue(host: host, port: port, reason: reason, timeout: timeout, stats: nil)
+            self?.dialOnScanQueue(host: host, port: port, reason: reason, peerId: peerId, timeout: timeout, stats: nil)
         }
     }
 
-    func dialOnScanQueue(host: String, port: UInt16, reason: String, timeout: TimeInterval, stats: ScanStats?) {
+    /// Non-`scan`/`direct` dials require an authorized peerId (clipboard ∪ notification).
+    /// `direct` = device-list one-shot send (text/file); no mutual auth.
+    func allowsProactiveDial(reason: String, peerId: String?) -> Bool {
+        if reason == "scan" || reason == "direct" { return true }
+        guard let peerId, !peerId.isEmpty else { return false }
+        return Set(PreferencesManager.shared.authorizedPeerIds).contains(peerId)
+    }
+
+    func resolvePeerId(host: String, port: UInt16) -> String? {
+        if let id = syncQueue.sync(execute: { sessions.first(where: { $0.value.host == host })?.key }) {
+            return id
+        }
+        peersLock.lock()
+        let fromMemory = discoveredPeers.values.first(where: { $0.host == host && $0.port == port })?.peerId
+        peersLock.unlock()
+        if let fromMemory { return fromMemory }
+        return loadEndpointCacheEntries().first(where: { $0.host == host && $0.port == port })?.peerId
+    }
+
+    func dialOnScanQueue(host: String, port: UInt16, reason: String, peerId: String? = nil, timeout: TimeInterval, stats: ScanStats?) {
+        let resolvedPeerId = peerId ?? (reason == "scan" ? nil : resolvePeerId(host: host, port: port))
+        if !allowsProactiveDial(reason: reason, peerId: resolvedPeerId) {
+            return
+        }
         let key = "\(host):\(port)", now = Date()
         dialDedupLock.lock()
         if let last = lastDialAt[key], now.timeIntervalSince(last) < dialDedupTTL, reason == "scan" {

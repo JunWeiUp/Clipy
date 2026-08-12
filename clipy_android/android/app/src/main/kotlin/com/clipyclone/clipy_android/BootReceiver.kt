@@ -10,6 +10,9 @@ import android.util.Log
  * After reboot, start [ClipySyncForegroundService] when Flutter prefs say
  * sync is enabled. FGS then [ClipyApplication.ensureEngine] so Dart binds :5566
  * without the user opening the UI.
+ *
+ * Also handles [Intent.ACTION_MY_PACKAGE_REPLACED] so the sync service comes
+ * back after an app update without waiting for a reboot or a manual launch.
  */
 class BootReceiver : BroadcastReceiver() {
 
@@ -22,7 +25,8 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
         if (action != Intent.ACTION_BOOT_COMPLETED &&
-            action != Intent.ACTION_LOCKED_BOOT_COMPLETED
+            action != Intent.ACTION_LOCKED_BOOT_COMPLETED &&
+            action != Intent.ACTION_MY_PACKAGE_REPLACED
         ) {
             return
         }

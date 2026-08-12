@@ -96,8 +96,9 @@ final class SyncManager: NSObject {
             self.startPingTimer()
             self.startPathMonitoring()
             if PreferencesManager.shared.isSyncEnabled {
+                // Authorized cache dial only — full /24 scan is user refresh.
                 self.loadEndpointCache()
-                self.scheduleDiscovery(immediate: true)
+                self.scheduleDiscovery(immediate: true, scanFullSubnet: false)
             }
         }
     }
@@ -126,7 +127,10 @@ final class SyncManager: NSObject {
         syncQueue.asyncAfter(deadline: .now() + 1) { [weak self] in self?.start() }
     }
 
-    func refreshDiscovery() {
+    /// - Parameters:
+    ///   - pruneCache: drop unauthorized ghosts from disk (user refresh button).
+    ///   - scanFullSubnet: dial entire /24 (only user refresh).
+    func refreshDiscovery(pruneCache: Bool = true, scanFullSubnet: Bool = true) {
         guard PreferencesManager.shared.isSyncEnabled, !isRefreshingDiscovery else { return }
         isRefreshingDiscovery = true
         syncQueue.async { [weak self] in
@@ -148,16 +152,18 @@ final class SyncManager: NSObject {
             self.discoveredPeers = kept
             let keptList = Array(kept.values)
             self.peersLock.unlock()
-            self.rewriteEndpointCache(keeping: keptList)
+            if pruneCache {
+                self.rewriteEndpointCacheAfterRefresh(livePeers: keptList)
+            }
             self.notifyPeersChanged()
-            self.scheduleDiscovery(immediate: true)
+            self.scheduleDiscovery(immediate: true, scanFullSubnet: scanFullSubnet)
             self.syncQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.isRefreshingDiscovery = false }
         }
     }
 
     func triggerCrossBandDiscovery() {
         guard PreferencesManager.shared.isSyncEnabled else { return }
-        scheduleDiscovery(immediate: false)
+        scheduleDiscovery(immediate: false, scanFullSubnet: false)
     }
 
     // MARK: - Public queries
@@ -204,7 +210,14 @@ final class SyncManager: NSObject {
 
     func sendTextToPeer(_ content: String, hash: String, peerId targetId: String, completion: ((Bool) -> Void)? = nil) {
         guard PreferencesManager.shared.isSyncEnabled, let payload = encrypt(content) else { completion?(false); return }
-        sendEnvelope(SyncEnvelope.make(type: SyncType.history, peerId: peerId, name: displayName, hash: hash, payload: payload), to: targetId, reliable: true, completion: completion)
+        // Device-list send: history.direct bypasses mutual authorization on both ends.
+        sendEnvelope(
+            SyncEnvelope.make(type: SyncType.historyDirect, peerId: peerId, name: displayName, hash: hash, payload: payload),
+            to: targetId,
+            reliable: true,
+            dialReason: "direct",
+            completion: completion
+        )
     }
 
     func sendText(_ content: String, hash: String, toDevice targetName: String) {
@@ -235,41 +248,36 @@ final class SyncManager: NSObject {
             if let data = encodeFrame(pong), let fd = sessions[remotePeerId]?.fd, !writeAll(fd, data) { appLog("pong send failed to \(remotePeerId.prefix(8))", level: .warning) }
         case SyncType.pong:
             if var session = sessions[remotePeerId] { session.lastPong = Date(); sessions[remotePeerId] = session }
-        case SyncType.ack:
-            guard requireInboundAuthorization(remotePeerId, for: env.type), let hash = env.hash else { return }; handleAck(hash: hash, from: remotePeerId)
-        case SyncType.history:
-            guard requireInboundAuthorization(remotePeerId, for: env.type), let payload = env.payload, let text = decrypt(payload) else { return }
+        case SyncType.ack, SyncType.notifAck:
+            guard let hash = env.hash else { return }; handleAck(hash: hash, from: remotePeerId)
+        case SyncType.history, SyncType.historyDirect:
+            // Inbound accept is unilateral: sender's allow-list gates who they push to;
+            // receiver does not require reciprocal authorization (same as notifications).
+            guard let payload = env.payload, let text = decrypt(payload) else { return }
             DispatchQueue.main.async { [weak self] in
                 ClipboardManager.shared.handleRemoteSync(content: text, hash: env.hash ?? "")
                 self?.syncQueue.async { self?.replyAck(to: remotePeerId, hash: env.hash) }
             }
         case SyncType.historyFetch:
-            guard requireInboundAuthorization(remotePeerId, for: env.type) else { return }; respondToHistoryFetch(from: remotePeerId)
+            // Responding = sending our history: only to clipboard-authorized peers.
+            guard clipboardAuthIds().contains(remotePeerId) else {
+                appLog("history.fetch from \(remotePeerId.prefix(8)) ignored (not a clipboard sync target)", level: .warning)
+                return
+            }
+            respondToHistoryFetch(from: remotePeerId)
         case SyncType.notifPost:
-            guard requireInboundAuthorization(remotePeerId, for: env.type), let payload = env.payload, let text = decrypt(payload) else { return }
+            guard let payload = env.payload, let text = decrypt(payload) else { return }
             DispatchQueue.main.async { NotificationManager.shared.handleRemoteNotification(text, from: env.peerId) }
         case SyncType.notifDismiss:
-            guard requireInboundAuthorization(remotePeerId, for: env.type), let payload = env.payload, let text = decrypt(payload) else { return }
+            guard let payload = env.payload, let text = decrypt(payload) else { return }
             DispatchQueue.main.async { NotificationManager.shared.handleRemoteDismiss(text) }
         case SyncType.notifClear:
-            guard requireInboundAuthorization(remotePeerId, for: env.type) else { return }
             DispatchQueue.main.async { NotificationManager.shared.handleRemoteClearAll() }
-        case SyncType.notifAck:
-            guard requireInboundAuthorization(remotePeerId, for: env.type), let hash = env.hash else { return }; handleAck(hash: hash, from: remotePeerId)
         case SyncType.notifConfig: appLog("Ignored remote notification config", level: .warning)
         case SyncType.hello, SyncType.welcome:
             if let name = env.name, let port = env.port { recordPeer(peerId: env.peerId, name: name, host: host, port: UInt16(port)) }
         default: break
         }
-    }
-
-    func isInboundAuthorized(_ remotePeerId: String) -> Bool {
-        !remotePeerId.isEmpty && Set(PreferencesManager.shared.authorizedPeerIds).contains(remotePeerId)
-    }
-    func requireInboundAuthorization(_ remotePeerId: String, for type: String) -> Bool {
-        if isInboundAuthorized(remotePeerId) { return true }
-        appLog("Dropped inbound \(type) from unauthorized peer \(remotePeerId.prefix(8)) — authorize it in Settings to accept its data", level: .warning)
-        return false
     }
 
     func respondToHistoryFetch(from remotePeerId: String) {
@@ -317,7 +325,11 @@ final class SyncManager: NSObject {
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
             let previous = self.lastPathStatus; self.lastPathStatus = path.status
-            if path.status == .satisfied && previous != .satisfied { appLog("Network path restored; rediscovering"); self.scheduleDiscovery(immediate: true) }
+            if path.status == .satisfied && previous != .satisfied {
+                appLog("Network path restored; dialing authorized cache")
+                self.loadEndpointCache()
+                self.scheduleDiscovery(immediate: true, scanFullSubnet: false)
+            }
         }
         monitor.start(queue: syncQueue)
     }

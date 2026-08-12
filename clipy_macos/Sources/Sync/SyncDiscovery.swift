@@ -2,10 +2,11 @@ import Foundation
 import Network
 
 extension SyncManager {
-    func scheduleDiscovery(immediate: Bool) {
+    /// - Parameter scanFullSubnet: only user refresh / explicit scan may dial every /24 host.
+    func scheduleDiscovery(immediate: Bool, scanFullSubnet: Bool = false) {
         pendingDiscoveryWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.runDiscovery(force: immediate)
+            self?.runDiscovery(force: immediate, scanFullSubnet: scanFullSubnet)
         }
         pendingDiscoveryWork = work
         let delay = immediate ? 0.05 : Self.discoveryDebounce
@@ -31,24 +32,31 @@ extension SyncManager {
         scanStateLock.unlock()
     }
 
-    func runDiscovery(force: Bool) {
+    func runDiscovery(force: Bool, scanFullSubnet: Bool = false) {
         guard PreferencesManager.shared.isSyncEnabled else { return }
-        let manual = PreferencesManager.shared.manualSyncPeers
         let port = syncPort
         let myIPs = Set(Self.localIPv4Addresses())
         let myPeerId = peerId
+        let auth = Set(PreferencesManager.shared.authorizedPeerIds)
         appLog(Self.diagnoseInterfaces())
 
+        // Proactive cache dial: authorized peers only (gate also in dialOnScanQueue).
+        for entry in loadEndpointCacheEntries() where entry.peerId != myPeerId {
+            guard auth.contains(entry.peerId) else { continue }
+            dial(host: entry.host, port: entry.port, reason: "cache", peerId: entry.peerId)
+        }
+
+        // Manual IPs: only dial when host maps to an authorized peer (else wait for scan).
+        let manual = PreferencesManager.shared.manualSyncPeers
         for entry in manual {
             let parts = entry.split(separator: ":")
             guard let host = parts.first.map(String.init), !host.isEmpty else { continue }
             let p = parts.count >= 2 ? UInt16(parts[1]) ?? port : port
-            dial(host: host, port: p, reason: "manual")
-        }
-        for entry in loadEndpointCacheEntries() where entry.peerId != myPeerId {
-            dial(host: entry.host, port: entry.port, reason: "cache")
+            guard let peerId = resolvePeerId(host: host, port: p), auth.contains(peerId) else { continue }
+            dial(host: host, port: p, reason: "manual", peerId: peerId)
         }
 
+        guard scanFullSubnet else { return }
         guard beginSubnetScan(force: force) else { return }
         defer { endSubnetScan() }
         var candidates: [String] = []
@@ -105,14 +113,20 @@ extension SyncManager {
         writeEndpointCacheEntries(entries)
     }
 
-    /// Replace disk cache with only the given live peers (user refresh prunes ghosts).
-    func rewriteEndpointCache(keeping peers: [DiscoveredPeer]) {
+    /// After user refresh: keep live sessions + authorized peers still in cache (drop unauthorized ghosts).
+    func rewriteEndpointCacheAfterRefresh(livePeers: [DiscoveredPeer]) {
+        let auth = Set(PreferencesManager.shared.authorizedPeerIds)
+        let previous = Dictionary(uniqueKeysWithValues: loadEndpointCacheEntries().map { ($0.peerId, $0) })
         let now = Date().timeIntervalSince1970
-        let entries = peers.map {
+        var entries: [CachedEndpoint] = livePeers.map {
             CachedEndpoint(peerId: $0.peerId, name: $0.displayName, host: $0.host, port: $0.port, ts: now)
         }
+        let liveIds = Set(livePeers.map(\.peerId))
+        for (id, entry) in previous where auth.contains(id) && !liveIds.contains(id) {
+            entries.append(entry)
+        }
         writeEndpointCacheEntries(entries)
-        appLog("endpoint cache pruned to \(entries.count) live peer(s) after refresh")
+        appLog("endpoint cache pruned to \(entries.count) peer(s) after refresh (live+authorized)")
     }
 
     func writeEndpointCacheEntries(_ entries: [CachedEndpoint]) {
@@ -130,10 +144,29 @@ extension SyncManager {
         return decoded.filter { $0.ts >= cutoff }
     }
 
-    /// Dial cached endpoints for reconnect; do not list them until handshake succeeds.
+    func cachedEndpoint(for peerId: String) -> CachedEndpoint? {
+        loadEndpointCacheEntries().first { $0.peerId == peerId }
+    }
+
+    /// Display name for settings / offline authorized rows.
+    func resolvedPeerLabel(peerId: String) -> String {
+        if let peer = peerSnapshot(peerId) { return peer.displayName }
+        if let cached = cachedEndpoint(for: peerId), !cached.name.isEmpty { return cached.name }
+        return String(peerId.prefix(8))
+    }
+
+    func resolvedPeerHostPort(peerId: String) -> String? {
+        if let peer = peerSnapshot(peerId) { return "\(peer.host):\(peer.port)" }
+        if let cached = cachedEndpoint(for: peerId) { return "\(cached.host):\(cached.port)" }
+        return nil
+    }
+
+    /// Dial cached endpoints for authorized peers only; list after handshake.
     func loadEndpointCache() {
+        let auth = Set(PreferencesManager.shared.authorizedPeerIds)
         for entry in loadEndpointCacheEntries() where entry.peerId != peerId {
-            dial(host: entry.host, port: entry.port, reason: "cache")
+            guard auth.contains(entry.peerId) else { continue }
+            dial(host: entry.host, port: entry.port, reason: "cache", peerId: entry.peerId)
         }
     }
 

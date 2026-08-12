@@ -33,7 +33,9 @@ extension SyncReliabilityMethods on SyncManager {
   }
 
   bool _isQueueable(String type) =>
-      type == SyncType.history || type == SyncType.notifPost;
+      type == SyncType.history ||
+      type == SyncType.historyDirect ||
+      type == SyncType.notifPost;
 
   Future<void> _fanout(SyncEnvelope env, {required bool requireAuth}) async {
     final data = syncEncodeFrame(env);
@@ -72,7 +74,8 @@ extension SyncReliabilityMethods on SyncManager {
   Future<bool> _deliver(List<int> data,
       {required String type,
       required String peerId,
-      String? hash}) async {
+      String? hash,
+      String dialReason = 'deliver'}) async {
     final session = _sessions[peerId];
     if (session != null) {
       try {
@@ -89,11 +92,23 @@ extension SyncReliabilityMethods on SyncManager {
     if (_isQueueable(type)) {
       await _enqueuePending(data, type, peerId, hash);
     }
+    final reason = type == SyncType.historyDirect ? 'direct' : dialReason;
     final peer = _discoveredPeers[peerId];
     if (peer != null) {
-      unawaited(_dial(peer.host, peer.port, reason: 'deliver'));
+      unawaited(
+          _dial(peer.host, peer.port, reason: reason, peerId: peerId));
     } else {
-      triggerCrossBandDiscovery();
+      unawaited(() async {
+        for (final e in await _readEndpointCache()) {
+          if (e['peerId'] != peerId) continue;
+          final host = e['host'] as String?;
+          final p = e['port'] as int?;
+          if (host == null || p == null) return;
+          await _dial(host, p, reason: reason, peerId: peerId);
+          return;
+        }
+        triggerCrossBandDiscovery(scanFullSubnet: false);
+      }());
     }
     _scheduleReconnect(peerId);
     return false;
@@ -139,6 +154,7 @@ extension SyncReliabilityMethods on SyncManager {
     );
     final filtered = due.where((f) {
       if (f.type == SyncType.history) return allowClipboard;
+      if (f.type == SyncType.historyDirect) return true;
       if (f.type == SyncType.notifPost ||
           f.type == SyncType.notifDismiss ||
           f.type == SyncType.notifClear ||
@@ -289,7 +305,9 @@ extension SyncReliabilityMethods on SyncManager {
     final cutoff = DateTime.now().subtract(SyncManager._pendingAckRetryAge);
     final stale = due
         .where((f) =>
-            f.type == SyncType.history && !f.enqueueAt.isAfter(cutoff))
+            (f.type == SyncType.history ||
+                f.type == SyncType.historyDirect) &&
+            !f.enqueueAt.isAfter(cutoff))
         .toList();
     if (stale.isEmpty) return;
     for (final frame in stale) {
@@ -302,13 +320,21 @@ extension SyncReliabilityMethods on SyncManager {
     await _flushPending(peerId);
   }
 
+  Future<bool> _hasDirectPending(String peerId) async {
+    final due = await PendingSyncRepository.instance.fetchDue(
+      peerId: peerId,
+      ttl: SyncManager._pendingTtl,
+    );
+    return due.any((f) => f.type == SyncType.historyDirect);
+  }
+
   Future<bool> sendTextToPeer(String content, {required String peerId}) async {
     if (!isEnabled) return false;
     final hash = sha256.convert(utf8.encode(content)).toString();
     final payload = _encrypt(content);
     if (payload == null) return false;
     final env = SyncEnvelope.make(
-      type: SyncType.history,
+      type: SyncType.historyDirect,
       peerId: this.peerId,
       name: displayName,
       hash: hash,
@@ -316,8 +342,13 @@ extension SyncReliabilityMethods on SyncManager {
     );
     final data = syncEncodeFrame(env);
     if (data == null) return false;
-    final delivered =
-        await _deliver(data, type: env.type, peerId: peerId, hash: hash);
+    final delivered = await _deliver(
+      data,
+      type: env.type,
+      peerId: peerId,
+      hash: hash,
+      dialReason: 'direct',
+    );
     if (delivered) {
       await _enqueuePending(data, env.type, peerId, hash);
     }

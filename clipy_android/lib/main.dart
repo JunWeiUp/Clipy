@@ -164,7 +164,10 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
     if (_isRefreshing || !SyncManager.instance.isEnabled) return;
     setState(() => _isRefreshing = true);
     try {
-      await SyncManager.instance.refreshDiscovery();
+      await SyncManager.instance.refreshDiscovery(
+        pruneCache: true,
+        scanFullSubnet: true,
+      );
       if (mounted) {
         setState(() => _availablePeers = SyncManager.instance.availablePeers);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -176,9 +179,16 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
     }
   }
 
+  List<String> get _authRowIds {
+    final online = _availablePeers.map((p) => p.peerId).toSet();
+    final auth = SyncManager.instance.authorizedPeerIds.toSet();
+    return {...auth, ...online}.toList()..sort();
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final rowIds = _authRowIds;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -221,18 +231,29 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
             style: TextStyle(fontSize: 12, color: Colors.grey[600]),
           ),
         ),
-        ..._buildStaleAuthorizedSection(l10n),
-        if (_availablePeers.isEmpty)
+        if (rowIds.isEmpty)
           ListTile(
             title: Text(l10n.noDevicesFound),
             subtitle: Text(l10n.sameWifiHint),
           )
         else
-          ..._availablePeers.map((peer) {
+          ...rowIds.map((peerId) {
+            DiscoveredPeer? online;
+            for (final p in _availablePeers) {
+              if (p.peerId == peerId) {
+                online = p;
+                break;
+              }
+            }
             final clipOn = SyncManager.instance.clipboardSyncPeerIds
-                .contains(peer.peerId);
+                .contains(peerId);
             final notifOn = SyncManager.instance.notificationSyncPeerIds
-                .contains(peer.peerId);
+                .contains(peerId);
+            final title = online?.displayName ??
+                SyncManager.instance.resolvedPeerLabel(peerId);
+            final subtitle = online != null
+                ? '${online.host}:${online.port}'
+                : peerId;
             return Padding(
               padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
               child: Column(
@@ -241,10 +262,35 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
                   ListTile(
                     dense: true,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                    title: Text(peer.displayName),
+                    title: Text(title),
                     subtitle: Text(
-                      peer.peerId,
+                      subtitle,
                       style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          online != null ? l10n.deviceOnline : l10n.deviceOffline,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: online != null
+                                ? Colors.green[700]
+                                : Colors.grey[600],
+                          ),
+                        ),
+                        if (clipOn || notifOn)
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline,
+                                color: Colors.red),
+                            tooltip: l10n.delete,
+                            onPressed: () async {
+                              await SyncManager.instance
+                                  .removeAuthorizedPeer(peerId);
+                              if (mounted) setState(() {});
+                            },
+                          ),
+                      ],
                     ),
                   ),
                   SwitchListTile(
@@ -254,7 +300,7 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
                     value: clipOn,
                     onChanged: (value) async {
                       await SyncManager.instance.setClipboardSyncTarget(
-                        peer.peerId,
+                        peerId,
                         enabled: value,
                       );
                       if (mounted) setState(() {});
@@ -267,7 +313,7 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
                     value: notifOn,
                     onChanged: (value) async {
                       await SyncManager.instance.setNotificationSyncTarget(
-                        peer.peerId,
+                        peerId,
                         enabled: value,
                       );
                       if (mounted) setState(() {});
@@ -280,44 +326,6 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
           }),
       ],
     );
-  }
-
-  List<Widget> _buildStaleAuthorizedSection(AppStrings l10n) {
-    final online = _availablePeers.map((p) => p.peerId).toSet();
-    final stale = SyncManager.instance.authorizedPeerIds
-        .where((id) => !online.contains(id))
-        .toList()
-      ..sort();
-    if (stale.isEmpty) return const [];
-    return [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-        child: Text(
-          l10n.offlineAuthorizedDevices,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: Colors.orange[800],
-          ),
-        ),
-      ),
-      ...stale.map(
-        (peerId) => ListTile(
-          title: Text(
-            peerId,
-            style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-          ),
-          trailing: IconButton(
-            icon: const Icon(Icons.delete_outline, color: Colors.red),
-            tooltip: l10n.delete,
-            onPressed: () async {
-              await SyncManager.instance.removeAuthorizedPeer(peerId);
-              if (mounted) setState(() {});
-            },
-          ),
-        ),
-      ),
-    ];
   }
 }
 
@@ -546,11 +554,17 @@ void main() async {
     }
     if (call.method == 'syncTick') {
       // Return next delay ms for FGS adaptive scheduling (busy 30s / idle 90s).
+      // Bounded by a hard timeout so a stalled bootstrap or a hung onSyncTick
+      // can never wedge the FGS tick chain — we return busyMs and the Kotlin
+      // watchdog (SYNC_TICK_WATCHDOG_MS) is the outer backstop regardless.
       const busyMs = 30000;
       try {
-        await _coreBootstrapComplete.future;
-        final nextMs = await SyncManager.instance.onSyncTick();
-        await NotificationManager.instance.drainNativePendingPosts();
+        await _coreBootstrapComplete.future
+            .timeout(const Duration(seconds: 10));
+        final nextMs = await SyncManager.instance.onSyncTick()
+            .timeout(const Duration(seconds: 20));
+        await NotificationManager.instance.drainNativePendingPosts()
+            .timeout(const Duration(seconds: 10));
         return nextMs;
       } catch (e) {
         debugPrint('syncTick error: $e');

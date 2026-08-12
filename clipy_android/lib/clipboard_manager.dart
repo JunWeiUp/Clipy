@@ -283,9 +283,9 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
       if (latest != null && latest.contentHash == effectiveHash) {
         _rememberRemoteHash(effectiveHash);
         _lastText = text;
-        unawaited(_writeSystemClipboard(text));
+        // Same as current top of history — do not re-set system clipboard.
         appLog(
-            'handleRemoteSync: already latest hash=${effectiveHash.substring(0, effectiveHash.length.clamp(0, 8))}');
+            'handleRemoteSync: already latest hash=${effectiveHash.substring(0, effectiveHash.length.clamp(0, 8))} (skip clipboard)');
         return true;
       }
 
@@ -352,22 +352,32 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   /// and the list clears+rebuilds on every notify (a visible refresh storm).
   ///
   /// Dedup: drops any frame whose hash already exists in the DB, so a replay
-  /// is idempotent. We also skip setting the system clipboard here (a bulk
-  /// catch-up must NOT clobber the user's current clipboard with a random old
-  /// entry) and skip broadcast (these came *from* a peer — broadcasting would
-  /// echo them right back).
+  /// is idempotent. System clipboard is written only when at least one **new**
+  /// hash was inserted (newest among new items); all-known replay leaves the
+  /// clipboard untouched. Skip broadcast (these came *from* a peer).
   Future<void> handleRemoteSyncBatch(List<({String text, String hash})> items) async {
     if (items.isEmpty) return;
+    // Normalize empty hashes the same way as handleRemoteSync.
+    final normalized = <({String text, String hash})>[];
+    for (final item in items) {
+      if (item.text.isEmpty) continue;
+      final effectiveHash = item.hash.isNotEmpty
+          ? item.hash
+          : (_contentHashForItem(HistoryItem(type: 'text', value: item.text)) ??
+              item.text.hashCode.toString());
+      normalized.add((text: item.text, hash: effectiveHash));
+    }
+    if (normalized.isEmpty) return;
+
     // Pre-filter against existing hashes to avoid a pointless transaction.
     // insertBatch itself also uses INSERT OR IGNORE as a second line of defense
     // (in case two batches race or a hash slips through normalization), and it
     // does NOT bump created_at on existing rows — so a fetch replay is truly
     // idempotent: existing entries keep their position and the UI never rebuilds.
     final existingHashes = await ClipboardRepository.instance.existingHashes(
-        items.map((e) => e.hash).toList());
+        normalized.map((e) => e.hash).toList());
     final toInsert = <HistoryEntry>[];
-    for (final item in items) {
-      if (item.text.isEmpty) continue;
+    for (final item in normalized) {
       if (existingHashes.contains(item.hash)) continue;
       _rememberRemoteHash(item.hash);
       toInsert.add(HistoryEntry(
@@ -377,11 +387,19 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
         contentHash: item.hash,
       ));
     }
-    if (toInsert.isEmpty) return;
+    if (toInsert.isEmpty) {
+      appLog(
+          'handleRemoteSyncBatch: ${normalized.length} received, 0 new — skip clipboard');
+      return;
+    }
     final inserted = await ClipboardRepository.instance.insertBatch(toInsert);
-    appLog('handleRemoteSyncBatch: ${items.length} received, ${toInsert.length} new (post-dedup), $inserted inserted');
+    appLog('handleRemoteSyncBatch: ${normalized.length} received, ${toInsert.length} new (post-dedup), $inserted inserted');
     if (inserted == 0) return; // all were IGNORE'd (race / normalization drift)
     await ClipboardRepository.instance.trimToLimit(_historyLimit);
+    // Mac pushes oldest-first; last new item is the newest among inserts.
+    final newestText = toInsert.last.item.value as String;
+    _lastText = newestText;
+    unawaited(_writeSystemClipboard(newestText));
     onHistoryChanged?.call();
     notifyListeners();
   }

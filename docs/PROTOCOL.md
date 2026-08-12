@@ -27,8 +27,9 @@ Do **not** change framing/crypto without bumping `v` and updating both ends plus
 | type | Direction | Purpose |
 |------|-----------|---------|
 | `hello` / `welcome` | both | Handshake |
-| `history` | both | Clipboard history item (encrypted payload) |
-| `history.fetch` | requester → peer | Ask peer to replay recent text history |
+| `history` | both | Clipboard history item (encrypted payload). Outbound only to clipboard allow-list; inbound accepted without reciprocal auth |
+| `history.direct` | both | Device-list one-shot text send (same payload as `history`); no allow-list; dial reason `direct` |
+| `history.fetch` | requester → peer | Ask peer to replay recent text history; peer responds only if requester ∈ its clipboard allow-list |
 | `ack` | receiver → sender | History (reliable) delivery ack |
 | `notif.post` / `notif.dismiss` / `notif.clear` | both | Notification mirror |
 | `notif.ack` | receiver → sender | Notification delivery ack |
@@ -49,18 +50,22 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
 
 ## Discovery
 
-- Scan local `/24` for TCP **5566** + optional manual `IP:port`.
+- **Proactive dial vs scan**
+  - Only a user **refresh / scan devices** action may dial arbitrary `/24` hosts (`reason=scan`).
+  - Device-list **Send Text / Send File** dials with `reason=direct` (no auth) and uses `history.direct` (text). File transfer remains a stub in v2.
+  - All other outbound dials (`cache`, `reconnect`, `deliver`, `manual`, `syncTick`, startup) require the target `peerId` ∈ authorized set (clipboard ∪ notification). Unauthorized cache entries are not dialed. Reconnect may use `direct` when pending `history.direct` frames exist for that peer.
+  - Inbound connections still accepted. Auth is **one-sided (sender)**: allow-lists gate outbound fanout / `history.fetch` responses / proactive dial; receivers accept inbound `history` / `history.direct` / notif without reciprocal authorization.
 - Endpoint cache key: `clipy.peerEndpoints.v2` (SharedPreferences / UserDefaults), TTL 24h.
-- User **refresh** prunes the disk cache to **live sessions only** (offline ghosts are forgotten across restart).
-- On sync **start**, cache is used only to **dial** known hosts; peers appear in the LAN device list after handshake succeeds (not pre-filled from cache).
-- Connectivity / path changes may re-trigger discovery (debounced).
+- User **refresh** prunes disk cache to **live sessions ∪ still-authorized** peers (drops unauthorized ghosts). Settings/open must **not** prune or full-scan.
+- On sync **start** / network restore: dial **authorized** cache only; peers appear in the LAN list after handshake (not pre-filled from cache).
+- Settings **authorized devices** UI lists authorized peers even when offline (labels from cache), plus currently discovered peers for new checkboxes.
 
 ## Session
 
 - After hello/welcome, one session per `peerId`.
 - **Client role**: lexicographically smaller `peerId` owns reconnect on pong timeout / EOF (avoids dual redial storms).
 - Duplicate inbound/outbound for same peer: **replace** the old session (do not silently drop the new one).
-- Authorization: outbound fanout only to peers in clipboard / notification allow-lists. Mac also gates inbound with the union of authorized ids.
+- Authorization: **one-sided**. Outbound fanout / proactive dial / `history.fetch` responses use clipboard or notification allow-lists on the sending device. Receivers accept inbound history and notifications without requiring the sender on their allow-list. Device-list `history.direct` needs no allow-list on either side.
 
 ## Reliability
 
@@ -70,7 +75,7 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
 2. Receiver must **persist successfully, then send `ack`**. Never ack before store (headless Android previously hung on DB → no ack).
 3. Both ends: SQLite `pending_sync` stores **encoded frames** keyed by `(peer_id, hash)`; ≥**120s** without ack clears in-flight and re-flushes on the ping path (Mac; avoids catch-up storms).
 4. Android may still flush legacy `pending_text_sync` (plaintext) once, re-encoding into `pending_sync`. `NotificationManager` keeps its own notif pending table for content-level offline queue.
-5. **`history.fetch`**: sent on session up / catch-up (Android **request** throttle **15 min**). **Not** on every FGS `syncTick`. Both ends **respond** with up to ~200 recent text entries; Mac **response** throttle **15 min** (Android respond throttle remains 30s). Fetch replay is **not** enqueued into `pending_sync`; receivers still ACK each `history` frame, but Mac only logs `cleared pending` when a real pending row was deleted.
+5. **`history.fetch`**: sent on session up / catch-up (Android **request** throttle **15 min**). **Not** on every FGS `syncTick`. Both ends **respond** with up to ~200 recent text entries; Mac **response** throttle **15 min** (Android respond throttle remains 30s). Fetch replay is **not** enqueued into `pending_sync`; receivers still ACK each `history` frame, but Mac only logs `cleared pending` when a real pending row was deleted. Android coalesces the fetch response into `handleRemoteSyncBatch` (hash dedup): **no system clipboard write when every hash already exists**; if any new rows insert, only the newest new text is written. Live single-frame `history` still uses `handleRemoteSync`, which also skips clipboard when the hash is already the local latest.
 
 ### Notifications
 
@@ -110,7 +115,7 @@ Entry: `ClipyApplication` → `PlatformChannels.registerAll` when sync is enable
 |-------|--------|
 | File transfer | Stub on both ends |
 | Notif offline queue | Android still has `pending_notification_sync` (content JSON) in addition to encoded `pending_sync` |
-| Inbound auth | Mac gates inbound with authorized union; Android is looser |
+| Inbound auth | None for history/notif (one-sided). `history.fetch` response still gated by clipboard allow-list on the responding device |
 
 ## Code map
 
@@ -135,3 +140,4 @@ Entry: `ClipyApplication` → `PlatformChannels.registerAll` when sync is enable
 7. Mac sends `history.fetch` → Android pushes recent text (≤200).
 8. Connected idle: Android FGS `syncTick` spacing ≈ 90s (not a fixed 30s forever).
 9. Sync off + cold start without UI: no warm engine / no FGS; open UI still single engine (no double-bind :5566).
+10. Device-list **Send Text** without authorization: `history.direct`. Automatic clipboard/notif: authorize only on the **sending** device; receiving peer does not need to authorize the sender.

@@ -37,6 +37,15 @@ class ClipySyncForegroundService : Service() {
         private const val SYNC_TICK_BUSY_MS = 30_000L
         private const val SYNC_TICK_IDLE_MS = 90_000L
         private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
+        /**
+         * Hard ceiling for one tick to complete. If the Dart `syncTick` Future
+         * never completes (e.g. an awaited MethodChannel call hangs inside
+         * `onSyncTick`), the Result callbacks below never fire, which used to
+         * permanently break the tick chain and let the WakeLock expire. The
+         * watchdog reschedules the next tick + renews the WakeLock so the loop
+         * self-heals even if a single tick stalls.
+         */
+        private const val SYNC_TICK_WATCHDOG_MS = 60_000L
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -47,6 +56,32 @@ class ClipySyncForegroundService : Service() {
             renewWakeLock()
             invokeSyncTick()
         }
+    }
+
+    /**
+     * Tracks whether the in-flight `syncTick` Result has resolved. Reset to
+     * `false` when a tick is dispatched, set to `true` in any of the Result
+     * callbacks. The [tickWatchdogRunnable] reads it to decide whether the
+     * tick stalled and the chain needs an unsolicited reschedule.
+     */
+    @Volatile private var tickResultReceived = true
+    private val tickWatchdogRunnable = Runnable {
+        if (!tickResultReceived) {
+            Log.w(TAG, "syncTick watchdog: no Result after ${SYNC_TICK_WATCHDOG_MS}ms, rescheduling")
+            renewWakeLock()
+            scheduleNextTick(SYNC_TICK_BUSY_MS)
+        }
+    }
+
+    private fun armTickWatchdog() {
+        tickResultReceived = false
+        mainHandler.removeCallbacks(tickWatchdogRunnable)
+        mainHandler.postDelayed(tickWatchdogRunnable, SYNC_TICK_WATCHDOG_MS)
+    }
+
+    private fun disarmTickWatchdog() {
+        tickResultReceived = true
+        mainHandler.removeCallbacks(tickWatchdogRunnable)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -75,6 +110,7 @@ class ClipySyncForegroundService : Service() {
 
     private fun stopSyncTicks() {
         mainHandler.removeCallbacks(syncTickRunnable)
+        mainHandler.removeCallbacks(tickWatchdogRunnable)
     }
 
     private fun scheduleNextTick(delayMs: Long) {
@@ -93,6 +129,7 @@ class ClipySyncForegroundService : Service() {
             scheduleNextTick(SYNC_TICK_BUSY_MS)
             return
         }
+        armTickWatchdog()
         try {
             MethodChannel(
                 engine.dartExecutor.binaryMessenger,
@@ -102,6 +139,7 @@ class ClipySyncForegroundService : Service() {
                 null,
                 object : MethodChannel.Result {
                     override fun success(result: Any?) {
+                        disarmTickWatchdog()
                         val delay = when (result) {
                             is Number -> result.toLong()
                             else -> SYNC_TICK_BUSY_MS
@@ -114,16 +152,19 @@ class ClipySyncForegroundService : Service() {
                         errorMessage: String?,
                         errorDetails: Any?,
                     ) {
+                        disarmTickWatchdog()
                         Log.w(TAG, "syncTick error: $errorCode $errorMessage")
                         scheduleNextTick(SYNC_TICK_BUSY_MS)
                     }
 
                     override fun notImplemented() {
+                        disarmTickWatchdog()
                         scheduleNextTick(SYNC_TICK_BUSY_MS)
                     }
                 },
             )
         } catch (e: Exception) {
+            disarmTickWatchdog()
             Log.w(TAG, "syncTick invoke failed", e)
             scheduleNextTick(SYNC_TICK_BUSY_MS)
         }
