@@ -354,20 +354,27 @@ class DetachedEditorWindowController: NSObject, NSWindowDelegate {
     }
 
     /// Commit current editor state back to the history entry, then close.
+    /// Commit current editor state: write it to the clipboard, persist to history
+    /// (creating an entry when the editor was opened from a pin/thumbnail which
+    /// had no linked entry), then close. Mirrors `overlayViewDidConfirm` so the
+    /// "Done" button behaves like a confirm — the edited result reaches the
+    /// clipboard and history instead of being silently dropped.
     private func commitToHistory() {
-        // Capture the final image before close tears down the view
-        let finalImage: NSImage?
-        let annotationData = currentAnnotationData()
-        if let view = overlayView, let composited = view.captureSelectedRegion() {
-            finalImage = applyPostProcessing(composited)
-        } else {
-            finalImage = nil
+        guard let raw = overlayView?.captureSelectedRegion() else {
+            window?.close()
+            return
         }
-        saveToHistory(annotationData: annotationData)
+        let image = applyPostProcessing(raw)
+        let annotationData = currentAnnotationData()
+        ImageEncoder.copyToClipboard(image)
+        playCopySound()
+        // ensureInHistory creates an entry when historyEntryID is nil (pin/thumbnail
+        // entry path); otherwise it no-ops and saveToHistory updates the existing one.
+        autoSaveToHistoryIfNeeded(compositedImage: image, annotationData: annotationData)
         window?.close()
-        // Show a new floating thumbnail with the saved image
-        if let image = finalImage, let entryID = historyEntryID {
-            screenshotAppIntegration()?.showFloatingThumbnail(image: image, annotationData: annotationData, historyEntryID: entryID)
+        // Show a new floating thumbnail with the saved image.
+        if let entryID = historyEntryID {
+            screenshotAppIntegration()?.showFloatingThumbnail(image: image, annotationData: annotationData, historyEntryID: entryID, captureScreenRect: nil)
         }
     }
 
@@ -423,7 +430,7 @@ extension DetachedEditorWindowController: OverlayViewDelegate {
         ImageEncoder.copyToClipboard(image)
         playCopySound()
         autoSaveToHistoryIfNeeded(compositedImage: image, annotationData: annotationData)
-        screenshotAppIntegration()?.showFloatingThumbnail(image: image, annotationData: annotationData, historyEntryID: historyEntryID)
+        screenshotAppIntegration()?.showFloatingThumbnail(image: image, annotationData: annotationData, historyEntryID: historyEntryID, captureScreenRect: nil)
     }
 
     func overlayViewDidRequestSave() {
@@ -451,7 +458,7 @@ extension DetachedEditorWindowController: OverlayViewDelegate {
         guard let raw = overlayView?.captureSelectedRegion() else { return }
         let image = applyPostProcessing(raw)
         playCopySound()
-        screenshotAppIntegration()?.showPin(image: image)
+        screenshotAppIntegration()?.showPin(image: image, screenRect: nil)
         autoSaveToHistoryIfNeeded(compositedImage: image)
     }
 
@@ -502,7 +509,7 @@ extension DetachedEditorWindowController: OverlayViewDelegate {
         let annotationData = currentAnnotationData()
         playCopySound()
         autoSaveToHistoryIfNeeded(compositedImage: image, annotationData: annotationData)
-        screenshotAppIntegration()?.showFloatingThumbnail(image: image, annotationData: annotationData, historyEntryID: historyEntryID)
+        screenshotAppIntegration()?.showFloatingThumbnail(image: image, annotationData: annotationData, historyEntryID: historyEntryID, captureScreenRect: nil)
     }
 
     func overlayViewDidRequestFileSave() {
@@ -581,7 +588,7 @@ extension DetachedEditorWindowController: OverlayViewDelegate {
                     let finalImage = NSImage(cgImage: cg, size: image.size)
                     ImageEncoder.copyToClipboard(finalImage)
                     self.playCopySound()
-                    screenshotAppIntegration()?.showFloatingThumbnail(image: finalImage, annotationData: nil, historyEntryID: nil)
+                    screenshotAppIntegration()?.showFloatingThumbnail(image: finalImage, annotationData: nil, historyEntryID: nil, captureScreenRect: nil)
                 }
             } catch {}
         }
@@ -697,7 +704,7 @@ private class AddCaptureOverlayHandler: NSObject, OverlayWindowControllerDelegat
         }
     }
 
-    func overlayDidRequestPin(_ controller: OverlayWindowController, image: NSImage, annotationData: CaptureAnnotationData?) {
+    func overlayDidRequestPin(_ controller: OverlayWindowController, image: NSImage, annotationData: CaptureAnnotationData?, screenRect: NSRect?) {
         dismissOverlays()
         onCapture?(image)
     }

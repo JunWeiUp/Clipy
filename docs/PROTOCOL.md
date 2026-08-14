@@ -108,6 +108,8 @@ Entry: `ClipyApplication` → `PlatformChannels.registerAll` when sync is enable
 - `syncTick` is adaptive: **30s** when reconnect/pending work is needed, **90s** when all authorized peers are connected and idle. Still does **not** send `history.fetch`.
 - Subnet scan concurrency **24**; syncTick-triggered full scan min gap **5 min**. Network restore prefers **endpoint cache dial** before `/24` full scan.
 - `ClipyApplication.onCreate` warms the FlutterEngine only when `flutter.syncEnabled` is true (same gate as BootReceiver).
+- FGS type is **`specialUse`** (Android 14+): Android 15 enforces a **6h/24h quota** on `dataSync`, which used to force-stop the always-on :5566 listener every few hours. API 29-33 falls back to `dataSync`.
+- **WorkManager watchdog** (`SyncGuardWorker`, 15 min periodic) re-asserts the FGS after the system kills it (Doze / MIUI) — it survives process death, unlike `START_STICKY` whose delivery Doze often drops. It runs as a **foreground worker** (`specialUse`/`dataSync` `ForegroundInfo`) so launching the FGS is legal under the Android 12+ background-FGS-start restriction. Armed by `ClipyApplication.onCreate` / `startForegroundSyncService` / `BootReceiver`; cancelled by `stopForegroundSyncService`. `onTaskRemoved` also re-asserts the FGS on swipe. Redmi/MIUI still requires the user to grant 自启动 + 省电无限制.
 
 ## Remaining asymmetry
 

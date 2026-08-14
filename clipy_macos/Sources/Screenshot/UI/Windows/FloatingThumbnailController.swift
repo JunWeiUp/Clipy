@@ -232,6 +232,9 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
     var historyEntryID: String?
     /// Editable raw image + annotations for opening the thumbnail back in the editor.
     var annotationData: CaptureAnnotationData?
+    /// Global screen rect where the capture was taken, so the "pin" action from
+    /// this thumbnail lands on the original spot instead of jumping to the mouse.
+    var captureScreenRect: NSRect?
     /// The intended final frame — used instead of window.frame to avoid reading
     /// intermediate positions during slide-in or reflow animations.
     private var targetFrame: NSRect = .zero

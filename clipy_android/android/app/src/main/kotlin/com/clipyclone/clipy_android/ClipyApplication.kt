@@ -53,6 +53,10 @@ class ClipyApplication : Application() {
         // UI without sync adopts the Activity-created engine into the cache.
         if (isSyncEnabledPref()) {
             ensureEngine()
+            // Arm the Doze-friendly WorkManager watchdog that re-asserts the
+            // sync FGS if the system stops/kills it (independent of START_STICKY
+            // delivery, which Doze/MIUI often drop).
+            SyncGuardScheduler.schedule(this)
         } else {
             Log.i(TAG, "syncEnabled=false, skip warm engine")
         }
@@ -163,6 +167,9 @@ class ClipyApplication : Application() {
             } else {
                 startService(intent)
             }
+            // (Re)arm the watchdog whenever sync is explicitly started so it is
+            // always scheduled even if Application.onCreate skipped it.
+            SyncGuardScheduler.schedule(this)
             true
         } catch (e: Exception) {
             Log.e(TAG, "startForegroundSync failed", e)
@@ -171,6 +178,8 @@ class ClipyApplication : Application() {
     }
 
     fun stopForegroundSyncService(): Boolean {
+        // Stop the watchdog too, otherwise it would keep restarting the FGS.
+        SyncGuardScheduler.cancel(this)
         return try {
             stopService(Intent(this, ClipySyncForegroundService::class.java))
             true

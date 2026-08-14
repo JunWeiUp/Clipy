@@ -345,6 +345,33 @@ class NotificationManager {
     }
   }
 
+  /// Whether notifications (incl. the sync FGS persistent one) can surface.
+  /// On Android 13+ POST_NOTIFICATIONS defaults to denied, which hides even
+  /// foreground-service notifications.
+  Future<bool> areNotificationsEnabled() async {
+    try {
+      final result = await _permissionsChannel
+          .invokeMethod<bool>('areNotificationsEnabled');
+      return result ?? true;
+    } catch (e) {
+      appLog('NotificationManager: error checking notifications: $e',
+          level: 'warning');
+      return true; // Don't block on error
+    }
+  }
+
+  /// Shows the POST_NOTIFICATIONS dialog (Android 13+) or opens the app's
+  /// notification settings page as fallback.
+  Future<void> requestNotificationPermission() async {
+    try {
+      await _permissionsChannel
+          .invokeMethod<void>('requestNotificationPermission');
+    } catch (e) {
+      appLog('NotificationManager: error requesting notifications: $e',
+          level: 'warning');
+    }
+  }
+
   Future<NotificationListenerStatus> getListenerStatus() async {
     try {
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(

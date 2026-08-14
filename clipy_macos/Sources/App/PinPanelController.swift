@@ -137,17 +137,21 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
 
         closeButton.bezelStyle = .inline
         closeButton.isBordered = false
-        closeButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: L10n.t(.close))
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: L10n.t(.close))
+        closeButton.contentTintColor = .white
         closeButton.target = self
         closeButton.action = #selector(closePanel)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.wantsLayer = true
 
         editButton.bezelStyle = .inline
         editButton.isBordered = false
-        editButton.image = NSImage(systemSymbolName: "pencil.circle.fill", accessibilityDescription: L10n.t(.screenshotEdit))
+        editButton.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: L10n.t(.screenshotEdit))
+        editButton.contentTintColor = .white
         editButton.target = self
         editButton.action = #selector(enterEditMode)
         editButton.translatesAutoresizingMaskIntoConstraints = false
+        editButton.wantsLayer = true
 
         container.addSubview(pinView)
         container.addSubview(closeButton)
@@ -159,16 +163,28 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
             pinView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             pinView.topAnchor.constraint(equalTo: container.topAnchor),
             pinView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            closeButton.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
-            closeButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
-            closeButton.widthAnchor.constraint(equalToConstant: 20),
-            closeButton.heightAnchor.constraint(equalToConstant: 20),
+            closeButton.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            closeButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            closeButton.widthAnchor.constraint(equalToConstant: 24),
+            closeButton.heightAnchor.constraint(equalToConstant: 24),
             // Edit button sits just to the left of the close button.
-            editButton.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
-            editButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -4),
-            editButton.widthAnchor.constraint(equalToConstant: 20),
-            editButton.heightAnchor.constraint(equalToConstant: 20)
+            editButton.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            editButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -6),
+            editButton.widthAnchor.constraint(equalToConstant: 24),
+            editButton.heightAnchor.constraint(equalToConstant: 24)
         ])
+
+        // Semi-transparent dark disc behind each control glyph so the white icon
+        // stays readable on any capture background — including pure-white pins,
+        // where the raw SF Symbol would otherwise blend in and vanish. A faint
+        // white hairline further separates the disc from light backgrounds.
+        for button in [closeButton, editButton] {
+            button.layer?.backgroundColor = NSColor(white: 0, alpha: 0.45).cgColor
+            button.layer?.cornerRadius = 12
+            button.layer?.masksToBounds = true
+            button.layer?.borderWidth = 0.5
+            button.layer?.borderColor = NSColor.white.withAlphaComponent(0.35).cgColor
+        }
 
         setFrame(panelFrame, display: false)
         updatePinViewTransform()

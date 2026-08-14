@@ -17,6 +17,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Android 14 (API 34) requires declaring the specific FGS type. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- specialUse type: Android 15 enforces a 6h/24h quota on dataSync FGS,
+         which kills always-on LAN sync every few hours. specialUse is exempt
+         from that quota; keep DATA_SYNC for the API 29-33 fallback branch. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application
         android:label="Clipy Android"
@@ -66,11 +70,20 @@
             </intent-filter>
         </service>
 
-        <!-- Holds process alive; on START_STICKY rebuild calls ensureEngine. -->
+        <!-- Holds process alive; on START_STICKY rebuild calls ensureEngine.
+             specialUse type avoids the Android 15 dataSync 6h/24h quota so the
+             long-lived TCP :5566 listener is not force-stopped every few hours.
+             dataSync is required by the API 29-33 branch of
+             startForegroundCompat: a type not declared here makes
+             startForeground throw IllegalArgumentException. -->
         <service
             android:name=".ClipySyncForegroundService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse|dataSync">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Persistent LAN peer-to-peer clipboard/notification sync listener (long-lived TCP :5566). The dataSync 6h/24h quota on Android 15 is incompatible with always-on sync." />
+        </service>
 
         <!-- Boot restore when flutter.syncEnabled is true. -->
         <receiver
@@ -84,6 +97,21 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- Overrides WorkManager's own type-less declaration. Its
+             SystemForegroundService hosts the "foreground" SyncGuardWorker; a
+             typed ForegroundInfo must be a subset of the type declared on this
+             element, and Android 16 (targetSdk 36) outright prohibits
+             startForeground with no type:
+             InvalidForegroundServiceTypeException: Starting FGS with type none
+             ... has been prohibited. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="specialUse|dataSync">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Brief foreground elevation for the periodic sync guard worker that re-asserts the LAN sync service (seconds, once per 15 min)." />
+        </service>
     </application>
     <queries>
         <intent>

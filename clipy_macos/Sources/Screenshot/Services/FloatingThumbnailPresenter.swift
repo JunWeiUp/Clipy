@@ -28,7 +28,9 @@ final class FloatingThumbnailPresenter {
     /// - Parameters:
     ///   - image: the final (composited) image to thumbnail.
     ///   - annotationData: optional editable raw image + annotations (for re-edit).
-    func show(image: NSImage, annotationData: CaptureAnnotationData? = nil) {
+    ///   - captureScreenRect: global rect where the capture was taken; the "pin"
+    ///     action uses it so the pin stays on the original spot instead of the mouse.
+    func show(image: NSImage, annotationData: CaptureAnnotationData? = nil, captureScreenRect: NSRect? = nil) {
         // Honor the user pref (defaults ON, matching macshot).
         let enabled = UserDefaults.standard.object(forKey: "showFloatingThumbnail") as? Bool ?? true
         guard enabled else { return }
@@ -59,6 +61,7 @@ final class FloatingThumbnailPresenter {
 
         let controller = FloatingThumbnailController(image: image)
         controller.annotationData = annotationData
+        controller.captureScreenRect = captureScreenRect
         controller.onDismiss = { [weak self] in
             guard let self = self else { return }
             self.controllers.removeAll { $0 === controller }
@@ -81,7 +84,8 @@ final class FloatingThumbnailPresenter {
         controller.onPin = { [weak controller] in
             guard let img = controller?.image else { return }
             // clipy1's pin (history-aware). skipIngest since it's already in history.
-            PinPanelController.shared.pin(image: img, at: nil, skipIngest: true)
+            // Pin at the original capture rect so it stays where the shot was taken.
+            PinPanelController.shared.pin(image: img, at: controller?.captureScreenRect, skipIngest: true)
         }
         controller.onEdit = { [weak controller] in
             guard let img = controller?.image else { return }

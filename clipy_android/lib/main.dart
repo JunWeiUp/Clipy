@@ -592,6 +592,32 @@ void main() async {
   }
 
   runApp(const MyApp());
+
+  // One-time: sync is enabled but notifications can't surface. Android 13+
+  // denies POST_NOTIFICATIONS by default, which hides even the FGS persistent
+  // notification — the user then can't tell autostart from a dead service.
+  unawaited(_maybeRequestNotificationPermissionOnce());
+}
+
+Future<void> _maybeRequestNotificationPermissionOnce() async {
+  if (!Platform.isAndroid) return;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('syncEnabled') != true) return;
+    if (prefs.getBool('clipy.notifPermAutoRequested') == true) return;
+    // MainActivity registers its method-channel handlers during engine
+    // attach; give the first frame a moment.
+    await Future<void>.delayed(const Duration(seconds: 2));
+    final enabled =
+        await NotificationManager.instance.areNotificationsEnabled();
+    if (enabled) return;
+    // Only stamp after a successful check so a failed probe retries next
+    // launch.
+    await prefs.setBool('clipy.notifPermAutoRequested', true);
+    await NotificationManager.instance.requestNotificationPermission();
+  } catch (e) {
+    debugPrint('notification permission auto-request error: $e');
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -955,6 +981,8 @@ class _MacSettingsTabState extends State<MacSettingsTab> {
             final prefs = await SharedPreferences.getInstance();
             await prefs.setBool('syncEnabled', value);
             if (value) {
+              unawaited(NotificationManager.instance
+                  .requestNotificationPermission());
               await SyncManager.instance.start();
             } else {
               await SyncManager.instance.stop();
@@ -1349,6 +1377,8 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
             final prefs = await SharedPreferences.getInstance();
             await prefs.setBool('syncEnabled', value);
             if (value) {
+              unawaited(NotificationManager.instance
+                  .requestNotificationPermission());
               await SyncManager.instance.start();
             } else {
               await SyncManager.instance.stop();
@@ -1588,6 +1618,8 @@ class _SettingsPageState extends State<SettingsPage> {
               final prefs = await SharedPreferences.getInstance();
               await prefs.setBool('syncEnabled', value);
               if (value) {
+                unawaited(NotificationManager.instance
+                    .requestNotificationPermission());
                 await SyncManager.instance.start();
               } else {
                 await SyncManager.instance.stop();

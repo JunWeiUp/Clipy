@@ -26,7 +26,9 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
+        // Coerce ≥4003 so a fresh debug build can reinstall over an older debug
+        // build (versionCode 4002) already on test devices without downgrade.
+        versionCode = maxOf(flutter.versionCode, 4003)
         versionName = flutter.versionName
     }
 
@@ -48,5 +50,10 @@ flutter {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
+    // WorkManager: periodic self-healing watchdog that re-asserts the sync FGS
+    // after the system (Doze / MIUI killer / dataSync 6h quota on Android 15)
+    // stops or kills it. Doze-friendly: periodic work is always rescheduled by
+    // the system even if START_STICKY delivery is dropped.
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }
 

@@ -291,21 +291,27 @@ extension ScreenshotSessionCoordinator: OverlayWindowControllerDelegate {
     func overlayDidConfirm(_ controller: OverlayWindowController,
                            capturedImage: NSImage?,
                            annotationData: CaptureAnnotationData?) {
+        // Grab the capture rect before tearing down — afterwards the overlay view
+        // is gone and globalSelectionRect would return nil. The rect flows to the
+        // floating thumbnail so a later "pin" from it lands on the original spot.
+        let captureRect = controller.globalSelectionRect
         let image = capturedImage ?? controller.screenshotImage
         tearDownOverlays(refocusPreviousApp: true)
         guard let image = image else { return }
         ingestConfirmedImage(image, windowTitle: controller.capturedWindowTitle)
         // Right-bottom draggable thumbnail with copy/save/pin/edit actions
         // (matches macshot's post-capture feedback).
-        FloatingThumbnailPresenter.shared.show(image: image, annotationData: annotationData)
+        FloatingThumbnailPresenter.shared.show(image: image, annotationData: annotationData, captureScreenRect: captureRect)
     }
 
     func overlayDidRequestPin(_ controller: OverlayWindowController,
                               image: NSImage,
-                              annotationData: CaptureAnnotationData?) {
+                              annotationData: CaptureAnnotationData?,
+                              screenRect: NSRect?) {
         tearDownOverlays(refocusPreviousApp: false)
         // Use clipy1's existing pin (its own history-aware pin controller).
-        PinPanelController.shared.pin(image: image, at: nil, skipIngest: false)
+        // screenRect is the original capture location → pin in place, no jump.
+        PinPanelController.shared.pin(image: image, at: screenRect, skipIngest: false)
     }
 
     func overlayDidRequestOCR(_ controller: OverlayWindowController,

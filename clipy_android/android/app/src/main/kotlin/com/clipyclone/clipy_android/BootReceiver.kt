@@ -49,6 +49,9 @@ class BootReceiver : BroadcastReceiver() {
             } else {
                 context.startService(serviceIntent)
             }
+            // Arm the WorkManager watchdog so the FGS is re-asserted even if
+            // START_STICKY rebuild is dropped by Doze / the OEM killer.
+            SyncGuardScheduler.schedule(context.applicationContext)
             Log.i(TAG, "Boot ($action): started ClipySyncForegroundService")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start sync service on boot", e)
