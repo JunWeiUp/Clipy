@@ -13,16 +13,23 @@ import Foundation
 protocol ScreenshotAppIntegration: AnyObject {
     func returnFocusIfNeeded()
     func refreshThumbnail(for entryID: String, image: NSImage, annotationData: CaptureAnnotationData?)
-    func showFloatingThumbnail(image: NSImage, annotationData: CaptureAnnotationData?, historyEntryID: String?)
-    func showPin(image: NSImage)
+    /// - Parameter captureScreenRect: global screen rect where the capture was
+    /// taken, so a later "pin" from the thumbnail lands on the original spot
+    /// instead of jumping to the mouse. nil when the caller has no such rect
+    /// (e.g. the detached editor).
+    func showFloatingThumbnail(image: NSImage, annotationData: CaptureAnnotationData?, historyEntryID: String?, captureScreenRect: NSRect?)
+    /// - Parameter screenRect: global screen rect to place the pin at (the
+    /// original capture location). nil falls back to a centered, mouse-anchored
+    /// position.
+    func showPin(image: NSImage, screenRect: NSRect?)
     func uploadImage(_ image: NSImage)
 }
 
 extension ScreenshotAppIntegration {
     func returnFocusIfNeeded() {}
     func refreshThumbnail(for entryID: String, image: NSImage, annotationData: CaptureAnnotationData?) {}
-    func showFloatingThumbnail(image: NSImage, annotationData: CaptureAnnotationData?, historyEntryID: String?) {}
-    func showPin(image: NSImage) {}
+    func showFloatingThumbnail(image: NSImage, annotationData: CaptureAnnotationData?, historyEntryID: String?, captureScreenRect: NSRect?) {}
+    func showPin(image: NSImage, screenRect: NSRect?) {}
     func uploadImage(_ image: NSImage) {}
 }
 

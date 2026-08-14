@@ -1,6 +1,7 @@
 package com.clipyclone.clipy_android
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -10,6 +11,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
@@ -24,6 +26,8 @@ class MainActivity: FlutterActivity() {
     private val NOTIFICATIONS_CHANNEL = ClipyApplication.NOTIFICATIONS_CHANNEL
     private val CLIPBOARD_CHANNEL = ClipyApplication.CLIPBOARD_CHANNEL
     private val STORAGE_PERMISSION_REQUEST_CODE = 1001
+    private val NOTIFICATION_PERMISSION_REQUEST_CODE = 1002
+    private val SYNC_CHANNEL_ID = "clipy_sync_foreground"
     private var clipboardChangeListener: ClipboardChangeListener? = null
     private var notificationsMethodChannel: MethodChannel? = null
 
@@ -68,6 +72,13 @@ class MainActivity: FlutterActivity() {
                 }
                 "requestBatteryOptimizationExemption" -> {
                     requestBatteryOptimizationExemption()
+                    result.success(null)
+                }
+                "areNotificationsEnabled" -> {
+                    result.success(areNotificationsEnabled())
+                }
+                "requestNotificationPermission" -> {
+                    requestNotificationPermission()
                     result.success(null)
                 }
                 else -> {
@@ -179,6 +190,52 @@ class MainActivity: FlutterActivity() {
     private fun isBatteryOptimizationExempt(): Boolean {
         val pm = getSystemService(POWER_SERVICE) as? PowerManager ?: return true
         return pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    /**
+     * True only when the FGS notification can actually surface: the app-level
+     * notification switch is on AND the sync channel (if already created) was
+     * not disabled by the user. On Android 13+ POST_NOTIFICATIONS defaults to
+     * denied, and a denied app hides even foreground-service notifications —
+     * making a running sync look dead in the shade.
+     */
+    private fun areNotificationsEnabled(): Boolean {
+        if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            val channel = nm.getNotificationChannel(SYNC_CHANNEL_ID)
+            if (channel != null && channel.importance == NotificationManager.IMPORTANCE_NONE) {
+                return false
+            }
+        }
+        return true
+    }
+
+    /**
+     * POST_NOTIFICATIONS dialog on Android 13+; falls back to the app's
+     * notification settings page when the OS toggle itself is off (pre-13 or
+     * OEM app-level switch, e.g. MIUI).
+     */
+    private fun requestNotificationPermission() {
+        if (areNotificationsEnabled()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                NOTIFICATION_PERMISSION_REQUEST_CODE,
+            )
+        } else {
+            try {
+                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+            } catch (e: Exception) {
+                Log.e("ClipyMain", "Cannot open notification settings", e)
+            }
+        }
     }
 
     @Suppress("DEPRECATION")

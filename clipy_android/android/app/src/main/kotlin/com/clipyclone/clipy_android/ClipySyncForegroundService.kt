@@ -20,9 +20,18 @@ import io.flutter.plugin.common.MethodChannel
 /**
  * Keeps the process elevated while Dart [SyncManager] owns ServerSocket :5566.
  *
+ * Uses the **specialUse** foreground service type (Android 14+): the Android 15
+ * `dataSync` 6h/24h quota used to force-stop this always-on listener every few
+ * hours. `specialUse` is exempt from that quota. `dataSync` is still used on the
+ * API 29-33 fallback branch.
+ *
  * On [START_STICKY] rebuild (process death), calls [ClipyApplication.ensureEngine]
  * so main() re-runs and sync rebinds without opening the UI. Periodic
  * [syncTick] nudges Dart reconnect / pending flush while backgrounded.
+ *
+ * [SyncGuardWorker] is the independent fallback: a Doze-friendly 15-min
+ * WorkManager watchdog that re-asserts this service if START_STICKY delivery is
+ * dropped (Doze / MIUI killer).
  *
  * WakeLock is held with a timeout and renewed on activity so the CPU can sleep
  * if ticks stop; FGS sticky still keeps the process eligible for restart.
@@ -101,6 +110,30 @@ class ClipySyncForegroundService : Service() {
         stopSyncTicks()
         releaseWakeLock()
         super.onDestroy()
+    }
+
+    /**
+     * User swiped the app from recents. The FGS still holds foreground priority
+     * at this instant, so re-issuing startForegroundService(self) is legal and
+     * refreshes the service before the system can tear it down. Best-effort
+     * against aggressive OEM killers (MIUI); [SyncGuardWorker] is the main
+     * independent fallback.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if ((application as? ClipyApplication)?.isSyncEnabledPref() == true) {
+            try {
+                val restart = Intent(applicationContext, ClipySyncForegroundService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    applicationContext.startForegroundService(restart)
+                } else {
+                    applicationContext.startService(restart)
+                }
+                Log.i(TAG, "onTaskRemoved: re-asserted FGS to survive swipe")
+            } catch (e: Exception) {
+                Log.w(TAG, "onTaskRemoved re-assert failed", e)
+            }
+        }
+        super.onTaskRemoved(rootIntent)
     }
 
     private fun startSyncTicks() {
@@ -223,10 +256,14 @@ class ClipySyncForegroundService : Service() {
             .setShowWhen(false)
             .build()
 
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-        } else {
-            0
+        val type = when {
+            // specialUse matches the manifest type; exempt from the Android 15
+            // dataSync 6h/24h quota so the long-lived :5566 listener survives.
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ->
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            else -> 0
         }
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
     }

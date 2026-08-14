@@ -64,7 +64,7 @@ private final class ScreenshotOverlayRootView: NSView {
 protocol OverlayWindowControllerDelegate: AnyObject {
     func overlayDidCancel(_ controller: OverlayWindowController)
     func overlayDidConfirm(_ controller: OverlayWindowController, capturedImage: NSImage?, annotationData: CaptureAnnotationData?)
-    func overlayDidRequestPin(_ controller: OverlayWindowController, image: NSImage, annotationData: CaptureAnnotationData?)
+    func overlayDidRequestPin(_ controller: OverlayWindowController, image: NSImage, annotationData: CaptureAnnotationData?, screenRect: NSRect?)
     func overlayDidRequestOCR(_ controller: OverlayWindowController, result: OCRScanResult, image: NSImage?)
     func overlayDidRequestUpload(_ controller: OverlayWindowController, image: NSImage, annotationData: CaptureAnnotationData?)
     func overlayDidRequestStartRecording(
@@ -109,6 +109,27 @@ class OverlayWindowController {
     var screenshotImage: NSImage? { overlayView?.screenshotImage }
     var selectionRect: NSRect { overlayView?.selectionRect ?? .zero }
     var remoteSelectionRect: NSRect { overlayView?.remoteSelectionRect ?? .zero }
+
+    /// The current selection rect in global screen coordinates (left-bottom
+    /// origin, matching NSScreen / NSWindow.setFrame). Used so a pinned capture
+    /// lands exactly where it was taken instead of jumping to the mouse.
+    /// OverlayView is non-flipped and fills the screen-sized borderless window,
+    /// so its local origin coincides with the window's content origin; we convert
+    /// to the window and offset by the window's global frame to be safe across
+    /// multi-display setups. Returns nil when there's no real selection.
+    var globalSelectionRect: NSRect? {
+        guard let view = overlayView else { return nil }
+        let local = view.selectionRect
+        guard local.width > 1, local.height > 1 else { return nil }
+        let inWindow = view.convert(local, to: nil)
+        let origin = overlayWindow?.frame.origin ?? screen.frame.origin
+        return NSRect(
+            x: origin.x + inWindow.origin.x,
+            y: origin.y + inWindow.origin.y,
+            width: inWindow.width,
+            height: inWindow.height
+        )
+    }
 
     // Session recording overrides (from toolbar popover, nil = use UserDefaults default)
     var sessionRecordingFPS: Int? { overlayView?.sessionRecordingFPS }
@@ -609,8 +630,11 @@ extension OverlayWindowController: OverlayViewDelegate {
         let annotationData = currentAnnotationDataForHistory()
         image = applyBeautifyIfNeeded(image) ?? image
         playCopySound()
+        // Capture the selection's global rect before dismiss clears the overlay,
+        // so the pin lands exactly where the capture was taken.
+        let pinScreenRect = globalSelectionRect
         dismiss()
-        overlayDelegate?.overlayDidRequestPin(self, image: image, annotationData: annotationData)
+        overlayDelegate?.overlayDidRequestPin(self, image: image, annotationData: annotationData, screenRect: pinScreenRect)
     }
 
     func overlayViewDidRequestOCR() {
