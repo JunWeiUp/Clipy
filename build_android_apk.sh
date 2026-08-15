@@ -14,6 +14,7 @@ BUILD_NUMBER="${BUILD_NUMBER:-1}"
 TARGET_PLATFORM="${TARGET_PLATFORM:-android-arm,android-arm64}"
 SPLIT_PER_ABI="${SPLIT_PER_ABI:-1}"
 
+
 echo "Starting Android APK build for ${APP_NAME}..."
 
 if [ ! -d "${ANDROID_DIR}" ]; then
