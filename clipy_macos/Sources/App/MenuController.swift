@@ -744,9 +744,10 @@ class MenuController: NSObject {
         let response = openPanel.runModal()
         if response == .OK, let url = openPanel.url {
             appLog("Selected file: \(url.lastPathComponent), sending...")
-            let success = SyncManager.shared.sendFileToPeer(at: url, peerId: peerId)
-            if !success {
-                Self.showSendFailedAlert()
+            SyncManager.shared.sendFileToPeer(at: url, peerId: peerId) { success in
+                if !success {
+                    Self.showSendFailedAlert()
+                }
             }
         }
     }
@@ -873,6 +874,11 @@ extension MenuController: NSMenuDelegate {
         // ensureMenuSummariesLoaded + rebuild，关闭后再建一次只会把刚释放的
         // 摘要重新拉回内存，并渲染一张没人看得见的菜单。
         isMenuDirtyWhileOpen = false
+        // 关闭即整树清空：menuNeedsUpdate 每次打开都全量重建，关闭后这棵
+        // item 树（50 条历史 representedObject 装箱 + 32px 缩略图 + 片段/
+        // 设备子菜单 + header views，约 0.5-1.5MB）滞留在常驻 statusItem
+        // .menu 上纯属浪费，还会抵消下面的 releaseMenuMemory。
+        menu.removeAllItems()
         clipboardManager.releaseMenuMemory()
         MemoryFootprintReclaimer.reclaimIfIdle()
     }

@@ -123,6 +123,13 @@ class ClipyApplication : Application() {
             io.flutter.plugins.GeneratedPluginRegistrant.registerWith(engine)
             // storage/clipboard/notifications/sync_service — see PlatformChannels.
             PlatformChannels.registerAll(this, engine)
+            // Must stay the DEFAULT entrypoint: engines started with a custom
+            // entrypoint name never register first-party fonts (every icon
+            // renders as a notdef box — verified on-device). main() mounts a
+            // cheap placeholder root, runs the data layer only, and defers the
+            // full UI to the `ui.attach` nudge MainActivity sends on
+            // SYNC_CONTROL_CHANNEL, so a background-only process doesn't carry
+            // the widget tree in memory.
             engine.dartExecutor.executeDartEntrypoint(
                 DartExecutor.DartEntrypoint.createDefault(),
             )

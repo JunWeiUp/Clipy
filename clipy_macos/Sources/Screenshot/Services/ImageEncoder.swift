@@ -221,35 +221,52 @@ enum ImageEncoder {
     /// a lossless PNG instead of the TIFF that NSImage.writeObjects provides.
     /// Also writes a retained backing file so Finder paste works and clipboard
     /// history tools do not keep references to deleted `/tmp` files.
-    static func copyToClipboard(_ image: NSImage, sourceFileURL: URL? = nil) {
+    /// - Parameter completion: invoked exactly once on the main thread with the
+    ///   PNG bytes that were encoded for the pasteboard (nil when encoding
+    ///   failed or the copy was superseded), so callers that also need PNG —
+    ///   the floating-thumbnail offload — reuse this encode instead of
+    ///   re-running the full-image conversion.
+    static func copyToClipboard(
+        _ image: NSImage,
+        sourceFileURL: URL? = nil,
+        completion: ((Data?) -> Void)? = nil
+    ) {
         let pasteboard = NSPasteboard.general
         let generation = beginClipboardCopy()
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let validSourceURL = reusableSourceURL(sourceFileURL)
-            guard let bitmap = makeBitmap(image),
-                  let pngData = bitmap.representation(using: .png, properties: [:]) else {
-                if let validSourceURL {
+            // The GCD thread's autorelease pool would otherwise hold the
+            // bitmaps until its next work item; drain them here.
+            autoreleasepool {
+                let validSourceURL = reusableSourceURL(sourceFileURL)
+                guard let bitmap = makeBitmap(image),
+                      let pngData = bitmap.representation(using: .png, properties: [:]) else {
                     DispatchQueue.main.async {
-                        guard isCurrentClipboardCopy(generation) else { return }
-                        pasteboard.clearContents()
-                        pasteboard.writeObjects([validSourceURL as NSURL])
+                        if let validSourceURL, isCurrentClipboardCopy(generation) {
+                            pasteboard.clearContents()
+                            pasteboard.writeObjects([validSourceURL as NSURL])
+                        }
+                        completion?(nil)
                     }
+                    return
                 }
-                return
-            }
 
-            let backingURL = validSourceURL ?? ClipboardBackingStore.writeImageData(pngData)
-            let tiffData = bitmap.representation(using: .tiff, properties: [:])
+                let backingURL = validSourceURL ?? ClipboardBackingStore.writeImageData(pngData)
+                let tiffData = bitmap.representation(using: .tiff, properties: [:])
 
-            DispatchQueue.main.async {
-                guard isCurrentClipboardCopy(generation) else { return }
-                writeImagePasteboard(
-                    pasteboard,
-                    backingURL: backingURL,
-                    pngData: pngData,
-                    tiffData: tiffData
-                )
+                DispatchQueue.main.async {
+                    guard isCurrentClipboardCopy(generation) else {
+                        completion?(nil)
+                        return
+                    }
+                    writeImagePasteboard(
+                        pasteboard,
+                        backingURL: backingURL,
+                        pngData: pngData,
+                        tiffData: tiffData
+                    )
+                    completion?(pngData)
+                }
             }
         }
     }

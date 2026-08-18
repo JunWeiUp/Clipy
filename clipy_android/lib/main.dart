@@ -536,11 +536,50 @@ Future<void> _bootstrapCore() async {
   }
 }
 
-/// Single entrypoint for UI and for Application-cached engine (FGS / boot).
+/// Single entrypoint for the Application-warmed engine (FGS / boot autostart)
+/// and for Activity-created engines (sync off).
+///
+/// A custom entrypoint name is NOT usable here: engines started with a
+/// non-default entrypoint never register first-party fonts, and every icon
+/// renders as a notdef box (verified with an offscreen raster probe). So this
+/// default `main` serves both modes. It mounts a trivial root immediately —
+/// runApp must not be deferred — and the full UI ([MyApp]) is only mounted by
+/// [_attachUi] when the user actually opens the app, keeping a background-only
+/// process free of the widget tree (MaterialApp + IndexedStack tabs + history
+/// pages ≈ several MB).
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _registerSyncControlChannel();
+  runApp(const SizedBox.shrink());
+  await _bootstrapCore();
+}
 
-  // Register before awaiting bootstrap so sticky-rebuild nudges wait on init.
+bool _uiAttached = false;
+
+/// Start (or resume) the widget tree. Idempotent so repeated `ui.attach`
+/// nudges (Activity recreation, native retries) are harmless.
+Future<void> _attachUi() async {
+  if (_uiAttached) return;
+  _uiAttached = true;
+
+  try {
+    await AppLanguageController.instance.init();
+  } catch (e) {
+    debugPrint('AppLanguageController init error: $e');
+  }
+
+  runApp(const MyApp());
+
+  // One-time: sync is enabled but notifications can't surface. Android 13+
+  // denies POST_NOTIFICATIONS by default, which hides even the FGS persistent
+  // notification — the user then can't tell autostart from a dead service.
+  unawaited(_maybeRequestNotificationPermissionOnce());
+}
+
+/// Native nudges (FGS sticky rebuild, watchdog, Activity ui.attach) can
+/// arrive before bootstrap finishes; registering the handler first lets each
+/// handler await completion.
+void _registerSyncControlChannel() {
   const MethodChannel('com.clipyclone.clipy_android/sync_control')
       .setMethodCallHandler((call) async {
     if (call.method == 'ensureSyncStarted') {
@@ -580,23 +619,18 @@ void main() async {
       }
       return true;
     }
+    if (call.method == 'ui.attach') {
+      // Activity attached to the headless engine — start the UI. Bound wait
+      // so a stalled bootstrap still shows the app after 10s.
+      try {
+        await _coreBootstrapComplete.future
+            .timeout(const Duration(seconds: 10));
+      } catch (_) {}
+      await _attachUi();
+      return true;
+    }
     return null;
   });
-
-  await _bootstrapCore();
-
-  try {
-    await AppLanguageController.instance.init();
-  } catch (e) {
-    debugPrint('AppLanguageController init error: $e');
-  }
-
-  runApp(const MyApp());
-
-  // One-time: sync is enabled but notifications can't surface. Android 13+
-  // denies POST_NOTIFICATIONS by default, which hides even the FGS persistent
-  // notification — the user then can't tell autostart from a dead service.
-  unawaited(_maybeRequestNotificationPermissionOnce());
 }
 
 Future<void> _maybeRequestNotificationPermissionOnce() async {
@@ -1076,7 +1110,7 @@ class _HomePageState extends State<HomePage> {
     _progressSubscription = SyncManager.instance.onFileProgress.listen((progress) {
       if (mounted) {
         setState(() {
-          if (progress.isCompleted) {
+          if (progress.isCompleted || progress.isFailed) {
             _activeTransfers.remove(progress.fileId);
           } else {
             _activeTransfers[progress.fileId] = progress;
@@ -1132,6 +1166,9 @@ class _HomePageState extends State<HomePage> {
             color: Colors.blue.withValues(alpha: 0.1),
             child: Column(
               children: _activeTransfers.values.map((progress) {
+                final transferLabel = progress.isOutgoing
+                    ? context.l10n.sending(progress.fileName)
+                    : context.l10n.receiving(progress.fileName);
                 return Padding(
                   padding: const EdgeInsets.all(8.0),
                   child: Column(
@@ -1139,11 +1176,16 @@ class _HomePageState extends State<HomePage> {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.downloading, size: 16),
+                          Icon(
+                            progress.isOutgoing
+                                ? Icons.upload_file
+                                : Icons.downloading,
+                            size: 16,
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              context.l10n.receiving(progress.fileName),
+                              transferLabel,
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                               overflow: TextOverflow.ellipsis,
                             ),

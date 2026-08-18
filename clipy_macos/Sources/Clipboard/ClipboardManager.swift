@@ -707,6 +707,15 @@ class ClipboardManager {
         addToHistory(.text(content), sourceApp: "Remote Device")
     }
 
+    /// A file received over LAN sync, already moved to its final destination.
+    /// Unlike text sync the pasteboard is not touched — the entry appears in
+    /// history / search with the usual "reveal in Finder" affordances.
+    /// Main thread only (addToHistory touches main-thread state).
+    func handleRemoteFileSync(url: URL, senderName: String) {
+        rememberRemoteHash("file:\(url.path)")
+        addToHistory(.files([url]), sourceApp: senderName.isEmpty ? "Remote Device" : senderName)
+    }
+
     /// Records a remote-origin hash so a subsequent local copy of the same
     /// content is treated as a loopback rather than re-broadcast.
     private func rememberRemoteHash(_ hash: String) {
@@ -1016,11 +1025,29 @@ class ClipboardManager {
 
     private func scheduleImageOCRIfNeeded(for entry: HistoryEntry) {
         guard case .image = entry.item, let hash = entry.contentHash else { return }
+        // Ingesting any image (paste, screenshot, sync) decodes the full
+        // bitmap and briefly holds several large buffers; schedule the
+        // debounced reclaim that presses the pages back to the system.
+        MemoryFootprintReclaimer.scheduleDelayedReclaim()
+        // Each recognition keeps Vision's models resident (~100MB, first use,
+        // not releasable); the preference lets users trade searchable image
+        // history for the standing footprint.
+        guard PreferencesManager.shared.isHistoryImageOCRIndexingEnabled else { return }
         guard !pendingIndexHashes.contains(hash) else { return }
         pendingIndexHashes.insert(hash)
         HistorySearchIndexBuilder.scheduleOCR(for: entry, contentHash: hash) { [weak self] contentHash, text in
             guard let self else { return }
             self.pendingIndexHashes.remove(contentHash)
+            if self.pendingIndexHashes.isEmpty {
+                // OCR is the last big allocator in a capture flow: Vision loads
+                // its models and staging buffers on first use and regularly
+                // outlives the 10s delayed reclaim (serial utility queue).
+                // Re-arm once the queue drains so those pages are returned too.
+                MemoryFootprintReclaimer.scheduleDelayedReclaim()
+            }
+            // Empty text = unreadable image or no OCR result; the hash is
+            // still cleared above so future edits can retry indexing.
+            guard !text.isEmpty else { return }
             if self.repository.updateSearchIndex(contentHash: contentHash, text: text) {
                 self.notifyHistoryChanged()
             }
@@ -1037,7 +1064,9 @@ class ClipboardManager {
             }
         case .image(let path):
             if let data = store.data(at: path) {
-                pasteboard.setData(data, forType: .tiff)
+                // HistoryMediaStore persists images as PNG; declaring them
+                // .tiff made receivers try (and fail) to decode PNG bytes as TIFF.
+                pasteboard.setData(data, forType: .png)
             }
         case .rtf(let path):
             if let data = store.data(at: path) {

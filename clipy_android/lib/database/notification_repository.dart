@@ -393,6 +393,14 @@ class NotificationRepository {
     );
   }
 
+  /// Cheap EXISTS probe for the flush fast path — fetchAllPendingSync would
+  /// materialize up to 500 rows on every syncTick.
+  Future<bool> hasPendingSync() async {
+    final rows = await (await _db)
+        .rawQuery('SELECT 1 FROM pending_notification_sync LIMIT 1');
+    return rows.isNotEmpty;
+  }
+
   /// Remove entries older than [maxAgeDays] and trim to [maxRows].
   Future<void> cleanOldPendingSync({
     int maxAgeDays = 7,

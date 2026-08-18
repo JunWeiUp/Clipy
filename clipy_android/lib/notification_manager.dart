@@ -493,10 +493,16 @@ class NotificationManager {
   }
 
   List<Map<String, dynamic>>? _installedAppsCache;
-  bool _appsLoaded = false;
+  DateTime? _installedAppsCachedAt;
+  /// The full app list (~300 entries) stays in this singleton for the whole
+  /// process; a TTL lets long-lived headless processes drop it between uses.
+  static const _installedAppsCacheTtl = Duration(minutes: 10);
 
   Future<List<Map<String, dynamic>>> getInstalledApps({bool forceRefresh = false}) async {
-    if (!forceRefresh && _appsLoaded && _installedAppsCache != null) {
+    final fresh = _installedAppsCachedAt != null &&
+        DateTime.now().difference(_installedAppsCachedAt!) <
+            _installedAppsCacheTtl;
+    if (!forceRefresh && fresh && _installedAppsCache != null) {
       return _installedAppsCache!;
     }
     try {
@@ -506,11 +512,19 @@ class NotificationManager {
       final apps =
           result.map((e) => Map<String, dynamic>.from(e as Map)).toList();
       _installedAppsCache = apps;
-      _appsLoaded = true;
+      _installedAppsCachedAt = DateTime.now();
       return apps;
     } catch (e) {
       return _installedAppsCache ?? [];
     }
+  }
+
+  /// Drop the cached installed-apps list. Called when the notification page
+  /// closes — the cache would otherwise stay in this singleton (and thus in
+  /// headless background processes) for the lifetime of the process.
+  void evictInstalledAppsCache() {
+    _installedAppsCache = null;
+    _installedAppsCachedAt = null;
   }
 
   Future<void> setEnabled(bool enabled) async {

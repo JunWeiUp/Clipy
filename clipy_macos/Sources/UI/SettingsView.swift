@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var currentHistoryCount: Int
     @State private var excludedApps: String
     @State private var historyEncryptionEnabled: Bool
+    @State private var historyImageOCRIndexing: Bool
     @State private var searchGlobalShortcutEnabled: Bool
     @State private var searchHistoryShortcut: ShortcutCombo?
     @State private var syncEnabled: Bool
@@ -39,6 +40,7 @@ struct SettingsView: View {
         _currentHistoryCount = State(initialValue: ClipboardManager.shared.totalHistoryCount)
         _excludedApps = State(initialValue: prefs.excludedApps.joined(separator: ", "))
         _historyEncryptionEnabled = State(initialValue: prefs.isHistoryEncryptionEnabled)
+        _historyImageOCRIndexing = State(initialValue: prefs.isHistoryImageOCRIndexingEnabled)
         _searchGlobalShortcutEnabled = State(initialValue: prefs.isSearchGlobalShortcutEnabled)
         _searchHistoryShortcut = State(initialValue: prefs.searchHistoryShortcut)
         _syncEnabled = State(initialValue: prefs.isSyncEnabled)
@@ -155,6 +157,14 @@ struct SettingsView: View {
                     }
                 }
                 Text(L10n.t(.encryptHistoryAtRestDescription))
+                    .font(AppFont.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle(L10n.t(.historyImageOCRIndexing), isOn: $historyImageOCRIndexing)
+                    .onChange(of: historyImageOCRIndexing) { newValue in
+                        PreferencesManager.shared.isHistoryImageOCRIndexingEnabled = newValue
+                    }
+                Text(L10n.t(.historyImageOCRIndexingDescription))
                     .font(AppFont.caption)
                     .foregroundStyle(.secondary)
 

@@ -70,6 +70,14 @@ enum SyncType {
     static let ping = "ping"
     static let pong = "pong"
     static let ack = "ack"
+
+    /// Chunked file transfer (device-list send, same no-auth rule as
+    /// `history.direct`). `file.meta` payload = encrypted JSON metadata,
+    /// `file.chunk` payload = encrypted `u32 BE index ‖ bytes` (msgId = fileId),
+    /// `file.ack` payload = encrypted JSON `{fileId, ok, error?}`.
+    static let fileMeta = "file.meta"
+    static let fileChunk = "file.chunk"
+    static let fileAck = "file.ack"
 }
 
 enum SyncCodec {

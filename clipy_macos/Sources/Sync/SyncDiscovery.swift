@@ -90,6 +90,7 @@ extension SyncManager {
         }
         _ = group.wait(timeout: .now() + 20)
         appLog("Subnet scan finished: \(stats.summary())")
+        pruneStaleDialTimestamps()
     }
 
     func peerSnapshot(_ id: String) -> DiscoveredPeer? {

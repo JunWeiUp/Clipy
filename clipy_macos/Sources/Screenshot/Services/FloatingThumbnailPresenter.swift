@@ -60,7 +60,9 @@ final class FloatingThumbnailPresenter {
         }
 
         let controller = FloatingThumbnailController(image: image)
-        controller.annotationData = annotationData
+        // `annotationData.rawImage` is a full-resolution capture (~30-50MB)
+        // that nothing on the thumbnail consumes; retaining it pinned hundreds
+        // of MB when stacking/auto-dismiss is off.
         controller.captureScreenRect = captureScreenRect
         controller.onDismiss = { [weak self] in
             guard let self = self else { return }
@@ -101,6 +103,18 @@ final class FloatingThumbnailPresenter {
         while controllers.count > Self.maxStackedThumbnails {
             let oldest = controllers.removeFirst()
             oldest.dismiss()
+        }
+    }
+
+    /// Hands freshly encoded PNG bytes (produced by the overlay's clipboard
+    /// copy) to the thumbnail that still holds the matching image in memory,
+    /// so its offload becomes a file write. Newest-first matching guards
+    /// against a slow encode of capture #1 landing on capture #2's thumbnail.
+    func provideEncodedPNG(_ data: Data?, for image: NSImage) {
+        guard let data else { return }
+        for controller in controllers.reversed() where controller.holdsImage(image) {
+            controller.provideEncodedPNG(data)
+            return
         }
     }
 

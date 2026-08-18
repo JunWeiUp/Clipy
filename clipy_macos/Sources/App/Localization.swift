@@ -207,6 +207,8 @@ enum L10nKey: String {
     case encryptHistoryAtRestDescription
     case historyEncryptionFailed
     case historyEncryptionInProgress
+    case historyImageOCRIndexing
+    case historyImageOCRIndexingDescription
     case syncPairingSecret
     case syncPairingSecretHint
     case syncPairingSecretDefaultWarning
@@ -304,6 +306,8 @@ enum L10nKey: String {
     case screenshotOCRLanguageEnglish
     case screenshotOCRLanguageChineseEnglish
     case screenshotOCRLanguageAuto
+    case fileReceivedTitle
+    case fileReceivedBody
 }
 
 struct L10n {
@@ -364,6 +368,8 @@ struct L10n {
             .showLogs: "显示日志...",
             .quit: "退出",
             .chooseFileToSend: "选择要发送到 %@ 的文件",
+            .fileReceivedTitle: "已接收文件",
+            .fileReceivedBody: "来自 %@：%@（已存入“下载/Clipy”）",
             .send: "发送",
             .sendFailed: "发送失败。目标设备可能离线或网络连接异常。",
             .snippetEditorTitle: "Clipy - 片段编辑器",
@@ -502,6 +508,8 @@ struct L10n {
             .encryptHistoryAtRest: "加密本地历史",
             .encryptHistoryAtRestDescription: "使用本机专用密钥 AES-GCM 加密外置的历史文本与媒体文件，密钥仅保存在本机。",
             .historyEncryptionFailed: "无法更新历史加密设置，请重试。",
+            .historyImageOCRIndexing: "历史图片文字识别（OCR 索引）",
+            .historyImageOCRIndexingDescription: "自动识别截图与图片中的文字，让历史搜索能搜到图片内容。首次识别会加载系统 Vision 模型并常驻约 100MB 内存；关闭可显著降低常驻内存，已索引的条目不受影响。",
             .historyEncryptionInProgress: "正在重新加密历史文件…",
             .syncPairingSecret: "配对密钥：",
             .syncPairingSecretHint: "在同一组设备上填写完全相同的密钥。留空则使用内置默认密钥，同网段任何一份本应用都能解密同步内容。",
@@ -649,6 +657,8 @@ struct L10n {
             .showLogs: "Show Logs...",
             .quit: "Quit",
             .chooseFileToSend: "Choose a file to send to %@",
+            .fileReceivedTitle: "File Received",
+            .fileReceivedBody: "From %@: %@ (saved to Downloads/Clipy)",
             .send: "Send",
             .sendFailed: "Send failed. The target device may be offline or the network connection may be unstable.",
             .snippetEditorTitle: "Clipy - Snippet Editor",
@@ -787,6 +797,8 @@ struct L10n {
             .encryptHistoryAtRest: "Encrypt Local History",
             .encryptHistoryAtRestDescription: "Encrypt externalized history text and media files with a device-local AES-GCM key stored on this device only.",
             .historyEncryptionFailed: "Could not update history encryption. Please try again.",
+            .historyImageOCRIndexing: "OCR Indexing for Image History",
+            .historyImageOCRIndexingDescription: "Recognize text in captured images so history search can find it. The first recognition loads the system Vision models (~100MB resident) that cannot be released; disabling it lowers the standing footprint. Already-indexed entries are unaffected.",
             .historyEncryptionInProgress: "Re-encrypting history files…",
             .syncPairingSecret: "Pairing secret:",
             .syncPairingSecretHint: "Enter the exact same secret on every device in this sync group. Leave it empty to use the built-in default key, which any copy of this app on your network can decrypt.",

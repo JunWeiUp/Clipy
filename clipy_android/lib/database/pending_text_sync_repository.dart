@@ -80,6 +80,13 @@ class PendingTextSyncRepository {
     return rows.map(_fromRow).toList();
   }
 
+  /// Cheap EXISTS probe for the flush fast path (legacy table is empty
+  /// post-migration).
+  Future<bool> hasAny() async {
+    final rows = await (await _db).rawQuery('SELECT 1 FROM $_table LIMIT 1');
+    return rows.isNotEmpty;
+  }
+
   /// Remove entries older than [maxAge] and trim the table to [maxRows].
   Future<void> cleanOld({
     Duration maxAge = const Duration(hours: 24),

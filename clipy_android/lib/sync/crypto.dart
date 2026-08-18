@@ -98,4 +98,36 @@ class SyncCrypto {
       return null;
     }
   }
+
+  /// Binary variant of [encryptText] for file chunks: wire form is the same
+  /// `base64(nonce12 ‖ ciphertext ‖ tag)` so it interops with the Swift side.
+  String? encryptBytes(List<int> bytes) {
+    try {
+      final k = key();
+      final rng = Random.secure();
+      final iv = enc.IV(
+          Uint8List.fromList(List<int>.generate(12, (_) => rng.nextInt(256))));
+      final encrypter = enc.Encrypter(enc.AES(k, mode: enc.AESMode.gcm));
+      final encrypted = encrypter.encryptBytes(bytes, iv: iv);
+      final combined = Uint8List.fromList([...iv.bytes, ...encrypted.bytes]);
+      return base64Encode(combined);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Uint8List? decryptToBytes(String base64String) {
+    try {
+      final k = key();
+      final data = base64Decode(base64String);
+      if (data.length <= 28) return null;
+      final iv = enc.IV(data.sublist(0, 12));
+      final encryptedBytes = data.sublist(12);
+      final encrypter = enc.Encrypter(enc.AES(k, mode: enc.AESMode.gcm));
+      return Uint8List.fromList(
+          encrypter.decryptBytes(enc.Encrypted(encryptedBytes), iv: iv));
+    } catch (_) {
+      return null;
+    }
+  }
 }

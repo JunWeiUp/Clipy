@@ -206,6 +206,14 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
     /// memory and the panel only ever draws a 240x160 thumbnail, so stacked
     /// thumbnails used to pin hundreds of MB for the lifetime of the stack.
     private var offloadedImageURL: URL?
+    /// PNG bytes handed over from the overlay's clipboard encode, so the
+    /// offload below is a file write instead of a full-image re-encode.
+    /// Invalidated whenever the displayed image is replaced.
+    private var encodedPngData: Data?
+    /// Delayed start of `offloadFullImage` — gives the clipboard encode's
+    /// completion (a few hundred ms) a chance to deliver `encodedPngData`
+    /// before a redundant encode begins.
+    private var offloadWorkItem: DispatchWorkItem?
     /// Small copy actually rendered by the panel.
     private var previewImage: NSImage
 
@@ -223,6 +231,7 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
         set {
             inMemoryImage = newValue
             offloadedImageURL = nil
+            encodedPngData = nil
             previewImage = Self.previewCopy(of: newValue)
         }
     }
@@ -230,8 +239,6 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
     private var corner: FloatingThumbnailCorner = .bottomRight
     /// History entry ID — used to match and update the thumbnail when the editor saves.
     var historyEntryID: String?
-    /// Editable raw image + annotations for opening the thumbnail back in the editor.
-    var annotationData: CaptureAnnotationData?
     /// Global screen rect where the capture was taken, so the "pin" action from
     /// this thumbnail lands on the original spot instead of jumping to the mouse.
     var captureScreenRect: NSRect?
@@ -271,32 +278,108 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
     }
 
     /// Downsamples for on-screen display. Sized at 2x the largest thumbnail the
-    /// preference allows so it still looks sharp on Retina.
+    /// preference allows so it still looks sharp on Retina. Draws the CGImage
+    /// straight into a smaller CGContext — the previous full-size PNG encode
+    /// round-trip pinned three more copies of a 4K capture at once.
     private static func previewCopy(of image: NSImage) -> NSImage {
         let maxEdge = 720
         guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              max(cg.width, cg.height) > maxEdge,
-              let data = ImageEncoder.encode(image),
-              let downsampled = ImageDownsampler.thumbnail(from: data, maxPixelSize: maxEdge) else {
+              max(cg.width, cg.height) > maxEdge else {
             return image
         }
-        return downsampled
+        let scale = min(
+            CGFloat(maxEdge) / CGFloat(cg.width),
+            CGFloat(maxEdge) / CGFloat(cg.height))
+        let width = max(1, Int((CGFloat(cg.width) * scale).rounded()))
+        let height = max(1, Int((CGFloat(cg.height) * scale).rounded()))
+        guard let space = cg.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(
+                data: nil,
+                width: width, height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else {
+            return image
+        }
+        ctx.interpolationQuality = .high
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let downsampled = ctx.makeImage() else { return image }
+        return NSImage(cgImage: downsampled, size: NSSize(width: downsampled.width, height: downsampled.height))
+    }
+
+    /// Whether this thumbnail still holds `image` in memory (identity check —
+    /// once offloaded to disk the encoded bytes are no longer useful to it).
+    func holdsImage(_ image: NSImage) -> Bool {
+        inMemoryImage === image
+    }
+
+    /// Receives PNG bytes encoded by the overlay's clipboard copy so the
+    /// offload skips its own encode. If the delayed offload has not started
+    /// yet this performs it immediately — writing existing bytes is free.
+    func provideEncodedPNG(_ data: Data) {
+        encodedPngData = data
+        guard inMemoryImage != nil else { return }
+        offloadFullImage()
     }
 
     /// Writes the full-resolution image to the scratch directory and releases it
     /// from memory. Encoding happens off the main thread.
     private func offloadFullImage() {
         guard let full = inMemoryImage else { return }
+        offloadWorkItem?.cancel()
+        offloadWorkItem = nil
         let url = TmpScratchDirectory.makeURL(filename: "thumb-\(UUID().uuidString).png")
-        DispatchQueue.global(qos: .utility).async {
-            guard let data = ImageEncoder.encode(full),
-                  (try? data.write(to: url, options: .atomic)) != nil else { return }
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.inMemoryImage === full else { return }
-                self.offloadedImageURL = url
-                self.inMemoryImage = nil
+        let preencoded = encodedPngData
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            autoreleasepool {
+                let written: Bool
+                if let preencoded {
+                    written = (try? preencoded.write(to: url, options: .atomic)) != nil
+                } else {
+                    written = autoreleasepool { () -> Bool in
+                        guard let data = ImageEncoder.encode(full) else { return false }
+                        return (try? data.write(to: url, options: .atomic)) != nil
+                    }
+                }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else {
+                        if written { try? FileManager.default.removeItem(at: url) }
+                        return
+                    }
+                    if written {
+                        if self.inMemoryImage === full {
+                            self.offloadedImageURL = url
+                            self.inMemoryImage = nil
+                        } else {
+                            // The image was replaced mid-offload; its own offload
+                            // owns the state now, drop this orphan file.
+                            try? FileManager.default.removeItem(at: url)
+                        }
+                    } else if self.inMemoryImage === full {
+                        // Offload failed: do not pin the full-resolution image
+                        // until dismiss — `image` falls back to the preview and
+                        // the capture is already in history and on the pasteboard.
+                        self.inMemoryImage = nil
+                        appLog("Screenshot: thumbnail offload failed; dropped in-memory image", level: .warning)
+                    }
+                    // The offload encode re-populated the encoder's CIContext
+                    // after the teardown-time reclaim; arm the second pass.
+                    MemoryFootprintReclaimer.scheduleDelayedReclaim()
+                }
             }
         }
+    }
+
+    /// Defers the offload slightly: the overlay-confirm path hands over the
+    /// clipboard encode's PNG bytes within a few hundred milliseconds, and a
+    /// write-only offload saves a full-image encode on the peak.
+    private func scheduleOffload() {
+        offloadWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.offloadFullImage() }
+        offloadWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: item)
     }
 
     // MARK: - Show
@@ -378,7 +461,7 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
         })
 
         scheduleAutoDismiss()
-        offloadFullImage()
+        scheduleOffload()
     }
 
     private func pauseAutoDismiss() {
@@ -399,6 +482,9 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
     func dismiss() {
         dismissTask?.cancel()
         dismissTask = nil
+        offloadWorkItem?.cancel()
+        offloadWorkItem = nil
+        encodedPngData = nil
         isInteractiveDismissActive = false
         isScrollDismissHostActive = false
         dismissDragStartFrame = nil
@@ -427,9 +513,11 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
     func showWindow() { window?.orderFront(nil) }
 
     /// Update the displayed image (e.g. after editor saves new annotations).
+    /// `annotationData` is intentionally NOT retained: its `rawImage` is a
+    /// full-resolution capture (~30-50MB) and nothing on the thumbnail reads
+    /// it — the editor opens with just the composited image.
     func updateImage(_ newImage: NSImage, annotationData: CaptureAnnotationData? = nil) {
         image = newImage
-        self.annotationData = annotationData
         thumbnailView?.updateImage(previewImage)
         offloadFullImage()
     }

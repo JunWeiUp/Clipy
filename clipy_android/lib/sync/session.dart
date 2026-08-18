@@ -423,6 +423,9 @@ extension SyncSessionMethods on SyncManager {
     // anything sent on it will never return. Clearing allows a reconnect to
     // legitimately redeliver still-pending items.
     _inFlightHashes.remove(peerId);
+    // Mid-transfer file chunks will never arrive on this socket again; drop
+    // the partial receive so the idle timer doesn't hold stale state.
+    _discardIncomingFilesFrom(peerId);
     // Persist any buffered fetch catch-up before the socket is gone (ACKs may
     // fail; store still runs).
     await _flushHistoryFetchCatchUp(peerId);

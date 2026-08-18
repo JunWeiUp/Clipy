@@ -14,7 +14,9 @@ final class SyncManager: NSObject {
     let syncQueue = DispatchQueue(label: "com.clipy.sync.v2")
     let scanQueue = DispatchQueue(label: "com.clipy.scan.v2", attributes: .concurrent)
     let dialDedupLock = NSLock()
-    var receiveScratch = Data(count: 65536)
+    /// Allocated on first recv — a 64KB buffer used to live here even when
+    /// sync was disabled entirely.
+    var receiveScratch = Data()
 
     static let maxFrameLength = 2 * 1024 * 1024
     static let maxHandshakeFrameLength = 64 * 1024
@@ -60,6 +62,16 @@ final class SyncManager: NSObject {
     var lastDialAt: [String: Date] = [:]
     let dialDedupTTL: TimeInterval = 4
 
+    /// A full /24 scan writes a dedup entry per dial (~254). They are only
+    /// meaningful for `dialDedupTTL` seconds, so drop the stale ones once the
+    /// scan finishes instead of keeping the map growing forever.
+    func pruneStaleDialTimestamps() {
+        let now = Date()
+        dialDedupLock.lock()
+        lastDialAt = lastDialAt.filter { now.timeIntervalSince($0.value) < 30 }
+        dialDedupLock.unlock()
+    }
+
     struct Session {
         let peerId: String
         let host: String
@@ -83,6 +95,28 @@ final class SyncManager: NSObject {
     var pingTimer: DispatchSourceTimer?
     var pathMonitor: NWPathMonitor?
     var lastPathStatus: NWPath.Status = .requiresConnection
+
+    // MARK: File transfer state (SyncFileTransfer.swift)
+    // incomingFiles / fileAckWaiters / retiredFDs are only touched on syncQueue.
+    struct IncomingFileState {
+        let peerId: String
+        let senderName: String
+        let fileId: String
+        let fileName: String
+        let fileSize: Int
+        let chunkSize: Int
+        let chunkCount: Int
+        let sha256: String
+        let partURL: URL
+        var received: Set<Int> = []
+        var idleWork: DispatchWorkItem?
+    }
+    var incomingFiles: [String: IncomingFileState] = [:]
+    var fileAckWaiters: [String: (Bool) -> Void] = [:]
+    /// fds closed by closeSession; guards file-chunk writers against writing
+    /// into a recycled descriptor. Cleared in adoptSession when a fd is reused.
+    var retiredFDs: Set<Int32> = []
+    let fileTransferQueue = DispatchQueue(label: "com.clipy.sync.filetransfer")
 
     // MARK: - Lifecycle
 
@@ -224,8 +258,8 @@ final class SyncManager: NSObject {
         guard let peer = availablePeers.first(where: { $0.displayName == targetName }) else { return }
         sendTextToPeer(content, hash: hash, peerId: peer.peerId)
     }
-    @discardableResult func sendFileToPeer(at url: URL, peerId: String) -> Bool { appLog("sendFileToPeer stubbed in sync v2", level: .warning); return false }
-    func sendFile(at url: URL, toDevice targetName: String) { appLog("sendFile stubbed in sync v2", level: .warning) }
+    // File transfer lives in SyncFileTransfer.swift:
+    // sendFileToPeer(at:peerId:completion:) / sendFile(at:toDevice:).
 
     func mapNotificationType(_ apiType: String) -> String? {
         switch apiType {
@@ -274,6 +308,12 @@ final class SyncManager: NSObject {
         case SyncType.notifClear:
             DispatchQueue.main.async { NotificationManager.shared.handleRemoteClearAll() }
         case SyncType.notifConfig: appLog("Ignored remote notification config", level: .warning)
+        case SyncType.fileMeta:
+            handleFileMeta(env, from: remotePeerId)
+        case SyncType.fileChunk:
+            handleFileChunk(env, from: remotePeerId)
+        case SyncType.fileAck:
+            handleFileAck(env, from: remotePeerId)
         case SyncType.hello, SyncType.welcome:
             if let name = env.name, let port = env.port { recordPeer(peerId: env.peerId, name: name, host: host, port: UInt16(port)) }
         default: break

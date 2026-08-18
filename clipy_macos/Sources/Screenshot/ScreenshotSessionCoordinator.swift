@@ -41,7 +41,21 @@ final class ScreenshotSessionCoordinator {
     /// Retains the OCR result window; released via its `onClose`.
     private var ocrResultController: OCRResultController?
 
-    private init() {}
+    private init() {
+        // NSScreen identity (ObjectIdentifier) changes when a display is
+        // unplugged/reconfigured or after sleep. Pooled controllers keyed by a
+        // dead screen would otherwise accumulate forever (a fullscreen panel +
+        // view tree each), so prune them on every configuration change.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.pruneStaleOverlayControllers()
+            }
+        }
+    }
 
     // MARK: - Public entry points
 
@@ -224,6 +238,32 @@ final class ScreenshotSessionCoordinator {
         return controller
     }
 
+    /// Drop pooled controllers whose screen no longer exists (unplug,
+    /// resolution change, sleep/wake re-creating NSScreen instances).
+    private func pruneStaleOverlayControllers() {
+        guard !isCapturing else { return }
+        let liveKeys = Set(NSScreen.screens.map { ObjectIdentifier($0) })
+        for (key, controller) in overlayControllerPool where !liveKeys.contains(key) {
+            controller.tearDown()
+            overlayControllerPool.removeValue(forKey: key)
+        }
+    }
+
+    /// Tear the whole warm overlay pool down while idle. Each pooled
+    /// controller keeps a fullscreen layer-backed panel + overlay view tree
+    /// whose backing store still holds the last captured frame (~33-70MB per
+    /// Retina screen); the pool only exists to warm the *next* capture, so
+    /// after a quiet period it is pure overhead. Called by
+    /// MemoryFootprintReclaimer on idle/delayed reclaims.
+    func releaseIdleOverlayPool() {
+        guard !isCapturing, !overlayControllerPool.isEmpty else { return }
+        for controller in overlayControllerPool.values {
+            controller.tearDown()
+        }
+        overlayControllerPool.removeAll()
+        appLog("Screenshot: idle overlay pool released", level: .info)
+    }
+
     /// Tear down the active session. Overlay windows are KEPT ALIVE (returned to
     /// idle click-through state) so the next capture reuses their NSPanel surface.
     private func tearDownOverlays(refocusPreviousApp: Bool) {
@@ -264,9 +304,18 @@ final class ScreenshotSessionCoordinator {
         // to run right here on the main thread, stalling the post-capture UI.
         let autoSave = PreferencesManager.shared.isScreenshotAutoSaveEnabled
         Task.detached(priority: .userInitiated) {
-            // PNG for paste/history compatibility (matches ScreenshotExport.exportPNG).
-            guard let pngData = ImageEncoder.encodePNG(image) ?? image.tiffRepresentation else {
+            // Cooperative-pool threads have no per-work-item autorelease drain;
+            // without this the encoder's intermediate bitmaps linger on the
+            // thread until it picks up unrelated work.
+            let encoded = autoreleasepool {
+                // PNG for paste/history compatibility (matches ScreenshotExport.exportPNG).
+                ImageEncoder.encodePNG(image) ?? image.tiffRepresentation
+            }
+            guard let pngData = encoded else {
                 appLog("Screenshot: failed to encode confirmed image", level: .warning)
+                // Even a failed flow touched the capture pipeline — still
+                // return its pages rather than stranding them.
+                MemoryFootprintReclaimer.scheduleDelayedReclaim()
                 return
             }
             await MainActor.run {
@@ -275,6 +324,10 @@ final class ScreenshotSessionCoordinator {
             if autoSave {
                 _ = ScreenshotSaveService.save(pngData: pngData)
             }
+            // This encode (plus the thumbnail offload) runs AFTER the
+            // reclaimAfterScreenshot at overlay teardown; schedule the second
+            // pass that actually returns those pages.
+            MemoryFootprintReclaimer.scheduleDelayedReclaim()
         }
     }
 }
@@ -302,6 +355,13 @@ extension ScreenshotSessionCoordinator: OverlayWindowControllerDelegate {
         // Right-bottom draggable thumbnail with copy/save/pin/edit actions
         // (matches macshot's post-capture feedback).
         FloatingThumbnailPresenter.shared.show(image: image, annotationData: annotationData, captureScreenRect: captureRect)
+    }
+
+    func overlayDidEncodePNG(_ controller: OverlayWindowController, image: NSImage, pngData: Data?) {
+        // The clipboard encode just produced the full-image PNG; hand it to the
+        // floating thumbnail so its offload is a plain file write instead of
+        // another full-image encode on top of the peak.
+        FloatingThumbnailPresenter.shared.provideEncodedPNG(pngData, for: image)
     }
 
     func overlayDidRequestPin(_ controller: OverlayWindowController,

@@ -151,7 +151,15 @@ extension SyncManager {
                 self.closeSession(peerId: peerId, scheduleReconnect: false)
             }
             if let client = self.acceptingClients.removeValue(forKey: fd) { client.source.cancel() }
+            // A recycled fd number may still sit in retiredFDs from its previous
+            // life; the new incarnation is live again.
+            retiredFDs.remove(fd)
             var session = Session(peerId: peerId, host: host, port: port, fd: fd, isClient: self.peerId < peerId)
+            // Chunked file transfer writes single frames up to ~700KB; make sure
+            // the kernel send buffer can absorb one whole frame so a blocking
+            // send() can't wedge syncQueue while the peer drains.
+            var sendBuffer = Int32(SyncManager.fileSendBufferSize)
+            setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sendBuffer, socklen_t(MemoryLayout.size(ofValue: sendBuffer)))
             let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: self.syncQueue)
             source.setEventHandler { [weak self] in self?.onSessionReadable(peerId: peerId) }
             session.readSource = source
@@ -176,6 +184,7 @@ extension SyncManager {
 
     func onSessionReadable(peerId: String) {
         guard var session = sessions[peerId] else { return }
+        if receiveScratch.isEmpty { receiveScratch = Data(count: 65536) }
         let count = receiveScratch.withUnsafeMutableBytes { raw -> Int in
             guard let base = raw.baseAddress else { return -1 }
             return Darwin.recv(session.fd, base, raw.count, 0)
@@ -208,8 +217,12 @@ extension SyncManager {
 
     func closeSession(peerId: String, scheduleReconnect: Bool, keepaliveDriven: Bool = false) {
         guard let session = sessions.removeValue(forKey: peerId) else { return }
-        session.readSource?.cancel(); Darwin.close(session.fd)
+        session.readSource?.cancel()
+        retiredFDs.insert(session.fd)
+        Darwin.close(session.fd)
         inFlightHashes.removeValue(forKey: peerId)
+        // Mid-transfer file chunks will never arrive on this socket again.
+        discardIncomingFiles(from: peerId)
         appLog("Session closed with \(peerId.prefix(8))")
         guard scheduleReconnect, !(keepaliveDriven && !session.isClient) else { return }
         self.scheduleReconnect(peerId: peerId)

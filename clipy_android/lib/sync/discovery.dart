@@ -141,6 +141,7 @@ extension SyncDiscoveryMethods on SyncManager {
       final hfStr = handshakeFail.entries.map((e) => '${e.key}=${e.value}').join(',');
       appLog('Subnet scan finished: attempted=$attempted connect_ok=$connectOkCount '
           'handshake_ok=${hsOk < 0 ? 0 : hsOk} | connect_fail{$cfStr} handshake_fail{$hfStr}');
+      _pruneStaleTimestampMaps();
     } finally {
       _discoveryRunning = false;
     }
