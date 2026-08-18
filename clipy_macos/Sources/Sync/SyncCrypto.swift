@@ -69,4 +69,32 @@ extension SyncManager {
             return nil
         }
     }
+
+    /// Binary variant of `encrypt(_:)` for file chunks. Wire form is the same
+    /// `base64(nonce12 ‖ ciphertext ‖ tag)` so it interops with the Dart side.
+    func encryptBytes(_ data: Data) -> String? {
+        do {
+            let iv = AES.GCM.Nonce()
+            let sealed = try AES.GCM.seal(data, using: encryptionKey, nonce: iv)
+            var combined = Data(iv)
+            combined.append(sealed.ciphertext)
+            combined.append(sealed.tag)
+            return combined.base64EncodedString()
+        } catch {
+            return nil
+        }
+    }
+
+    func decryptToBytes(_ base64: String) -> Data? {
+        guard let data = Data(base64Encoded: base64), data.count > 28 else { return nil }
+        do {
+            let nonce = try AES.GCM.Nonce(data: data.prefix(12))
+            let tag = data.suffix(16)
+            let ciphertext = data.dropFirst(12).dropLast(16)
+            let box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
+            return try AES.GCM.open(box, using: encryptionKey)
+        } catch {
+            return nil
+        }
+    }
 }

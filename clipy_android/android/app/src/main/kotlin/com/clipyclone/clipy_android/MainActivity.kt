@@ -113,6 +113,46 @@ class MainActivity: FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        maybeNudgeUiAttach(flutterEngine)
+    }
+
+    /**
+     * The Application-warmed engine runs the `headlessMain` entrypoint (data
+     * layer only, no widgets) to keep the background footprint small. When
+     * this Activity attaches to that cached engine, nudge Dart to start the
+     * UI via `ui.attach`. An Activity-created engine (sync off) already ran
+     * `main()` with runApp, so there is nothing to nudge.
+     */
+    private fun maybeNudgeUiAttach(flutterEngine: FlutterEngine) {
+        val cached = FlutterEngineCache.getInstance().get(ClipyApplication.ENGINE_ID) ?: return
+        if (flutterEngine !== cached) return
+        nudgeUiAttach(0)
+    }
+
+    // Retry until the Dart handler is registered — the entrypoint may still
+    // be a few hundred ms from its setMethodCallHandler when a cold Activity
+    // attaches right after process start.
+    private fun nudgeUiAttach(attempt: Int) {
+        val engine = FlutterEngineCache.getInstance().get(ClipyApplication.ENGINE_ID) ?: return
+        MethodChannel(engine.dartExecutor.binaryMessenger, ClipyApplication.SYNC_CONTROL_CHANNEL)
+            .invokeMethod("ui.attach", null, object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    Log.i("ClipyMain", "UI attached to headless engine (attempt=$attempt)")
+                }
+                override fun error(code: String, msg: String?, details: Any?) = retryUiAttach(attempt)
+                override fun notImplemented() = retryUiAttach(attempt)
+            })
+    }
+
+    private fun retryUiAttach(attempt: Int) {
+        if (attempt >= 20) {
+            Log.w("ClipyMain", "ui.attach not handled after ${attempt + 1} attempts; UI may stay blank")
+            return
+        }
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            nudgeUiAttach(attempt + 1)
+        }, 250L)
     }
 
     /**

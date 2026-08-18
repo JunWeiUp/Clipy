@@ -92,17 +92,31 @@ class SyncType {
   static const ping = 'ping';
   static const pong = 'pong';
   static const ack = 'ack';
+
+  /// Chunked file transfer (device-list send, same no-auth rule as
+  /// `history.direct`). `file.meta` payload = encrypted JSON metadata,
+  /// `file.chunk` payload = encrypted `u32 BE index ‖ bytes`,
+  /// `file.ack` payload = encrypted JSON `{fileId, ok, error?}`.
+  static const fileMeta = 'file.meta';
+  static const fileChunk = 'file.chunk';
+  static const fileAck = 'file.ack';
 }
 
 /// Max JSON body size (excluding 4-byte length prefix).
 const int syncMaxFrameLength = 2 * 1024 * 1024;
 
+/// Returns a compact `Uint8List`. Spreading into `[...]` produced a growable
+/// `List<int>` where every byte occupies an 8-byte VM slot — an 8x blowup on
+/// every in-flight frame, the pending queue and each pending_sync BLOB.
 List<int>? syncEncodeFrame(SyncEnvelope env) {
   try {
     final jsonBytes = utf8.encode(jsonEncode(env.toJson()));
     if (jsonBytes.length > syncMaxFrameLength) return null;
     final header = ByteData(4)..setUint32(0, jsonBytes.length, Endian.big);
-    return [...header.buffer.asUint8List(), ...jsonBytes];
+    final out = BytesBuilder(copy: false)
+      ..add(header.buffer.asUint8List())
+      ..add(jsonBytes);
+    return out.toBytes();
   } catch (_) {
     return null;
   }

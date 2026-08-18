@@ -41,7 +41,9 @@ class LogManager: ObservableObject {
     }
 
     @Published var logs: [LogEntry] = []
-    private let maxLogs = 500
+    // In-memory ring for the Log window only; the full history lives in the
+    // daily files under ~/Library/Logs/ClipyClone/.
+    private let maxLogs = 200
 
     /// Batch buffer: log lines land here first so hot paths (sync/file transfer)
     /// don't hit the main thread once per line.

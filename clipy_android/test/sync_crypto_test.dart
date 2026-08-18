@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -37,5 +38,31 @@ void main() {
 
   test('rejects a truncated payload', () {
     expect(crypto.decryptText(base64Encode(Uint8List(8))), isNull);
+  });
+
+  // Binary file-chunk path (file.transfer). Wire form must stay
+  // base64(nonce12 ‖ ciphertext ‖ tag) to match the Swift implementation.
+  test('round-trips binary chunk payload', () {
+    final header = ByteData(4)..setUint32(0, 42, Endian.big);
+    final chunk = Uint8List.fromList(List<int>.generate(70000, (i) => i & 0xFF));
+    final builder = BytesBuilder(copy: false)
+      ..add(header.buffer.asUint8List())
+      ..add(chunk);
+    final plain = builder.toBytes();
+    final enc = crypto.encryptBytes(plain);
+    expect(enc, isNotNull);
+    final raw = base64Decode(enc!);
+    expect(raw.length, 12 + plain.length + 16);
+    final dec = crypto.decryptToBytes(enc);
+    expect(dec, isNotNull);
+    expect(ByteData.sublistView(dec!).getUint32(0, Endian.big), 42);
+    expect(dec.sublist(4), chunk);
+  });
+
+  test('rejects a tampered binary chunk', () {
+    final enc = crypto.encryptBytes(Uint8List.fromList(List<int>.filled(1024, 7)))!;
+    final raw = base64Decode(enc);
+    raw[raw.length - 1] ^= 0xFF;
+    expect(crypto.decryptToBytes(base64Encode(raw)), isNull);
   });
 }

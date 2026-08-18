@@ -79,6 +79,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     _notifSubscription?.cancel();
     _collectedSub?.cancel();
     _syncedSub?.cancel();
+    // Free the process-wide installed-apps list (~300 entries); it is only
+    // needed while this page is open.
+    NotificationManager.instance.evictInstalledAppsCache();
     super.dispose();
   }
 

@@ -35,6 +35,9 @@ Do **not** change framing/crypto without bumping `v` and updating both ends plus
 | `notif.ack` | receiver → sender | Notification delivery ack |
 | `notif.config` | — | Reserved; receivers ignore |
 | `ping` / `pong` | both | Keepalive |
+| `file.meta` | sender → receiver | Chunked file transfer header. Encrypted payload = JSON `{fileId, name, size, chunkSize, chunks, sha256}`; envelope `hash` = file sha256 |
+| `file.chunk` | sender → receiver | Encrypted payload = `u32 BE chunk index ‖ raw bytes`; envelope `msgId` = fileId (deterministic, for routing). chunkSize = 512 KiB (frame stays < 2 MiB after base64) |
+| `file.ack` | receiver → sender | Encrypted payload = JSON `{fileId, ok, error?}`. `ok=false` errors: `tooLarge / ioError / hashMismatch` |
 
 API-layer aliases on Android (`notification/post`, …) map to `notif.*` before send.
 
@@ -52,7 +55,7 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
 
 - **Proactive dial vs scan**
   - Only a user **refresh / scan devices** action may dial arbitrary `/24` hosts (`reason=scan`).
-  - Device-list **Send Text / Send File** dials with `reason=direct` (no auth) and uses `history.direct` (text). File transfer remains a stub in v2.
+  - Device-list **Send Text / Send File** dials with `reason=direct` (no auth) and uses `history.direct` (text) / `file.*` (files).
   - All other outbound dials (`cache`, `reconnect`, `deliver`, `manual`, `syncTick`, startup) require the target `peerId` ∈ authorized set (clipboard ∪ notification). Unauthorized cache entries are not dialed. Reconnect may use `direct` when pending `history.direct` frames exist for that peer.
   - Inbound connections still accepted. Auth is **one-sided (sender)**: allow-lists gate outbound fanout / `history.fetch` responses / proactive dial; receivers accept inbound `history` / `history.direct` / notif without reciprocal authorization.
 - Endpoint cache key: `clipy.peerEndpoints.v2` (SharedPreferences / UserDefaults), TTL 24h.
@@ -68,6 +71,14 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
 - Authorization: **one-sided**. Outbound fanout / proactive dial / `history.fetch` responses use clipboard or notification allow-lists on the sending device. Receivers accept inbound history and notifications without requiring the sender on their allow-list. Device-list `history.direct` needs no allow-list on either side.
 
 ## Reliability
+
+### File transfer
+
+1. Interactive one-shot over the live session: sender waits/dials `direct` for a session (≤8s), streams the file in 512 KiB chunks (`file.meta` first, then `file.chunk`s), and waits for `file.ack`. **Nothing is enqueued into `pending_sync`** — a dropped session fails the transfer; the user retries.
+2. Each attempt uses a fresh `fileId`; chunks carry `msgId = fileId` so concurrent transfers from one peer stay routed.
+3. Receiver: append-only `.part` file next to the final destination (same volume → atomic rename), idle timeout **120s** (no chunk) discards state, size cap **512 MiB** (rejected via `file.ack tooLarge`), full-file sha256 verified before promote; sender aborts mid-stream when a reject ack lands.
+4. Delivery: Android saves into `<appStorage>/Clipy/` + `file_transfers` row (20-row trim also deletes managed files); macOS moves into `~/Downloads/Clipy/`, inserts a `.files` history entry (no clipboard write), posts a system notification.
+5. macOS chunk writes go through `syncQueue.sync` with a 4 MiB `SO_SNDBUF` and a retired-fd set — prevents a recycled descriptor write and keeps one-chunk blocking from deadlocking two Macs sending simultaneously.
 
 ### History
 
@@ -115,9 +126,9 @@ Entry: `ClipyApplication` → `PlatformChannels.registerAll` when sync is enable
 
 | Topic | Notes |
 |-------|--------|
-| File transfer | Stub on both ends |
+| File transfer retransmit | No resume/offset protocol; a dropped session restarts from scratch with a new fileId on retry |
 | Notif offline queue | Android still has `pending_notification_sync` (content JSON) in addition to encoded `pending_sync` |
-| Inbound auth | None for history/notif (one-sided). `history.fetch` response still gated by clipboard allow-list on the responding device |
+| Inbound auth | None for history/notif/files (one-sided). `history.fetch` response still gated by clipboard allow-list on the responding device |
 
 ## Code map
 
@@ -143,3 +154,4 @@ Entry: `ClipyApplication` → `PlatformChannels.registerAll` when sync is enable
 8. Connected idle: Android FGS `syncTick` spacing ≈ 90s (not a fixed 30s forever).
 9. Sync off + cold start without UI: no warm engine / no FGS; open UI still single engine (no double-bind :5566).
 10. Device-list **Send Text** without authorization: `history.direct`. Automatic clipboard/notif: authorize only on the **sending** device; receiving peer does not need to authorize the sender.
+11. Device-list **Send File** both directions (Mac ⇄ Android): sender waits for `file.ack`; receiver gets the file on disk (Mac: `~/Downloads/Clipy` + history entry + notification; Android: `Clipy/` + 已接收文件 page) without any authorization toggles.

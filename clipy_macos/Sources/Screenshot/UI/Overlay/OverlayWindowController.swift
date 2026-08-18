@@ -84,6 +84,13 @@ protocol OverlayWindowControllerDelegate: AnyObject {
     func overlayDidChangeWindowSnapState(_ controller: OverlayWindowController)
 }
 
+extension OverlayWindowControllerDelegate {
+    /// Follows `overlayDidConfirm` once the clipboard PNG encode finishes.
+    /// Default no-op keeps implementers that ignore encoded bytes (the editor's
+    /// add-capture handler) source-compatible.
+    func overlayDidEncodePNG(_ controller: OverlayWindowController, image: NSImage, pngData: Data?) {}
+}
+
 /// Manages one fullscreen overlay per screen.
 /// Does NOT subclass NSWindowController to avoid AppKit retain-cycle issues.
 @MainActor
@@ -619,8 +626,14 @@ extension OverlayWindowController: OverlayViewDelegate {
             finalImage = BeautifyRenderer.render(image: beautifyInput, config: beautifyCfg)
         }
 
-        // Copy button / Cmd+C always copies to clipboard
-        ImageEncoder.copyToClipboard(finalImage)
+        // Copy button / Cmd+C always copies to clipboard. The encoded PNG is
+        // forwarded to the delegate so downstream consumers (the floating
+        // thumbnail's offload) reuse the bytes instead of encoding the full
+        // image yet again.
+        ImageEncoder.copyToClipboard(finalImage) { [weak self] pngData in
+            guard let self else { return }
+            self.overlayDelegate?.overlayDidEncodePNG(self, image: finalImage, pngData: pngData)
+        }
 
         overlayDelegate?.overlayDidConfirm(self, capturedImage: finalImage, annotationData: annotationData)
     }

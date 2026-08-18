@@ -31,6 +31,11 @@ enum HistorySearchIndexBuilder {
         }
     }
 
+    /// Schedules OCR for an image entry. `updater` is invoked exactly once on
+    /// the main thread for every scheduled hash — with empty text when the
+    /// image is unreadable or OCR finds nothing — so the caller can always
+    /// clear its in-flight bookkeeping (empty-text callbacks previously never
+    /// fired, leaking the hash from the pending set forever).
     static func scheduleOCR(for entry: HistoryEntry, contentHash: String, updater: @escaping (String, String) -> Void) {
         guard case .image(let path) = entry.item else { return }
 
@@ -38,9 +43,15 @@ enum HistorySearchIndexBuilder {
             ocrSemaphore.wait()
             defer { ocrSemaphore.signal() }
 
-            guard let cgImage = ImageDownsampler.cgImage(at: path, maxPixelSize: ocrMaxPixelSize) else { return }
+            guard let cgImage = ImageDownsampler.cgImage(at: path, maxPixelSize: ocrMaxPixelSize) else {
+                DispatchQueue.main.async { updater(contentHash, "") }
+                return
+            }
             let text = ImageOCRService.recognizeSync(cgImage: cgImage)
-            guard let text, !text.isEmpty else { return }
+            guard let text, !text.isEmpty else {
+                DispatchQueue.main.async { updater(contentHash, "") }
+                return
+            }
             DispatchQueue.main.async {
                 updater(contentHash, truncate(text) ?? text)
             }

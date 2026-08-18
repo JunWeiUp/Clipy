@@ -104,6 +104,16 @@ class PendingSyncRepository {
     return rows.map((r) => r['hash'] as String).toSet();
   }
 
+  /// Cheap EXISTS probe for the flush fast path — avoids materializing up to
+  /// 500 BLOB frames on every syncTick just to discover the queue is empty.
+  Future<bool> hasPending(String peerId) async {
+    final rows = await (await _db).rawQuery(
+      'SELECT 1 FROM $_table WHERE peer_id = ? LIMIT 1',
+      [peerId],
+    );
+    return rows.isNotEmpty;
+  }
+
   Future<void> remove({required String peerId, required String hash}) async {
     await (await _db).delete(
       _table,

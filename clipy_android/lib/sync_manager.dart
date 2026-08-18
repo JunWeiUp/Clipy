@@ -12,17 +12,20 @@ import 'package:uuid/uuid.dart';
 
 import 'clipboard_manager.dart';
 import 'database/clipboard_repository.dart';
+import 'database/file_transfer_repository.dart';
 import 'database/notification_repository.dart';
 import 'database/pending_sync_repository.dart';
 import 'database/pending_text_sync_repository.dart';
 import 'log_manager.dart';
 import 'notification_manager.dart';
+import 'storage_paths.dart';
 import 'sync/crypto.dart';
 import 'sync/protocol.dart';
 
 export 'sync/protocol.dart' show SyncEnvelope, SyncType;
 
 part 'sync/discovery.dart';
+part 'sync/file_transfer.dart';
 part 'sync/session.dart';
 part 'sync/reliability.dart';
 
@@ -39,6 +42,8 @@ class FileProgress {
   final int totalBytes;
   final bool isCompleted;
   final bool isFailed;
+  /// True while this device is the sender (outbound transfer progress).
+  final bool isOutgoing;
 
   FileProgress({
     required this.fileId,
@@ -48,7 +53,43 @@ class FileProgress {
     required this.totalBytes,
     this.isCompleted = false,
     this.isFailed = false,
+    this.isOutgoing = false,
   });
+}
+
+/// Inbound chunked-file transfer state (see sync/file_transfer.dart).
+class _IncomingFileTransfer {
+  final String peerId;
+  final String senderName;
+  final String fileId;
+  final String fileName;
+  final int fileSize;
+  final int chunkSize;
+  final int chunkCount;
+  final String sha256Hex;
+  final File partFile;
+  final Set<int> received = {};
+  Timer? idleTimer;
+
+  _IncomingFileTransfer({
+    required this.peerId,
+    required this.senderName,
+    required this.fileId,
+    required this.fileName,
+    required this.fileSize,
+    required this.chunkSize,
+    required this.chunkCount,
+    required this.sha256Hex,
+    required this.partFile,
+  });
+}
+
+class _DigestCollector implements Sink<Digest> {
+  Digest? digest;
+  @override
+  void add(Digest data) => digest = data;
+  @override
+  void close() {}
 }
 
 class DiscoveredPeer {
@@ -106,6 +147,7 @@ class _HistoryFetchCatchUp {
   final List<({String text, String hash})> items = [];
   Timer? debounce;
   Timer? maxWait;
+  int totalChars = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +176,16 @@ class SyncManager with WidgetsBindingObserver {
   static const Duration _minReconnectInterval = Duration(seconds: 2);
   static const int _syncTickBusyMs = 30000;
   static const int _syncTickIdleMs = 90000;
+
+  // File transfer (see sync/file_transfer.dart).
+  static const int fileChunkSize = 512 * 1024;
+  static const int fileMaxBytes = 512 * 1024 * 1024;
+  static const Duration _fileIncomingIdleTimeout = Duration(minutes: 2);
+  final Map<String, _IncomingFileTransfer> _incomingFiles = {};
+  final Map<String, Completer<bool>> _fileAckWaiters = {};
+  /// Cached at init so file.meta handlers can resolve the receive directory
+  /// synchronously (StoragePaths goes through a MethodChannel).
+  String? _receiveDirPath;
 
   final Map<String, DiscoveredPeer> _discoveredPeers = {};
   final _devicesChangedController = StreamController<List<String>>.broadcast();
@@ -193,6 +245,19 @@ class SyncManager with WidgetsBindingObserver {
   List<String> get authorizedPeerIds =>
       {...clipboardSyncPeerIds, ...notificationSyncPeerIds}.toList()..sort();
 
+  /// A full /24 scan writes a dial-dedup entry per host (~254 keys). They are
+  /// only meaningful for seconds; drop the stale ones after each scan instead
+  /// of letting the per-'ip:port' timestamp maps grow forever.
+  void _pruneStaleTimestampMaps() {
+    final now = DateTime.now();
+    _lastDialAt.removeWhere(
+        (_, t) => now.difference(t) > const Duration(minutes: 1));
+    _lastReconnectAttempt.removeWhere(
+        (_, t) => now.difference(t) > const Duration(minutes: 1));
+    _lastHistoryFetchResponse.removeWhere(
+        (_, t) => now.difference(t) > const Duration(minutes: 5));
+  }
+
   List<DiscoveredPeer> get availablePeers {
     final list = _discoveredPeers.values.toList()
       ..sort((a, b) =>
@@ -226,6 +291,7 @@ class SyncManager with WidgetsBindingObserver {
     displayName = prefs.getString('deviceName') ??
         (Platform.isAndroid ? 'Android' : 'Device');
     pairingSecret = prefs.getString(_pairingSecretKey) ?? '';
+    _receiveDirPath = (await StoragePaths.appStorageDirectory()).path;
     await _migrateAuthorizedPeerIds(prefs);
     await _migrateDualSyncAuth(prefs);
     clipboardSyncPeerIds =
@@ -626,6 +692,15 @@ class SyncManager with WidgetsBindingObserver {
       case SyncType.historyFetch:
         unawaited(_respondToHistoryFetch(from));
         break;
+      case SyncType.fileMeta:
+        _handleFileMetaFrame(env, from: from);
+        break;
+      case SyncType.fileChunk:
+        _handleFileChunkFrame(env, from: from);
+        break;
+      case SyncType.fileAck:
+        _handleFileAckFrame(env, from: from);
+        break;
       case SyncType.hello:
       case SyncType.welcome:
         if (env.name != null && env.port != null) {
@@ -650,12 +725,21 @@ class SyncManager with WidgetsBindingObserver {
     });
   }
 
+  /// Hard char cap for one catch-up window. The peer may stream up to 200
+  /// frames within the 8s window; without a cap the batch (plus the copies
+  /// handleRemoteSyncBatch makes) grows without bound. Over-cap frames are
+  /// dropped WITHOUT acking, so the sender's pending queue re-delivers them.
+  static const _historyFetchCatchUpMaxChars = 8 * 1024 * 1024;
+
   /// Returns true when the frame was buffered for catch-up (caller must not
   /// also run the live single-item path).
   bool _bufferHistoryFetchCatchUp(String peerId, String text, String hash) {
     final buf = _historyFetchCatchUp[peerId];
     if (buf == null) return false;
-    buf.items.add((text: text, hash: hash));
+    if (buf.totalChars < _historyFetchCatchUpMaxChars) {
+      buf.items.add((text: text, hash: hash));
+      buf.totalChars += text.length;
+    }
     buf.debounce?.cancel();
     buf.debounce = Timer(_historyFetchCatchUpDebounce, () {
       unawaited(_flushHistoryFetchCatchUp(peerId));
@@ -708,6 +792,7 @@ class SyncManager with WidgetsBindingObserver {
     appLog(
         'sync.ack history.fetch from ${remotePeerId.substring(0, remotePeerId.length.clamp(0, 8))}: pushing ${recent.length} text entries');
     // Oldest first so the peer's list ends with the newest on top after ingest.
+    var batchCount = 0;
     for (final entry in recent.reversed) {
       final payload = _encrypt(entry.text);
       if (payload == null) continue;
@@ -722,6 +807,13 @@ class SyncManager with WidgetsBindingObserver {
       if (data == null) continue;
       try {
         session.socket.add(data);
+        // Drain as we go: queueing all 200 encoded frames before one flush
+        // used to spike memory by the entire response size.
+        if (++batchCount % 25 == 0) {
+          try {
+            await session.socket.flush();
+          } catch (_) {}
+        }
       } catch (e) {
         appLog('history.fetch push failed: $e', level: 'warning');
         return;

@@ -26,6 +26,7 @@ class PreferencesManager {
     private let appLanguageKey = "appLanguage"
     private let launchAtLoginKey = "launchAtLogin"
     private let historyEncryptionEnabledKey = "historyEncryptionEnabled"
+    private let historyImageOCRIndexingKey = "historyImageOCRIndexing"
     private let searchGlobalShortcutEnabledKey = "searchGlobalShortcutEnabled"
     private let searchHistoryShortcutKey = "searchHistoryShortcut"
     private let screenshotShortcutEnabledKey = "screenshotShortcutEnabled"
@@ -318,6 +319,18 @@ class PreferencesManager {
     var isHistoryEncryptionEnabled: Bool {
         get { defaults.bool(forKey: historyEncryptionEnabledKey) }
         set { defaults.set(newValue, forKey: historyEncryptionEnabledKey) }
+    }
+
+    /// Whether image history entries are OCR-indexed for search. Defaults ON;
+    /// the first recognition loads Vision's models (~100MB resident for the
+    /// process lifetime), which is the single largest component of the
+    /// post-screenshot memory floor.
+    var isHistoryImageOCRIndexingEnabled: Bool {
+        get {
+            if defaults.object(forKey: historyImageOCRIndexingKey) == nil { return true }
+            return defaults.bool(forKey: historyImageOCRIndexingKey)
+        }
+        set { defaults.set(newValue, forKey: historyImageOCRIndexingKey) }
     }
 
     var isSearchGlobalShortcutEnabled: Bool {

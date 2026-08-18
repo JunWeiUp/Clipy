@@ -313,12 +313,21 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   }
 
   /// Fast path: MethodChannel (may hang headless). Fallback: prefs for FGS drain.
+  ///
+  /// The prefs fallback is size-gated: SharedPreferences is kept fully in
+  /// memory on BOTH sides (Kotlin's map + the Dart plugin cache), so a huge
+  /// clip would be pinned 2-3x until the next FGS drain. Large texts skip the
+  /// fallback — they stay in history, just without a headless clipboard write.
+  static const _headlessClipboardPrefsMaxChars = 64 * 1024;
+
   Future<void> _writeSystemClipboard(String text) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_headlessClipboardKey, text);
-    } catch (e) {
-      appLog('headless clipboard prefs write failed: $e', level: 'warning');
+    if (text.length <= _headlessClipboardPrefsMaxChars) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_headlessClipboardKey, text);
+      } catch (e) {
+        appLog('headless clipboard prefs write failed: $e', level: 'warning');
+      }
     }
 
     try {

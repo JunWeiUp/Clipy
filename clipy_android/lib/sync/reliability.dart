@@ -148,6 +148,17 @@ extension SyncReliabilityMethods on SyncManager {
     final allowClipboard = clipboardSyncPeerIds.contains(peerId);
     final allowNotification = notificationSyncPeerIds.contains(peerId);
 
+    // Fast path: this runs on every syncTick (30-90s). When nothing is
+    // pending anywhere, skip materializing up to 500 BLOB frames + the
+    // legacy queue + 500 notification rows just to find them all empty.
+    if (!await PendingSyncRepository.instance.hasPending(peerId) &&
+        (!allowClipboard ||
+            !await PendingTextSyncRepository.instance.hasAny()) &&
+        (!allowNotification ||
+            !await NotificationRepository.instance.hasPendingSync())) {
+      return;
+    }
+
     final due = await PendingSyncRepository.instance.fetchDue(
       peerId: peerId,
       ttl: SyncManager._pendingTtl,
@@ -355,8 +366,6 @@ extension SyncReliabilityMethods on SyncManager {
     return delivered;
   }
 
-  Future<bool> sendFileToPeer(File file, {required String peerId}) async {
-    appLog('sendFileToPeer stubbed in sync v2', level: 'warning');
-    return false;
-  }
+  Future<bool> sendFileToPeer(File file, {required String peerId}) =>
+      sendFileToPeerImpl(file, peerId: peerId);
 }

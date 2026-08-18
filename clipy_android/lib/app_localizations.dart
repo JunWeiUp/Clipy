@@ -141,6 +141,7 @@ class AppStrings {
   String get receivedFiles => _t('已接收文件', 'Received Files');
   String get viewLogs => _t('查看日志', 'View Logs');
   String receiving(String fileName) => _t('正在接收：$fileName', 'Receiving: $fileName');
+  String sending(String fileName) => _t('正在发送：$fileName', 'Sending: $fileName');
   String get deviceNameForSync => _t('设备名称（用于同步）', 'Device Name (for Sync)');
   String get enterDeviceName => _t('输入设备名称', 'Enter device name');
   String get deviceNameUpdated => _t('设备名称已更新，同步已重启', 'Device name updated and sync restarted');

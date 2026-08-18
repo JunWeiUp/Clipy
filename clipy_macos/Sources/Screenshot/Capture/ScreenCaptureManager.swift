@@ -35,11 +35,21 @@ class ScreenCaptureManager {
         if let cached = cachedContent, Date().timeIntervalSince(cachedContentTime) < cacheTTL {
             return cached
         }
+        // Drop the stale snapshot: it holds the full window/display metadata
+        // of the last capture (can reach MBs) and used to stay pinned forever.
+        cachedContent = nil
         let content = try await SCShareableContent.excludingDesktopWindows(
             true, onScreenWindowsOnly: true)
         cachedContent = content
         cachedContentTime = Date()
         return content
+    }
+
+    /// Release the cached shareable-content snapshot once the capture flow is
+    /// done; the 2s TTL only guards reuse, it never dropped the reference.
+    static func releaseCachedContent() {
+        cachedContent = nil
+        cachedContentTime = .distantPast
     }
 
     /// Pre-warm the shareable content cache so the next capture is instant.
