@@ -36,7 +36,7 @@ Do **not** change framing/crypto without bumping `v` and updating both ends plus
 | `notif.config` | — | Reserved; receivers ignore |
 | `ping` / `pong` | both | Keepalive |
 | `file.meta` | sender → receiver | Chunked file transfer header. Encrypted payload = JSON `{fileId, name, size, chunkSize, chunks, sha256}`; envelope `hash` = file sha256 |
-| `file.chunk` | sender → receiver | Encrypted payload = `u32 BE chunk index ‖ raw bytes`; envelope `msgId` = fileId (deterministic, for routing). chunkSize = 512 KiB (frame stays < 2 MiB after base64) |
+| `file.chunk` | sender → receiver | Encrypted payload = `u32 BE chunk index ‖ raw bytes`; envelope `msgId` = fileId (deterministic, for routing). chunkSize is sender-chosen (1 MiB recommended; receivers accept any size that keeps the frame < 2 MiB) |
 | `file.ack` | receiver → sender | Encrypted payload = JSON `{fileId, ok, error?}`. `ok=false` errors: `tooLarge / ioError / hashMismatch` |
 
 API-layer aliases on Android (`notification/post`, …) map to `notif.*` before send.
@@ -78,7 +78,8 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
 2. Each attempt uses a fresh `fileId`; chunks carry `msgId = fileId` so concurrent transfers from one peer stay routed.
 3. Receiver: append-only `.part` file next to the final destination (same volume → atomic rename), idle timeout **120s** (no chunk) discards state, size cap **512 MiB** (rejected via `file.ack tooLarge`), full-file sha256 verified before promote; sender aborts mid-stream when a reject ack lands.
 4. Delivery: Android saves into `<appStorage>/Clipy/` + `file_transfers` row (20-row trim also deletes managed files); macOS moves into `~/Downloads/Clipy/`, inserts a `.files` history entry (no clipboard write), posts a system notification.
-5. macOS chunk writes go through `syncQueue.sync` with a 4 MiB `SO_SNDBUF` and a retired-fd set — prevents a recycled descriptor write and keeps one-chunk blocking from deadlocking two Macs sending simultaneously.
+5. macOS chunk writes are pipelined through `syncQueue.async` (bounded: 8 frames in flight), guarded by a retired-fd set; session sockets carry 4 MiB `SO_SNDBUF`/`SO_RCVBUF` and the read loop drains until EAGAIN.
+6. Throughput notes: pure-Dart AES-GCM measured ~2 MB/s (desktop) / <1 MB/s (phone) — Android routes file-chunk crypto through the native `sync_crypto` MethodChannel (javax.crypto, ARMv8 crypto extensions) with a pure-Dart fallback; Mac uses CryptoKit. Both senders pipeline encrypt + network I/O (Android: bounded 4 MiB in-flight instead of per-chunk flush). Wire cost is base64 (+33%); text/history frames are unaffected.
 
 ### History
 

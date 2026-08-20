@@ -287,6 +287,9 @@ extension SyncSessionMethods on SyncManager {
 
     final name = env.name ?? env.peerId;
     final peerPort = env.port ?? port;
+    // 4 MiB send buffer: a whole 1.4 MiB chunk frame always fits, so a burst
+    // of pipelined chunks never stalls behind a small kernel buffer.
+    _bumpSocketBuffers(socket);
     final session = _Session(
       peerId: env.peerId,
       host: host,
@@ -316,6 +319,20 @@ extension SyncSessionMethods on SyncManager {
     }
     appLog(
         'Session up with $name (${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}) @ $host:$peerPort');
+  }
+
+  /// Best-effort SO_SNDBUF/SO_RCVBUF bump (Linux: SOL_SOCKET=1, SNDBUF=7,
+  /// RCVBUF=8). Dart sets a small default; file transfers want room for a few
+  /// pipelined chunk frames.
+  void _bumpSocketBuffers(Socket socket) {
+    try {
+      final snd = ByteData(4)..setInt32(0, 4 * 1024 * 1024, Endian.little);
+      socket.setRawOption(RawSocketOption(1, 7, snd.buffer.asUint8List()));
+      final rcv = ByteData(4)..setInt32(0, 4 * 1024 * 1024, Endian.little);
+      socket.setRawOption(RawSocketOption(1, 8, rcv.buffer.asUint8List()));
+    } catch (_) {
+      // Non-Linux or unsupported — kernel defaults still work.
+    }
   }
 
   Future<void> _requestHistoryFromPeer(String id) async {

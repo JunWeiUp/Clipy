@@ -15,13 +15,14 @@ void main(List<String> args) async {
   final path = args.length > 1 ? args[1] : '/tmp/e2e_send_test.bin';
   final file = File(path);
   await file.writeAsBytes(
-      List<int>.generate(800 * 1024 + 137, (i) => i & 0xFF),
+      List<int>.generate(64 * 1024 * 1024 + 137, (i) => i & 0xFF),
       flush: true);
   final bytes = await file.readAsBytes();
   final sha = sha256.convert(bytes).toString();
 
+  final stopwatch = Stopwatch()..start();
   final peerId = const Uuid().v4();
-  final chunkSize = 512 * 1024;
+  final chunkSize = 1024 * 1024;
   final chunkCount = (bytes.length + chunkSize - 1) ~/ chunkSize;
   final fileId = const Uuid().v4();
   final crypto = SyncCrypto()..pairingSecret = '';
@@ -95,6 +96,11 @@ void main(List<String> args) async {
     final plain = BytesBuilder(copy: false)
       ..add(header.buffer.asUint8List())
       ..add(bytes.sublist(start, end));
+    final payload = await crypto.encryptBytes(plain.toBytes());
+    if (payload == null) {
+      print('encrypt failed');
+      exit(3);
+    }
     sendEnvelope(SyncEnvelope(
       v: SyncEnvelope.version,
       type: SyncType.fileChunk,
@@ -102,13 +108,16 @@ void main(List<String> args) async {
       peerId: peerId,
       name: 'E2E-Test',
       ts: DateTime.now().millisecondsSinceEpoch / 1000.0,
-      payload: crypto.encryptBytes(plain.toBytes()),
+      payload: payload,
     ));
+    await socket.flush();
   }
   print('sent meta + $chunkCount chunks (${bytes.length} bytes)');
 
   final ack = await ackCompleter.future.timeout(const Duration(seconds: 20));
   print('ACK: $ack');
+  print('elapsed: ${stopwatch.elapsedMilliseconds} ms for ${bytes.length} bytes '
+      '(${(bytes.length / 1024 / 1024 / (stopwatch.elapsedMilliseconds / 1000)).toStringAsFixed(1)} MB/s)');
   await socket.close();
   exit(ack['ok'] == true ? 0 : 2);
 }

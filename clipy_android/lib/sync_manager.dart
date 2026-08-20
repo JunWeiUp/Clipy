@@ -68,6 +68,11 @@ class _IncomingFileTransfer {
   final int chunkCount;
   final String sha256Hex;
   final File partFile;
+  /// Append-mode handle opened at file.meta; closed on complete/discard.
+  RandomAccessFile? raf;
+  /// Serializes chunk processing so the async native decrypt can't reorder
+  /// writes (TCP order must survive into the part file).
+  Future<void> queue = Future.value();
   final Set<int> received = {};
   Timer? idleTimer;
 
@@ -160,6 +165,8 @@ class SyncManager with WidgetsBindingObserver {
 
   static const MethodChannel _fgsChannel =
       MethodChannel('com.clipyclone.clipy_android/sync_service');
+  static const MethodChannel _syncCryptoChannel =
+      MethodChannel('com.clipyclone.clipy_android/sync_crypto');
 
   static const String _pairingSecretKey = 'clipy.sync.pairingSecret';
   static const String _endpointCacheKey = 'clipy.peerEndpoints.v2';
@@ -178,7 +185,9 @@ class SyncManager with WidgetsBindingObserver {
   static const int _syncTickIdleMs = 90000;
 
   // File transfer (see sync/file_transfer.dart).
-  static const int fileChunkSize = 512 * 1024;
+  /// 1 MiB plaintext ≈ 1.37 MiB base64 frame — well under the 2 MiB cap and
+  /// half the per-frame overhead of the old 512 KiB size.
+  static const int fileChunkSize = 1024 * 1024;
   static const int fileMaxBytes = 512 * 1024 * 1024;
   static const Duration _fileIncomingIdleTimeout = Duration(minutes: 2);
   final Map<String, _IncomingFileTransfer> _incomingFiles = {};
@@ -277,6 +286,7 @@ class SyncManager with WidgetsBindingObserver {
     isEnabled = prefs.getBool('syncEnabled') ?? false;
     port = prefs.getInt('syncPort') ?? 5566;
     peerId = prefs.getString('peerId') ?? '';
+    _installNativeCryptoHook();
     // Regenerate if empty OR not a canonical UUID. Protocol-v1 stored peerId as
     // "Android-<8hex>" / "iOS-<8hex>"; those legacy values revive verbatim and
     // corrupt session identity (adoptSession dedup, role arbitration, auth lists).
@@ -303,6 +313,30 @@ class SyncManager with WidgetsBindingObserver {
     if (isEnabled) {
       await start();
     }
+  }
+
+  /// Route file-chunk AES-GCM through native javax.crypto (ARMv8 crypto
+  /// extensions). Pure-Dart pointycastle manages only tens of MB/s on a
+  /// phone and is the transfer bottleneck. Any failure (non-Android, tests,
+  /// native error) falls back to the pure-Dart path inside SyncCrypto.
+  void _installNativeCryptoHook() {
+    if (!Platform.isAndroid) return;
+    var unavailable = false;
+    SyncCrypto.nativeAesGcm = (op, key, nonce, plain, sealed) async {
+      if (unavailable) return null;
+      try {
+        final out = await _syncCryptoChannel.invokeListMethod<int>(op, {
+          'key': key,
+          'nonce': nonce,
+          if (plain != null) 'plain': plain,
+          if (sealed != null) 'sealed': sealed,
+        });
+        return out == null ? null : Uint8List.fromList(out);
+      } catch (_) {
+        unavailable = true;
+        return null;
+      }
+    };
   }
 
   /// Canonical UUID v4 format: 8-4-4-4-12 hex digits with hyphens.
