@@ -8,6 +8,9 @@ import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import io.flutter.embedding.engine.FlutterEngine
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
@@ -32,6 +35,7 @@ object PlatformChannels {
     const val CLIPBOARD = ClipyApplication.CLIPBOARD_CHANNEL
     const val NOTIFICATIONS = ClipyApplication.NOTIFICATIONS_CHANNEL
     const val SYNC_SERVICE = ClipyApplication.SYNC_SERVICE_CHANNEL
+    const val SYNC_CRYPTO = ClipyApplication.SYNC_CRYPTO_CHANNEL
 
     @Volatile
     private var notificationsChannel: MethodChannel? = null
@@ -43,7 +47,8 @@ object PlatformChannels {
         registerClipboard(app, engine)
         registerNotifications(app, engine)
         registerSyncService(app, engine)
-        Log.i(TAG, "registerAll: storage/clipboard/notifications/sync_service")
+        registerSyncCrypto(engine)
+        Log.i(TAG, "registerAll: storage/clipboard/notifications/sync_service/sync_crypto")
     }
 
     /**
@@ -284,6 +289,55 @@ object PlatformChannels {
                     "startForegroundSync" -> result.success(app.startForegroundSyncService())
                     "stopForegroundSync" -> result.success(app.stopForegroundSyncService())
                     else -> result.notImplemented()
+                }
+            }
+    }
+
+    /**
+     * Hardware-accelerated AES-GCM for file chunks. Pure-Dart pointycastle
+     * manages only tens of MB/s on a phone and is the transfer bottleneck;
+     * javax.crypto uses ARMv8 crypto extensions. Wire format stays
+     * nonce12 ‖ ciphertext ‖ tag16 — byte-identical to the Dart fallback and
+     * to the macOS CryptoKit implementation.
+     */
+    private fun registerSyncCrypto(engine: FlutterEngine) {
+        MethodChannel(engine.dartExecutor.binaryMessenger, SYNC_CRYPTO)
+            .setMethodCallHandler { call, result ->
+                val key = call.argument<ByteArray>("key")
+                val nonce = call.argument<ByteArray>("nonce")
+                if (key == null || nonce == null || key.size != 32 || nonce.size != 12) {
+                    result.error("BAD_ARGS", null, null)
+                    return@setMethodCallHandler
+                }
+                try {
+                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                    when (call.method) {
+                        "seal" -> {
+                            val plain = call.argument<ByteArray>("plain")
+                                ?: return@setMethodCallHandler result.error("BAD_ARGS", null, null)
+                            cipher.init(
+                                Cipher.ENCRYPT_MODE,
+                                SecretKeySpec(key, "AES"),
+                                GCMParameterSpec(128, nonce),
+                            )
+                            val sealed = cipher.doFinal(plain)
+                            result.success(nonce + sealed)
+                        }
+                        "open" -> {
+                            val sealed = call.argument<ByteArray>("sealed")
+                                ?: return@setMethodCallHandler result.error("BAD_ARGS", null, null)
+                            cipher.init(
+                                Cipher.DECRYPT_MODE,
+                                SecretKeySpec(key, "AES"),
+                                GCMParameterSpec(128, nonce),
+                            )
+                            result.success(cipher.doFinal(sealed))
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (e: Exception) {
+                    // AEADBadTagException lands here (tampered/wrong key).
+                    result.error("CRYPTO_FAILED", e.message, null)
                 }
             }
     }

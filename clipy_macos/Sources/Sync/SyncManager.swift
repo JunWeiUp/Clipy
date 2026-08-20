@@ -108,6 +108,9 @@ final class SyncManager: NSObject {
         let chunkCount: Int
         let sha256: String
         let partURL: URL
+        /// Persistent append handle opened at file.meta; closed by
+        /// completeChunkedFile / discardIncomingFile.
+        var handle: FileHandle?
         var received: Set<Int> = []
         var idleWork: DispatchWorkItem?
     }

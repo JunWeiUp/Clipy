@@ -89,6 +89,11 @@ extension SyncFileTransferMethods on SyncManager {
       try {
         final header = ByteData(4);
         var sentChunks = 0;
+        // Bounded in-flight bytes: letting Dart's socket buffer swallow the
+        // whole file would balloon memory, but flushing per chunk serializes
+        // encrypt and network I/O. 4 MiB keeps both pipelines busy.
+        var outstanding = 0;
+        const outstandingLimit = 4 * 1024 * 1024;
         for (var index = 0; index < chunkCount; index++) {
           // The receiver may reject (oversize / disk full) mid-stream; stop
           // burning bandwidth once it has answered.
@@ -99,7 +104,7 @@ extension SyncFileTransferMethods on SyncManager {
           final plain = BytesBuilder(copy: false)
             ..add(header.buffer.asUint8List())
             ..add(data);
-          final payload = _crypto.encryptBytes(plain.toBytes());
+          final payload = await _crypto.encryptBytes(plain.toBytes());
           if (payload == null) {
             _fileAckWaiters.remove(fileId);
             emit(0, failed: true);
@@ -122,11 +127,15 @@ extension SyncFileTransferMethods on SyncManager {
             return false;
           }
           session.socket.add(frame);
-          // Await backpressure instead of buffering the whole file in memory.
-          await session.socket.flush();
+          outstanding += frame.length;
+          if (outstanding >= outstandingLimit) {
+            await session.socket.flush();
+            outstanding = 0;
+          }
           sentChunks++;
           emit((sentChunks * chunkSize).clamp(0, length) / length);
         }
+        await session.socket.flush();
       } finally {
         await raf.close();
       }
@@ -244,6 +253,16 @@ extension SyncFileTransferMethods on SyncManager {
     // Register state synchronously — meta and the first chunk usually arrive
     // back-to-back, and an async gap here would drop the chunk.
     _discardIncomingFile(fileId);
+    final partFile = File('${receiveDir.path}/.incoming-$fileId.part');
+    RandomAccessFile? raf;
+    try {
+      partFile.writeAsBytesSync([], flush: true);
+      raf = partFile.openSync(mode: FileMode.append);
+    } catch (e) {
+      appLog('file.meta part file unavailable: $e', level: 'error');
+      _sendFileAck(from, fileId: fileId, ok: false, error: 'ioError');
+      return;
+    }
     final incoming = _IncomingFileTransfer(
       peerId: from,
       senderName: env.name ?? from.substring(0, from.length.clamp(0, 8)),
@@ -253,8 +272,8 @@ extension SyncFileTransferMethods on SyncManager {
       chunkSize: chunkSize,
       chunkCount: chunks,
       sha256Hex: sha256Hex,
-      partFile: File('${receiveDir.path}/.incoming-$fileId.part'),
-    );
+      partFile: partFile,
+    )..raf = raf;
     _incomingFiles[fileId] = incoming;
     _armIncomingIdleTimer(fileId);
     _fileProgressController.add(FileProgress(
@@ -268,6 +287,10 @@ extension SyncFileTransferMethods on SyncManager {
     if (incoming.chunkCount == 0) {
       _incomingFiles.remove(fileId);
       incoming.idleTimer?.cancel();
+      try {
+        incoming.raf?.closeSync();
+        incoming.raf = null;
+      } catch (_) {}
       unawaited(_completeIncomingFile(incoming));
     }
   }
@@ -291,27 +314,38 @@ extension SyncFileTransferMethods on SyncManager {
     // Chunks carry msgId = fileId (see the send loop above).
     final incoming = _incomingFiles[env.msgId];
     if (incoming == null || incoming.peerId != from) return;
+    // Decrypt may hop through the native crypto channel; chain each chunk so
+    // the async gap can't reorder writes (TCP order must reach the part file).
+    incoming.queue = incoming.queue
+        .then((_) => _processFileChunk(env, incoming))
+        .catchError((Object e) {
+      appLog('file.chunk processing error: $e', level: 'error');
+    });
+  }
+
+  Future<void> _processFileChunk(
+      SyncEnvelope env, _IncomingFileTransfer incoming) async {
+    // A restart (duplicate meta) or discard superseded this state.
+    if (_incomingFiles[incoming.fileId] != incoming) return;
     final payload = env.payload;
     if (payload == null) return;
-    final plain = _crypto.decryptToBytes(payload);
+    final plain = await _crypto.decryptToBytes(payload);
     if (plain == null || plain.length < 4) return;
     final index = ByteData.sublistView(plain).getUint32(0, Endian.big);
     if (index >= incoming.chunkCount) return;
     final data = plain.sublist(4);
     try {
+      final raf = incoming.raf;
+      if (raf == null) return;
       // FileMode.append always writes at EOF regardless of positioning —
       // exactly what an in-order TCP stream needs, and a restart always
       // begins with a fresh fileId (fresh part file).
-      final raf = incoming.partFile.openSync(mode: FileMode.append);
-      try {
-        raf.writeFromSync(data);
-      } finally {
-        raf.closeSync();
-      }
+      raf.writeFromSync(data);
     } catch (e) {
       appLog('file.chunk write failed: $e', level: 'error');
       _discardIncomingFile(incoming.fileId);
-      _sendFileAck(from, fileId: incoming.fileId, ok: false, error: 'ioError');
+      _sendFileAck(incoming.peerId,
+          fileId: incoming.fileId, ok: false, error: 'ioError');
       _emitIncomingFailed(incoming);
       return;
     }
@@ -326,6 +360,12 @@ extension SyncFileTransferMethods on SyncManager {
       totalBytes: incoming.fileSize,
     ));
     if (received >= incoming.chunkCount) {
+      _incomingFiles.remove(incoming.fileId);
+      incoming.idleTimer?.cancel();
+      try {
+        incoming.raf?.closeSync();
+        incoming.raf = null;
+      } catch (_) {}
       unawaited(_completeIncomingFile(incoming));
     }
   }
@@ -356,9 +396,15 @@ extension SyncFileTransferMethods on SyncManager {
   }
 
   Future<void> _completeIncomingFile(_IncomingFileTransfer incoming) async {
-    // Remove from the map first so duplicate completion can't race.
-    if (_incomingFiles.remove(incoming.fileId) == null) return;
+    // Callers that already removed the state (chunk-complete / zero-byte)
+    // pass through; only a superseding restart (different live state) aborts.
+    final live = _incomingFiles.remove(incoming.fileId);
+    if (live != null && live != incoming) return;
     incoming.idleTimer?.cancel();
+    try {
+      incoming.raf?.closeSync();
+      incoming.raf = null;
+    } catch (_) {}
     try {
       final actual = await _hashFile(incoming.partFile);
       if (actual != incoming.sha256Hex) {
@@ -446,6 +492,11 @@ extension SyncFileTransferMethods on SyncManager {
       final entry = _incomingFiles.remove(fileId);
       if (entry == null) return;
       appLog('Incoming file ${entry.fileName} timed out; discarded', level: 'warning');
+      entry.idleTimer?.cancel();
+      try {
+        entry.raf?.closeSync();
+        entry.raf = null;
+      } catch (_) {}
       unawaited(_deleteQuietly(entry.partFile));
       _emitIncomingFailed(entry);
     });
@@ -458,6 +509,10 @@ extension SyncFileTransferMethods on SyncManager {
         removeState ? _incomingFiles.remove(fileId) : _incomingFiles[fileId];
     if (incoming == null) return;
     incoming.idleTimer?.cancel();
+    try {
+      incoming.raf?.closeSync();
+      incoming.raf = null;
+    } catch (_) {}
     unawaited(_deleteQuietly(incoming.partFile));
   }
 
@@ -467,9 +522,7 @@ extension SyncFileTransferMethods on SyncManager {
         .map((f) => f.fileId)
         .toList();
     for (final id in ids) {
-      final incoming = _incomingFiles.remove(id);
-      incoming?.idleTimer?.cancel();
-      if (incoming != null) unawaited(_deleteQuietly(incoming.partFile));
+      _discardIncomingFile(id);
     }
   }
 

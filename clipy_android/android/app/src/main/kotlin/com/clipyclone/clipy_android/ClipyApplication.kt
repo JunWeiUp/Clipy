@@ -32,6 +32,7 @@ class ClipyApplication : Application() {
         const val CLIPBOARD_CHANNEL = "com.clipyclone.clipy_android/clipboard"
         const val STORAGE_CHANNEL = "com.clipyclone.clipy_android/storage"
         const val NOTIFICATIONS_CHANNEL = "com.clipyclone.clipy_android/notifications"
+        const val SYNC_CRYPTO_CHANNEL = "com.clipyclone.clipy_android/sync_crypto"
         private const val FLUTTER_PREFS = "FlutterSharedPreferences"
         private const val KEY_SYNC_ENABLED = "flutter.syncEnabled"
         /** Cap for the inter-retry backoff when engine creation keeps failing. */

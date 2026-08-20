@@ -155,11 +155,14 @@ extension SyncManager {
             // life; the new incarnation is live again.
             retiredFDs.remove(fd)
             var session = Session(peerId: peerId, host: host, port: port, fd: fd, isClient: self.peerId < peerId)
-            // Chunked file transfer writes single frames up to ~700KB; make sure
-            // the kernel send buffer can absorb one whole frame so a blocking
-            // send() can't wedge syncQueue while the peer drains.
+            setNonBlocking(fd)
+            // Chunked file transfer writes single frames up to ~1.4MB; make sure
+            // the kernel buffers can absorb several of them so a blocking
+            // send()/recv() can't wedge syncQueue while the peer drains.
             var sendBuffer = Int32(SyncManager.fileSendBufferSize)
             setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sendBuffer, socklen_t(MemoryLayout.size(ofValue: sendBuffer)))
+            var recvBuffer = Int32(SyncManager.fileSendBufferSize)
+            setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &recvBuffer, socklen_t(MemoryLayout.size(ofValue: recvBuffer)))
             let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: self.syncQueue)
             source.setEventHandler { [weak self] in self?.onSessionReadable(peerId: peerId) }
             session.readSource = source
@@ -184,19 +187,32 @@ extension SyncManager {
 
     func onSessionReadable(peerId: String) {
         guard var session = sessions[peerId] else { return }
-        if receiveScratch.isEmpty { receiveScratch = Data(count: 65536) }
-        let count = receiveScratch.withUnsafeMutableBytes { raw -> Int in
-            guard let base = raw.baseAddress else { return -1 }
-            return Darwin.recv(session.fd, base, raw.count, 0)
-        }
-        guard count > 0 else {
-            appLog("recv \(count == 0 ? "EOF" : "error errno=\(errno)") from \(peerId.prefix(8))")
-            closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true)
+        if receiveScratch.count < 262144 { receiveScratch = Data(count: 262144) }
+        // Drain everything available in one event: chunked file transfers push
+        // multi-megabyte back-to-back frames, and one 64KB recv per event
+        // multiplies scheduler round-trips for nothing.
+        while true {
+            let count = receiveScratch.withUnsafeMutableBytes { raw -> Int in
+                guard let base = raw.baseAddress else { return -1 }
+                return Darwin.recv(session.fd, base, raw.count, 0)
+            }
+            if count > 0 {
+                session.buffer.append(receiveScratch.prefix(count))
+                sessions[peerId] = session
+                drainBuffer(peerId: peerId)
+                guard let current = sessions[peerId] else { return }
+                session = current
+                continue
+            }
+            if count == 0 {
+                appLog("recv EOF from \(peerId.prefix(8))")
+                closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true)
+            } else if errno != EAGAIN {
+                appLog("recv error errno=\(errno) from \(peerId.prefix(8))")
+                closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true)
+            }
             return
         }
-        session.buffer.append(receiveScratch.prefix(count))
-        sessions[peerId] = session
-        drainBuffer(peerId: peerId)
     }
 
     func drainBuffer(peerId: String) {
@@ -256,6 +272,7 @@ extension SyncManager {
         guard clientFD >= 0 else { return }
         var hostBuffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN)); inet_ntop(AF_INET, &addr.sin_addr, &hostBuffer, socklen_t(INET_ADDRSTRLEN))
         let host = String(cString: hostBuffer)
+        setNonBlocking(clientFD)
         appLog("Inbound connection from \(host)")
         scanQueue.async { [weak self] in
             guard let self else { Darwin.close(clientFD); return }
@@ -270,23 +287,47 @@ extension SyncManager {
         var addr = sockaddr_in(); addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); addr.sin_family = sa_family_t(AF_INET); addr.sin_port = port.bigEndian
         guard inet_pton(AF_INET, host, &addr.sin_addr) == 1 else { failure = .other; Darwin.close(fd); return nil }
         let result = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-        if result == 0 { _ = fcntl(fd, F_SETFL, flags); setTCPNoDelay(fd); return fd }
+        if result == 0 { setTCPNoDelay(fd); return fd }
         guard errno == EINPROGRESS else { failure = ConnectFailure(errno: errno); Darwin.close(fd); return nil }
         var pollFD = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
         guard poll(&pollFD, 1, Int32(timeout * 1000)) > 0 else { failure = .timeout; Darwin.close(fd); return nil }
         var error: Int32 = 0; var errorLength = socklen_t(MemoryLayout<Int32>.size); getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &errorLength)
         guard error == 0 else { failure = ConnectFailure(soError: error); Darwin.close(fd); return nil }
-        _ = fcntl(fd, F_SETFL, flags); setTCPNoDelay(fd); setKeepalive(fd); return fd
+        setTCPNoDelay(fd); setKeepalive(fd); return fd
     }
 
     func setTCPNoDelay(_ fd: Int32) { var value: Int32 = 1; setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, socklen_t(MemoryLayout.size(ofValue: value))) }
     func setKeepalive(_ fd: Int32) { var value: Int32 = 1; setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &value, socklen_t(MemoryLayout.size(ofValue: value))) }
 
-    @discardableResult func writeAll(_ fd: Int32, _ data: Data) -> Bool {
-        data.withUnsafeBytes { raw in
+    /// Session sockets stay non-blocking: the read loop drains until EAGAIN
+    /// and writes poll for room. A blocking socket would wedge the serial
+    /// syncQueue forever the moment a peer stalls (one dead recv stalled
+    /// accepts/pings/everything — the "device unreachable" bug).
+    func setNonBlocking(_ fd: Int32) {
+        let flags = fcntl(fd, F_GETFL, 0)
+        guard flags >= 0 else { return }
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+    }
+
+    /// Non-blocking send + poll(POLLOUT) with a total deadline. macOS has no
+    /// SO_SNDTIMEO for TCP; a plain blocking send() on a stalled peer would
+    /// freeze syncQueue (and thus every session + the listener).
+    @discardableResult func writeAll(_ fd: Int32, _ data: Data, timeout: TimeInterval = 10) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        return data.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return false }
             var sent = 0
-            while sent < raw.count { let count = Darwin.send(fd, base + sent, raw.count - sent, 0); guard count > 0 else { return false }; sent += count }
+            while sent < raw.count {
+                let count = Darwin.send(fd, base + sent, raw.count - sent, 0)
+                if count > 0 { sent += count; continue }
+                if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    var pollFD = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+                    let remain = deadline.timeIntervalSinceNow
+                    guard remain > 0, poll(&pollFD, 1, Int32(remain * 1000)) > 0 else { return false }
+                    continue
+                }
+                return false
+            }
             return true
         }
     }
@@ -304,6 +345,8 @@ extension SyncManager {
             let remain = deadline.timeIntervalSinceNow
             guard remain > 0, poll(&pollFD, 1, Int32(remain * 1000)) > 0 else { return nil }
             let count = scratch.withUnsafeMutableBytes { raw -> Int in guard let base = raw.baseAddress else { return -1 }; return Darwin.recv(fd, base, raw.count, 0) }
+            // Non-blocking fd: a spurious wakeup can leave nothing to read.
+            if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) { continue }
             guard count > 0 else { return nil }; buffer.append(scratch.prefix(count))
         }
         return nil

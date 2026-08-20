@@ -11,13 +11,16 @@ import CryptoKit
 /// `PendingSyncRepository`; if the session drops mid-transfer both sides
 /// discard state and the user can simply retry.
 extension SyncManager {
-    static let fileChunkSize = 512 * 1024
+    static let fileChunkSize = 1024 * 1024
     static let fileMaxBytes = 512 * 1024 * 1024
     static let fileIncomingIdleTimeout: TimeInterval = 120
     /// A whole chunk frame must fit in the socket send buffer so `send()`
     /// returns promptly; otherwise two Macs blasting files at each other could
     /// deadlock (both blocked writing, neither reading).
     static let fileSendBufferSize = 4 * 1024 * 1024
+    /// Pipelined chunk writes: this many frames may sit in flight before the
+    /// sender pauses and waits. 8 × ~1.4 MiB ≈ 11 MiB burst memory.
+    static let fileMaxInflightChunks = 8
 
     private struct FileMeta: Decodable {
         let fileId: String
@@ -110,9 +113,39 @@ extension SyncManager {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return fail("cannot open file") }
         defer { try? handle.close() }
 
+        // Pipelined writes: dispatch frames to syncQueue and keep reading +
+        // encrypting the next chunk while the previous one drains. Bounded by
+        // a semaphore so memory stays capped; a failure flag aborts early.
+        let inflight = DispatchSemaphore(value: Self.fileMaxInflightChunks)
+        let drain = DispatchSemaphore(value: 0)
+        let flightLock = NSLock()
+        var inFlightCount = 0
+        var writeFailed = false
+
+        func checkWriteFailed() -> Bool {
+            flightLock.lock(); defer { flightLock.unlock() }
+            return writeFailed
+        }
+
+        func dispatchFrame(_ frame: Data) {
+            inflight.wait()
+            flightLock.lock(); inFlightCount += 1; flightLock.unlock()
+            syncQueue.async { [weak self] in
+                let ok = self?.writeFrameToSession(fd, frame) ?? false
+                flightLock.lock()
+                inFlightCount -= 1
+                let nowEmpty = inFlightCount == 0
+                if !ok { writeFailed = true }
+                flightLock.unlock()
+                inflight.signal()
+                if nowEmpty { drain.signal() }
+            }
+        }
+
         var index: UInt32 = 0
         while Int(index) < chunkCount {
-            // Peer rejected mid-stream → stop burning bandwidth.
+            // Peer rejected mid-stream or a write already failed → stop.
+            if checkWriteFailed() { return fail("chunk write failed") }
             if !syncQueue.sync(execute: { fileAckWaiters[fileId] != nil }) {
                 resultLock.lock(); let rejected = ackResult == false; resultLock.unlock()
                 if rejected { return fail("rejected by peer") }
@@ -128,11 +161,21 @@ extension SyncManager {
                 peerId: peerId, name: displayName, port: nil,
                 ts: Date().timeIntervalSince1970, hash: nil, payload: payload
             )
-            guard let frame = encodeFrame(envelope), writeFrameToSession(fd, frame) else {
-                return fail("chunk write failed")
-            }
+            guard let frame = encodeFrame(envelope) else { return fail("chunk encode failed") }
+            dispatchFrame(frame)
             index &+= 1
         }
+
+        // Wait until every dispatched frame has actually hit the socket.
+        while true {
+            flightLock.lock()
+            let remaining = inFlightCount
+            let failed = writeFailed
+            flightLock.unlock()
+            if remaining == 0 || failed { break }
+            _ = drain.wait(timeout: .now() + .seconds(30))
+        }
+        if checkWriteFailed() { return fail("chunk write failed") }
 
         let timeout = max(45, length / (200 * 1024))
         if semaphore.wait(timeout: .now() + .seconds(timeout)) == .timedOut {
@@ -211,7 +254,7 @@ extension SyncManager {
         discardIncomingFile(fileId: meta.fileId)
         let partURL = Self.fileReceiveDirectory().appendingPathComponent(".incoming-\(meta.fileId).part")
         FileManager.default.createFile(atPath: partURL.path, contents: nil)
-        incomingFiles[meta.fileId] = IncomingFileState(
+        var state = IncomingFileState(
             peerId: peerId,
             senderName: env.name ?? String(peerId.prefix(8)),
             fileId: meta.fileId,
@@ -222,15 +265,22 @@ extension SyncManager {
             sha256: meta.sha256,
             partURL: partURL
         )
+        // One persistent append handle instead of open/write/close per chunk.
+        do {
+            let handle = try FileHandle(forWritingTo: partURL)
+            try handle.seekToEnd()
+            state.handle = handle
+        } catch {
+            appLog("file.meta part file unavailable: \(error)", level: .error)
+            sendFileAck(to: peerId, fileId: meta.fileId, ok: false, error: "ioError")
+            return
+        }
+        incomingFiles[meta.fileId] = state
         armIncomingIdleTimer(fileId: meta.fileId)
         appLog("file.meta from \(peerId.prefix(8)): \(meta.name) (\(meta.size) bytes, \(meta.chunks) chunks)")
         // Zero-byte files carry no chunks; finish immediately.
-        if meta.chunks == 0, var state = incomingFiles[meta.fileId] {
-            incomingFiles.removeValue(forKey: meta.fileId)
-            state.idleWork?.cancel()
-            fileTransferQueue.async { [weak self] in
-                self?.completeIncomingFile(state)
-            }
+        if meta.chunks == 0 {
+            completeChunkedFile(fileId: meta.fileId)
         }
     }
 
@@ -239,17 +289,14 @@ extension SyncManager {
         guard var state = incomingFiles[env.msgId], state.peerId == peerId,
               let payload = env.payload, let plain = decryptToBytes(payload), plain.count > 4
         else { return }
-        let index = plain.prefix(4).reduce(0) { ($0 << 8) | UInt32($1) }
-        guard Int(index) < state.chunkCount else { return }
+        let index = Int(plain.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) })
+        guard index < state.chunkCount else { return }
         let data = plain.dropFirst(4)
         do {
-            let handle = try FileHandle(forWritingTo: state.partURL)
-            defer { try? handle.close() }
-            let eof = try handle.seekToEnd()
-            let offset = UInt64(index) * UInt64(state.chunkSize)
-            // Append-only works because a single TCP stream delivers chunks in
-            // order and a restart always begins with a fresh fileId.
-            try handle.seek(toOffset: min(eof, offset))
+            guard let handle = state.handle else { return }
+            // Sequential appends: the handle already sits at EOF (seekToEnd at
+            // meta) and TCP delivers chunks in order; a restart always begins
+            // with a fresh fileId (fresh part file).
             try handle.write(contentsOf: data)
         } catch {
             appLog("file.chunk write failed: \(error)", level: .error)
@@ -257,15 +304,24 @@ extension SyncManager {
             sendFileAck(to: peerId, fileId: state.fileId, ok: false, error: "ioError")
             return
         }
-        state.received.insert(Int(index))
+        state.received.insert(index)
         incomingFiles[env.msgId] = state
         armIncomingIdleTimer(fileId: state.fileId)
         if state.received.count >= state.chunkCount {
-            incomingFiles.removeValue(forKey: env.msgId)
-            state.idleWork?.cancel()
-            fileTransferQueue.async { [weak self] in
-                self?.completeIncomingFile(state)
-            }
+            completeChunkedFile(fileId: env.msgId)
+        }
+    }
+
+    /// Pull the finished state out of the map (closing the part-file handle)
+    /// and hand the heavy verification tail to fileTransferQueue.
+    private func completeChunkedFile(fileId: String) {
+        guard var state = incomingFiles.removeValue(forKey: fileId) else { return }
+        state.idleWork?.cancel()
+        let handle = state.handle
+        state.handle = nil
+        if let handle { try? handle.close() }
+        fileTransferQueue.async { [weak self] in
+            self?.completeIncomingFile(state)
         }
     }
 
@@ -329,6 +385,7 @@ extension SyncManager {
         let work = DispatchWorkItem { [weak self] in
             guard let self, let entry = self.incomingFiles.removeValue(forKey: fileId) else { return }
             appLog("Incoming file \(entry.fileName) timed out; discarded", level: .warning)
+            if let handle = entry.handle { try? handle.close() }
             try? FileManager.default.removeItem(at: entry.partURL)
         }
         incomingFiles[fileId]?.idleWork = work
@@ -340,6 +397,7 @@ extension SyncManager {
     func discardIncomingFile(fileId: String) {
         guard let state = incomingFiles.removeValue(forKey: fileId) else { return }
         state.idleWork?.cancel()
+        if let handle = state.handle { try? handle.close() }
         try? FileManager.default.removeItem(at: state.partURL)
     }
 

@@ -101,33 +101,61 @@ class SyncCrypto {
 
   /// Binary variant of [encryptText] for file chunks: wire form is the same
   /// `base64(nonce12 ‖ ciphertext ‖ tag)` so it interops with the Swift side.
-  String? encryptBytes(List<int> bytes) {
+  ///
+  /// On Android the heavy lifting goes through the native `sync_crypto`
+  /// MethodChannel (javax.crypto / ARMv8 crypto extensions — pure-Dart
+  /// pointycastle tops out at tens of MB/s and is the transfer bottleneck).
+  /// Any failure (desktop, tests, native error) falls back to pure Dart.
+  Future<String?> encryptBytes(List<int> bytes) async {
+    final nonce = _randomNonce();
+    final keyBytes = key().bytes;
+    final native = await (SyncCrypto.nativeAesGcm
+        ?.call('seal', keyBytes, nonce, Uint8List.fromList(bytes), null));
+    if (native != null) {
+      return base64Encode(native);
+    }
     try {
       final k = key();
-      final rng = Random.secure();
-      final iv = enc.IV(
-          Uint8List.fromList(List<int>.generate(12, (_) => rng.nextInt(256))));
       final encrypter = enc.Encrypter(enc.AES(k, mode: enc.AESMode.gcm));
-      final encrypted = encrypter.encryptBytes(bytes, iv: iv);
-      final combined = Uint8List.fromList([...iv.bytes, ...encrypted.bytes]);
+      final encrypted = encrypter.encryptBytes(bytes, iv: enc.IV(nonce));
+      final combined = Uint8List.fromList([...nonce, ...encrypted.bytes]);
       return base64Encode(combined);
     } catch (_) {
       return null;
     }
   }
 
-  Uint8List? decryptToBytes(String base64String) {
+  Future<Uint8List?> decryptToBytes(String base64String) async {
     try {
-      final k = key();
       final data = base64Decode(base64String);
       if (data.length <= 28) return null;
-      final iv = enc.IV(data.sublist(0, 12));
-      final encryptedBytes = data.sublist(12);
+      final nonce = data.sublist(0, 12);
+      final sealed = data.sublist(12);
+      final native = await (SyncCrypto.nativeAesGcm
+          ?.call('open', key().bytes, nonce, null, sealed));
+      if (native != null) return native;
+      final k = key();
       final encrypter = enc.Encrypter(enc.AES(k, mode: enc.AESMode.gcm));
       return Uint8List.fromList(
-          encrypter.decryptBytes(enc.Encrypted(encryptedBytes), iv: iv));
+          encrypter.decryptBytes(enc.Encrypted(sealed), iv: enc.IV(nonce)));
     } catch (_) {
       return null;
     }
   }
+
+  static Uint8List _randomNonce() {
+    final rng = Random.secure();
+    return Uint8List.fromList(List<int>.generate(12, (_) => rng.nextInt(256)));
+  }
+
+  /// Native fast path injected by the app layer (SyncManager wires this to
+  /// the `sync_crypto` MethodChannel on Android). Returns `nonce ‖ ct ‖ tag`
+  /// (seal) / plaintext (open), or null → pure-Dart fallback. Kept as a hook
+  /// so this file stays pure Dart (unit tests / dart-run tools import it).
+  static Future<Uint8List?> Function(
+      String op,
+      Uint8List key,
+      Uint8List nonce,
+      Uint8List? plain,
+      Uint8List? sealed)? nativeAesGcm;
 }
