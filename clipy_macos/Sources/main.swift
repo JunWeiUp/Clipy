@@ -34,6 +34,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         LogManager.shared.startSession()
         CrashReporter.install()
+        SystemNotificationRouter.shared.install()
         setupMainMenu()
         NotificationCenter.default.addObserver(
             self,

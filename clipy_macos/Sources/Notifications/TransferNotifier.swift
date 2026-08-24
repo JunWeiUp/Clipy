@@ -3,18 +3,16 @@ import UserNotifications
 
 /// Posts a system notification when a file transfer from a peer lands on
 /// disk. Uses provisional authorization so no permission prompt interrupts
-/// the user; if notifications are denied the post simply no-ops.
-final class TransferNotifier: NSObject, UNUserNotificationCenterDelegate {
+/// the user; if notifications are denied the post simply no-ops. Banner taps
+/// are handled by SystemNotificationRouter, which reveals the file in Finder.
+final class TransferNotifier {
     static let shared = TransferNotifier()
 
     private var authorizationRequested = false
 
-    override private init() {
-        super.init()
-    }
+    private init() {}
 
     func activate() {
-        UNUserNotificationCenter.current().delegate = self
         requestAuthorizationIfNeeded()
     }
 
@@ -24,12 +22,14 @@ final class TransferNotifier: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().requestAuthorization(options: [.provisional, .alert, .sound]) { _, _ in }
     }
 
-    func notifyFileReceived(name: String, sender: String) {
+    func notifyFileReceived(name: String, sender: String, destination: URL) {
         activate()
         let content = UNMutableNotificationContent()
         content.title = L10n.t(.fileReceivedTitle)
         content.body = L10n.format(.fileReceivedBody, sender, name)
         content.sound = .default
+        // The final path (post-dedupe rename), not the original file name.
+        content.userInfo = ["filePath": destination.path]
         let request = UNNotificationRequest(
             identifier: "clipy.file.\(UUID().uuidString)",
             content: content,
@@ -40,15 +40,5 @@ final class TransferNotifier: NSObject, UNUserNotificationCenterDelegate {
                 appLog("Transfer notification failed: \(error)", level: .warning)
             }
         }
-    }
-
-    /// The app is a menu-bar (LSUIElement) process that is often active;
-    /// without this delegate method macOS would suppress the banner.
-    func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-    ) {
-        completionHandler([.banner, .sound])
     }
 }

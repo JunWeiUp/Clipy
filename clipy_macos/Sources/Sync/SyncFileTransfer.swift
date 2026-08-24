@@ -360,7 +360,7 @@ extension SyncManager {
         let fileName = state.fileName
         DispatchQueue.main.async {
             ClipboardManager.shared.handleRemoteFileSync(url: destination, senderName: senderName)
-            TransferNotifier.shared.notifyFileReceived(name: fileName, sender: senderName)
+            TransferNotifier.shared.notifyFileReceived(name: fileName, sender: senderName, destination: destination)
         }
         sendFileAckOnQueue(to: state.peerId, fileId: state.fileId, ok: true)
         appLog("Received file \(state.fileName) (\(state.fileSize) bytes) from \(senderName)")

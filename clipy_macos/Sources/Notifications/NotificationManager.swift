@@ -6,7 +6,7 @@ extension Notification.Name {
     static let phoneNotificationsDidChange = Notification.Name("phoneNotificationsDidChange")
 }
 
-class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
+class NotificationManager: NSObject {
     static let shared = NotificationManager()
 
     static let pageSize = 100
@@ -147,7 +147,6 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     private func setupNotificationCenter() {
         let center = UNUserNotificationCenter.current()
-        center.delegate = self
 
         let dismissAction = UNNotificationAction(
             identifier: "DISMISS_ON_PHONE",
@@ -404,13 +403,11 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    // MARK: - UNUserNotificationCenterDelegate
+    // MARK: - Notification Banner Actions
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound])
-    }
-
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+    /// Banner interactions are routed here by SystemNotificationRouter (the
+    /// sole UNUserNotificationCenter delegate).
+    func handleUserResponse(_ response: UNNotificationResponse) {
         let userInfo = response.notification.request.content.userInfo
         let notificationId = userInfo["notificationId"] as? String
 
@@ -430,7 +427,5 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         default:
             break
         }
-
-        completionHandler()
     }
 }
