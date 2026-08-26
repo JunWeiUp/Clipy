@@ -4,4 +4,20 @@
     <string name="fgs_notification_text">Keeping LAN sync service alive</string>
     <string name="fgs_channel_name">LAN Sync</string>
     <string name="fgs_channel_desc">Keeps device sync connections alive when the app is in the background</string>
+
+    <string name="timer_widget_label">Timer Widget</string>
+    <string name="timer_widget_desc">1–40 min home-screen countdown; drag the ruler to set, with pause and reset</string>
+    <string name="timer_widget_status_idle">Ready</string>
+    <string name="timer_widget_status_running">Counting down</string>
+    <string name="timer_widget_status_paused">Paused</string>
+    <string name="timer_widget_status_finished">Time\'s up</string>
+    <string name="timer_widget_reset">Reset</string>
+    <string name="timer_widget_done_title">Time\'s up</string>
+    <string name="timer_widget_done_text">The %1$d-minute countdown has finished</string>
+    <string name="timer_widget_channel_name">Timer Widget</string>
+    <string name="timer_widget_channel_desc">Countdown finished alerts</string>
+    <string name="timer_panel_unit">min</string>
+    <string name="timer_panel_hint">Rotate the dial to set the duration (0–40 min)</string>
+    <string name="timer_panel_start">Start countdown</string>
+    <string name="timer_panel_cancel">Cancel</string>
 </resources>

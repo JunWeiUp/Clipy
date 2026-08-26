@@ -1306,10 +1306,13 @@ class _MobileSettingsContent extends StatefulWidget {
 }
 
 class _MobileSettingsContentState extends State<_MobileSettingsContent> {
+  static const _widgetChannel =
+      MethodChannel('com.clipyclone.clipy_android/widget');
   late TextEditingController _portController;
   late TextEditingController _nameController;
   StreamSubscription? _devicesSubscription;
   List<DiscoveredPeer> _availableDevices = [];
+  bool _timerWidgetPinned = false;
 
   @override
   void initState() {
@@ -1328,6 +1331,7 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
         });
       }
     });
+    _refreshTimerWidgetPinned();
     // On-demand device discovery: this page shows the device list, so trigger
     // a single subnet scan here. Results refresh via onPeersChanged.
     SyncManager.instance.triggerCrossBandDiscovery();
@@ -1339,6 +1343,81 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
     _nameController.dispose();
     _devicesSubscription?.cancel();
     super.dispose();
+  }
+
+  Future<void> _refreshTimerWidgetPinned() async {
+    try {
+      final pinned =
+          await _widgetChannel.invokeMethod<bool>('isTimerWidgetPinned') ??
+              false;
+      if (mounted) {
+        setState(() => _timerWidgetPinned = pinned);
+      }
+    } catch (_) {
+      // Native side unavailable — keep the current state.
+    }
+  }
+
+  Future<void> _requestPinTimerWidget(AppStrings l10n) async {
+    var ok = false;
+    try {
+      ok =
+          await _widgetChannel.invokeMethod<bool>('requestPinTimerWidget') ??
+              false;
+    } catch (_) {
+      ok = false;
+    }
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(ok ? l10n.timerWidgetPinRequested : l10n.timerWidgetPinFailed),
+      ),
+    );
+    if (ok) {
+      // Give the user time to confirm the system pin dialog before re-checking.
+      await Future<void>.delayed(const Duration(seconds: 3));
+      await _refreshTimerWidgetPinned();
+    }
+  }
+
+  Widget _buildTimerWidgetCard(AppStrings l10n) {
+    return Card(
+      margin: const EdgeInsets.all(12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            const Icon(Icons.timer_outlined, color: Colors.blue, size: 36),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    l10n.timerWidgetTitle,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    l10n.timerWidgetDesc,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                  ),
+                ],
+              ),
+            ),
+            if (_timerWidgetPinned)
+              const Icon(Icons.check_circle, color: Colors.green)
+            else
+              ElevatedButton(
+                onPressed: () => _requestPinTimerWidget(l10n),
+                child: Text(l10n.addToHomeScreen),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -1485,6 +1564,16 @@ class _MobileSettingsContentState extends State<_MobileSettingsContent> {
           ..._availableDevices.map(
             (peer) => LanDeviceActionTile(peer: peer),
           ),
+        const Divider(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Text(
+            l10n.homeWidgetSection,
+            style: const TextStyle(
+                fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blue),
+          ),
+        ),
+        _buildTimerWidgetCard(l10n),
         const Divider(),
         ListTile(
           leading: const Icon(Icons.folder_open),

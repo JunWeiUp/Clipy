@@ -21,6 +21,9 @@
          which kills always-on LAN sync every few hours. specialUse is exempt
          from that quota; keep DATA_SYNC for the API 29-33 fallback branch. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Timer widget: exact "time's up" alarm. Denied by default on 31+ when
+         targeting 33+; TimerWidgetProvider falls back to an inexact alarm. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:label="Clipy Android"
@@ -97,6 +100,31 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- Countdown timer home-screen widget (2x2). Clicks are dispatched
+             back via explicit PendingIntents; the running readout is a
+             launcher-side countdown Chronometer (no periodic updates). -->
+        <receiver
+            android:name=".TimerWidgetProvider"
+            android:exported="true"
+            android:label="@string/timer_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/timer_widget_info" />
+        </receiver>
+
+        <!-- Drag-to-set panel opened by tapping the widget readout; plain
+             framework activity (no Flutter) so it opens instantly even after
+             process death. -->
+        <activity
+            android:name=".TimerSetupActivity"
+            android:exported="false"
+            android:theme="@style/TimerPanelTheme"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
 
         <!-- Overrides WorkManager's own type-less declaration. Its
              SystemForegroundService hosts the "foreground" SyncGuardWorker; a

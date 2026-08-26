@@ -4,4 +4,20 @@
     <string name="fgs_notification_text">正在保持局域网同步服务运行</string>
     <string name="fgs_channel_name">局域网同步</string>
     <string name="fgs_channel_desc">用于在应用退到后台时保持设备间同步连接</string>
+
+    <string name="timer_widget_label">计时部件</string>
+    <string name="timer_widget_desc">1–40 分钟桌面倒计时，拖拽刻度设定，支持暂停与重置</string>
+    <string name="timer_widget_status_idle">待开始</string>
+    <string name="timer_widget_status_running">倒计时中</string>
+    <string name="timer_widget_status_paused">已暂停</string>
+    <string name="timer_widget_status_finished">时间到</string>
+    <string name="timer_widget_reset">复位</string>
+    <string name="timer_widget_done_title">时间到</string>
+    <string name="timer_widget_done_text">为期 %1$d 分钟的倒计时已结束</string>
+    <string name="timer_widget_channel_name">计时部件</string>
+    <string name="timer_widget_channel_desc">倒计时结束提醒</string>
+    <string name="timer_panel_unit">分钟</string>
+    <string name="timer_panel_hint">顺时针转动表盘设定时长（0–40 分钟）</string>
+    <string name="timer_panel_start">开始倒计时</string>
+    <string name="timer_panel_cancel">取消</string>
 </resources>
