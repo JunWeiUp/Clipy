@@ -261,5 +261,19 @@ class AppStrings {
          'No device connected — make sure the peer has sync on and is on the same LAN');
   String get diagAllGood => _t('同步状态正常', 'Sync looks healthy');
 
+  // Timer home-screen widget
+  String get homeWidgetSection => _t('桌面小部件', 'Home-Screen Widget');
+  String get timerWidgetTitle => _t('计时部件', 'Timer Widget');
+  String get timerWidgetDesc => _t(
+      '1–40 分钟桌面倒计时：部件上 +/− 每按 ±1 分钟，点击时间数字可拖拽设定',
+      'A 1–40 min home-screen countdown: +/- steps by 1 minute; tap the readout to set it by dragging');
+  String get addToHomeScreen => _t('添加到桌面', 'Add to Home Screen');
+  String get timerWidgetPinRequested =>
+      _t('已请求添加，请在桌面弹窗中确认', 'Pin requested — confirm on the home screen');
+  String get timerWidgetPinFailed => _t(
+      '无法自动添加：请长按桌面空白处 → 小部件 → Clipy Android 手动添加',
+      'Could not pin automatically: long-press an empty area of the home screen → Widgets → Clipy Android');
+  String get timerWidgetAdded => _t('已添加到桌面', 'Added to home screen');
+
   String _t(String zh, String en) => language == AppLanguage.zh ? zh : en;
 }

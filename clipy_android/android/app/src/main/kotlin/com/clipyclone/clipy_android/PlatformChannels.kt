@@ -1,7 +1,10 @@
 package com.clipyclone.clipy_android
 
+import android.appwidget.AppWidgetManager
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
@@ -36,6 +39,7 @@ object PlatformChannels {
     const val NOTIFICATIONS = ClipyApplication.NOTIFICATIONS_CHANNEL
     const val SYNC_SERVICE = ClipyApplication.SYNC_SERVICE_CHANNEL
     const val SYNC_CRYPTO = ClipyApplication.SYNC_CRYPTO_CHANNEL
+    const val WIDGET = ClipyApplication.WIDGET_CHANNEL
 
     @Volatile
     private var notificationsChannel: MethodChannel? = null
@@ -48,7 +52,8 @@ object PlatformChannels {
         registerNotifications(app, engine)
         registerSyncService(app, engine)
         registerSyncCrypto(engine)
-        Log.i(TAG, "registerAll: storage/clipboard/notifications/sync_service/sync_crypto")
+        registerWidget(app, engine)
+        Log.i(TAG, "registerAll: storage/clipboard/notifications/sync_service/sync_crypto/widget")
     }
 
     /**
@@ -338,6 +343,35 @@ object PlatformChannels {
                 } catch (e: Exception) {
                     // AEADBadTagException lands here (tampered/wrong key).
                     result.error("CRYPTO_FAILED", e.message, null)
+                }
+            }
+    }
+
+    /** Timer home-screen widget: pin request from the settings page. */
+    private fun registerWidget(app: ClipyApplication, engine: FlutterEngine) {
+        MethodChannel(engine.dartExecutor.binaryMessenger, WIDGET)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "requestPinTimerWidget" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            val manager = AppWidgetManager.getInstance(app)
+                            val ok = try {
+                                manager.requestPinAppWidget(
+                                    ComponentName(app, TimerWidgetProvider::class.java),
+                                    null,
+                                    null,
+                                )
+                            } catch (e: Exception) {
+                                Log.w(TAG, "requestPinAppWidget failed", e)
+                                false
+                            }
+                            result.success(ok)
+                        } else {
+                            result.success(false)
+                        }
+                    }
+                    "isTimerWidgetPinned" -> result.success(TimerWidgetProvider.isPinned(app))
+                    else -> result.notImplemented()
                 }
             }
     }

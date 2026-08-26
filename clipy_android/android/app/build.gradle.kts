@@ -26,9 +26,10 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        // Coerce ≥4003 so a fresh debug build can reinstall over an older debug
-        // build (versionCode 4002) already on test devices without downgrade.
-        versionCode = maxOf(flutter.versionCode, 4003)
+        // Coerce ≥6004 so a fresh debug build can reinstall over the newer
+        // user-built debug package (versionCode 6003) already on the test
+        // device without a downgrade install failure.
+        versionCode = maxOf(flutter.versionCode, 6004)
         versionName = flutter.versionName
     }
 

@@ -30,6 +30,17 @@ class BootReceiver : BroadcastReceiver() {
         ) {
             return
         }
+        // Re-render timer widgets: launcher Chronometers go stale across a
+        // reboot/update, so recompute the remaining time from the persisted
+        // wall-clock deadline (an expired countdown flips to finished without
+        // re-notifying). Runs regardless of the sync flag below.
+        if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            try {
+                TimerWidgetProvider.refreshAll(context, notifyOnExpire = false)
+            } catch (e: Exception) {
+                Log.w(TAG, "Timer widget refresh on boot failed", e)
+            }
+        }
         val enabled = try {
             context.applicationContext
                 .getSharedPreferences(FLUTTER_PREFS, Context.MODE_PRIVATE)
