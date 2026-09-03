@@ -1,40 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Countdown timer home-screen widget. RemoteViews constraints: framework
-     views only, no gesture handling — clicks are wired in
-     TimerWidgetProvider.buildViews. Quiet dark card; the mono time readout
-     dominates, status/toggle colors are set dynamically per state. -->
+<!-- Countdown timer home-screen widget (2x2), styled to match the MIUI
+     clock timer page: near-black card, near-white mono readout, quiet gray
+     glyph controls with a single blue accent on the start/pause action.
+     RemoteViews constraints: framework views only, clicks wired in
+     TimerWidgetProvider.buildViews. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@drawable/timer_widget_bg"
-    android:padding="12dp">
+    android:padding="14dp">
 
-    <LinearLayout
-        android:layout_width="match_parent"
+    <TextView
+        android:id="@+id/status_text"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/timer_widget_label"
-            android:textSize="11sp"
-            android:textStyle="bold"
-            android:letterSpacing="0.08"
-            android:textColor="#8DA0BC"
-            android:maxLines="1" />
-
-        <TextView
-            android:id="@+id/status_text"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="end"
-            android:textSize="11sp"
-            android:maxLines="1" />
-    </LinearLayout>
+        android:textSize="11sp"
+        android:letterSpacing="0.05"
+        android:maxLines="1" />
 
     <FrameLayout
         android:id="@+id/time_area"
@@ -48,12 +31,12 @@
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:typeface="monospace"
-            android:textSize="34sp"
+            android:textSize="36sp"
             android:textStyle="bold"
-            android:textColor="#FFFFFF"
+            android:textColor="#F2F2F2"
             android:autoSizeTextType="uniform"
-            android:autoSizeMinTextSize="18sp"
-            android:autoSizeMaxTextSize="42sp"
+            android:autoSizeMinTextSize="20sp"
+            android:autoSizeMaxTextSize="48sp"
             android:autoSizeStepGranularity="2sp" />
 
         <TextView
@@ -62,13 +45,13 @@
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:typeface="monospace"
-            android:textSize="34sp"
+            android:textSize="36sp"
             android:textStyle="bold"
-            android:textColor="#FFFFFF"
+            android:textColor="#F2F2F2"
             android:visibility="gone"
             android:autoSizeTextType="uniform"
-            android:autoSizeMinTextSize="18sp"
-            android:autoSizeMaxTextSize="42sp"
+            android:autoSizeMinTextSize="20sp"
+            android:autoSizeMaxTextSize="48sp"
             android:autoSizeStepGranularity="2sp" />
     </FrameLayout>
 
@@ -80,49 +63,42 @@
         <TextView
             android:id="@+id/btn_minus"
             android:layout_width="0dp"
-            android:layout_height="36dp"
+            android:layout_height="38dp"
             android:layout_weight="1"
-            android:layout_margin="4dp"
-            android:background="@drawable/timer_widget_button"
             android:gravity="center"
             android:text="−"
-            android:textSize="15sp"
-            android:textColor="#E6FFFFFF" />
+            android:textSize="17sp"
+            android:textColor="#808080" />
 
         <TextView
             android:id="@+id/btn_toggle"
             android:layout_width="0dp"
-            android:layout_height="36dp"
+            android:layout_height="38dp"
             android:layout_weight="1"
-            android:layout_margin="4dp"
-            android:background="@drawable/timer_widget_button"
             android:gravity="center"
             android:text="▶"
-            android:textSize="15sp"
-            android:textColor="#E6FFFFFF" />
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="#4787FD" />
 
         <TextView
             android:id="@+id/btn_reset"
             android:layout_width="0dp"
-            android:layout_height="36dp"
+            android:layout_height="38dp"
             android:layout_weight="1"
-            android:layout_margin="4dp"
-            android:background="@drawable/timer_widget_button"
             android:gravity="center"
             android:text="↺"
-            android:textSize="15sp"
-            android:textColor="#E6FFFFFF" />
+            android:textSize="17sp"
+            android:textColor="#808080" />
 
         <TextView
             android:id="@+id/btn_plus"
             android:layout_width="0dp"
-            android:layout_height="36dp"
+            android:layout_height="38dp"
             android:layout_weight="1"
-            android:layout_margin="4dp"
-            android:background="@drawable/timer_widget_button"
             android:gravity="center"
             android:text="+"
-            android:textSize="15sp"
-            android:textColor="#E6FFFFFF" />
+            android:textSize="17sp"
+            android:textColor="#808080" />
     </LinearLayout>
 </LinearLayout>

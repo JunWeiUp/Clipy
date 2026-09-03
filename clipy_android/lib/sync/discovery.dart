@@ -55,9 +55,49 @@ extension SyncDiscoveryMethods on SyncManager {
     });
   }
 
+  /// Counts a failed proactive dial to an authorized peer (its cached address
+  /// is dead — typically the peer moved to a new DHCP lease) and, once the
+  /// streak trips the threshold and the cooldown has elapsed, falls back to a
+  /// full /24 scan so the peer is re-found without a manual refresh.
+  void noteAuthorizedDialFailure() {
+    if (!isEnabled) return;
+    _autoRediscoverFailStreak += 1;
+    _maybeAutoRediscover();
+  }
+
+  void noteSessionEstablished() {
+    _autoRediscoverFailStreak = 0;
+  }
+
+  void _maybeAutoRediscover() {
+    if (_autoRediscoverFailStreak < SyncManager._autoRediscoverFailThreshold) {
+      return;
+    }
+    final now = DateTime.now();
+    final last = _lastAutoRediscoverAt;
+    if (last != null &&
+        now.difference(last) < SyncManager._autoRediscoverCooldown) {
+      return;
+    }
+    _lastAutoRediscoverAt = now;
+    appLog('Auto rediscover: $_autoRediscoverFailStreak consecutive authorized '
+        'dial failures — scanning /24 for missing peers');
+    triggerCrossBandDiscovery(scanFullSubnet: true);
+  }
+
   Future<void> _runDiscovery({bool scanFullSubnet = false}) async {
-    if (!isEnabled || _discoveryRunning) return;
+    if (!isEnabled || _discoveryRunning) {
+      // A full scan requested while another run holds the flag must not be
+      // lost (the auto-rediscover cooldown would swallow the retry) — park it
+      // and honor it at the end of the current run.
+      if (scanFullSubnet) _pendingAutoFullScan = true;
+      return;
+    }
     _discoveryRunning = true;
+    if (_pendingAutoFullScan) {
+      scanFullSubnet = true;
+      _pendingAutoFullScan = false;
+    }
     try {
       final auth = authorizedPeerIds.toSet();
       final cached = await _readEndpointCache();
@@ -83,9 +123,8 @@ extension SyncDiscoveryMethods on SyncManager {
         unawaited(_dial(host, p, reason: 'manual', peerId: id));
       }
 
-      if (!scanFullSubnet) return;
-
-      final myIPs = await _enumerateLocalIPv4s();
+      if (scanFullSubnet) {
+        final myIPs = await _enumerateLocalIPv4s();
       final connectedHosts = _sessions.values.map((s) => s.host).toSet();
       final candidates = <String>{};
       final subnets = <String>{};
@@ -142,8 +181,13 @@ extension SyncDiscoveryMethods on SyncManager {
       appLog('Subnet scan finished: attempted=$attempted connect_ok=$connectOkCount '
           'handshake_ok=${hsOk < 0 ? 0 : hsOk} | connect_fail{$cfStr} handshake_fail{$hfStr}');
       _pruneStaleTimestampMaps();
+      }
     } finally {
       _discoveryRunning = false;
+    }
+    if (_pendingAutoFullScan) {
+      _pendingAutoFullScan = false;
+      unawaited(_runDiscovery(scanFullSubnet: true));
     }
   }
 

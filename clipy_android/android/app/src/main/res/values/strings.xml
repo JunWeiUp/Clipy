@@ -12,12 +12,18 @@
     <string name="timer_widget_status_paused">已暂停</string>
     <string name="timer_widget_status_finished">时间到</string>
     <string name="timer_widget_reset">复位</string>
+    <string name="timer_widget_stop">停止</string>
     <string name="timer_widget_done_title">时间到</string>
-    <string name="timer_widget_done_text">为期 %1$d 分钟的倒计时已结束</string>
+    <string name="timer_widget_done_text">倒计时 %1$s 已结束</string>
     <string name="timer_widget_channel_name">计时部件</string>
     <string name="timer_widget_channel_desc">倒计时结束提醒</string>
-    <string name="timer_panel_unit">分钟</string>
-    <string name="timer_panel_hint">顺时针转动表盘设定时长（0–40 分钟）</string>
+    <string name="timer_running_channel_name">倒计时进行中</string>
+    <string name="timer_running_channel_desc">在状态栏显示当前倒计时进度</string>
+    <string name="timer_countdown_title">倒计时</string>
+    <string name="timer_countdown_paused">已暂停 · 剩余 %1$s</string>
+    <string name="timer_action_pause">暂停</string>
+    <string name="timer_action_resume">继续</string>
+    <string name="timer_panel_title">计时</string>
     <string name="timer_panel_start">开始倒计时</string>
     <string name="timer_panel_cancel">取消</string>
 </resources>

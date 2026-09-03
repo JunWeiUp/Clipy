@@ -62,6 +62,17 @@ final class SyncManager: NSObject {
     var lastDialAt: [String: Date] = [:]
     let dialDedupTTL: TimeInterval = 4
 
+    // Auto-rediscovers a peer whose cached endpoint died (e.g. its DHCP lease
+    // moved): after this many consecutive authorized dial failures, fall back
+    // to one full /24 scan — throttled so a dead address can't scan on every
+    // discovery cycle. Guarded by selfHealLock: dials run on the concurrent
+    // scanQueue while adoption runs on syncQueue.
+    static let autoRediscoverFailThreshold = 2
+    static let autoRediscoverCooldown: TimeInterval = 10 * 60
+    let selfHealLock = NSLock()
+    var authorizedDialFailStreak = 0
+    var lastAutoRediscoverAt: Date?
+
     /// A full /24 scan writes a dedup entry per dial (~254). They are only
     /// meaningful for `dialDedupTTL` seconds, so drop the stale ones once the
     /// scan finishes instead of keeping the map growing forever.
@@ -201,6 +212,37 @@ final class SyncManager: NSObject {
     func triggerCrossBandDiscovery() {
         guard PreferencesManager.shared.isSyncEnabled else { return }
         scheduleDiscovery(immediate: false, scanFullSubnet: false)
+    }
+
+    /// Counts a failed proactive dial to an authorized peer (its cached
+    /// address is dead — typically the peer moved to a new DHCP lease) and,
+    /// once the streak trips the threshold and the cooldown has elapsed,
+    /// falls back to a full /24 scan so the peer is re-found without a manual
+    /// refresh.
+    func noteAuthorizedDialFailure(peerId: String?) {
+        guard let peerId, !peerId.isEmpty,
+              Set(PreferencesManager.shared.authorizedPeerIds).contains(peerId) else { return }
+        var shouldScan = false
+        selfHealLock.lock()
+        authorizedDialFailStreak += 1
+        let streak = authorizedDialFailStreak
+        if streak >= Self.autoRediscoverFailThreshold {
+            let last = lastAutoRediscoverAt
+            if last == nil || Date().timeIntervalSince(last!) >= Self.autoRediscoverCooldown {
+                lastAutoRediscoverAt = Date()
+                shouldScan = true
+            }
+        }
+        selfHealLock.unlock()
+        guard shouldScan else { return }
+        appLog("Auto rediscover: \(streak) consecutive authorized dial failures — scanning /24 for missing peers")
+        scheduleDiscovery(immediate: true, scanFullSubnet: true)
+    }
+
+    func noteSessionEstablished() {
+        selfHealLock.lock()
+        authorizedDialFailStreak = 0
+        selfHealLock.unlock()
     }
 
     // MARK: - Public queries

@@ -308,6 +308,22 @@ enum L10nKey: String {
     case screenshotOCRLanguageAuto
     case fileReceivedTitle
     case fileReceivedBody
+    case generatePassword
+    case passwordRegenerate
+    case passwordCopy
+    case passwordCopied
+    case passwordEntropy
+    case passwordLengthLabel
+    case passwordCharacterSet
+    case passwordUppercase
+    case passwordLowercase
+    case passwordDigits
+    case passwordSymbols
+    case passwordExcludeAmbiguous
+    case passwordStrengthWeak
+    case passwordStrengthFair
+    case passwordStrengthStrong
+    case passwordStrengthVeryStrong
 }
 
 struct L10n {
@@ -608,6 +624,22 @@ struct L10n {
             .screenshotOCRLanguageEnglish: "仅英文",
             .screenshotOCRLanguageChineseEnglish: "中文 + 英文",
             .screenshotOCRLanguageAuto: "自动（全部语言）",
+            .generatePassword: "生成密码",
+            .passwordRegenerate: "重新生成",
+            .passwordCopy: "复制密码",
+            .passwordCopied: "已复制到剪贴板",
+            .passwordEntropy: "熵：%@ 位",
+            .passwordLengthLabel: "长度：",
+            .passwordCharacterSet: "字符集",
+            .passwordUppercase: "大写字母 A-Z",
+            .passwordLowercase: "小写字母 a-z",
+            .passwordDigits: "数字 0-9",
+            .passwordSymbols: "符号",
+            .passwordExcludeAmbiguous: "排除易混淆字符（Il1|O0o）",
+            .passwordStrengthWeak: "弱",
+            .passwordStrengthFair: "中",
+            .passwordStrengthStrong: "强",
+            .passwordStrengthVeryStrong: "极强",
         ],
         .en: [
             .recordShortcut: "Click to record shortcut",
@@ -897,6 +929,22 @@ struct L10n {
             .screenshotOCRLanguageEnglish: "English Only",
             .screenshotOCRLanguageChineseEnglish: "Chinese + English",
             .screenshotOCRLanguageAuto: "Auto (All Languages)",
+            .generatePassword: "Generate Password",
+            .passwordRegenerate: "Regenerate",
+            .passwordCopy: "Copy Password",
+            .passwordCopied: "Copied to clipboard",
+            .passwordEntropy: "Entropy: %@ bits",
+            .passwordLengthLabel: "Length:",
+            .passwordCharacterSet: "Character Set",
+            .passwordUppercase: "Uppercase (A-Z)",
+            .passwordLowercase: "Lowercase (a-z)",
+            .passwordDigits: "Digits (0-9)",
+            .passwordSymbols: "Symbols",
+            .passwordExcludeAmbiguous: "Exclude ambiguous characters (Il1|O0o)",
+            .passwordStrengthWeak: "Weak",
+            .passwordStrengthFair: "Fair",
+            .passwordStrengthStrong: "Strong",
+            .passwordStrengthVeryStrong: "Very Strong",
         ]
     ]
 }

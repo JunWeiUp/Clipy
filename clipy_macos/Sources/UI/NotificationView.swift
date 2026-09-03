@@ -31,7 +31,9 @@ final class NotificationViewModel: ObservableObject {
     private var loadedCount = 0
     private var hasMore = false
     private var isLoadingMore = false
-    private var isLoadingAllForSearch = false
+    /// Search results are capped — SQL-side search (repository.search) means
+    /// the window never materializes the whole table to filter it.
+    private static let searchResultCap = 500
     /// Bumped whenever the paging window resets, so an in-flight background
     /// fetch can tell its rows are stale.
     private var dataGeneration: UInt64 = 0
@@ -84,7 +86,6 @@ final class NotificationViewModel: ObservableObject {
         loadedCount = 0
         hasMore = false
         isLoadingMore = false
-        isLoadingAllForSearch = false
         dataGeneration &+= 1
     }
 
@@ -124,7 +125,6 @@ final class NotificationViewModel: ObservableObject {
     func reload() {
         lastReloadAt = Date()
         isLoadingMore = false
-        isLoadingAllForSearch = false
         dataGeneration &+= 1
         loadedCount = 0
         let page = manager.fetchPage(offset: 0, limit: NotificationManager.pageSize)
@@ -210,73 +210,21 @@ final class NotificationViewModel: ObservableObject {
             filteredGroups = groups
             return
         }
-        // Show matches among the loaded pages right away, then widen the result
-        // once the rest of the table arrives.
-        filteredGroups = Self.filterGroups(groups, matching: trimmed)
-        loadRemainingForSearch()
-    }
-
-    /// Search has to see rows beyond the loaded pages. Reading them is SQLite IO
-    /// proportional to the whole table, so it runs off the main thread and the
-    /// filter is recomputed when the rows land.
-    private func loadRemainingForSearch() {
-        guard hasMore, !isLoadingAllForSearch else { return }
-        isLoadingAllForSearch = true
+        // SQL-side search on a background queue; the paging window (`groups`)
+        // is left untouched, so clearing the query restores it without a
+        // refetch. A stale result (query changed since) is simply dropped —
+        // the newer debounce pass supersedes it.
         let generation = dataGeneration
-        let startOffset = loadedCount
-        let pageSize = NotificationManager.pageSize
-        let manager = self.manager
+        let query = trimmed
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var collected: [NotificationManager.NotificationEntry] = []
-            var offset = startOffset
-            while true {
-                let page = manager.fetchPage(offset: offset, limit: pageSize)
-                collected.append(contentsOf: page)
-                offset += page.count
-                if page.count < pageSize { break }
-            }
+            let entries = NotificationManager.shared.searchNotifications(
+                query: query, limit: Self.searchResultCap)
+            let resultGroups = Self.buildGroups(from: entries)
             DispatchQueue.main.async {
                 guard let self, self.isActive else { return }
-                self.isLoadingAllForSearch = false
-                // A reload while we were fetching reset the paging window; these
-                // rows would append at the wrong offset and duplicate.
-                guard self.dataGeneration == generation else {
-                    self.recomputeFilteredGroups()
-                    return
-                }
-                if !collected.isEmpty {
-                    self.appendEntries(collected)
-                    self.loadedCount += collected.count
-                }
-                self.hasMore = false
-                let trimmed = self.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-                self.filteredGroups = trimmed.isEmpty
-                    ? self.groups
-                    : Self.filterGroups(self.groups, matching: trimmed)
+                guard self.dataGeneration == generation else { return }
+                self.filteredGroups = resultGroups
             }
-        }
-    }
-
-    private static func filterGroups(_ groups: [NotificationGroup], matching trimmed: String) -> [NotificationGroup] {
-        groups.compactMap { group -> NotificationGroup? in
-            // App/package match keeps the whole group; otherwise filter down to
-            // only entries whose content (title/subtitle/body) matches the query.
-            if group.appName.localizedCaseInsensitiveContains(trimmed) ||
-                group.packageName.localizedCaseInsensitiveContains(trimmed) {
-                return group
-            }
-            let matched = group.items.filter { entry in
-                entry.title.localizedCaseInsensitiveContains(trimmed) ||
-                entry.body.localizedCaseInsensitiveContains(trimmed) ||
-                (entry.subtitle?.localizedCaseInsensitiveContains(trimmed) ?? false)
-            }
-            guard !matched.isEmpty else { return nil }
-            return NotificationGroup(
-                id: group.id,
-                packageName: group.packageName,
-                appName: group.appName,
-                items: matched
-            )
         }
     }
 
@@ -355,8 +303,10 @@ final class NotificationViewModel: ObservableObject {
     }
 
     func selectedEntries() -> [NotificationManager.NotificationEntry] {
+        // Iterate the displayed groups (filteredGroups == groups when not
+        // searching) so selections made against search results resolve too.
         var result: [NotificationManager.NotificationEntry] = []
-        for group in groups {
+        for group in filteredGroups {
             if selectedIDs.contains(group.packageName) {
                 result.append(contentsOf: group.items)
             }

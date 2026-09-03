@@ -27,4 +27,23 @@ class StoragePaths {
     if (path == null || path.isEmpty) return null;
     return Directory(path);
   }
+
+  /// Root for files received from peers: the public Downloads directory, so
+  /// received files are visible and openable from any file manager. Probed
+  /// for writability first (pre-29 without WRITE_EXTERNAL_STORAGE, exotic
+  /// ROMs); falls back to the app-private directory.
+  static Future<Directory> receiveRootDirectory() async {
+    final downloads = await publicDownloadsDirectory();
+    if (downloads != null) {
+      try {
+        final probe = File('${downloads.path}/Clipy/.clipy-write-probe');
+        await probe.create(recursive: true);
+        await probe.delete();
+        return downloads;
+      } catch (_) {
+        // Not writable — fall through to the app-private directory.
+      }
+    }
+    return appStorageDirectory();
+  }
 }

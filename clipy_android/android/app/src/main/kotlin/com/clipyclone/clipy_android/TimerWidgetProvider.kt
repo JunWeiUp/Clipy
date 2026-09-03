@@ -1,6 +1,7 @@
 package com.clipyclone.clipy_android
 
 import android.app.AlarmManager
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -10,6 +11,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
@@ -45,7 +48,10 @@ class TimerWidgetProvider : AppWidgetProvider() {
             ACTION_PLUS -> adjust(ctx, +1)
             ACTION_TOGGLE -> toggle(ctx)
             ACTION_RESET -> reset(ctx)
-            ACTION_FINISHED -> refreshAll(ctx, notifyOnExpire = true)
+            ACTION_FINISHED -> {
+                Log.i(TAG, "finish alarm fired")
+                refreshAll(ctx, notifyOnExpire = true)
+            }
         }
     }
 
@@ -70,10 +76,15 @@ class TimerWidgetProvider : AppWidgetProvider() {
 
     companion object {
         private const val TAG = "TimerWidget"
-        const val MAX_MINUTES = 40
-        const val DEFAULT_MINUTES = 40
+        // Duration is stored in seconds; the panel's wheel picker allows up
+        // to 23:59:59 (the old 40-minute cap is gone).
+        const val DEFAULT_DURATION_SEC = 40 * 60
+        val MAX_DURATION_SEC = 23 * 3600 + 59 * 60 + 59
         private const val PREFS = "timer_widget"
         private const val KEY_STATE = "state"
+        private const val KEY_DURATION_SEC = "duration_seconds"
+
+        /** Legacy minute key from the 40-minute-cap era, migrated on read. */
         private const val KEY_DURATION_MIN = "duration_minutes"
         private const val KEY_END_AT = "end_at_ms"
         private const val KEY_REMAINING = "remaining_ms"
@@ -89,17 +100,22 @@ class TimerWidgetProvider : AppWidgetProvider() {
         const val ACTION_RESET = "com.clipyclone.clipy_android.timer.RESET"
         private const val ACTION_FINISHED = "com.clipyclone.clipy_android.timer.FINISHED"
 
-        private const val CHANNEL_ID = "clipy_timer"
+        // v2: channel sound/vibration settings are locked at creation, so the
+        // alarm-grade sound needed a fresh channel id.
+        private const val CHANNEL_ID = "clipy_timer_v2"
         private const val NOTIFICATION_ID = 0x7103
+        // Ongoing "countdown running" notification: silent, chronometer-driven;
+        // MIUI/HyperOS renders it as a status-bar focus countdown.
+        private const val RUNNING_CHANNEL_ID = "clipy_timer_running"
+        private const val RUNNING_NOTIFICATION_ID = 0x7104
 
-        // Palette shared with the widget layout / panel (see TimerDialView).
-        val COLOR_ACCENT = 0xFF4F9CF9.toInt()
-        val COLOR_ACCENT_LIGHT = 0xFF8FD0FF.toInt()
-        val COLOR_TEXT = 0xFFFFFFFF.toInt()
-        val COLOR_TEXT_SOFT = 0xE6FFFFFF.toInt()
-        val COLOR_MUTED = 0xFF8DA0BC.toInt()
+        // Palette sampled from the MIUI clock reference screenshot, shared
+        // with the wheel panel (see TimerWheelPicker).
+        val COLOR_TEXT = 0xFFF2F2F2.toInt()
+        val COLOR_MUTED = 0xFF808080.toInt()
+        val COLOR_IDLE = 0xFF515151.toInt()
+        val COLOR_ACCENT = 0xFF4787FD.toInt()
         val COLOR_FINISHED = 0xFFFFB169.toInt()
-        val COLOR_ON_ACCENT = 0xFF0B1220.toInt()
 
         private fun prefs(ctx: Context): SharedPreferences =
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -109,53 +125,60 @@ class TimerWidgetProvider : AppWidgetProvider() {
                 .getAppWidgetIds(ComponentName(ctx, TimerWidgetProvider::class.java))
                 .isNotEmpty()
 
-        fun currentDurationMinutes(ctx: Context): Int =
-            prefs(ctx).getInt(KEY_DURATION_MIN, DEFAULT_MINUTES)
+        fun currentDurationSeconds(ctx: Context): Int = currentDurationSeconds(prefs(ctx))
 
-        /** Set (or restart) the countdown — called from the drag panel. */
-        fun start(context: Context, minutes: Int) {
+        private fun currentDurationSeconds(p: SharedPreferences): Int {
+            if (p.contains(KEY_DURATION_SEC)) return p.getInt(KEY_DURATION_SEC, DEFAULT_DURATION_SEC)
+            // Migrate the legacy minutes value once.
+            return p.getInt(KEY_DURATION_MIN, 40) * 60
+        }
+
+        /** Set (or restart) the countdown — called from the wheel panel. */
+        fun start(context: Context, seconds: Int) {
             val ctx = context.applicationContext
-            val m = minutes.coerceIn(1, MAX_MINUTES)
+            val sec = seconds.coerceIn(1, MAX_DURATION_SEC)
             prefs(ctx).edit()
-                .putInt(KEY_DURATION_MIN, m)
-                .putLong(KEY_END_AT, System.currentTimeMillis() + m * 60_000L)
-                .putLong(KEY_REMAINING, m * 60_000L)
+                .putInt(KEY_DURATION_SEC, sec)
+                .putLong(KEY_END_AT, System.currentTimeMillis() + sec * 1000L)
+                .putLong(KEY_REMAINING, sec * 1000L)
                 .putString(KEY_STATE, RUNNING)
                 .apply()
             cancelFinishedNotification(ctx)
             armFinishAlarm(ctx)
             refreshAll(ctx)
+            postRunningNotification(ctx)
         }
 
-        /** -/+ button: 1-minute step, clamped to 1..40 minutes. */
+        /** -/+ widget button: 1-minute step, clamped to 1s..23:59:59. */
         fun adjust(context: Context, deltaMinutes: Int) {
             val ctx = context.applicationContext
             val p = prefs(ctx)
             when (p.getString(KEY_STATE, IDLE)) {
                 RUNNING -> {
                     val remaining = (remainingMillis(p) + deltaMinutes * 60_000L)
-                        .coerceIn(60_000L, MAX_MINUTES * 60_000L)
+                        .coerceIn(1_000L, MAX_DURATION_SEC * 1000L)
                     p.edit()
                         .putLong(KEY_END_AT, System.currentTimeMillis() + remaining)
                         .apply()
                     armFinishAlarm(ctx)
+                    postRunningNotification(ctx)
                 }
                 PAUSED -> {
                     val remaining =
-                        (p.getLong(KEY_REMAINING, DEFAULT_MINUTES * 60_000L) + deltaMinutes * 60_000L)
-                            .coerceIn(60_000L, MAX_MINUTES * 60_000L)
+                        (p.getLong(KEY_REMAINING, DEFAULT_DURATION_SEC * 1000L) + deltaMinutes * 60_000L)
+                            .coerceIn(1_000L, MAX_DURATION_SEC * 1000L)
                     p.edit().putLong(KEY_REMAINING, remaining).apply()
                 }
                 else -> {
-                    val duration = (p.getInt(KEY_DURATION_MIN, DEFAULT_MINUTES) + deltaMinutes)
-                        .coerceIn(1, MAX_MINUTES)
-                    p.edit().putInt(KEY_DURATION_MIN, duration).apply()
+                    val duration = (currentDurationSeconds(p) + deltaMinutes * 60)
+                        .coerceIn(1, MAX_DURATION_SEC)
+                    p.edit().putInt(KEY_DURATION_SEC, duration).apply()
                 }
             }
             refreshAll(ctx)
         }
 
-        /** Start / pause button. */
+        /** Start / pause button; in FINISHED state it is a stop (✕) button. */
         fun toggle(context: Context) {
             val ctx = context.applicationContext
             val p = prefs(ctx)
@@ -170,22 +193,27 @@ class TimerWidgetProvider : AppWidgetProvider() {
                     }
                     edit.apply()
                     cancelFinishAlarm(ctx)
+                    postRunningNotification(ctx)
                 }
                 PAUSED -> {
-                    val remaining = p.getLong(KEY_REMAINING, DEFAULT_MINUTES * 60_000L)
+                    val remaining = p.getLong(KEY_REMAINING, DEFAULT_DURATION_SEC * 1000L)
                     p.edit()
                         .putLong(KEY_END_AT, System.currentTimeMillis() + remaining)
                         .putString(KEY_STATE, RUNNING)
                         .apply()
                     armFinishAlarm(ctx)
+                    postRunningNotification(ctx)
                 }
-                else -> start(ctx, p.getInt(KEY_DURATION_MIN, DEFAULT_MINUTES))
+                FINISHED -> reset(ctx)
+                else -> start(ctx, currentDurationSeconds(ctx))
             }
             refreshAll(ctx)
         }
 
         fun reset(context: Context) {
             val ctx = context.applicationContext
+            TimerRinger.stop()
+            cancelRunningNotification(ctx)
             prefs(ctx).edit().putString(KEY_STATE, IDLE).apply()
             cancelFinishAlarm(ctx)
             cancelFinishedNotification(ctx)
@@ -209,17 +237,98 @@ class TimerWidgetProvider : AppWidgetProvider() {
             val p = prefs(ctx)
             if (p.getString(KEY_STATE, IDLE) != RUNNING) return
             if (remainingMillis(p) > 0L) return
-            val durationMin = p.getInt(KEY_DURATION_MIN, DEFAULT_MINUTES)
+            val durationSec = currentDurationSeconds(ctx)
             p.edit().putString(KEY_STATE, FINISHED).apply()
             cancelFinishAlarm(ctx)
-            if (notifyOnExpire) notifyFinished(ctx, durationMin)
+            cancelRunningNotification(ctx)
+            if (notifyOnExpire) {
+                TimerRinger.start(ctx)
+                notifyFinished(ctx, durationSec)
+            }
+        }
+
+        /**
+         * Persistent countdown notification. While running it embeds the
+         * framework chronometer in countdown mode, so it ticks by itself —
+         * and MIUI/HyperOS surfaces it as a status-bar countdown next to the
+         * clock. Paused shows the frozen remaining time instead.
+         */
+        private fun postRunningNotification(ctx: Context) {
+            val p = prefs(ctx)
+            val state = p.getString(KEY_STATE, IDLE)
+            if (state != RUNNING && state != PAUSED) return
+            ensureRunningChannel(ctx)
+            if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) return
+            val remaining = remainingMillis(p)
+            val remainingText = formatMillis(remaining)
+            val contentPI = PendingIntent.getActivity(
+                ctx,
+                6,
+                Intent(ctx, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val builder = NotificationCompat.Builder(ctx, RUNNING_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setContentTitle(ctx.getString(R.string.timer_countdown_title))
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(contentPI)
+                .addAction(
+                    0,
+                    ctx.getString(
+                        if (state == RUNNING) R.string.timer_action_pause else R.string.timer_action_resume,
+                    ),
+                    broadcastPI(ctx, ACTION_TOGGLE, 2),
+                )
+                .addAction(
+                    0,
+                    ctx.getString(R.string.timer_widget_reset),
+                    broadcastPI(ctx, ACTION_RESET, 3),
+                )
+            if (state == RUNNING) {
+                builder.setUsesChronometer(true)
+                builder.setChronometerCountDown(true)
+                builder.setWhen(p.getLong(KEY_END_AT, System.currentTimeMillis()))
+            } else {
+                builder.setShowWhen(false)
+                builder.setContentText(ctx.getString(R.string.timer_countdown_paused, remainingText))
+            }
+            try {
+                NotificationManagerCompat.from(ctx).notify(RUNNING_NOTIFICATION_ID, builder.build())
+            } catch (e: Exception) {
+                Log.w(TAG, "post running notification failed", e)
+            }
+        }
+
+        private fun cancelRunningNotification(ctx: Context) {
+            try {
+                NotificationManagerCompat.from(ctx).cancel(RUNNING_NOTIFICATION_ID)
+            } catch (_: Exception) {
+            }
+        }
+
+        private fun ensureRunningChannel(ctx: Context) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (nm.getNotificationChannel(RUNNING_CHANNEL_ID) != null) return
+            val channel = NotificationChannel(
+                RUNNING_CHANNEL_ID,
+                ctx.getString(R.string.timer_running_channel_name),
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = ctx.getString(R.string.timer_running_channel_desc)
+                setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
+            }
+            nm.createNotificationChannel(channel)
         }
 
         private fun remainingMillis(p: SharedPreferences): Long {
             return when (p.getString(KEY_STATE, IDLE)) {
                 RUNNING -> p.getLong(KEY_END_AT, 0L) - System.currentTimeMillis()
-                PAUSED -> p.getLong(KEY_REMAINING, DEFAULT_MINUTES * 60_000L)
-                else -> p.getInt(KEY_DURATION_MIN, DEFAULT_MINUTES) * 60_000L
+                PAUSED -> p.getLong(KEY_REMAINING, DEFAULT_DURATION_SEC * 1000L)
+                else -> currentDurationSeconds(p) * 1000L
             }
         }
 
@@ -260,30 +369,33 @@ class TimerWidgetProvider : AppWidgetProvider() {
             views.setTextColor(
                 R.id.status_text,
                 when (state) {
-                    RUNNING -> COLOR_ACCENT_LIGHT
+                    RUNNING -> COLOR_ACCENT
                     FINISHED -> COLOR_FINISHED
-                    else -> COLOR_MUTED
+                    PAUSED -> COLOR_MUTED
+                    else -> COLOR_IDLE
                 },
             )
             views.setTextColor(
                 R.id.time_text,
                 if (state == FINISHED) COLOR_FINISHED else COLOR_TEXT,
             )
-            // Pause becomes a filled accent pill while running.
-            views.setTextViewText(R.id.btn_toggle, if (state == RUNNING) "⏸" else "▶")
-            views.setInt(
-                R.id.btn_toggle,
-                "setBackgroundResource",
-                if (state == RUNNING) {
-                    R.drawable.timer_widget_button_accent
-                } else {
-                    R.drawable.timer_widget_button
-                },
-            )
-            views.setTextColor(
-                R.id.btn_toggle,
-                if (state == RUNNING) COLOR_ON_ACCENT else COLOR_TEXT_SOFT,
-            )
+            // The primary button is state-shaped: ▶/⏸ normally, but once the
+            // countdown is finished it becomes the amber ✕ that silences the
+            // alarm — the always-visible stop affordance on the widget.
+            when (state) {
+                RUNNING -> {
+                    views.setTextViewText(R.id.btn_toggle, "⏸")
+                    views.setTextColor(R.id.btn_toggle, COLOR_ACCENT)
+                }
+                FINISHED -> {
+                    views.setTextViewText(R.id.btn_toggle, "✕")
+                    views.setTextColor(R.id.btn_toggle, COLOR_FINISHED)
+                }
+                else -> {
+                    views.setTextViewText(R.id.btn_toggle, "▶")
+                    views.setTextColor(R.id.btn_toggle, COLOR_ACCENT)
+                }
+            }
 
             views.setOnClickPendingIntent(R.id.btn_minus, broadcastPI(ctx, ACTION_MINUS, 1))
             views.setOnClickPendingIntent(R.id.btn_toggle, broadcastPI(ctx, ACTION_TOGGLE, 2))
@@ -351,29 +463,45 @@ class TimerWidgetProvider : AppWidgetProvider() {
             am.cancel(finishPI(ctx))
         }
 
-        private fun notifyFinished(ctx: Context, durationMin: Int) {
+        private fun notifyFinished(ctx: Context, durationSec: Int) {
             ensureChannel(ctx)
             if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) return
+            val durationText = String.format(
+                Locale.ROOT, "%02d:%02d:%02d",
+                durationSec / 3600, durationSec % 3600 / 60, durationSec % 60,
+            )
             val contentPI = PendingIntent.getActivity(
                 ctx,
                 6,
                 Intent(ctx, MainActivity::class.java),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
+            // Alarm-grade: full-screen alert over the lock screen. The sound
+            // itself is played by TimerRinger (channel ringtones are muted by
+            // some OEM ROMs); the notification is the visual anchor.
+            val fullScreenPI = PendingIntent.getActivity(
+                ctx,
+                7,
+                Intent(ctx, TimerRingingActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
             val notification = NotificationCompat.Builder(ctx, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
                 .setContentTitle(ctx.getString(R.string.timer_widget_done_title))
-                .setContentText(ctx.getString(R.string.timer_widget_done_text, durationMin))
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentText(ctx.getString(R.string.timer_widget_done_text, durationText))
+                .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setOngoing(true)
                 .setAutoCancel(true)
                 .setContentIntent(contentPI)
+                .setFullScreenIntent(fullScreenPI, true)
                 .addAction(
                     0,
                     ctx.getString(R.string.timer_widget_reset),
                     broadcastPI(ctx, ACTION_RESET, 3),
                 )
                 .build()
+            notification.flags = notification.flags or Notification.FLAG_INSISTENT
             try {
                 NotificationManagerCompat.from(ctx).notify(NOTIFICATION_ID, notification)
             } catch (e: Exception) {
@@ -392,6 +520,8 @@ class TimerWidgetProvider : AppWidgetProvider() {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
             val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (nm.getNotificationChannel(CHANNEL_ID) != null) return
+            val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 ctx.getString(R.string.timer_widget_channel_name),
@@ -399,6 +529,19 @@ class TimerWidgetProvider : AppWidgetProvider() {
             ).apply {
                 description = ctx.getString(R.string.timer_widget_channel_desc)
                 setShowBadge(false)
+                // Alarm stream: independent of media volume, rings through
+                // alarms-only DND.
+                setSound(
+                    alarmSound,
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                )
+                enableVibration(true)
+                vibrationPattern = longArrayOf(
+                    0, 300, 150, 300, 150, 300, 150, 300, 150, 300,
+                )
             }
             nm.createNotificationChannel(channel)
         }

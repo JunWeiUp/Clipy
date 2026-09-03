@@ -52,6 +52,7 @@ class NotificationManager: NSObject {
         // Done last so DB schema (created in NotificationRepository.init via
         // `AppDatabase.shared`) is guaranteed ready.
         notificationCount = repository.count()
+        enforceRetentionIfNeeded()
     }
 
     // MARK: - Models
@@ -137,6 +138,12 @@ class NotificationManager: NSObject {
 
     func fetchAllNotifications() -> [NotificationEntry] {
         repository.fetchAll()
+    }
+
+    /// SQL-side search with a capped result set — the notification window
+    /// filters through this instead of loading the rest of the table.
+    func searchNotifications(query: String, limit: Int) -> [NotificationEntry] {
+        repository.search(query: query, limit: limit)
     }
 
     func fetchById(_ id: String) -> NotificationEntry? {
@@ -235,6 +242,7 @@ class NotificationManager: NSObject {
         case .inserted:
             // +1 net row; didSet broadcasts the count change to UI.
             notificationCount += 1
+            enforceRetentionIfNeeded()
             return true
         case .replacedDuplicate(let removedId):
             // Net 0 rows (delete-then-insert, or pure content-equal no-op).
@@ -255,6 +263,27 @@ class NotificationManager: NSObject {
         (entry.subtitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         entry.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         (entry.extras ?? [:]).values.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    // MARK: - Retention
+
+    /// Mirror-history retention cap. Everything already lives only in SQLite
+    /// (memory keeps a single count), but an unbounded phone notification
+    /// stream would grow that table forever. Trim to the newest
+    /// `retentionCap` rows once the count drifts past cap + margin.
+    static let retentionCap = 5000
+    private static let retentionMargin = 500
+
+    private func enforceRetentionIfNeeded() {
+        guard notificationCount > Self.retentionCap + Self.retentionMargin else { return }
+        let removed = repository.prune(keepLatest: Self.retentionCap)
+        if removed > 0 {
+            notificationCount -= removed
+            appLog(
+                "NotificationManager: pruned \(removed) old notifications (retention \(Self.retentionCap))",
+                level: .info
+            )
+        }
     }
 
     /// 对 title/subtitle/body 做大小写不敏感的子串匹配；空白项被忽略。

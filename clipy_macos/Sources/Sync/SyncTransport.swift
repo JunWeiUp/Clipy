@@ -105,7 +105,12 @@ extension SyncManager {
         var failure: ConnectFailure?
         guard let fd = tcpConnectDiag(host: host, port: port, timeout: timeout, failure: &failure) else {
             if reason == "scan" { stats?.recordConnectFailure(failure ?? .other) }
-            else { appLog("Dial \(reason) \(host):\(port) failed: connect(\(failure?.label ?? "unknown"))", level: .warning) }
+            else {
+                appLog("Dial \(reason) \(host):\(port) failed: connect(\(failure?.label ?? "unknown"))", level: .warning)
+                // A dead authorized endpoint is the auto-rediscover signal;
+                // scan/direct dials have no stable peer identity to count against.
+                if let resolvedPeerId { noteAuthorizedDialFailure(peerId: resolvedPeerId) }
+            }
             return
         }
         if reason == "scan" { stats?.recordConnectOk() }
@@ -170,6 +175,7 @@ extension SyncManager {
             source.resume()
             self.reconnectBackoffs[peerId] = 1
             self.pendingReconnects.removeValue(forKey: peerId)?.cancel()
+            self.noteSessionEstablished()
             self.recordPeer(peerId: peerId, name: name, host: host, port: port)
             self.persistEndpoint(peerId: peerId, name: name, host: host, port: port)
             self.flushPending(for: peerId)
