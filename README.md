@@ -12,7 +12,9 @@ Find what you copied. Reuse it on another device. Keep sync on your local networ
 
 **[Download for macOS →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-macOS-v1.0.15.zip)** &nbsp; · &nbsp; **[Download for Android →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-Android-arm64-v8a-v1.0.15.apk)**
 
-<sub>v1.0.15 · macOS 13+ on Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds and version notes</a></sub>
+<sub>Published v1.0.15 · macOS 13+ on Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds and version notes</a></sub>
+
+Current source version: **1.0.16** · [Build metadata](clipy_android/pubspec.yaml)
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
@@ -21,6 +23,8 @@ Find what you copied. Reuse it on another device. Keep sync on your local networ
 </div>
 
 > **Version notes:** the download links above point to the published v1.0.15 release. The `master` branch includes newer changes. In particular, private pairing-secret settings are not included in v1.0.15; read the [sync version notes](docs/GETTING_STARTED.md#sync-version-notes) before enabling sync.
+
+The Release badge tracks published stable releases, not the current source version or unpublished drafts.
 
 > Release readiness: the macshot-derived screenshot module needs a [third-party license review](THIRD_PARTY_NOTICES.md) before new combined binaries are published. The repository's MIT text is not a complete licensing statement for that module.
 
@@ -115,26 +119,55 @@ Use sync only on trusted networks and configure a strong private pairing secret.
 
 ## 🛠️ Build from source
 
+Run the commands below from the repository root. If your network requires a proxy, enable your own shell configuration first (for example, `proxy` if you have that helper configured); the build scripts do not require a particular proxy command.
+
 ### macOS (Swift / AppKit)
+
 Requirements: **Xcode 26+** with the macOS 26 SDK. The application deployment target is macOS 13.
 
 ```bash
 ./build_macos_app.sh
 ```
 
-Generates `clipy_macos/ClipyClone.app` and debug symbols without installing or launching. After quitting the running app, opt in with `INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh`. See [build and signing options](docs/DEVELOPMENT.md).
-
-### Android / iOS (Flutter)
-Requirements: Flutter **3.41.7** (see `.fvmrc`), JDK 17 and the Android SDK.
+Output: `clipy_macos/ClipyClone.app` and `clipy_macos/ClipyClone.app.dSYM`. The default build does **not** install or launch the app. To build, install into `/Applications`, and launch, first quit the running Clipy app, then run:
 
 ```bash
-cd clipy_android
-flutter pub get --enforce-lockfile
-flutter build apk --debug      # Android
-# iOS is experimental and not validated by this project's CI.
+INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh
 ```
 
-Release builds produce split APKs for `armeabi-v7a` and `arm64-v8a` and require explicit signing configuration. Run `bash scripts/check.sh all` from the root for local quality checks.
+Local macOS builds are ad-hoc signed, not Developer ID signed or notarized. See [build and signing options](docs/DEVELOPMENT.md#macos).
+
+### Android (Flutter)
+
+Requirements: Flutter **3.41.7** (see `.fvmrc`), JDK 17 and the Android SDK.
+
+Configure a persistent release keystore once on each build machine, using the ignored `clipy_android/android/key.properties` or the signing environment variables in the [Android signing guide](docs/DEVELOPMENT.md#android). Once configured, build with:
+
+```bash
+./build_android_apk.sh
+```
+
+Output: `dist/ClipyClone-Android-arm64-v8a-v<version>.apk` and `dist/ClipyClone-Android-armeabi-v7a-v<version>.apk`. The script resolves locked dependencies and signs both release APKs with your configured key. Keep the same key for future upgrades; never commit signing files or passwords.
+
+For a debug build without release signing credentials:
+
+```bash
+(
+  cd clipy_android
+  flutter pub get --enforce-lockfile
+  flutter build apk --debug --no-pub
+)
+```
+
+Debug output: `clipy_android/build/app/outputs/flutter-apk/app-debug.apk`. Debug and release signing identities differ; do not assume in-place upgrades between them. Back up app data before any necessary uninstall/reinstall.
+
+iOS remains experimental and is not validated by this project's CI.
+
+### Versions and checks
+
+Both root build scripts default to `version: X.Y.Z+N` in [`clipy_android/pubspec.yaml`](clipy_android/pubspec.yaml): `X.Y.Z` is the application version and `N` is the build number. `APP_VERSION` and `BUILD_NUMBER` can explicitly override them for a build. When changing versions, update **both README files** in the same change and keep build numbers increasing; installing over a newer CI build may require a higher `BUILD_NUMBER`.
+
+Run `bash scripts/check.sh all` from the root for local quality checks.
 
 ## 🏗️ Architecture
 
@@ -193,14 +226,15 @@ Issues and pull requests are welcome in English or Chinese. See [CONTRIBUTING.md
 
 ## 📦 Releasing
 
-After configuring release signing, version tags run CI and create a **draft** for maintainer review:
+After configuring release signing, update `clipy_android/pubspec.yaml` and both README files, then commit the changes. Push a **new, unused** version tag matching the source version to run CI and create a **draft** for maintainer review:
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+VERSION="$(awk '/^version:/ {split($2, v, "+"); print v[1]; exit}' clipy_android/pubspec.yaml)"
+git tag "v${VERSION}"
+git push origin "v${VERSION}"
 ```
 
-The `Release` workflow can also be triggered manually with a version like `1.1.0`. Complete the [release checklist](docs/DEVELOPMENT.md#release-checklist), including licensing and signing review, before publishing the draft.
+The `Release` workflow can also be triggered manually with the matching `X.Y.Z` version. Do not move or overwrite existing version tags. Complete the [release checklist](docs/DEVELOPMENT.md#release-checklist), including licensing and signing review, before publishing the draft.
 
 Use the [release notes template](docs/RELEASE_NOTES_TEMPLATE.md) to explain user-visible changes, upgrade steps, and the platforms included in each release.
 

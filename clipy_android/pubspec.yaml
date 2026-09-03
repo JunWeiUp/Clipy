@@ -1,7 +1,7 @@
 name: clipy_android
 description: Clipboard history, encrypted LAN sync, notification mirroring, and file transfer for Clipy.
 publish_to: none
-version: 1.0.0+10006
+version: 1.0.16+10023
 
 environment:
   sdk: ">=3.11.0 <4.0.0"

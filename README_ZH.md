@@ -12,7 +12,9 @@
 
 **[下载 macOS 版 →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-macOS-v1.0.15.zip)** &nbsp; · &nbsp; **[下载 Android 版 →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-Android-arm64-v8a-v1.0.15.apk)**
 
-<sub>v1.0.15 · macOS 13+，Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED_ZH.md#下载与版本">其他安装包与版本说明</a></sub>
+<sub>已发布 v1.0.15 · macOS 13+，Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED_ZH.md#下载与版本">其他安装包与版本说明</a></sub>
+
+当前源码版本：**1.0.16** · [构建版本配置](clipy_android/pubspec.yaml)
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
@@ -21,6 +23,8 @@
 </div>
 
 > **版本说明：**上方下载入口对应已发布的 v1.0.15，`master` 分支包含此后的更新。其中，私有配对密钥设置尚未包含在 v1.0.15 中；启用同步前请先阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
+
+Release 徽章显示已公开发布的稳定版本，不代表当前源码版本，也不包含尚未发布的草稿。
 
 > 发布前注意：截图模块移植自 macshot，需先完成[第三方许可核对](THIRD_PARTY_NOTICES.md)，再发布新的组合二进制。根目录的 MIT 文本不能代表该模块的完整许可条件。
 
@@ -115,26 +119,55 @@ macOS 端使用原生 Swift / AppKit，Android 端使用 Flutter。截图标注�
 
 ## 🛠️ 从源码构建
 
+以下命令均在仓库根目录执行。如果网络需要代理，请先启用自己的终端代理配置（已配置 `proxy` 命令的本机可先执行 `proxy`）；构建脚本本身不依赖特定代理命令。
+
 ### macOS（Swift / AppKit）
+
 环境要求：**Xcode 26+** 和 macOS 26 SDK；应用最低部署版本仍为 macOS 13。
 
 ```bash
 ./build_macos_app.sh
 ```
 
-生成 `clipy_macos/ClipyClone.app` 与调试符号，默认不安装、不启动。退出运行中的应用后，可用 `INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh` 显式安装启动。详见[构建与签名选项](docs/DEVELOPMENT.md)。
-
-### Android / iOS（Flutter）
-环境要求：Flutter **3.41.7**（见 `.fvmrc`）、JDK 17 与 Android SDK。
+产物为 `clipy_macos/ClipyClone.app` 和 `clipy_macos/ClipyClone.app.dSYM`，默认**不安装、不启动**。如需构建后安装到 `/Applications` 并自动启动，请先退出正在运行的 Clipy，再执行：
 
 ```bash
-cd clipy_android
-flutter pub get --enforce-lockfile
-flutter build apk --debug      # Android
-# iOS 为实验性目标，尚未纳入本项目 CI 验证。
+INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh
 ```
 
-Release 构建会生成 `armeabi-v7a` 与 `arm64-v8a` 两个分 ABI 的 APK，并要求显式配置签名。在仓库根目录运行 `bash scripts/check.sh all` 可执行质量检查。
+本地 macOS 构建使用 ad-hoc 签名，不含 Developer ID 签名或公证。详见[构建与签名选项](docs/DEVELOPMENT.md#macos)。
+
+### Android（Flutter）
+
+环境要求：Flutter **3.41.7**（见 `.fvmrc`）、JDK 17 与 Android SDK。
+
+每台构建机器首次使用时，需按 [Android 签名指南](docs/DEVELOPMENT.md#android)配置固定发布密钥，使用 Git 忽略的 `clipy_android/android/key.properties` 或签名环境变量。配置完成后，直接运行：
+
+```bash
+./build_android_apk.sh
+```
+
+产物为 `dist/ClipyClone-Android-arm64-v8a-v<version>.apk` 和 `dist/ClipyClone-Android-armeabi-v7a-v<version>.apk`。脚本会解析锁定的依赖并使用已配置的密钥签名两个 Release APK。后续升级须保留同一份密钥，切勿提交签名文件或密码。
+
+如果只需调试包，无需配置发布签名：
+
+```bash
+(
+  cd clipy_android
+  flutter pub get --enforce-lockfile
+  flutter build apk --debug --no-pub
+)
+```
+
+调试包位于 `clipy_android/build/app/outputs/flutter-apk/app-debug.apk`。调试包与发布包签名不同，不能假设可互相覆盖安装；如确需卸载重装，请先备份应用数据。
+
+iOS 仍为实验性目标，尚未纳入本项目 CI 验证。
+
+### 版本号与检查
+
+两个根目录构建脚本默认读取 [`clipy_android/pubspec.yaml`](clipy_android/pubspec.yaml) 中的 `version: X.Y.Z+N`：`X.Y.Z` 为应用版本，`N` 为构建号；也可通过 `APP_VERSION`、`BUILD_NUMBER` 显式覆盖单次构建。版本变更时应在同一批改动中同步更新**中英文两份 README**，并保持构建号递增；若要覆盖更高构建号的 CI 包，本地需使用更高的 `BUILD_NUMBER`。
+
+在仓库根目录运行 `bash scripts/check.sh all` 可执行质量检查。
 
 ## 🏗️ 架构
 
@@ -193,14 +226,15 @@ assets/                   # Logo 与应用图标
 
 ## 📦 发布
 
-配置发布签名后，推送版本标签会执行 CI 并创建待人工审核的 **Release 草稿**：
+配置发布签名后，先更新 `clipy_android/pubspec.yaml` 和中英文 README 并提交改动，再推送与源码版本一致的**全新、未使用过的版本标签**。这会执行 CI 并创建待人工审核的 **Release 草稿**：
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+VERSION="$(awk '/^version:/ {split($2, v, "+"); print v[1]; exit}' clipy_android/pubspec.yaml)"
+git tag "v${VERSION}"
+git push origin "v${VERSION}"
 ```
 
-也可以手动触发 `Release` workflow，并输入类似 `1.1.0` 的版本号。发布草稿前请完成[发布清单](docs/DEVELOPMENT.md#release-checklist)，尤其是许可与签名核对。
+也可以手动触发 `Release` workflow，并输入与源码一致的 `X.Y.Z` 版本号。不要移动或覆盖已有版本标签。发布草稿前请完成[发布清单](docs/DEVELOPMENT.md#release-checklist)，尤其是许可与签名核对。
 
 可使用[更新说明模板](docs/RELEASE_NOTES_TEMPLATE.md)，说明用户可见的变化、升级步骤与实际提供的平台版本。
 
