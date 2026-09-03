@@ -8,6 +8,7 @@ check_repo() {
   bash -n build_macos_app.sh build_android_apk.sh scripts/check.sh scripts/lib/build_common.sh scripts/test_build_config.sh
   bash scripts/test_build_config.sh
   python3 scripts/check_repository.py
+  python3 scripts/check_icons.py
 }
 
 check_flutter() {

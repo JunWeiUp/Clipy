@@ -14,15 +14,15 @@ Find what you copied. Reuse it on another device. Keep sync on your local networ
 
 <sub>Published v1.0.15 · macOS 13+ on Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds and version notes</a></sub>
 
-Current source version: **1.0.16** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.17** · Build **10040** · [Build metadata](clipy_android/pubspec.yaml)
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
-[![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
 [![License review](https://img.shields.io/badge/license-review_required-orange)](THIRD_PARTY_NOTICES.md)
 
 </div>
 
-> **Version notes:** the download links above point to the published v1.0.15 release. The `master` branch includes newer changes. In particular, private pairing-secret settings are not included in v1.0.15; read the [sync version notes](docs/GETTING_STARTED.md#sync-version-notes) before enabling sync.
+> **Version notes:** the download links above point to the published v1.0.15 release. The `main` branch includes newer changes. In particular, private pairing-secret settings are not included in v1.0.15; read the [sync version notes](docs/GETTING_STARTED.md#sync-version-notes) before enabling sync.
 
 The Release badge tracks published stable releases, not the current source version or unpublished drafts.
 
@@ -120,6 +120,8 @@ Use sync only on trusted networks and configure a strong private pairing secret.
 ## 🛠️ Build from source
 
 Run the commands below from the repository root. If your network requires a proxy, enable your own shell configuration first (for example, `proxy` if you have that helper configured); the build scripts do not require a particular proxy command.
+
+App icons share one approved master across macOS, Android and iOS. See the [icon assets and export guide](assets/branding/README.md) to regenerate all platform sizes and this README's logo.
 
 ### macOS (Swift / AppKit)
 

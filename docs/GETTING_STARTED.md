@@ -26,7 +26,7 @@ The project's current build workflow does not notarize the app. Verify the downl
 
 ## Sync version notes
 
-The current `master` source and the downloadable v1.0.15 are different:
+The current `main` source and the downloadable v1.0.15 are different:
 
 | Build | Pairing behavior |
 | --- | --- |
