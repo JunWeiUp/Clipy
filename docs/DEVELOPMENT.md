@@ -98,6 +98,25 @@ back up user data before any uninstall/reinstall.
 
 ## Manual regression checks
 
+### App icons
+
+The approved master and reproducible platform exports are documented in
+[the branding guide](../assets/branding/README.md). To update all launcher icons
+and both README logos together, run on macOS:
+
+```bash
+swift scripts/export_app_icons.swift
+python3 scripts/check_icons.py
+```
+
+Commit the resulting platform assets along with the source artwork. Normal app
+builds consume the checked-in PNG/XML files and do not run image generation.
+`scripts/check.sh repo` validates the icon resources on macOS and Linux. Review
+the exported preview at small sizes, then verify installed launchers on target
+devices; Android theme/mask choices and icon caches are launcher-dependent.
+
+### Application behavior
+
 Use test data and test devices. Unit tests do not establish that permissions,
 background execution, OEM power management, capture or recording work correctly.
 

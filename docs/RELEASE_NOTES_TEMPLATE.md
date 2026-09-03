@@ -2,7 +2,7 @@
 
 Use this for a **reviewed release draft**. The existing [release checklist](DEVELOPMENT.md#release-checklist), signing requirements, and [license review](../THIRD_PARTY_NOTICES.md) still apply.
 
-Replace every placeholder with verified information before publishing. Describe changes present in the tagged version, not changes that only exist on `master`.
+Replace every placeholder with verified information before publishing. Describe changes present in the tagged version, not changes that only exist on the development branch.
 
 ```markdown
 ## What's changed

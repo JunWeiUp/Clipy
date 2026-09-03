@@ -14,15 +14,15 @@
 
 <sub>已发布 v1.0.15 · macOS 13+，Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED_ZH.md#下载与版本">其他安装包与版本说明</a></sub>
 
-当前源码版本：**1.0.16** · [构建版本配置](clipy_android/pubspec.yaml)
+当前源码版本：**1.0.17** · 构建号 **10040** · [构建版本配置](clipy_android/pubspec.yaml)
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
-[![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
 [![License review](https://img.shields.io/badge/license-review_required-orange)](THIRD_PARTY_NOTICES.md)
 
 </div>
 
-> **版本说明：**上方下载入口对应已发布的 v1.0.15，`master` 分支包含此后的更新。其中，私有配对密钥设置尚未包含在 v1.0.15 中；启用同步前请先阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
+> **版本说明：**上方下载入口对应已发布的 v1.0.15，`main` 分支包含此后的更新。其中，私有配对密钥设置尚未包含在 v1.0.15 中；启用同步前请先阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
 
 Release 徽章显示已公开发布的稳定版本，不代表当前源码版本，也不包含尚未发布的草稿。
 
@@ -120,6 +120,8 @@ macOS 端使用原生 Swift / AppKit，Android 端使用 Flutter。截图标注�
 ## 🛠️ 从源码构建
 
 以下命令均在仓库根目录执行。如果网络需要代理，请先启用自己的终端代理配置（已配置 `proxy` 命令的本机可先执行 `proxy`）；构建脚本本身不依赖特定代理命令。
+
+macOS、Android 和 iOS 的应用图标使用同一份设计母版。更新各平台尺寸及 README 标志的方法见[图标资源与导出说明](assets/branding/README.md)。
 
 ### macOS（Swift / AppKit）
 
