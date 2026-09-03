@@ -1,14 +1,9 @@
-<p align="right"><b>English</b> &nbsp; / &nbsp; <a href="README_ZH.md">简体中文</a></p>
-
 <div align="center">
-
-<img src="Logo.png" alt="Clipy" width="96" height="96" />
-
-# Clipy
-
-**Your Mac clipboard, connected to Android.**
-
-Find what you copied. Reuse it on another device. Keep sync on your local network, with no account required.
+  <img src="Logo.png" alt="Clipy — two linked clipboard sheets" width="112" height="112" />
+  <h1>Clipy</h1>
+  <p><strong>Your Mac clipboard, connected to Android.</strong></p>
+  <p>Find what you copied. Reuse it on another device. Keep sync on your local network, with no account required.</p>
+  <p><strong>English</strong> · <a href="README_ZH.md">简体中文</a></p>
 
 **[Download for macOS →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-macOS-v1.0.15.zip)** &nbsp; · &nbsp; **[Download for Android →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-Android-arm64-v8a-v1.0.15.apk)**
 
