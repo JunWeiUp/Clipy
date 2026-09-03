@@ -1,14 +1,9 @@
-<p align="right"><a href="README.md">English</a> &nbsp; / &nbsp; <b>简体中文</b></p>
-
 <div align="center">
-
-<img src="Logo.png" alt="Clipy" width="96" height="96" />
-
-# Clipy
-
-**让 Mac 和 Android，共享你的剪贴板。**
-
-找回复制过的内容，在另一台设备上继续使用。局域网同步，无需账号。
+  <img src="Logo.png" alt="Clipy — 相连的双页剪贴板图标" width="112" height="112" />
+  <h1>Clipy</h1>
+  <p><strong>让 Mac 和 Android，共享你的剪贴板。</strong></p>
+  <p>找回复制过的内容，在另一台设备上继续使用。局域网同步，无需账号。</p>
+  <p><a href="README.md">English</a> · <strong>简体中文</strong></p>
 
 **[下载 macOS 版 →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-macOS-v1.0.15.zip)** &nbsp; · &nbsp; **[下载 Android 版 →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-Android-arm64-v8a-v1.0.15.apk)**
 
