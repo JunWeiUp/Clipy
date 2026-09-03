@@ -45,37 +45,37 @@ class PendingSyncRepository {
   }) async {
     if (peerId.isEmpty || hash.isEmpty) return false;
     final db = await _db;
-    final cutoff =
-        DateTime.now().subtract(ttl).millisecondsSinceEpoch;
+    final cutoff = DateTime.now().subtract(ttl).millisecondsSinceEpoch;
     await db.delete(_table, where: 'enqueue_at < ?', whereArgs: [cutoff]);
 
-    final existing = Sqflite.firstIntValue(await db.rawQuery(
-      'SELECT COUNT(*) FROM $_table WHERE peer_id = ? AND hash = ?',
-      [peerId, hash],
-    )) ??
+    final existing =
+        Sqflite.firstIntValue(
+          await db.rawQuery(
+            'SELECT COUNT(*) FROM $_table WHERE peer_id = ? AND hash = ?',
+            [peerId, hash],
+          ),
+        ) ??
         0;
     if (existing == 0) {
-      final count = Sqflite.firstIntValue(await db.rawQuery(
-        'SELECT COUNT(*) FROM $_table WHERE peer_id = ?',
-        [peerId],
-      )) ??
+      final count =
+          Sqflite.firstIntValue(
+            await db.rawQuery(
+              'SELECT COUNT(*) FROM $_table WHERE peer_id = ?',
+              [peerId],
+            ),
+          ) ??
           0;
       if (count >= maxPerPeer) return false;
     }
 
     final bytes = data is Uint8List ? data : Uint8List.fromList(data);
-    await db.insert(
-      _table,
-      {
-        'peer_id': peerId,
-        'hash': hash,
-        'type': type,
-        'data': bytes,
-        'enqueue_at':
-            (enqueueAt ?? DateTime.now()).millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert(_table, {
+      'peer_id': peerId,
+      'hash': hash,
+      'type': type,
+      'data': bytes,
+      'enqueue_at': (enqueueAt ?? DateTime.now()).millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
     return true;
   }
 
@@ -83,8 +83,7 @@ class PendingSyncRepository {
     required String peerId,
     Duration ttl = defaultTtl,
   }) async {
-    final cutoff =
-        DateTime.now().subtract(ttl).millisecondsSinceEpoch;
+    final cutoff = DateTime.now().subtract(ttl).millisecondsSinceEpoch;
     final rows = await (await _db).query(
       _table,
       where: 'peer_id = ? AND enqueue_at >= ?',
@@ -127,8 +126,7 @@ class PendingSyncRepository {
   }
 
   Future<void> removeAllForPeer(String peerId) async {
-    await (await _db)
-        .delete(_table, where: 'peer_id = ?', whereArgs: [peerId]);
+    await (await _db).delete(_table, where: 'peer_id = ?', whereArgs: [peerId]);
   }
 
   Future<void> cleanOld({
@@ -136,11 +134,12 @@ class PendingSyncRepository {
     int maxRows = 2000,
   }) async {
     final db = await _db;
-    final cutoff =
-        DateTime.now().subtract(maxAge).millisecondsSinceEpoch;
+    final cutoff = DateTime.now().subtract(maxAge).millisecondsSinceEpoch;
     await db.delete(_table, where: 'enqueue_at < ?', whereArgs: [cutoff]);
-    final count = Sqflite.firstIntValue(
-            await db.rawQuery('SELECT COUNT(*) FROM $_table')) ??
+    final count =
+        Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM $_table'),
+        ) ??
         0;
     if (count > maxRows) {
       await db.rawDelete(
@@ -166,8 +165,7 @@ class PendingSyncRepository {
       hash: row['hash'] as String,
       type: row['type'] as String,
       data: bytes,
-      enqueueAt:
-          DateTime.fromMillisecondsSinceEpoch(row['enqueue_at'] as int),
+      enqueueAt: DateTime.fromMillisecondsSinceEpoch(row['enqueue_at'] as int),
     );
   }
 }

@@ -39,7 +39,8 @@ class NotificationHealthStatus {
 
 class NotificationHealthMonitor with WidgetsBindingObserver {
   NotificationHealthMonitor._();
-  static final NotificationHealthMonitor instance = NotificationHealthMonitor._();
+  static final NotificationHealthMonitor instance =
+      NotificationHealthMonitor._();
 
   static const _foregroundInterval = Duration(seconds: 45);
   static const _notReceivingGracePeriod = Duration(minutes: 3);
@@ -118,20 +119,28 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
 
   Future<NotificationHealthStatus> checkHealth() async {
     if (!Platform.isAndroid) {
-      return _publish(_healthyStatus(const NotificationListenerStatus(
-        permissionGranted: true,
-        serviceConnected: true,
-        activeNotificationCount: 0,
-      )));
+      return _publish(
+        _healthyStatus(
+          const NotificationListenerStatus(
+            permissionGranted: true,
+            serviceConnected: true,
+            activeNotificationCount: 0,
+          ),
+        ),
+      );
     }
 
     final notificationManager = NotificationManager.instance;
     if (!notificationManager.isEnabled) {
-      return _publish(_healthyStatus(const NotificationListenerStatus(
-        permissionGranted: true,
-        serviceConnected: true,
-        activeNotificationCount: 0,
-      )));
+      return _publish(
+        _healthyStatus(
+          const NotificationListenerStatus(
+            permissionGranted: true,
+            serviceConnected: true,
+            activeNotificationCount: 0,
+          ),
+        ),
+      );
     }
 
     var status = await notificationManager.getListenerStatus();
@@ -169,8 +178,8 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
     }
 
     // 检测电池优化白名单——多数国产 ROM 会因省电杀掉后台监听服务
-    final batteryOptimizationExempt =
-        await notificationManager.isBatteryOptimizationExempt();
+    final batteryOptimizationExempt = await notificationManager
+        .isBatteryOptimizationExempt();
     if (!batteryOptimizationExempt) {
       appLog(
         'NotificationHealthMonitor: battery optimization NOT exempt, '
@@ -235,7 +244,8 @@ class NotificationHealthMonitor with WidgetsBindingObserver {
       issue: NotificationHealthIssue.none,
       listenerStatus: status,
       batteryOptimizationExempt: true,
-      lastNotificationAt: NotificationManager.instance.lastNotificationReceivedAt,
+      lastNotificationAt:
+          NotificationManager.instance.lastNotificationReceivedAt,
       checkedAt: DateTime.now(),
     );
   }

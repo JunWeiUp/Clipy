@@ -22,11 +22,55 @@ class CompressionUtils {
   };
 
   static const Set<String> _textExtensions = {
-    'txt', 'log', 'csv', 'json', 'xml', 'html', 'htm', 'css', 'js', 'ts',
-    'py', 'java', 'cpp', 'c', 'h', 'hpp', 'cs', 'rb', 'php', 'go', 'rs',
-    'swift', 'kt', 'kts', 'md', 'markdown', 'yaml', 'yml', 'toml', 'ini',
-    'properties', 'cfg', 'conf', 'sh', 'bash', 'bat', 'cmd', 'sql', 'pl',
-    'pm', 'lua', 'r', 'scala', 'clj', 'cljs', 'edn', 'coffee', 'scss', 'sass',
+    'txt',
+    'log',
+    'csv',
+    'json',
+    'xml',
+    'html',
+    'htm',
+    'css',
+    'js',
+    'ts',
+    'py',
+    'java',
+    'cpp',
+    'c',
+    'h',
+    'hpp',
+    'cs',
+    'rb',
+    'php',
+    'go',
+    'rs',
+    'swift',
+    'kt',
+    'kts',
+    'md',
+    'markdown',
+    'yaml',
+    'yml',
+    'toml',
+    'ini',
+    'properties',
+    'cfg',
+    'conf',
+    'sh',
+    'bash',
+    'bat',
+    'cmd',
+    'sql',
+    'pl',
+    'pm',
+    'lua',
+    'r',
+    'scala',
+    'clj',
+    'cljs',
+    'edn',
+    'coffee',
+    'scss',
+    'sass',
   };
 
   static Future<bool> shouldCompressFile(String filePath) async {
@@ -58,7 +102,10 @@ class CompressionUtils {
 
         var printableCount = 0;
         for (final byte in data) {
-          if ((byte >= 32 && byte <= 126) || byte == 9 || byte == 10 || byte == 13) {
+          if ((byte >= 32 && byte <= 126) ||
+              byte == 9 ||
+              byte == 10 ||
+              byte == 13) {
             printableCount++;
           }
         }

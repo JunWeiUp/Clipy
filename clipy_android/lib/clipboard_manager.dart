@@ -14,10 +14,12 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   static final ClipboardManager instance = ClipboardManager._();
   ClipboardManager._();
 
-  static const _clipboardChannel =
-      MethodChannel('com.clipyclone.clipy_android/clipboard');
+  static const _clipboardChannel = MethodChannel(
+    'com.clipyclone.clipy_android/clipboard',
+  );
 
   String? _lastText;
+
   /// Recent remote-origin hashes used as a second loopback guard (the first
   /// line is `_lastText == text`). Kept as a bounded, time-windowed set so
   /// concurrent remote pushes and restart windows are both covered.
@@ -49,7 +51,10 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   int get historyLimit => _historyLimit;
   List<String> get excludedApps => List.unmodifiable(_excludedApps);
 
-  Future<List<HistoryEntry>> fetchPage({required int offset, required int limit}) {
+  Future<List<HistoryEntry>> fetchPage({
+    required int offset,
+    required int limit,
+  }) {
     return ClipboardRepository.instance.fetchPage(offset: offset, limit: limit);
   }
 
@@ -103,8 +108,10 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     try {
       await _clipboardChannel.invokeMethod('startMonitoring');
     } catch (e) {
-      appLog('ClipboardManager: failed to start native monitoring: $e',
-          level: 'warning');
+      appLog(
+        'ClipboardManager: failed to start native monitoring: $e',
+        level: 'warning',
+      );
     }
     _updateBackgroundPoll();
   }
@@ -116,14 +123,17 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     try {
       await _clipboardChannel.invokeMethod('stopMonitoring');
     } catch (e) {
-      appLog('ClipboardManager: failed to stop native monitoring: $e',
-          level: 'warning');
+      appLog(
+        'ClipboardManager: failed to stop native monitoring: $e',
+        level: 'warning',
+      );
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _inBackground = state == AppLifecycleState.paused ||
+    _inBackground =
+        state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.inactive;
 
@@ -159,7 +169,10 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
 
   void _startPolling(Duration interval) {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(interval, (_) => unawaited(_pollClipboardOnce()));
+    _pollTimer = Timer.periodic(
+      interval,
+      (_) => unawaited(_pollClipboardOnce()),
+    );
   }
 
   void _stopPolling() {
@@ -173,7 +186,9 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
       await _processClipboardText(
         data.text!,
         recordHistory: _lastText != null,
-        sourceApp: Platform.isMacOS ? 'macOS' : (Platform.isIOS ? 'iOS' : 'Android'),
+        sourceApp: Platform.isMacOS
+            ? 'macOS'
+            : (Platform.isIOS ? 'iOS' : 'Android'),
       );
     }
   }
@@ -200,7 +215,8 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
     _historyLimit = prefs.getInt('historyLimit') ?? 1000;
-    _excludedApps = prefs.getStringList('excludedApps') ?? List.from(_defaultExcludedApps);
+    _excludedApps =
+        prefs.getStringList('excludedApps') ?? List.from(_defaultExcludedApps);
   }
 
   /// Records a remote-origin hash so the next local copy of the same content is
@@ -223,7 +239,10 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     }
   }
 
-  Future<void> _addToHistory(HistoryEntry entry, {bool broadcast = true}) async {
+  Future<void> _addToHistory(
+    HistoryEntry entry, {
+    bool broadcast = true,
+  }) async {
     if (entry.sourceApp != null && _excludedApps.contains(entry.sourceApp)) {
       return;
     }
@@ -239,16 +258,19 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
 
     // Loopback guard: skip broadcast if this exact content just arrived from a
     // remote peer (single-field `_lastText` check above is the first line).
-    final isLoopback = normalizedEntry.contentHash != null &&
+    final isLoopback =
+        normalizedEntry.contentHash != null &&
         _wasRecentlyRemote(normalizedEntry.contentHash!);
 
     if (broadcast && !isLoopback) {
       if (normalizedEntry.item.type == 'text') {
         // Primary LAN clipboard sync — always text/plain.
-        unawaited(SyncManager.instance.broadcastSync(
-          normalizedEntry.item.value as String,
-          normalizedEntry.contentHash!,
-        ));
+        unawaited(
+          SyncManager.instance.broadcastSync(
+            normalizedEntry.item.value as String,
+            normalizedEntry.contentHash!,
+          ),
+        );
       }
     }
 
@@ -276,7 +298,7 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     final effectiveHash = hash.isNotEmpty
         ? hash
         : (_contentHashForItem(HistoryItem(type: 'text', value: text)) ??
-            text.hashCode.toString());
+              text.hashCode.toString());
 
     try {
       final latest = await ClipboardRepository.instance.latestEntry();
@@ -285,7 +307,8 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
         _lastText = text;
         // Same as current top of history — do not re-set system clipboard.
         appLog(
-            'handleRemoteSync: already latest hash=${effectiveHash.substring(0, effectiveHash.length.clamp(0, 8))} (skip clipboard)');
+          'handleRemoteSync: already latest hash=${effectiveHash.substring(0, effectiveHash.length.clamp(0, 8))} (skip clipboard)',
+        );
         return true;
       }
 
@@ -304,7 +327,8 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
       // Queue + non-blocking write so ACK is not stuck until UI opens.
       unawaited(_writeSystemClipboard(text));
       appLog(
-          'handleRemoteSync: stored hash=${effectiveHash.substring(0, effectiveHash.length.clamp(0, 8))}');
+        'handleRemoteSync: stored hash=${effectiveHash.substring(0, effectiveHash.length.clamp(0, 8))}',
+      );
       return true;
     } catch (e) {
       appLog('handleRemoteSync failed: $e', level: 'error');
@@ -332,10 +356,8 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
 
     try {
       final native = await _clipboardChannel
-          .invokeMethod<bool>('setText', {'text': text}).timeout(
-        const Duration(milliseconds: 400),
-        onTimeout: () => false,
-      );
+          .invokeMethod<bool>('setText', {'text': text})
+          .timeout(const Duration(milliseconds: 400), onTimeout: () => false);
       if (native == true) {
         try {
           final prefs = await SharedPreferences.getInstance();
@@ -347,8 +369,9 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
       appLog('native setText failed/timeout: $e', level: 'warning');
     }
     try {
-      await Clipboard.setData(ClipboardData(text: text))
-          .timeout(const Duration(milliseconds: 400));
+      await Clipboard.setData(
+        ClipboardData(text: text),
+      ).timeout(const Duration(milliseconds: 400));
     } catch (e) {
       appLog('Flutter Clipboard.setData failed/timeout: $e', level: 'warning');
     }
@@ -364,7 +387,9 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   /// is idempotent. System clipboard is written only when at least one **new**
   /// hash was inserted (newest among new items); all-known replay leaves the
   /// clipboard untouched. Skip broadcast (these came *from* a peer).
-  Future<void> handleRemoteSyncBatch(List<({String text, String hash})> items) async {
+  Future<void> handleRemoteSyncBatch(
+    List<({String text, String hash})> items,
+  ) async {
     if (items.isEmpty) return;
     // Normalize empty hashes the same way as handleRemoteSync.
     final normalized = <({String text, String hash})>[];
@@ -373,7 +398,7 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
       final effectiveHash = item.hash.isNotEmpty
           ? item.hash
           : (_contentHashForItem(HistoryItem(type: 'text', value: item.text)) ??
-              item.text.hashCode.toString());
+                item.text.hashCode.toString());
       normalized.add((text: item.text, hash: effectiveHash));
     }
     if (normalized.isEmpty) return;
@@ -384,25 +409,31 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     // does NOT bump created_at on existing rows — so a fetch replay is truly
     // idempotent: existing entries keep their position and the UI never rebuilds.
     final existingHashes = await ClipboardRepository.instance.existingHashes(
-        normalized.map((e) => e.hash).toList());
+      normalized.map((e) => e.hash).toList(),
+    );
     final toInsert = <HistoryEntry>[];
     for (final item in normalized) {
       if (existingHashes.contains(item.hash)) continue;
       _rememberRemoteHash(item.hash);
-      toInsert.add(HistoryEntry(
-        item: HistoryItem(type: 'text', value: item.text),
-        date: DateTime.now(),
-        sourceApp: 'Remote Sync',
-        contentHash: item.hash,
-      ));
+      toInsert.add(
+        HistoryEntry(
+          item: HistoryItem(type: 'text', value: item.text),
+          date: DateTime.now(),
+          sourceApp: 'Remote Sync',
+          contentHash: item.hash,
+        ),
+      );
     }
     if (toInsert.isEmpty) {
       appLog(
-          'handleRemoteSyncBatch: ${normalized.length} received, 0 new — skip clipboard');
+        'handleRemoteSyncBatch: ${normalized.length} received, 0 new — skip clipboard',
+      );
       return;
     }
     final inserted = await ClipboardRepository.instance.insertBatch(toInsert);
-    appLog('handleRemoteSyncBatch: ${normalized.length} received, ${toInsert.length} new (post-dedup), $inserted inserted');
+    appLog(
+      'handleRemoteSyncBatch: ${normalized.length} received, ${toInsert.length} new (post-dedup), $inserted inserted',
+    );
     if (inserted == 0) return; // all were IGNORE'd (race / normalization drift)
     await ClipboardRepository.instance.trimToLimit(_historyLimit);
     // Mac pushes oldest-first; last new item is the newest among inserts.
@@ -440,8 +471,7 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     switch (item.type) {
       case 'text':
         final text = (item.value as String).trim();
-        final normalized =
-            text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+        final normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
         final bytes = utf8.encode(normalized);
         return sha256.convert(bytes).toString();
       default:

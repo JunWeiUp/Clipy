@@ -22,7 +22,8 @@ class PendingTextSyncEntry {
 
 class PendingTextSyncRepository {
   PendingTextSyncRepository._();
-  static final PendingTextSyncRepository instance = PendingTextSyncRepository._();
+  static final PendingTextSyncRepository instance =
+      PendingTextSyncRepository._();
 
   Future<Database> get _db => AppDatabase.instance.database;
 
@@ -38,22 +39,22 @@ class PendingTextSyncRepository {
     required String targetPeerId,
   }) async {
     final db = await _db;
-    await db.insert(
-      _table,
-      {
-        'hash': hash,
-        'data': data,
-        'type': type,
-        'target_peer_id': targetPeerId,
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert(_table, {
+      'hash': hash,
+      'data': data,
+      'type': type,
+      'target_peer_id': targetPeerId,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
     // Per-peer cap: drop oldest beyond maxPerPeer.
-    final perPeer = Sqflite.firstIntValue(await db.rawQuery(
-      'SELECT COUNT(*) FROM $_table WHERE target_peer_id = ?',
-      [targetPeerId],
-    )) ?? 0;
+    final perPeer =
+        Sqflite.firstIntValue(
+          await db.rawQuery(
+            'SELECT COUNT(*) FROM $_table WHERE target_peer_id = ?',
+            [targetPeerId],
+          ),
+        ) ??
+        0;
     if (perPeer > maxPerPeer) {
       await db.rawDelete(
         'DELETE FROM $_table WHERE rowid IN '
@@ -95,8 +96,10 @@ class PendingTextSyncRepository {
     final db = await _db;
     final cutoff = DateTime.now().subtract(maxAge).millisecondsSinceEpoch;
     await db.delete(_table, where: 'created_at < ?', whereArgs: [cutoff]);
-    final count = Sqflite.firstIntValue(
-            await db.rawQuery('SELECT COUNT(*) FROM $_table')) ??
+    final count =
+        Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM $_table'),
+        ) ??
         0;
     if (count > maxRows) {
       await db.rawDelete(

@@ -1,0 +1,13 @@
+name: Feature request / 功能建议
+description: Describe the problem you want to solve.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case / 使用场景
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution and alternatives / 建议方案与替代方式

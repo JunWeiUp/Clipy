@@ -1,20 +1,22 @@
-# Clipy macOS (Swift + AppKit)
+# Clipy macOS
 
-macOS 剪贴板管理器，基于 Swift 与 AppKit 构建的菜单栏应用。
+Native Swift/AppKit menu-bar app. The main macOS target is not the Flutter UI.
 
-## 构建
-
-要求：已安装 Xcode 命令行工具。
+From the repository root, with Xcode 26+ and the macOS 26 SDK selected:
 
 ```bash
 ./build_macos_app.sh
 ```
 
-产物：`clipy_macos/ClipyClone.app`
+From this directory, use `../build_macos_app.sh` (there is no local wrapper).
+The output is `ClipyClone.app` and its `.dSYM`; the default build does **not**
+install, launch, terminate apps or reset permissions. The deployment target is
+macOS 13; newer capture/translation APIs are availability-guarded.
 
-也可在 `clipy_macos` 目录执行 `./build_macos_app.sh`（会转发到仓库根目录）。
+`Sources/` is organized by feature. `Resources/Info.plist` is the reviewed bundle
+metadata template. See [Architecture](../docs/ARCHITECTURE.md) and
+[Development](../docs/DEVELOPMENT.md) for module boundaries, build options,
+signing and device verification.
 
-## 源码结构
-
-- `Sources/`：Swift 源码
-- `../build_macos_app.sh`：应用包构建脚本（仓库根目录）
+Before distribution, resolve the screenshot port's
+[third-party license review](../THIRD_PARTY_NOTICES.md).

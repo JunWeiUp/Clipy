@@ -13,7 +13,9 @@ void main() {
       length: 32,
     );
     final hex = key.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-    expect(hex,
-        'd164fcd218e08daf93e80254c79b3c3e80d1f2d6bc18d5e06541d9bc604a3fa1');
+    expect(
+      hex,
+      'd164fcd218e08daf93e80254c79b3c3e80d1f2d6bc18d5e06541d9bc604a3fa1',
+    );
   });
 }

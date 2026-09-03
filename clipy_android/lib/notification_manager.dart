@@ -11,11 +11,13 @@ class NotificationManager {
   static final NotificationManager instance = NotificationManager._();
   NotificationManager._();
 
-  static const _channel =
-      MethodChannel('com.clipyclone.clipy_android/notifications');
+  static const _channel = MethodChannel(
+    'com.clipyclone.clipy_android/notifications',
+  );
   static const _selfPackageName = 'com.clipyclone.clipy_android';
-  static const _permissionsChannel =
-      MethodChannel('com.clipyclone.clipy_android/permissions');
+  static const _permissionsChannel = MethodChannel(
+    'com.clipyclone.clipy_android/permissions',
+  );
 
   List<String> collectedPackages = []; // 收集白名单：空 = 收集全部
   List<String> syncedPackages = []; // 同步白名单：空 = 同步全部已收集
@@ -72,7 +74,9 @@ class NotificationManager {
       collectedPackages = legacy;
       await prefs.remove('notificationAllowedPackages');
       await prefs.setStringList(
-          'notificationCollectedPackages', collectedPackages);
+        'notificationCollectedPackages',
+        collectedPackages,
+      );
     } else {
       collectedPackages =
           prefs.getStringList('notificationCollectedPackages') ?? [];
@@ -99,12 +103,15 @@ class NotificationManager {
         case 'onNotificationRemoved':
           final Map<dynamic, dynamic> removedArgs = call.arguments;
           await _handleNotificationRemoved(
-              Map<String, dynamic>.from(removedArgs));
+            Map<String, dynamic>.from(removedArgs),
+          );
           break;
         case 'onListenerConnected':
           final Map<dynamic, dynamic> args = call.arguments;
           final connected = args['connected'] as bool? ?? true;
-          appLog('NotificationManager: listener connection state changed: $connected');
+          appLog(
+            'NotificationManager: listener connection state changed: $connected',
+          );
           if (connected) {
             lastNotificationReceivedAt ??= DateTime.now();
             if (isEnabled) {
@@ -143,7 +150,8 @@ class NotificationManager {
       title: data['title'] as String? ?? '',
       subtitle: data['subtitle'] as String?,
       body: data['body'] as String? ?? '',
-      postTime: (data['postTime'] as num?)?.toInt() ??
+      postTime:
+          (data['postTime'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch,
       groupKey: data['groupKey'] as String?,
       isClearable: data['isClearable'] as bool? ?? true,
@@ -226,7 +234,9 @@ class NotificationManager {
     if (hash.isEmpty) return;
     NotificationRepository.instance.removePendingSync(hash);
     NotificationRepository.instance.markSynced(hash);
-    appLog('NotificationManager: ACK received, removed pending sync + marked synced for $hash');
+    appLog(
+      'NotificationManager: ACK received, removed pending sync + marked synced for $hash',
+    );
   }
 
   /// 消费 Kotlin 端在 MethodChannel 不可用期间（锁屏 / 进程被回收 /
@@ -238,10 +248,13 @@ class NotificationManager {
   /// Public so FGS / Application can drain after headless bootstrap.
   Future<void> drainNativePendingPosts() async {
     try {
-      final list = await _channel
-          .invokeMethod<List<dynamic>>('drainNativePendingPosts');
+      final list = await _channel.invokeMethod<List<dynamic>>(
+        'drainNativePendingPosts',
+      );
       if (list == null || list.isEmpty) return;
-      appLog('NotificationManager: consumed ${list.length} native-buffered notification(s)');
+      appLog(
+        'NotificationManager: consumed ${list.length} native-buffered notification(s)',
+      );
       for (final item in list) {
         if (item is String) {
           try {
@@ -249,14 +262,17 @@ class NotificationManager {
             await _handleNotificationPosted(data);
           } catch (e) {
             appLog(
-                'NotificationManager: native buffered post decode error: $e',
-                level: 'warning');
+              'NotificationManager: native buffered post decode error: $e',
+              level: 'warning',
+            );
           }
         }
       }
     } catch (e) {
-      appLog('NotificationManager: drainNativePendingPosts failed: $e',
-          level: 'warning');
+      appLog(
+        'NotificationManager: drainNativePendingPosts failed: $e',
+        level: 'warning',
+      );
     }
   }
 
@@ -269,8 +285,8 @@ class NotificationManager {
   Future<void> _backfillMissingToPendingSync() async {
     if (!isEnabled) return;
     try {
-      final alreadyPending =
-          await NotificationRepository.instance.fetchPendingSyncIds();
+      final alreadyPending = await NotificationRepository.instance
+          .fetchPendingSyncIds();
       final unsynced = await NotificationRepository.instance.fetchUnsynced(
         shouldSync: _shouldSync,
         withinDays: 2,
@@ -280,7 +296,9 @@ class NotificationManager {
           .where((e) => !alreadyPending.contains(e.id))
           .toList();
       if (toBackfill.isEmpty) return;
-      appLog('NotificationManager: backfilling ${toBackfill.length} missed notification(s) to sync queue');
+      appLog(
+        'NotificationManager: backfilling ${toBackfill.length} missed notification(s) to sync queue',
+      );
       for (final entry in toBackfill) {
         _broadcastToSync(entry);
       }
@@ -295,8 +313,10 @@ class NotificationManager {
       final entry = NotificationEntry.fromJson(json);
       unawaited(_upsertRemote(entry));
     } catch (e) {
-      appLog('NotificationManager: error handling remote notification: $e',
-          level: 'error');
+      appLog(
+        'NotificationManager: error handling remote notification: $e',
+        level: 'error',
+      );
     }
   }
 
@@ -313,8 +333,10 @@ class NotificationManager {
       final request = NotificationDismissRequest.fromJson(json);
       dismissNotification(request);
     } catch (e) {
-      appLog('NotificationManager: error handling remote dismiss: $e',
-          level: 'error');
+      appLog(
+        'NotificationManager: error handling remote dismiss: $e',
+        level: 'error',
+      );
     }
   }
 
@@ -325,23 +347,29 @@ class NotificationManager {
 
   Future<bool> isBatteryOptimizationExempt() async {
     try {
-      final result = await _permissionsChannel
-          .invokeMethod<bool>('isBatteryOptimizationExempt');
+      final result = await _permissionsChannel.invokeMethod<bool>(
+        'isBatteryOptimizationExempt',
+      );
       return result ?? false;
     } catch (e) {
-      appLog('NotificationManager: error checking battery optimization: $e',
-          level: 'warning');
+      appLog(
+        'NotificationManager: error checking battery optimization: $e',
+        level: 'warning',
+      );
       return true; // Don't block on error
     }
   }
 
   Future<void> requestBatteryOptimizationExemption() async {
     try {
-      await _permissionsChannel
-          .invokeMethod<void>('requestBatteryOptimizationExemption');
+      await _permissionsChannel.invokeMethod<void>(
+        'requestBatteryOptimizationExemption',
+      );
     } catch (e) {
-      appLog('NotificationManager: error requesting battery optimization: $e',
-          level: 'warning');
+      appLog(
+        'NotificationManager: error requesting battery optimization: $e',
+        level: 'warning',
+      );
     }
   }
 
@@ -350,12 +378,15 @@ class NotificationManager {
   /// foreground-service notifications.
   Future<bool> areNotificationsEnabled() async {
     try {
-      final result = await _permissionsChannel
-          .invokeMethod<bool>('areNotificationsEnabled');
+      final result = await _permissionsChannel.invokeMethod<bool>(
+        'areNotificationsEnabled',
+      );
       return result ?? true;
     } catch (e) {
-      appLog('NotificationManager: error checking notifications: $e',
-          level: 'warning');
+      appLog(
+        'NotificationManager: error checking notifications: $e',
+        level: 'warning',
+      );
       return true; // Don't block on error
     }
   }
@@ -364,11 +395,14 @@ class NotificationManager {
   /// notification settings page as fallback.
   Future<void> requestNotificationPermission() async {
     try {
-      await _permissionsChannel
-          .invokeMethod<void>('requestNotificationPermission');
+      await _permissionsChannel.invokeMethod<void>(
+        'requestNotificationPermission',
+      );
     } catch (e) {
-      appLog('NotificationManager: error requesting notifications: $e',
-          level: 'warning');
+      appLog(
+        'NotificationManager: error requesting notifications: $e',
+        level: 'warning',
+      );
     }
   }
 
@@ -408,12 +442,15 @@ class NotificationManager {
   /// Opens Xiaomi/HyperOS autostart settings when available.
   Future<bool> openOemAutostartSettings() async {
     try {
-      final result =
-          await _channel.invokeMethod<bool>('openOemAutostartSettings');
+      final result = await _channel.invokeMethod<bool>(
+        'openOemAutostartSettings',
+      );
       return result ?? false;
     } catch (e) {
-      appLog('NotificationManager: openOemAutostartSettings failed: $e',
-          level: 'warning');
+      appLog(
+        'NotificationManager: openOemAutostartSettings failed: $e',
+        level: 'warning',
+      );
       return false;
     }
   }
@@ -422,8 +459,10 @@ class NotificationManager {
     try {
       await _channel.invokeMethod('openListenerSettings');
     } catch (e) {
-      appLog('NotificationManager: error opening listener settings: $e',
-          level: 'error');
+      appLog(
+        'NotificationManager: error opening listener settings: $e',
+        level: 'error',
+      );
     }
   }
 
@@ -437,8 +476,9 @@ class NotificationManager {
     if (!isEnabled) return;
     _suppressBroadcast = true;
     try {
-      final result =
-          await _channel.invokeMethod<List<dynamic>>('refreshActiveNotifications');
+      final result = await _channel.invokeMethod<List<dynamic>>(
+        'refreshActiveNotifications',
+      );
       if (result == null) return;
       for (final item in result) {
         if (item is Map) {
@@ -446,8 +486,10 @@ class NotificationManager {
         }
       }
     } catch (e) {
-      appLog('NotificationManager: error refreshing active notifications: $e',
-          level: 'warning');
+      appLog(
+        'NotificationManager: error refreshing active notifications: $e',
+        level: 'warning',
+      );
     } finally {
       _suppressBroadcast = false;
     }
@@ -464,8 +506,10 @@ class NotificationManager {
         'notificationKey': request.notificationKey,
       });
     } catch (e) {
-      appLog('NotificationManager: error dismissing notification: $e',
-          level: 'error');
+      appLog(
+        'NotificationManager: error dismissing notification: $e',
+        level: 'error',
+      );
     }
   }
 
@@ -476,8 +520,10 @@ class NotificationManager {
         'notificationKey': entry.notificationKey,
       });
     } catch (e) {
-      appLog('NotificationManager: error opening notification: $e',
-          level: 'error');
+      appLog(
+        'NotificationManager: error opening notification: $e',
+        level: 'error',
+      );
     }
   }
 
@@ -487,30 +533,38 @@ class NotificationManager {
       await NotificationRepository.instance.clearAll();
       _notificationsChangedController.add(null);
     } catch (e) {
-      appLog('NotificationManager: error clearing all notifications: $e',
-          level: 'error');
+      appLog(
+        'NotificationManager: error clearing all notifications: $e',
+        level: 'error',
+      );
     }
   }
 
   List<Map<String, dynamic>>? _installedAppsCache;
   DateTime? _installedAppsCachedAt;
+
   /// The full app list (~300 entries) stays in this singleton for the whole
   /// process; a TTL lets long-lived headless processes drop it between uses.
   static const _installedAppsCacheTtl = Duration(minutes: 10);
 
-  Future<List<Map<String, dynamic>>> getInstalledApps({bool forceRefresh = false}) async {
-    final fresh = _installedAppsCachedAt != null &&
+  Future<List<Map<String, dynamic>>> getInstalledApps({
+    bool forceRefresh = false,
+  }) async {
+    final fresh =
+        _installedAppsCachedAt != null &&
         DateTime.now().difference(_installedAppsCachedAt!) <
             _installedAppsCacheTtl;
     if (!forceRefresh && fresh && _installedAppsCache != null) {
       return _installedAppsCache!;
     }
     try {
-      final result =
-          await _channel.invokeMethod<List<dynamic>>('getInstalledApps');
+      final result = await _channel.invokeMethod<List<dynamic>>(
+        'getInstalledApps',
+      );
       if (result == null) return _installedAppsCache ?? [];
-      final apps =
-          result.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      final apps = result
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
       _installedAppsCache = apps;
       _installedAppsCachedAt = DateTime.now();
       return apps;
@@ -562,7 +616,9 @@ class NotificationManager {
         if (syncedPackages.contains(packageName)) {
           syncedPackages.remove(packageName);
           await prefs.setStringList(
-              'notificationSyncedPackages', syncedPackages);
+            'notificationSyncedPackages',
+            syncedPackages,
+          );
           _syncedPackagesChangedController.add(syncedPackages);
         }
       }
@@ -570,7 +626,9 @@ class NotificationManager {
     }
     collectedPackages = packages;
     await prefs.setStringList(
-        'notificationCollectedPackages', collectedPackages);
+      'notificationCollectedPackages',
+      collectedPackages,
+    );
     _collectedPackagesChangedController.add(collectedPackages);
   }
 

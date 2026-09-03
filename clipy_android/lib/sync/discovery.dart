@@ -80,8 +80,10 @@ extension SyncDiscoveryMethods on SyncManager {
       return;
     }
     _lastAutoRediscoverAt = now;
-    appLog('Auto rediscover: $_autoRediscoverFailStreak consecutive authorized '
-        'dial failures — scanning /24 for missing peers');
+    appLog(
+      'Auto rediscover: $_autoRediscoverFailStreak consecutive authorized '
+      'dial failures — scanning /24 for missing peers',
+    );
     triggerCrossBandDiscovery(scanFullSubnet: true);
   }
 
@@ -125,62 +127,81 @@ extension SyncDiscoveryMethods on SyncManager {
 
       if (scanFullSubnet) {
         final myIPs = await _enumerateLocalIPv4s();
-      final connectedHosts = _sessions.values.map((s) => s.host).toSet();
-      final candidates = <String>{};
-      final subnets = <String>{};
-      for (final ip in myIPs) {
-        final parts = ip.split('.');
-        if (parts.length != 4) continue;
-        final a = int.tryParse(parts[0]);
-        final b = int.tryParse(parts[1]);
-        final c = int.tryParse(parts[2]);
-        if (a == null || b == null || c == null) continue;
-        if (!_isLanIPv4(a, b)) continue;
-        subnets.add('$a.$b.$c.0/24');
-        for (var d = 1; d <= 254; d++) {
-          final candidate = '$a.$b.$c.$d';
-          if (myIPs.contains(candidate)) continue;
-          if (connectedHosts.contains(candidate)) continue;
-          candidates.add(candidate);
+        final connectedHosts = _sessions.values.map((s) => s.host).toSet();
+        final candidates = <String>{};
+        final subnets = <String>{};
+        for (final ip in myIPs) {
+          final parts = ip.split('.');
+          if (parts.length != 4) continue;
+          final a = int.tryParse(parts[0]);
+          final b = int.tryParse(parts[1]);
+          final c = int.tryParse(parts[2]);
+          if (a == null || b == null || c == null) continue;
+          if (!_isLanIPv4(a, b)) continue;
+          subnets.add('$a.$b.$c.0/24');
+          for (var d = 1; d <= 254; d++) {
+            final candidate = '$a.$b.$c.$d';
+            if (myIPs.contains(candidate)) continue;
+            if (connectedHosts.contains(candidate)) continue;
+            candidates.add(candidate);
+          }
         }
-      }
 
-      final list = candidates.toList()..sort();
-      final subnetList =
-          subnets.isEmpty ? '<none>' : (subnets.toList()..sort()).join(', ');
-      appLog('Subnet scan: ${list.length} hosts on :$port (subnets: $subnetList)');
+        final list = candidates.toList()..sort();
+        final subnetList = subnets.isEmpty
+            ? '<none>'
+            : (subnets.toList()..sort()).join(', ');
+        appLog(
+          'Subnet scan: ${list.length} hosts on :$port (subnets: $subnetList)',
+        );
 
-      // Aggregate stats across all /24 workers (mirrors the Mac side's ScanStats).
-      // `timeout` dominating connectFailures is the VPN/route-hijack tell-tale.
-      var attempted = 0;
-      final connectFail = <String, int>{};
-      final handshakeFail = <String, int>{};
-      void cf(String label) => connectFail[label] = (connectFail[label] ?? 0) + 1;
-      void hf(String label) => handshakeFail[label] = (handshakeFail[label] ?? 0) + 1;
+        // Aggregate stats across all /24 workers (mirrors the Mac side's ScanStats).
+        // `timeout` dominating connectFailures is the VPN/route-hijack tell-tale.
+        var attempted = 0;
+        final connectFail = <String, int>{};
+        final handshakeFail = <String, int>{};
+        void cf(String label) =>
+            connectFail[label] = (connectFail[label] ?? 0) + 1;
+        void hf(String label) =>
+            handshakeFail[label] = (handshakeFail[label] ?? 0) + 1;
 
-      var index = 0;
-      Future<void> worker() async {
-        while (true) {
-          if (index >= list.length) return;
-          final host = list[index++];
-          attempted++;
-          await _dial(host, port, reason: 'scan', timeout: SyncManager._scanConnectTimeout,
-              onConnectFailure: cf, onHandshakeFailure: hf);
+        var index = 0;
+        Future<void> worker() async {
+          while (true) {
+            if (index >= list.length) return;
+            final host = list[index++];
+            attempted++;
+            await _dial(
+              host,
+              port,
+              reason: 'scan',
+              timeout: SyncManager._scanConnectTimeout,
+              onConnectFailure: cf,
+              onHandshakeFailure: hf,
+            );
+          }
         }
-      }
 
-      await Future.wait(
-          List.generate(SyncManager._scanConcurrency, (_) => worker()));
+        await Future.wait(
+          List.generate(SyncManager._scanConcurrency, (_) => worker()),
+        );
 
-      // connect_ok = attempted - connectFailures (those that got past TCP).
-      final connectOkCount = attempted - connectFail.values.fold(0, (a, b) => a + b);
-      final hsFailTotal = handshakeFail.values.fold(0, (a, b) => a + b);
-      final hsOk = connectOkCount - hsFailTotal;
-      final cfStr = connectFail.entries.map((e) => '${e.key}=${e.value}').join(',');
-      final hfStr = handshakeFail.entries.map((e) => '${e.key}=${e.value}').join(',');
-      appLog('Subnet scan finished: attempted=$attempted connect_ok=$connectOkCount '
-          'handshake_ok=${hsOk < 0 ? 0 : hsOk} | connect_fail{$cfStr} handshake_fail{$hfStr}');
-      _pruneStaleTimestampMaps();
+        // connect_ok = attempted - connectFailures (those that got past TCP).
+        final connectOkCount =
+            attempted - connectFail.values.fold(0, (a, b) => a + b);
+        final hsFailTotal = handshakeFail.values.fold(0, (a, b) => a + b);
+        final hsOk = connectOkCount - hsFailTotal;
+        final cfStr = connectFail.entries
+            .map((e) => '${e.key}=${e.value}')
+            .join(',');
+        final hfStr = handshakeFail.entries
+            .map((e) => '${e.key}=${e.value}')
+            .join(',');
+        appLog(
+          'Subnet scan finished: attempted=$attempted connect_ok=$connectOkCount '
+          'handshake_ok=${hsOk < 0 ? 0 : hsOk} | connect_fail{$cfStr} handshake_fail{$hfStr}',
+        );
+        _pruneStaleTimestampMaps();
       }
     } finally {
       _discoveryRunning = false;
@@ -196,7 +217,9 @@ extension SyncDiscoveryMethods on SyncManager {
     final diagParts = <String>[];
     try {
       for (final iface in await NetworkInterface.list(
-          type: InternetAddressType.IPv4, includeLinkLocal: false)) {
+        type: InternetAddressType.IPv4,
+        includeLinkLocal: false,
+      )) {
         for (final addr in iface.addresses) {
           final ip = addr.address;
           final parts = ip.split('.').map(int.tryParse).toList();
@@ -215,7 +238,9 @@ extension SyncDiscoveryMethods on SyncManager {
     }
     // A VPN tun0 carrying 10.8.0.x shows up as [LAN] here — that is the
     // tell-tale sign of route hijack starving the real wlan0 subnet.
-    appLog('Discovery local interfaces: ${diagParts.isEmpty ? "<none>" : diagParts.join(", ")}');
+    appLog(
+      'Discovery local interfaces: ${diagParts.isEmpty ? "<none>" : diagParts.join(", ")}',
+    );
     return result.toSet().toList()..sort();
   }
 
@@ -234,7 +259,11 @@ extension SyncDiscoveryMethods on SyncManager {
   // -----------------------------------------------------------------------
 
   Future<void> _persistEndpoint(
-      String peerId, String name, String host, int port) async {
+    String peerId,
+    String name,
+    String host,
+    int port,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
     final list = await _readEndpointCache();
     list.removeWhere((e) => e['peerId'] == peerId);
@@ -278,7 +307,8 @@ extension SyncDiscoveryMethods on SyncManager {
       await prefs.setString(SyncManager._endpointCacheKey, jsonEncode(list));
     }
     appLog(
-        'endpoint cache pruned to ${list.length} peer(s) after refresh (live+authorized)');
+      'endpoint cache pruned to ${list.length} peer(s) after refresh (live+authorized)',
+    );
   }
 
   String resolvedPeerLabel(String peerId) {
@@ -318,11 +348,14 @@ extension SyncDiscoveryMethods on SyncManager {
     if (raw == null) return [];
     try {
       final list = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
-      final cutoff = DateTime.now()
-          .subtract(SyncManager._endpointCacheTtl)
-          .millisecondsSinceEpoch /
+      final cutoff =
+          DateTime.now()
+              .subtract(SyncManager._endpointCacheTtl)
+              .millisecondsSinceEpoch /
           1000.0;
-      return list.where((e) => ((e['ts'] as num?)?.toDouble() ?? 0) >= cutoff).toList();
+      return list
+          .where((e) => ((e['ts'] as num?)?.toDouble() ?? 0) >= cutoff)
+          .toList();
     } catch (_) {
       return [];
     }
@@ -340,6 +373,4 @@ extension SyncDiscoveryMethods on SyncManager {
       unawaited(_dial(host, p, reason: 'cache', peerId: id));
     }
   }
-
-
 }

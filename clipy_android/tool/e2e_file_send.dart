@@ -1,123 +1,187 @@
-// End-to-end check for the Mac-side file receive path: acts as a sync v2
-// peer (hello → file.meta → file.chunk…) and prints the file.ack verdict.
-// Run from clipy_android: dart run tool/e2e_file_send.dart <host> <file>
+// Manual integration probe. Sends an EXISTING file; never creates/overwrites it.
+// The receiver writes to its normal Downloads/Clipy directory.
+// Usage: dart run tool/e2e_file_send.dart <host> <file>
+// Optional: CLIPY_PAIRING_SECRET and CLIPY_SYNC_PORT environment variables.
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:convert';
-import 'dart:async';
+
 import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
-import 'package:clipy_android/sync/protocol.dart';
 import 'package:clipy_android/sync/crypto.dart';
+import 'package:clipy_android/sync/protocol.dart';
 
-void main(List<String> args) async {
-  final host = args.isNotEmpty ? args[0] : '192.168.31.221';
-  final path = args.length > 1 ? args[1] : '/tmp/e2e_send_test.bin';
-  final file = File(path);
-  await file.writeAsBytes(
-      List<int>.generate(64 * 1024 * 1024 + 137, (i) => i & 0xFF),
-      flush: true);
-  final bytes = await file.readAsBytes();
-  final sha = sha256.convert(bytes).toString();
+Future<void> main(List<String> args) async {
+  const usage =
+      'Usage: dart run tool/e2e_file_send.dart <host> <existing-file>';
+  if (args.length == 1 && args.single == '--help') {
+    stdout.writeln(usage);
+    return;
+  }
+  if (args.length != 2 || args.first.trim().isEmpty) {
+    stderr.writeln(usage);
+    exitCode = 64;
+    return;
+  }
+  final port = int.tryParse(Platform.environment['CLIPY_SYNC_PORT'] ?? '5566');
+  if (port == null || port < 1 || port > 65535) {
+    stderr.writeln('CLIPY_SYNC_PORT must be between 1 and 65535.');
+    exitCode = 64;
+    return;
+  }
+  final file = File(args[1]);
+  if (!await file.exists()) {
+    stderr.writeln('Input file does not exist: ${file.path}');
+    exitCode = 66;
+    return;
+  }
+  try {
+    final success = await sendFileProbe(args[0], port, file);
+    exitCode = success ? 0 : 2;
+  } catch (error) {
+    stderr.writeln('Transfer failed: $error');
+    exitCode = 1;
+  }
+}
 
-  final stopwatch = Stopwatch()..start();
+/// Uses bounded file reads and waits for the actual handshake, not a fixed sleep.
+Future<bool> sendFileProbe(String host, int port, File file) async {
+  const chunkSize = 1024 * 1024;
+  final length = await file.length();
+  if (length > 512 * 1024 * 1024) {
+    throw ArgumentError('The sync protocol accepts files up to 512 MiB.');
+  }
+  final digest = (await sha256.bind(file.openRead()).first).toString();
+  final chunks = (length + chunkSize - 1) ~/ chunkSize;
   final peerId = const Uuid().v4();
-  final chunkSize = 1024 * 1024;
-  final chunkCount = (bytes.length + chunkSize - 1) ~/ chunkSize;
   final fileId = const Uuid().v4();
-  final crypto = SyncCrypto()..pairingSecret = '';
-
-  final socket = await Socket.connect(host, 5566, timeout: const Duration(seconds: 3));
-  print('connected to $host:5566');
-
-  final done = Completer<void>();
-  final ackCompleter = Completer<Map<String, dynamic>>();
+  final crypto = SyncCrypto()
+    ..pairingSecret = Platform.environment['CLIPY_PAIRING_SECRET'] ?? '';
+  final handshake = Completer<SyncEnvelope?>();
+  final ack = Completer<Map<String, dynamic>>();
   final buffer = BytesBuilder(copy: false);
+  final stopwatch = Stopwatch()..start();
+  final socket = await Socket.connect(
+    host,
+    port,
+    timeout: const Duration(seconds: 3),
+  );
+  RandomAccessFile? input;
+  StreamSubscription<Uint8List>? subscription;
 
-  void sendEnvelope(SyncEnvelope env) {
-    final data = syncEncodeFrame(env);
-    if (data == null) throw StateError('encode failed for ${env.type}');
-    socket.add(data);
+  void disconnected(String reason) {
+    if (!handshake.isCompleted) handshake.complete(null);
+    if (!ack.isCompleted) ack.complete({'ok': false, 'error': reason});
   }
 
-  unawaited(() async {
-    await for (final data in socket) {
-      buffer.add(data);
-      List<int>? frame;
-      while ((frame = syncTryTakeFrame(buffer)) != null) {
-        final env = syncDecodeEnvelope(frame!);
-        if (env == null) continue;
-        if (env.type == 'hello' || env.type == 'welcome') {
-          print('handshake: ${env.type} from ${env.name}');
-        } else if (env.type == 'file.ack') {
-          final plain = crypto.decryptText(env.payload ?? '');
-          print('file.ack raw payload decrypt: ${plain == null ? "FAILED" : "ok"}');
-          if (plain != null) {
-            ackCompleter.complete(jsonDecode(plain) as Map<String, dynamic>);
+  void send(SyncEnvelope envelope) {
+    final frame = syncEncodeFrame(envelope);
+    if (frame == null) throw StateError('Cannot encode ${envelope.type}');
+    socket.add(frame);
+  }
+
+  try {
+    subscription = socket.listen(
+      (data) {
+        buffer.add(data);
+        List<int>? frame;
+        while ((frame = syncTryTakeFrame(buffer)) != null) {
+          final envelope = syncDecodeEnvelope(frame!);
+          if (envelope == null) continue;
+          if (envelope.type == SyncType.welcome ||
+              envelope.type == SyncType.hello) {
+            if (!handshake.isCompleted) handshake.complete(envelope);
+          } else if (envelope.type == SyncType.fileAck && !ack.isCompleted) {
+            final text = crypto.decryptText(envelope.payload ?? '');
+            if (text == null) continue;
+            try {
+              final result = jsonDecode(text);
+              if (result is Map<String, dynamic> &&
+                  result['fileId'] == fileId) {
+                ack.complete(result);
+              }
+            } on FormatException {
+              // Ignore malformed acknowledgements; the timeout remains bounded.
+            }
           }
         }
-      }
-    }
-    if (!ackCompleter.isCompleted) {
-      ackCompleter.completeError('socket closed before ack');
-    }
-    if (!done.isCompleted) done.complete();
-  }());
+      },
+      onError: (Object error) {
+        disconnected('Socket error: $error');
+      },
+      onDone: () {
+        disconnected('Socket closed before acknowledgement');
+      },
+    );
 
-  sendEnvelope(SyncEnvelope.make(
-    type: SyncType.hello,
-    peerId: peerId,
-    name: 'E2E-Test',
-    port: 5566,
-  ));
-
-  // Give the peer a moment to handshake before meta/chunks.
-  await Future.delayed(const Duration(milliseconds: 300));
-
-  sendEnvelope(SyncEnvelope.make(
-    type: SyncType.fileMeta,
-    peerId: peerId,
-    name: 'E2E-Test',
-    hash: sha,
-    payload: crypto.encryptText(jsonEncode({
-      'fileId': fileId,
-      'name': 'e2e_send_test.bin',
-      'size': bytes.length,
-      'chunkSize': chunkSize,
-      'chunks': chunkCount,
-      'sha256': sha,
-    }))!,
-  ));
-
-  for (var i = 0; i < chunkCount; i++) {
-    final start = i * chunkSize;
-    final end = (start + chunkSize).clamp(0, bytes.length);
-    final header = ByteData(4)..setUint32(0, i, Endian.big);
-    final plain = BytesBuilder(copy: false)
-      ..add(header.buffer.asUint8List())
-      ..add(bytes.sublist(start, end));
-    final payload = await crypto.encryptBytes(plain.toBytes());
-    if (payload == null) {
-      print('encrypt failed');
-      exit(3);
-    }
-    sendEnvelope(SyncEnvelope(
-      v: SyncEnvelope.version,
-      type: SyncType.fileChunk,
-      msgId: fileId,
-      peerId: peerId,
-      name: 'E2E-Test',
-      ts: DateTime.now().millisecondsSinceEpoch / 1000.0,
-      payload: payload,
-    ));
+    send(
+      SyncEnvelope.make(
+        type: SyncType.hello,
+        peerId: peerId,
+        name: 'Clipy-E2E',
+        port: port,
+      ),
+    );
     await socket.flush();
-  }
-  print('sent meta + $chunkCount chunks (${bytes.length} bytes)');
+    final remote = await handshake.future.timeout(const Duration(seconds: 8));
+    if (remote == null || remote.v != SyncEnvelope.version) {
+      throw StateError('Peer disconnected or rejected the protocol version');
+    }
+    stdout.writeln('Connected to $host:$port; sending $length bytes');
+    send(
+      SyncEnvelope.make(
+        type: SyncType.fileMeta,
+        peerId: peerId,
+        hash: digest,
+        payload: crypto.encryptText(
+          jsonEncode({
+            'fileId': fileId,
+            'name': file.uri.pathSegments.last,
+            'size': length,
+            'chunkSize': chunkSize,
+            'chunks': chunks,
+            'sha256': digest,
+          }),
+        ),
+      ),
+    );
 
-  final ack = await ackCompleter.future.timeout(const Duration(seconds: 20));
-  print('ACK: $ack');
-  print('elapsed: ${stopwatch.elapsedMilliseconds} ms for ${bytes.length} bytes '
-      '(${(bytes.length / 1024 / 1024 / (stopwatch.elapsedMilliseconds / 1000)).toStringAsFixed(1)} MB/s)');
-  await socket.close();
-  exit(ack['ok'] == true ? 0 : 2);
+    input = await file.open();
+    for (var index = 0; index < chunks; index++) {
+      final expected = (length - index * chunkSize).clamp(0, chunkSize);
+      final bytes = await input.read(expected);
+      if (bytes.length != expected) {
+        throw StateError('Input changed while sending');
+      }
+      final header = ByteData(4)..setUint32(0, index, Endian.big);
+      final plaintext = BytesBuilder(copy: false)
+        ..add(header.buffer.asUint8List())
+        ..add(bytes);
+      final payload = await crypto.encryptBytes(plaintext.toBytes());
+      if (payload == null) throw StateError('Encryption failed');
+      send(
+        SyncEnvelope(
+          v: SyncEnvelope.version,
+          type: SyncType.fileChunk,
+          msgId: fileId,
+          peerId: peerId,
+          ts: DateTime.now().millisecondsSinceEpoch / 1000.0,
+          payload: payload,
+        ),
+      );
+      await socket.flush();
+    }
+    await socket.flush(); // Also deliver metadata for a zero-byte file.
+    final result = await ack.future.timeout(
+      Duration(seconds: 45 + length ~/ (200 * 1024)),
+    );
+    stdout.writeln('ACK: $result');
+    stdout.writeln('Elapsed: ${stopwatch.elapsedMilliseconds} ms');
+    return result['ok'] == true;
+  } finally {
+    await input?.close();
+    await subscription?.cancel();
+    socket.destroy();
+  }
 }

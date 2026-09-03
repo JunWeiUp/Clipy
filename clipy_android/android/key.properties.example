@@ -1,0 +1,6 @@
+# Copy to key.properties (ignored by Git). Paths are relative to android/,
+# or use an absolute path. Do not commit passwords or the keystore.
+storeFile=/absolute/path/to/clipy-release.jks
+storePassword=replace-locally
+keyAlias=clipy
+keyPassword=replace-locally

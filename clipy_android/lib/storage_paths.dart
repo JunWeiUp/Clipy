@@ -6,7 +6,9 @@ class StoragePaths {
 
   static Future<Directory> appStorageDirectory() async {
     if (Platform.isAndroid) {
-      final path = await _channel.invokeMethod<String>('getAppStorageDirectory');
+      final path = await _channel.invokeMethod<String>(
+        'getAppStorageDirectory',
+      );
       if (path != null && path.isNotEmpty) {
         final dir = Directory(path);
         await dir.create(recursive: true);
@@ -15,7 +17,11 @@ class StoragePaths {
     }
 
     final home = Platform.environment['HOME'];
-    final dir = Directory(home != null ? '$home/.clipy_android' : '${Directory.systemTemp.path}/clipy_android');
+    final dir = Directory(
+      home != null
+          ? '$home/.clipy_android'
+          : '${Directory.systemTemp.path}/clipy_android',
+    );
     await dir.create(recursive: true);
     return dir;
   }

@@ -20,7 +20,9 @@ class _NotificationHealthBannerState extends State<NotificationHealthBanner> {
   void initState() {
     super.initState();
     _status = NotificationHealthMonitor.instance.latestStatus;
-    _healthSub = NotificationHealthMonitor.instance.onHealthChanged.listen((status) {
+    _healthSub = NotificationHealthMonitor.instance.onHealthChanged.listen((
+      status,
+    ) {
       if (mounted) setState(() => _status = status);
     });
     Future<void>.microtask(() async {
@@ -57,7 +59,10 @@ class _NotificationHealthBannerState extends State<NotificationHealthBanner> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.notifications_off_outlined, color: Colors.orange.shade800),
+            Icon(
+              Icons.notifications_off_outlined,
+              color: Colors.orange.shade800,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -66,9 +71,9 @@ class _NotificationHealthBannerState extends State<NotificationHealthBanner> {
                   Text(
                     l10n.notificationListenerIssueTitle,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: Colors.orange.shade900,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      color: Colors.orange.shade900,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -80,8 +85,7 @@ class _NotificationHealthBannerState extends State<NotificationHealthBanner> {
             ),
             const SizedBox(width: 8),
             FilledButton.tonal(
-              onPressed: () =>
-                  _handleReauthorize(context, isBatteryIssue),
+              onPressed: () => _handleReauthorize(context, isBatteryIssue),
               child: Text(actionLabel),
             ),
           ],
@@ -105,7 +109,10 @@ class _NotificationHealthBannerState extends State<NotificationHealthBanner> {
     }
   }
 
-  Future<void> _handleReauthorize(BuildContext context, bool isBatteryIssue) async {
+  Future<void> _handleReauthorize(
+    BuildContext context,
+    bool isBatteryIssue,
+  ) async {
     final l10n = context.l10n;
     final messenger = ScaffoldMessenger.of(context);
     if (isBatteryIssue) {

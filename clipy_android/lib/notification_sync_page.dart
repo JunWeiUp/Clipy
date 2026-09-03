@@ -35,6 +35,7 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   final Map<String, List<NotificationEntry>> _packageNotificationsCache = {};
   bool _appsLoaded = false;
   bool _appsLoading = false;
+
   /// Distinguishes first permission probe from a real denied→granted transition.
   bool _permissionStatusLoaded = false;
   static const _packageGroupPageSize = 20;
@@ -49,22 +50,25 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     _loadPermissionStatus();
     unawaited(_loadInstalledApps());
     unawaited(_rebuildHistoryItems());
-    _notifSubscription =
-        NotificationManager.instance.onNotificationsChanged.listen((_) {
-      if (!mounted) return;
-      unawaited(_rebuildHistoryItems().then((_) {
-        if (mounted && _tabController.index == _historyTabIndex) {
-          setState(() {});
-        }
-      }));
-    });
-    _collectedSub =
-        NotificationManager.instance.onCollectedPackagesChanged.listen((_) {
-      if (!mounted) return;
-      unawaited(_rebuildHistoryItems());
-    });
-    _syncedSub =
-        NotificationManager.instance.onSyncedPackagesChanged.listen((_) {
+    _notifSubscription = NotificationManager.instance.onNotificationsChanged
+        .listen((_) {
+          if (!mounted) return;
+          unawaited(
+            _rebuildHistoryItems().then((_) {
+              if (mounted && _tabController.index == _historyTabIndex) {
+                setState(() {});
+              }
+            }),
+          );
+        });
+    _collectedSub = NotificationManager.instance.onCollectedPackagesChanged
+        .listen((_) {
+          if (!mounted) return;
+          unawaited(_rebuildHistoryItems());
+        });
+    _syncedSub = NotificationManager.instance.onSyncedPackagesChanged.listen((
+      _,
+    ) {
       if (!mounted) return;
       unawaited(_rebuildHistoryItems());
     });
@@ -86,10 +90,7 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   }
 
   Future<void> _setPackageSyncEnabled(String packageName, bool enabled) async {
-    await NotificationManager.instance.setPackageSynced(
-      packageName,
-      enabled,
-    );
+    await NotificationManager.instance.setPackageSynced(packageName, enabled);
     if (mounted) setState(() {});
   }
 
@@ -143,8 +144,7 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   Future<void> _rebuildHistoryItems() async {
     final l10n = context.l10n;
     final totalCount = await NotificationManager.instance.count();
-    final appCount =
-        await NotificationRepository.instance.packageGroupCount();
+    final appCount = await NotificationRepository.instance.packageGroupCount();
     final groups = await NotificationRepository.instance.fetchPackageGroups(
       offset: 0,
       limit: _packageGroupPageSize,
@@ -184,7 +184,8 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
       final isExpanded = _expandedApps.contains(group.packageName);
       List<NotificationEntry>? expandedItems;
       if (isExpanded) {
-        expandedItems = _packageNotificationsCache[group.packageName] ??
+        expandedItems =
+            _packageNotificationsCache[group.packageName] ??
             await NotificationRepository.instance.fetchByPackage(
               group.packageName,
               offset: 0,
@@ -217,12 +218,14 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     }) async {
       if (sectionGroups.isEmpty) return;
       final isCollapsed = _collapsedSections.contains(sectionKey);
-      rows.add(_HistoryListItem.sectionHeader(
-        title: title,
-        sectionKey: sectionKey,
-        isCollapsed: isCollapsed,
-        count: sectionGroups.length,
-      ));
+      rows.add(
+        _HistoryListItem.sectionHeader(
+          title: title,
+          sectionKey: sectionKey,
+          isCollapsed: isCollapsed,
+          count: sectionGroups.length,
+        ),
+      );
       if (!isCollapsed) {
         for (final group in sectionGroups) {
           await appendGroup(group);
@@ -250,7 +253,8 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   }
 
   Future<List<NotificationEntry>> _notificationsForPackage(
-      String packageName) async {
+    String packageName,
+  ) async {
     return _packageNotificationsCache[packageName] ??
         await NotificationRepository.instance.fetchByPackage(
           packageName,
@@ -267,8 +271,8 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   }
 
   Future<void> _loadPermissionStatus() async {
-    final granted =
-        await NotificationManager.instance.isListenerPermissionGranted();
+    final granted = await NotificationManager.instance
+        .isListenerPermissionGranted();
     if (!mounted) return;
     final wasGranted = _permissionGranted;
     final isInitialLoad = !_permissionStatusLoaded;
@@ -305,15 +309,15 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
       controller: _tabController,
       tabs: [
         Tab(icon: const Icon(Icons.tune), text: l10n.settings),
-        Tab(icon: const Icon(Icons.notifications), text: l10n.notificationHistory),
+        Tab(
+          icon: const Icon(Icons.notifications),
+          text: l10n.notificationHistory,
+        ),
       ],
     );
     final body = TabBarView(
       controller: _tabController,
-      children: [
-        _buildSettingsTab(),
-        _buildHistoryTab(),
-      ],
+      children: [_buildSettingsTab(), _buildHistoryTab()],
     );
 
     if (widget.embedded) {
@@ -364,7 +368,7 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(child: _buildPermissionCard(l10n)),
-        SliverToBoxAdapter(child: const Divider(height: 1)),
+        const SliverToBoxAdapter(child: Divider(height: 1)),
         SliverToBoxAdapter(
           child: SwitchListTile(
             title: Text(l10n.enableNotificationSync),
@@ -395,14 +399,17 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
             ),
           ),
         ),
-        SliverToBoxAdapter(child: const Divider(height: 1)),
+        const SliverToBoxAdapter(child: Divider(height: 1)),
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Row(
               children: [
-                Icon(Icons.filter_list,
-                    size: 20, color: Theme.of(context).colorScheme.primary),
+                Icon(
+                  Icons.filter_list,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
                 const SizedBox(width: 8),
                 Text(
                   l10n.syncNotificationsFrom,
@@ -467,12 +474,10 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
           ),
         ),
         if (_appsLoading)
-          SliverToBoxAdapter(
-            child: const Padding(
+          const SliverToBoxAdapter(
+            child: Padding(
               padding: EdgeInsets.all(32),
-              child: Center(
-                child: CircularProgressIndicator(),
-              ),
+              child: Center(child: CircularProgressIndicator()),
             ),
           )
         else if (appItems.isEmpty)
@@ -489,16 +494,13 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
           )
         else
           SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final item = appItems[index];
-                if (item.isHeader) {
-                  return _buildSectionHeader(item.title!, item.count!);
-                }
-                return _buildAppTile(item.app!, manager);
-              },
-              childCount: appItems.length,
-            ),
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final item = appItems[index];
+              if (item.isHeader) {
+                return _buildSectionHeader(item.title!, item.count!);
+              }
+              return _buildAppTile(item.app!, manager);
+            }, childCount: appItems.length),
           ),
       ],
     );
@@ -542,8 +544,10 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     final isSynced = manager.isPackageSynced(packageName);
     return ListTile(
       title: Text(appName, style: const TextStyle(fontSize: 14)),
-      subtitle: Text(packageName,
-          style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+      subtitle: Text(
+        packageName,
+        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+      ),
       trailing: _CompactTogglePair(
         collectLabel: l10n.collect,
         syncLabel: l10n.sync,
@@ -578,7 +582,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                         ? l10n.permissionGranted
                         : l10n.notificationListenerPermission,
                     style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 15),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -648,8 +654,10 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                 await _rebuildHistoryItems();
               },
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
                 color: Colors.grey[100],
                 child: Row(
                   children: [
@@ -661,11 +669,7 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                       color: Colors.grey[600],
                     ),
                     const SizedBox(width: 4),
-                    Icon(
-                      icon,
-                      size: 16,
-                      color: iconColor,
-                    ),
+                    Icon(icon, size: 16, color: iconColor),
                     const SizedBox(width: 6),
                     Text(
                       item.sectionTitle!,
@@ -678,17 +682,16 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                     const SizedBox(width: 6),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 1),
+                        horizontal: 6,
+                        vertical: 1,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.grey[300],
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
                         '${item.sectionCount}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[700],
-                        ),
+                        style: TextStyle(fontSize: 11, color: Colors.grey[700]),
                       ),
                     ),
                   ],
@@ -696,10 +699,12 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
               ),
             );
           case _HistoryListItemKind.groupHeader:
-            final isCollected = NotificationManager.instance
-                .isPackageCollected(item.packageName!);
-            final syncEnabled = NotificationManager.instance
-                .isPackageSynced(item.packageName!);
+            final isCollected = NotificationManager.instance.isPackageCollected(
+              item.packageName!,
+            );
+            final syncEnabled = NotificationManager.instance.isPackageSynced(
+              item.packageName!,
+            );
             return _AppGroupHeader(
               appName: item.appName!,
               packageName: item.packageName!,
@@ -709,8 +714,10 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
               isCollected: isCollected,
               syncEnabled: syncEnabled,
               onToggleCollected: (enabled) {
-                NotificationManager.instance
-                    .setPackageCollected(item.packageName!, enabled);
+                NotificationManager.instance.setPackageCollected(
+                  item.packageName!,
+                  enabled,
+                );
               },
               onToggleSync: (enabled) =>
                   _setPackageSyncEnabled(item.packageName!, enabled),
@@ -723,8 +730,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                 await _rebuildHistoryItems();
               },
               onDismissAll: () async {
-                final notifications =
-                    await _notificationsForPackage(item.packageName!);
+                final notifications = await _notificationsForPackage(
+                  item.packageName!,
+                );
                 for (final notification in notifications) {
                   NotificationManager.instance.broadcastDismissToRemote(
                     NotificationDismissRequest(
@@ -733,17 +741,20 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                       notificationKey: notification.notificationKey,
                     ),
                   );
-                  await NotificationManager.instance
-                      .removeNotification(notification.id);
+                  await NotificationManager.instance.removeNotification(
+                    notification.id,
+                  );
                 }
                 _packageNotificationsCache.remove(item.packageName);
               },
               onDeleteAll: () async {
-                final notifications =
-                    await _notificationsForPackage(item.packageName!);
+                final notifications = await _notificationsForPackage(
+                  item.packageName!,
+                );
                 for (final notification in notifications) {
-                  await NotificationManager.instance
-                      .removeNotification(notification.id);
+                  await NotificationManager.instance.removeNotification(
+                    notification.id,
+                  );
                 }
                 _packageNotificationsCache.remove(item.packageName);
               },
@@ -753,8 +764,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                 // up then throws.
                 final messenger = ScaffoldMessenger.of(context);
                 final message = l10n.copiedToClipboard;
-                final notifications =
-                    await _notificationsForPackage(item.packageName!);
+                final notifications = await _notificationsForPackage(
+                  item.packageName!,
+                );
                 final text = notifications
                     .map(_notificationDetailText)
                     .join('\n\n');
@@ -767,12 +779,10 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
             );
           case _HistoryListItemKind.notification:
             final entry = item.entry!;
-            final isCollected =
-                NotificationManager.instance.isPackageCollected(
+            final isCollected = NotificationManager.instance.isPackageCollected(
               entry.packageName,
             );
-            final syncEnabled =
-                NotificationManager.instance.isPackageSynced(
+            final syncEnabled = NotificationManager.instance.isPackageSynced(
               entry.packageName,
             );
             return _NotificationTile(
@@ -780,8 +790,10 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
               isCollected: isCollected,
               syncEnabled: syncEnabled,
               onToggleCollected: (enabled) {
-                NotificationManager.instance
-                    .setPackageCollected(entry.packageName, enabled);
+                NotificationManager.instance.setPackageCollected(
+                  entry.packageName,
+                  enabled,
+                );
               },
               onToggleSync: (enabled) =>
                   _setPackageSyncEnabled(entry.packageName, enabled),
@@ -799,13 +811,17 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
               },
               onCopy: () {
                 ClipboardManager.instance.copyToClipboard(
-                  HistoryItem(type: 'text', value: _notificationDetailText(entry)),
+                  HistoryItem(
+                    type: 'text',
+                    value: _notificationDetailText(entry),
+                  ),
                 );
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(l10n.copiedToClipboard)),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(l10n.copiedToClipboard)));
               },
-              onOpen: () => NotificationManager.instance.openNotification(entry),
+              onOpen: () =>
+                  NotificationManager.instance.openNotification(entry),
               onShowDetails: () => _showNotificationDetails(entry),
             );
         }
@@ -816,14 +832,16 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   Widget _buildHistorySummary(AppStrings l10n, _HistoryListItem item) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      color: Theme.of(context)
-          .colorScheme
-          .surfaceContainerHighest
-          .withValues(alpha: 0.3),
+      color: Theme.of(
+        context,
+      ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
       child: Row(
         children: [
-          Icon(Icons.notifications_active,
-              size: 18, color: Theme.of(context).colorScheme.primary),
+          Icon(
+            Icons.notifications_active,
+            size: 18,
+            color: Theme.of(context).colorScheme.primary,
+          ),
           const SizedBox(width: 8),
           Text(
             l10n.notificationsCount(item.notificationCount!),
@@ -901,15 +919,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                entry.appName,
-                style: Theme.of(ctx).textTheme.titleLarge,
-              ),
+              Text(entry.appName, style: Theme.of(ctx).textTheme.titleLarge),
               const SizedBox(height: 4),
-              Text(
-                entry.packageName,
-                style: Theme.of(ctx).textTheme.bodySmall,
-              ),
+              Text(entry.packageName, style: Theme.of(ctx).textTheme.bodySmall),
               const SizedBox(height: 16),
               Expanded(
                 child: SingleChildScrollView(
@@ -933,8 +945,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                     onPressed: () {
                       ClipboardManager.instance.copyToClipboard(
                         HistoryItem(
-                            type: 'text',
-                            value: _notificationDetailText(entry)),
+                          type: 'text',
+                          value: _notificationDetailText(entry),
+                        ),
                       );
                       Navigator.pop(ctx);
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -961,7 +974,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
         content: Text(l10n.clearNotificationHistoryConfirm),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(l10n.cancel),
+          ),
           TextButton(
             onPressed: () {
               NotificationManager.instance.clearAllLocal();
@@ -979,8 +994,12 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     switch (action) {
       case 'open_permission':
         NotificationManager.instance.openListenerSettings();
-        unawaited(Future<void>.delayed(
-            const Duration(seconds: 1), _loadPermissionStatus));
+        unawaited(
+          Future<void>.delayed(
+            const Duration(seconds: 1),
+            _loadPermissionStatus,
+          ),
+        );
         break;
       case 'clear_all':
         _confirmClearHistory(l10n);
@@ -1141,123 +1160,126 @@ class _NotificationTile extends StatelessWidget {
     return Opacity(
       opacity: isCollected ? 1 : 0.55,
       child: Dismissible(
-      key: ValueKey(entry.id),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        color: Colors.red,
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 16),
-        child: const Icon(Icons.delete, color: Colors.white),
-      ),
-      onDismissed: (_) => onDismiss(),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-          radius: 20,
-          child: Text(
-            entry.appName.isNotEmpty ? entry.appName[0] : '?',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onPrimaryContainer,
-              fontWeight: FontWeight.bold,
+        key: ValueKey(entry.id),
+        direction: DismissDirection.endToStart,
+        background: Container(
+          color: Colors.red,
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 16),
+          child: const Icon(Icons.delete, color: Colors.white),
+        ),
+        onDismissed: (_) => onDismiss(),
+        child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+            radius: 20,
+            child: Text(
+              entry.appName.isNotEmpty ? entry.appName[0] : '?',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
-        ),
-        title: Text(
-          title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (entry.isArchived)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 2),
-                child: Text(
-                  l10n.notificationArchivedBadge,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.orange.shade800,
+          title: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (entry.isArchived)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Text(
+                    l10n.notificationArchivedBadge,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.orange.shade800,
+                    ),
                   ),
                 ),
-              ),
-            if (body.isNotEmpty && body != title)
+              if (body.isNotEmpty && body != title)
+                Text(
+                  body,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                ),
+              const SizedBox(height: 2),
               Text(
-                body,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                '${entry.appName} · $timeDisplay · ${isCollected ? l10n.collect : l10n.appSyncDisabled}/${syncEnabled ? l10n.sync : l10n.appSyncDisabled}',
+                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
               ),
-            const SizedBox(height: 2),
-            Text(
-              '${entry.appName} · $timeDisplay · ${isCollected ? l10n.collect : l10n.appSyncDisabled}/${syncEnabled ? l10n.sync : l10n.appSyncDisabled}',
-              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-            ),
-          ],
+            ],
+          ),
+          isThreeLine: entry.isArchived || (body.isNotEmpty && body != title),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _CompactTogglePair(
+                collectLabel: l10n.collect,
+                syncLabel: l10n.sync,
+                isCollected: isCollected,
+                syncEnabled: syncEnabled,
+                onToggleCollected: onToggleCollected,
+                onToggleSync: onToggleSync,
+              ),
+              PopupMenuButton<String>(
+                icon: Icon(Icons.more_vert, size: 18, color: Colors.grey[600]),
+                onSelected: (v) {
+                  switch (v) {
+                    case 'copy':
+                      onCopy();
+                      break;
+                    case 'toggle_collect':
+                      onToggleCollected(!isCollected);
+                      break;
+                    case 'toggle_sync':
+                      onToggleSync(!syncEnabled);
+                      break;
+                    case 'dismiss_phone':
+                      onDismissOnPhone();
+                      break;
+                    case 'dismiss_local':
+                      onDismiss();
+                      break;
+                  }
+                },
+                itemBuilder: (_) => [
+                  PopupMenuItem(value: 'copy', child: Text(l10n.copyContent)),
+                  PopupMenuItem(
+                    value: 'toggle_collect',
+                    child: Text(
+                      isCollected ? l10n.stopSyncingThisApp : l10n.syncThisApp,
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'toggle_sync',
+                    child: Text(
+                      syncEnabled ? l10n.stopSyncingThisApp : l10n.syncThisApp,
+                    ),
+                  ),
+                  if (entry.isClearable)
+                    PopupMenuItem(
+                      value: 'dismiss_phone',
+                      child: Text(l10n.dismissOnPhone),
+                    ),
+                  PopupMenuItem(
+                    value: 'dismiss_local',
+                    child: Text(l10n.delete),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          onTap: onOpen,
+          onLongPress: onShowDetails,
         ),
-        isThreeLine: entry.isArchived || (body.isNotEmpty && body != title),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _CompactTogglePair(
-              collectLabel: l10n.collect,
-              syncLabel: l10n.sync,
-              isCollected: isCollected,
-              syncEnabled: syncEnabled,
-              onToggleCollected: onToggleCollected,
-              onToggleSync: onToggleSync,
-            ),
-            PopupMenuButton<String>(
-          icon: Icon(Icons.more_vert, size: 18, color: Colors.grey[600]),
-          onSelected: (v) {
-            switch (v) {
-              case 'copy':
-                onCopy();
-                break;
-              case 'toggle_collect':
-                onToggleCollected(!isCollected);
-                break;
-              case 'toggle_sync':
-                onToggleSync(!syncEnabled);
-                break;
-              case 'dismiss_phone':
-                onDismissOnPhone();
-                break;
-              case 'dismiss_local':
-                onDismiss();
-                break;
-            }
-          },
-          itemBuilder: (_) => [
-            PopupMenuItem(value: 'copy', child: Text(l10n.copyContent)),
-            PopupMenuItem(
-              value: 'toggle_collect',
-              child: Text(isCollected
-                  ? l10n.stopSyncingThisApp
-                  : l10n.syncThisApp),
-            ),
-            PopupMenuItem(
-              value: 'toggle_sync',
-              child: Text(syncEnabled
-                  ? l10n.stopSyncingThisApp
-                  : l10n.syncThisApp),
-            ),
-            if (entry.isClearable)
-              PopupMenuItem(
-                  value: 'dismiss_phone',
-                  child: Text(l10n.dismissOnPhone)),
-            PopupMenuItem(
-                value: 'dismiss_local', child: Text(l10n.delete)),
-          ],
-        ),
-          ],
-        ),
-        onTap: onOpen,
-        onLongPress: onShowDetails,
       ),
-    ),
     );
   }
 }
@@ -1329,13 +1351,15 @@ class _AppGroupHeader extends StatelessWidget {
                     const SizedBox(width: 4),
                     CircleAvatar(
                       radius: 16,
-                      backgroundColor:
-                          Theme.of(context).colorScheme.primaryContainer,
+                      backgroundColor: Theme.of(
+                        context,
+                      ).colorScheme.primaryContainer,
                       child: Text(
                         appName.isNotEmpty ? appName[0] : '?',
                         style: TextStyle(
-                          color:
-                              Theme.of(context).colorScheme.onPrimaryContainer,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onPrimaryContainer,
                           fontWeight: FontWeight.bold,
                           fontSize: 14,
                         ),
@@ -1436,23 +1460,22 @@ class _AppGroupHeader extends StatelessWidget {
               itemBuilder: (_) => [
                 PopupMenuItem(
                   value: 'toggle_collect',
-                  child: Text(isCollected
-                      ? l10n.stopSyncingThisApp
-                      : l10n.syncThisApp),
+                  child: Text(
+                    isCollected ? l10n.stopSyncingThisApp : l10n.syncThisApp,
+                  ),
                 ),
                 PopupMenuItem(
                   value: 'toggle_sync',
-                  child: Text(syncEnabled
-                      ? l10n.stopSyncingThisApp
-                      : l10n.syncThisApp),
+                  child: Text(
+                    syncEnabled ? l10n.stopSyncingThisApp : l10n.syncThisApp,
+                  ),
                 ),
+                PopupMenuItem(value: 'copy_all', child: Text(l10n.copyContent)),
                 PopupMenuItem(
-                    value: 'copy_all', child: Text(l10n.copyContent)),
-                PopupMenuItem(
-                    value: 'dismiss_all',
-                    child: Text(l10n.dismissOnPhone)),
-                PopupMenuItem(
-                  value: 'delete_all', child: Text(l10n.delete)),
+                  value: 'dismiss_all',
+                  child: Text(l10n.dismissOnPhone),
+                ),
+                PopupMenuItem(value: 'delete_all', child: Text(l10n.delete)),
               ],
             ),
           ],
@@ -1514,8 +1537,7 @@ class _CompactTogglePair extends StatelessWidget {
       children: [
         _buildSwitch(collectLabel, isCollected, onToggleCollected),
         const SizedBox(width: 4),
-        _buildSwitch(
-            syncLabel, syncEnabled, isCollected ? onToggleSync : null),
+        _buildSwitch(syncLabel, syncEnabled, isCollected ? onToggleSync : null),
       ],
     );
   }

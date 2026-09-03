@@ -28,3 +28,33 @@ clipy_android/android/local.properties
 .zcode/
 .trae/
 .workbuddy/
+
+# Local agent state, SDK telemetry, and caches
+/.config/flutter/
+/.dart-tool/
+.dart_tool/
+/.flutter
+/.video_agent/
+/.dbg/
+.fvm/
+.gradle/
+coverage/
+__pycache__/
+*.pyc
+*.log
+
+# Secrets and local signing material
+.env
+.env.*
+!.env.example
+**/key.properties
+*.p12
+*.pfx
+*.mobileprovision
+
+# User databases and temporary build state
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3

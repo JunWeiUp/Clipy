@@ -35,10 +35,16 @@ extension SyncSessionMethods on SyncManager {
   void _onInbound(Socket socket) {
     final host = socket.remoteAddress.address;
     appLog('Inbound from $host');
-    unawaited(_performHandshake(socket, host: host, inbound: true,
+    unawaited(
+      _performHandshake(
+        socket,
+        host: host,
+        inbound: true,
         onHandshakeFailure: (f) {
-      appLog('Inbound handshake failed from $host: $f', level: 'warning');
-    }));
+          appLog('Inbound handshake failed from $host: $f', level: 'warning');
+        },
+      ),
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -78,12 +84,15 @@ extension SyncSessionMethods on SyncManager {
     return authorizedPeerIds.contains(peerId);
   }
 
-  Future<void> _dial(String host, int peerPort,
-      {required String reason,
-      String? peerId,
-      Duration? timeout,
-      void Function(String connectFailure)? onConnectFailure,
-      void Function(String hsFailure)? onHandshakeFailure}) async {
+  Future<void> _dial(
+    String host,
+    int peerPort, {
+    required String reason,
+    String? peerId,
+    Duration? timeout,
+    void Function(String connectFailure)? onConnectFailure,
+    void Function(String hsFailure)? onHandshakeFailure,
+  }) async {
     final resolved =
         peerId ?? (reason == 'scan' ? null : _resolvePeerId(host, peerPort));
     if (!_allowsProactiveDial(reason, resolved)) return;
@@ -110,15 +119,18 @@ extension SyncSessionMethods on SyncManager {
     } catch (e) {
       // SocketException with null osError + message "Connection timed out" or
       // "Connecting timed out" is the Dart-side timeout path (scanConnectTimeout).
-      final isTimeout = (e is SocketException) &&
+      final isTimeout =
+          (e is SocketException) &&
           (e.osError == null) &&
           (e.message.toLowerCase().contains('timed out'));
       final label = isTimeout ? 'timeout' : _classifyConnectError(e);
       if (reason == 'scan') {
         onConnectFailure?.call(label);
       } else {
-        appLog('Dial $reason $host:$peerPort failed: connect($label)',
-            level: 'warning');
+        appLog(
+          'Dial $reason $host:$peerPort failed: connect($label)',
+          level: 'warning',
+        );
         // A dead authorized endpoint is the auto-rediscover signal; scan/
         // direct dials have no stable peer identity to count against.
         if (resolved != null && authorizedPeerIds.contains(resolved)) {
@@ -127,19 +139,27 @@ extension SyncSessionMethods on SyncManager {
       }
       return;
     }
-    await _performHandshake(socket, host: host, inbound: false,
-        onHandshakeFailure: reason == 'scan'
-            ? onHandshakeFailure
-            : (f) {
-                appLog('Dial $reason $host:$peerPort failed: handshake($f)',
-                    level: 'warning');
-              });
+    await _performHandshake(
+      socket,
+      host: host,
+      inbound: false,
+      onHandshakeFailure: reason == 'scan'
+          ? onHandshakeFailure
+          : (f) {
+              appLog(
+                'Dial $reason $host:$peerPort failed: handshake($f)',
+                level: 'warning',
+              );
+            },
+    );
   }
 
-  Future<void> _performHandshake(Socket socket,
-      {required String host,
-      required bool inbound,
-      void Function(String failure)? onHandshakeFailure}) async {
+  Future<void> _performHandshake(
+    Socket socket, {
+    required String host,
+    required bool inbound,
+    void Function(String failure)? onHandshakeFailure,
+  }) async {
     final hello = SyncEnvelope.make(
       type: SyncType.hello,
       peerId: peerId,
@@ -181,17 +201,22 @@ extension SyncSessionMethods on SyncManager {
         if (!firstFrame.isCompleted) firstFrame.complete(null);
         final id = adoptedPeerId;
         if (id != null) {
-          appLog('Socket error from ${id.substring(0, id.length.clamp(0, 8))}: $e',
-              level: 'warning');
+          appLog(
+            'Socket error from ${id.substring(0, id.length.clamp(0, 8))}: $e',
+            level: 'warning',
+          );
           unawaited(
-              _closeSession(id, scheduleReconnect: true, keepaliveDriven: true));
+            _closeSession(id, scheduleReconnect: true, keepaliveDriven: true),
+          );
         }
       },
       onDone: () {
         if (!firstFrame.isCompleted) firstFrame.complete(null);
         final id = adoptedPeerId;
         if (id != null) {
-          appLog('Socket closed by peer ${id.substring(0, id.length.clamp(0, 8))}');
+          appLog(
+            'Socket closed by peer ${id.substring(0, id.length.clamp(0, 8))}',
+          );
           unawaited(_closeSession(id, scheduleReconnect: false));
         }
       },
@@ -270,8 +295,10 @@ extension SyncSessionMethods on SyncManager {
           socket.add(data);
           await socket.flush();
         } catch (e) {
-          appLog('welcome send failed to ${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}: $e',
-              level: 'warning');
+          appLog(
+            'welcome send failed to ${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}: $e',
+            level: 'warning',
+          );
         }
       }
     }
@@ -281,8 +308,9 @@ extension SyncSessionMethods on SyncManager {
       // Align with Mac: replace the old socket. Dropping the new fd while the
       // peer keeps dialing causes Replacing/errno=54 storms and lost flushes.
       appLog(
-          'Duplicate session for ${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}, replacing existing @ ${existing.host}',
-          level: 'warning');
+        'Duplicate session for ${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}, replacing existing @ ${existing.host}',
+        level: 'warning',
+      );
       await existing.subscription?.cancel();
       try {
         await existing.socket.close();
@@ -324,7 +352,8 @@ extension SyncSessionMethods on SyncManager {
       unawaited(_requestHistoryFromPeer(env.peerId));
     }
     appLog(
-        'Session up with $name (${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}) @ $host:$peerPort');
+      'Session up with $name (${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}) @ $host:$peerPort',
+    );
   }
 
   /// Best-effort SO_SNDBUF/SO_RCVBUF bump (Linux: SOL_SOCKET=1, SNDBUF=7,
@@ -346,7 +375,10 @@ extension SyncSessionMethods on SyncManager {
     if (session == null) return;
     final last = _lastHistoryFetchAt[id];
     final now = DateTime.now();
-    if (last != null && now.difference(last) < SyncManager._historyFetchThrottle) return;
+    if (last != null &&
+        now.difference(last) < SyncManager._historyFetchThrottle) {
+      return;
+    }
     _lastHistoryFetchAt[id] = now;
     final env = SyncEnvelope.make(type: SyncType.historyFetch, peerId: peerId);
     final data = syncEncodeFrame(env);
@@ -356,7 +388,8 @@ extension SyncSessionMethods on SyncManager {
       await session.socket.flush();
       _beginHistoryFetchCatchUp(id);
       appLog(
-          'sync.session history.fetch → ${id.substring(0, id.length.clamp(0, 8))}');
+        'sync.session history.fetch → ${id.substring(0, id.length.clamp(0, 8))}',
+      );
     } catch (e) {
       appLog('history.fetch send failed: $e', level: 'warning');
     }
@@ -369,8 +402,9 @@ extension SyncSessionMethods on SyncManager {
       buffer.add(bytes);
       return null;
     }
-    final length = ByteData.sublistView(Uint8List.fromList(bytes.sublist(0, 4)))
-        .getUint32(0, Endian.big);
+    final length = ByteData.sublistView(
+      Uint8List.fromList(bytes.sublist(0, 4)),
+    ).getUint32(0, Endian.big);
     if (length <= 0 || length > syncMaxFrameLength) {
       buffer.clear();
       return null;
@@ -415,10 +449,12 @@ extension SyncSessionMethods on SyncManager {
         break;
       }
       final length = ByteData.sublistView(
-              Uint8List.fromList(bytes.sublist(offset, offset + 4)))
-          .getUint32(0, Endian.big);
+        Uint8List.fromList(bytes.sublist(offset, offset + 4)),
+      ).getUint32(0, Endian.big);
       if (length <= 0 || length > syncMaxFrameLength) {
-        unawaited(_closeSession(peerId, scheduleReconnect: true, keepaliveDriven: true));
+        unawaited(
+          _closeSession(peerId, scheduleReconnect: true, keepaliveDriven: true),
+        );
         return;
       }
       if (bytes.length - offset < 4 + length) {
@@ -434,8 +470,11 @@ extension SyncSessionMethods on SyncManager {
     }
   }
 
-  Future<void> _closeSession(String peerId,
-      {required bool scheduleReconnect, bool keepaliveDriven = false}) async {
+  Future<void> _closeSession(
+    String peerId, {
+    required bool scheduleReconnect,
+    bool keepaliveDriven = false,
+  }) async {
     final session = _sessions.remove(peerId);
     if (session == null) return;
     await session.subscription?.cancel();
@@ -452,7 +491,9 @@ extension SyncSessionMethods on SyncManager {
     // Persist any buffered fetch catch-up before the socket is gone (ACKs may
     // fail; store still runs).
     await _flushHistoryFetchCatchUp(peerId);
-    appLog('Session closed with ${peerId.substring(0, peerId.length.clamp(0, 8))}');
+    appLog(
+      'Session closed with ${peerId.substring(0, peerId.length.clamp(0, 8))}',
+    );
     if (!scheduleReconnect) return;
     // Keepalive-driven close (pong timeout / socket error / frame corruption):
     // only the client role redials, so both sides don't reconnect each other.
@@ -470,12 +511,16 @@ extension SyncSessionMethods on SyncManager {
     // pile on top of the client's keepalive reconnect.
     final now = DateTime.now();
     final last = _lastReconnectAttempt[peerId];
-    if (last != null && now.difference(last) < SyncManager._minReconnectInterval) return;
+    if (last != null &&
+        now.difference(last) < SyncManager._minReconnectInterval) {
+      return;
+    }
     _lastReconnectAttempt[peerId] = now;
     final delay = _reconnectBackoffSec[peerId] ?? 1.0;
-    _reconnectBackoffSec[peerId] =
-        (delay * 2).clamp(1, 30).toDouble();
-    appLog('Reconnect scheduled for ${peerId.substring(0, peerId.length.clamp(0, 8))} in ${delay.round()}s');
+    _reconnectBackoffSec[peerId] = (delay * 2).clamp(1, 30).toDouble();
+    appLog(
+      'Reconnect scheduled for ${peerId.substring(0, peerId.length.clamp(0, 8))} in ${delay.round()}s',
+    );
     _reconnectTimers[peerId] = Timer(Duration(seconds: delay.round()), () {
       _reconnectTimers.remove(peerId);
       if (_sessions.containsKey(peerId)) return;
@@ -498,7 +543,4 @@ extension SyncSessionMethods on SyncManager {
       }());
     });
   }
-
-
-
 }

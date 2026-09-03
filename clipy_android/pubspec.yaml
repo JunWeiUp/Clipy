@@ -1,9 +1,11 @@
 name: clipy_android
-description: A new Flutter project for ClipyClone Android.
-version: 1.0.0+1
+description: Clipboard history, encrypted LAN sync, notification mirroring, and file transfer for Clipy.
+publish_to: none
+version: 1.0.0+10006
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=3.11.0 <4.0.0"
+  flutter: ">=3.41.0"
 
 dependencies:
   flutter:

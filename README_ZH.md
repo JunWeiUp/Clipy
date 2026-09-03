@@ -4,7 +4,7 @@
 
 # Clipy
 
-**原生 macOS 菜单栏剪贴板管理 + 截图工具，并与手机端端到端加密局域网同步。**
+**原生 macOS 菜单栏剪贴板管理 + 截图工具，支持与手机端进行局域网加密同步。**
 
 剪贴板历史 · 片段与快捷键 · 截图标注与端侧 OCR · 全局搜索 ·
 手机通知镜像 · AES-GCM 加密同步与文件传输
@@ -12,13 +12,17 @@
 [中文](README_ZH.md) | [English](README.md)
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?include_prereleases&label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
-[![Build](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/release.yml?branch=master&label=Build&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/release.yml)
-[![Platform](https://img.shields.io/badge/平台-macOS%2013%2B%20·%20Android%20·%20iOS-blue?logo=apple)](#-下载)
+[![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
+[![Platform](https://img.shields.io/badge/平台-macOS%2013%2B%20·%20Android-blue?logo=apple)](#-下载)
 [![Language](https://img.shields.io/badge/构建于-Swift%20·%20Flutter-orange?logo=swift&logoColor=white)](#-架构)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?logo=opensourceinitiative&logoColor=black)](LICENSE)
+[![License review](https://img.shields.io/badge/license-review_required-orange)](THIRD_PARTY_NOTICES.md)
 [![Stars](https://img.shields.io/github/stars/JunWeiUp/Clipy?style=social&logo=star)](https://github.com/JunWeiUp/Clipy/stargazers)
 
 </div>
+
+[开发指南](docs/DEVELOPMENT.md) · [架构地图](docs/ARCHITECTURE.md) · [贡献规范](CONTRIBUTING.md) · [安全说明](SECURITY.md)
+
+> 发布前注意：截图模块移植自 macshot，需先完成[第三方许可核对](THIRD_PARTY_NOTICES.md)，再发布新的组合二进制。根目录的 MIT 文本不能代表该模块的完整许可条件。
 
 ---
 
@@ -26,7 +30,7 @@
 
 Clipy 常驻菜单栏，悄悄增强你的剪贴板。除了保存你复制的每一条内容，它还内置了**带端侧 OCR 的完整截图与标注工具**、覆盖全部历史的**全局搜索**，以及**加密同步**——把 Android 手机的剪贴板、文件和通知实时镜像到 Mac。无需云端、无需账号，一切都在你的局域网内完成。
 
-- 🔒 **隐私优先** —— 同步全程 **AES-GCM 256 位**加密，仅在局域网传输；历史可选静态加密，密钥存放在 macOS 钥匙串。
+- 🔒 **本地优先** —— 在可信网络中使用 **AES-GCM 256 位**加密同步载荷，请配置私有配对密钥；历史媒体可选静态加密，密钥存放在 macOS 钥匙串。详见[安全边界](SECURITY.md)。
 - ⚡ **原生轻量** —— macOS 端纯 Swift/AppKit（不占 Dock），移动端 Flutter。
 - 🌍 **双语界面** —— 随时在中文与英文之间切换。
 
@@ -57,7 +61,7 @@ Clipy 常驻菜单栏，悄悄增强你的剪贴板。除了保存你复制的�
 
 ### 📸 截图与标注（macOS）
 - 捕获模式：**区域 / 窗口 / 全屏 / 滚动长截图 / 屏幕录制（MP4 + GIF）**。
-- **18 工具标注引擎**（移植自 [macshot](https://github.com/)），统一单全屏 OverlayView：画笔（压感 + 平滑）、直线、**6 种箭头**（曲线/虚线/手绘）、矩形、填充矩形、椭圆、**正片叠底荧光笔**、富文本（粗体/斜体/描边/背景）、自增**编号**、emoji/图片**图章**、**马赛克/模糊/纯色/擦除**遮挡、**放大镜**、**像素标尺**、**取色器**、**聚光灯**。
+- **18 工具标注引擎**（移植自 [macshot](https://github.com/sw33tLie/macshot)），统一单全屏 OverlayView：画笔（压感 + 平滑）、直线、**6 种箭头**（曲线/虚线/手绘）、矩形、填充矩形、椭圆、**正片叠底荧光笔**、富文本（粗体/斜体/描边/背景）、自增**编号**、emoji/图片**图章**、**马赛克/模糊/纯色/擦除**遮挡、**放大镜**、**像素标尺**、**取色器**、**聚光灯**。
 - 每工具**二级选项条** + 玻璃主工具条 + 颜色/emoji/字体/特效弹层。
 - **美化**渐变包裹 + **图像特效**（亮度/对比度/饱和度/锐度）。
 - **滚动长截图**带侧边实时预览（基于 Vision 的帧拼接）。
@@ -85,12 +89,12 @@ Clipy 常驻菜单栏，悄悄增强你的剪贴板。除了保存你复制的�
 
 ### ⌨️ 全局快捷键 与 🌍 国际化
 - 搜索、截图、每个片段均可绑定快捷键。
-- 全平台中/英文界面；**跨平台** —— macOS 原生，Android 与 iOS 共用一套 Flutter 代码。
+- 中/英文界面；macOS 原生端与 Flutter Android 端。iOS 为实验性目标，未纳入 CI 与真机验证，不能默认使用 Android 原生能力。
 
 <details>
 <summary><b>🔐 关于安全的说明</b></summary>
 
-同步流量使用 **AES-GCM 256 位**加密，内容在局域网内是保密的。需要注意的是：当前的预共享密钥为固定值，并非按设备配对生成，因此对端认证依赖**用户手动勾选的授权设备列表**。简而言之：它保护的是你**发送了什么**，而你**接收谁**由你自己掌控。欢迎为「按设备配对协商密钥」提交贡献。
+请只在可信网络中启用同步，并配置足够强的私有配对密钥。密钥留空会使用源码中公开的兼容密钥，**无法对知道源码的攻击者提供保密性**。授权设备列表不是密码学身份认证，单次文本与文件发送也有不同的授权规则。完整说明见 [SECURITY.md](SECURITY.md)。
 </details>
 
 ## ⬇️ 下载
@@ -99,35 +103,35 @@ Clipy 常驻菜单栏，悄悄增强你的剪贴板。除了保存你复制的�
 
 | 平台 | 产物 |
 | --- | --- |
-| macOS 13+ | `ClipyClone-macOS-v<version>.zip` |
+| macOS 13+（Apple Silicon） | `ClipyClone-macOS-v<version>.zip` |
 | Android（64 位） | `ClipyClone-Android-arm64-v8a-v<version>.apk` |
 | Android（32 位） | `ClipyClone-Android-armeabi-v7a-v<version>.apk` |
-| iOS | 需自行从源码构建（Flutter） |
+| iOS（实验性） | 仅保留源码目标，未通过 CI 验证 |
 
 > 首次启动时，请在「系统设置 → 隐私与安全性」中授予**辅助功能**（粘贴模拟）、**屏幕录制**（截图）和**本地网络**（同步）权限。
 
 ## 🛠️ 从源码构建
 
 ### macOS（Swift / AppKit）
-环境要求：**macOS 13+** 及 Xcode 命令行工具。
+环境要求：**Xcode 26+** 和 macOS 26 SDK；应用最低部署版本仍为 macOS 13。
 
 ```bash
 ./build_macos_app.sh
 ```
 
-脚本会生成 `clipy_macos/ClipyClone.app` 并安装到 `/Applications`。
+生成 `clipy_macos/ClipyClone.app` 与调试符号，默认不安装、不启动。退出运行中的应用后，可用 `INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh` 显式安装启动。详见[构建与签名选项](docs/DEVELOPMENT.md)。
 
 ### Android / iOS（Flutter）
-环境要求：Flutter SDK 与 Android SDK。
+环境要求：Flutter **3.41.7**（见 `.fvmrc`）、JDK 17 与 Android SDK。
 
 ```bash
 cd clipy_android
-flutter pub get
+flutter pub get --enforce-lockfile
 flutter build apk --debug      # Android
-# flutter build ios             # iOS
+# iOS 为实验性目标，尚未纳入本项目 CI 验证。
 ```
 
-Release 构建会生成 `armeabi-v7a` 与 `arm64-v8a` 两个分 ABI 的 APK。
+Release 构建会生成 `armeabi-v7a` 与 `arm64-v8a` 两个分 ABI 的 APK，并要求显式配置签名。在仓库根目录运行 `bash scripts/check.sh all` 可执行质量检查。
 
 ## 🏗️ 架构
 
@@ -142,7 +146,8 @@ Release 构建会生成 `armeabi-v7a` 与 `arm64-v8a` 两个分 ABI 的 APK。
 - `PreferencesManager`、`SettingsWindow`、`SnippetEditorWindow`、`LogWindow` —— 配置与编辑界面。
 
 **Android/iOS 应用** —— Flutter/Dart：
-- `lib/main.dart` —— Tab 化界面（历史、设置、日志、通知、传输）。
+- `lib/main.dart` —— 默认入口；`lib/app/` 负责初始化与无界面引擎桥接。
+- `lib/features/` —— 设备、历史、设置、日志与文件页面。
 - `lib/clipboard_manager.dart` —— 剪贴板监听、历史、同步协调。
 - `lib/sync_manager.dart` —— 子网/手动发现、TCP 同步 v2、加密、历史与通知投递。
 - `lib/notification_manager.dart` —— `NotificationListenerService` 集成。
@@ -168,33 +173,33 @@ clipy_macos/Sources/      # macOS Swift/AppKit 源码
 clipy_android/lib/        # Android 与 iOS 的 Flutter/Dart 源码
 build_macos_app.sh        # macOS 应用包构建脚本
 build_android_apk.sh      # Android 分 ABI APK 构建脚本
-.github/workflows/        # Release CI
+.github/workflows/        # CI + reviewed release drafts
 res/                      # README 图片资源
 assets/                   # Logo 与应用图标
 ```
 
 ## 🤝 贡献
 
-欢迎提交 Issue 和 Pull Request！较大的改动请先开 Issue 讨论。贡献代码：
+欢迎用中文或英文提交 Issue 和 Pull Request！先阅读[贡献规范](CONTRIBUTING.md)与[架构地图](docs/ARCHITECTURE.md)。贡献代码：
 
 1. Fork 仓库并创建功能分支。
-2. 确保 macOS 应用可通过 `./build_macos_app.sh` 构建，和/或 Flutter 应用可通过 `flutter build apk` 构建。
+2. 运行 `bash scripts/check.sh all`，并构建受影响的原生平台。
 3. 提交 Pull Request 描述你的改动。
 
 ## 📦 发布
 
-推送版本标签时会自动构建并发布 Release：
+配置发布签名后，推送版本标签会执行 CI 并创建待人工审核的 **Release 草稿**：
 
 ```bash
 git tag v1.1.0
 git push origin v1.1.0
 ```
 
-也可以在 GitHub Actions 中手动触发 `Release` workflow，并输入类似 `1.1.0` 的版本号。
+也可以手动触发 `Release` workflow，并输入类似 `1.1.0` 的版本号。发布草稿前请完成[发布清单](docs/DEVELOPMENT.md#release-checklist)，尤其是许可与签名核对。
 
 ## 📄 许可证
 
-基于 [MIT License](LICENSE) 开源。
+仓库目前保留 [MIT License](LICENSE) 文本，但 macshot 移植模块仍需单独核对许可与来源，不能将整个组合应用直接视为仅受 MIT 许可约束。详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## ⭐ Star History
 
