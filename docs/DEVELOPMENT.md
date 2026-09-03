@@ -90,9 +90,10 @@ CLIPY_ALLOW_DEBUG_SIGNING=1 ./build_android_apk.sh
 Output: `dist/ClipyClone-Android-{armeabi-v7a,arm64-v8a}-v<version>.apk`.
 `SPLIT_PER_ABI=0` creates one APK; the default split packaging targets ARM32/ARM64.
 Build numbers now come directly from Flutter metadata, with no device-specific
-minimum hidden in Gradle. The existing effective build number `10006` is recorded
-in `pubspec.yaml`; to upgrade a newer local installation, explicitly supply a
-higher `BUILD_NUMBER`. Changing signing keys prevents in-place APK upgrades;
+minimum hidden in Gradle. The current source version and build number are recorded
+in `clipy_android/pubspec.yaml`; keep them aligned with the current-version text in
+both root README files. To upgrade a newer local or CI installation, explicitly
+supply a higher `BUILD_NUMBER`. Changing signing keys prevents in-place APK upgrades;
 back up user data before any uninstall/reinstall.
 
 ## Manual regression checks
@@ -134,9 +135,13 @@ mode has the limitations described in [SECURITY.md](../SECURITY.md).
 4. Configure Actions secrets `CLIPY_KEYSTORE_BASE64`, `CLIPY_KEYSTORE_PASSWORD`,
    `CLIPY_KEY_ALIAS`, `CLIPY_KEY_PASSWORD` using a backed-up release keystore.
    Missing credentials fail the workflow; debug keys are never an implicit fallback.
-5. Update `pubspec.yaml`; version tags must use `vX.Y.Z`. CI build numbers use the
-   checked-in build number plus the workflow run number. Keep them monotonically
-   increasing across releases and any workflow/build-number policy changes.
+5. Update `clipy_android/pubspec.yaml`, `README.md` and `README_ZH.md` in the same
+   change. Version tags must use `vX.Y.Z`, match the source version and never
+   overwrite an existing tag. README source-version text is separate from the
+   Release badge, which only tracks published releases, not drafts. CI build
+   numbers use the checked-in build number plus the workflow run number. Keep
+   them monotonically increasing across releases and any workflow/build-number
+   policy changes.
 6. A version tag or manual Release workflow runs checks and creates a **draft**.
    Inspect APK signing/upgrade compatibility, the macOS signing/notarization status,
    `SHA256SUMS.txt`, symbols and notices before manually publishing.
