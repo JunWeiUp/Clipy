@@ -1,20 +1,15 @@
-<p align="right"><a href="README.md">English</a> &nbsp; / &nbsp; <b>简体中文</b></p>
-
 <div align="center">
+  <img src="Logo.png" alt="Clipy — 相连的双页剪贴板图标" width="112" height="112" />
+  <h1>Clipy</h1>
+  <p><strong>让 Mac 和 Android，共享你的剪贴板。</strong></p>
+  <p>找回复制过的内容，在另一台设备上继续使用。局域网同步，无需账号。</p>
+  <p><a href="README.md">English</a> · <strong>简体中文</strong></p>
 
-<img src="Logo.png" alt="Clipy" width="96" height="96" />
+**[下载 macOS 版 →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-macOS-v1.0.17.zip)** &nbsp; · &nbsp; **[下载 Android 版 →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-Android-arm64-v8a-v1.0.17.apk)**
 
-# Clipy
+<sub>最新正式版：v1.0.17 · macOS 13+，Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED_ZH.md#下载与版本">其他安装包与版本说明</a></sub>
 
-**让 Mac 和 Android，共享你的剪贴板。**
-
-找回复制过的内容，在另一台设备上继续使用。局域网同步，无需账号。
-
-**[下载 macOS 版 →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-macOS-v1.0.15.zip)** &nbsp; · &nbsp; **[下载 Android 版 →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-Android-arm64-v8a-v1.0.15.apk)**
-
-<sub>已发布 v1.0.15 · macOS 13+，Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED_ZH.md#下载与版本">其他安装包与版本说明</a></sub>
-
-当前源码版本：**1.0.17** · 构建号 **10040** · [构建版本配置](clipy_android/pubspec.yaml)
+当前源码版本：**1.0.17** · 默认本地构建号 **10040** · [构建版本配置](clipy_android/pubspec.yaml)
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
@@ -22,19 +17,11 @@
 
 </div>
 
-> **版本说明：**上方下载入口对应已发布的 v1.0.15，`main` 分支包含此后的更新。其中，私有配对密钥设置尚未包含在 v1.0.15 中；启用同步前请先阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
+> **版本说明：**[v1.0.17](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.17) 已正式发布并设为 Latest，包含重新设计的 macOS、Android 图标，以及 Android 自适应与单色主题图标。本版本已提供私有配对密钥设置；从 v1.0.15 升级的用户请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
 
 Release 徽章显示已公开发布的稳定版本，不代表当前源码版本，也不包含尚未发布的草稿。
 
-> 发布前注意：截图模块移植自 macshot，需先完成[第三方许可核对](THIRD_PARTY_NOTICES.md)，再发布新的组合二进制。根目录的 MIT 文本不能代表该模块的完整许可条件。
-
-## 看看实际界面
-
-<p align="center">
-  <img src="res/search.png" width="640" alt="Clipy 全局搜索的真实界面：剪贴板历史、内容预览，以及类型、来源应用和日期筛选。" />
-</p>
-
-<p align="center"><sub>按 <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> 找回之前复制的内容。截图来自真实应用，支持中英文界面。</sub></p>
+> 许可说明：截图模块移植自 macshot，[第三方许可核对](THIRD_PARTY_NOTICES.md)仍未完成。版本已公开发布不代表许可核对已经完成，根目录的 MIT 文本不能代表该模块的完整许可条件。
 
 ## 让日常衔接更顺手
 
@@ -169,6 +156,8 @@ iOS 仍为实验性目标，尚未纳入本项目 CI 验证。
 
 两个根目录构建脚本默认读取 [`clipy_android/pubspec.yaml`](clipy_android/pubspec.yaml) 中的 `version: X.Y.Z+N`：`X.Y.Z` 为应用版本，`N` 为构建号；也可通过 `APP_VERSION`、`BUILD_NUMBER` 显式覆盖单次构建。版本变更时应在同一批改动中同步更新**中英文两份 README**，并保持构建号递增；若要覆盖更高构建号的 CI 包，本地需使用更高的 `BUILD_NUMBER`。
 
+已发布的 v1.0.17 安装包使用构建号 **10057**（源码构建号 10040 + Release 运行序号 17）。如需用本地构建覆盖该 Android APK，须保留相同签名密钥，并显式设置更高的 `BUILD_NUMBER`；默认本地构建号并不是已发布安装包的构建号。
+
 在仓库根目录运行 `bash scripts/check.sh all` 可执行质量检查。
 
 ## 🏗️ 架构
@@ -237,6 +226,8 @@ git push origin "v${VERSION}"
 ```
 
 也可以手动触发 `Release` workflow，并输入与源码一致的 `X.Y.Z` 版本号。不要移动或覆盖已有版本标签。发布草稿前请完成[发布清单](docs/DEVELOPMENT.md#release-checklist)，尤其是许可与签名核对。
+
+工作流明确设置了 `draft: true`，所以构建成功不会自动公开发布，也不会自动成为 Latest。审核完成后，在 GitHub 编辑草稿，不勾选 **This is a pre-release**，勾选 **Set as latest release**，再点击 **Publish release**，无需重新构建或覆盖标签。正式发布后，再同步更新中英文 README 和两份入门指南中的已发布版本及下载链接。详见 [GitHub 发布说明](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)。
 
 可使用[更新说明模板](docs/RELEASE_NOTES_TEMPLATE.md)，说明用户可见的变化、升级步骤与实际提供的平台版本。
 
