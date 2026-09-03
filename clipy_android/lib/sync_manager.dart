@@ -29,7 +29,6 @@ part 'sync/file_transfer.dart';
 part 'sync/session.dart';
 part 'sync/reliability.dart';
 
-
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -42,6 +41,7 @@ class FileProgress {
   final int totalBytes;
   final bool isCompleted;
   final bool isFailed;
+
   /// True while this device is the sender (outbound transfer progress).
   final bool isOutgoing;
 
@@ -68,8 +68,10 @@ class _IncomingFileTransfer {
   final int chunkCount;
   final String sha256Hex;
   final File partFile;
+
   /// Append-mode handle opened at file.meta; closed on complete/discard.
   RandomAccessFile? raf;
+
   /// Serializes chunk processing so the async native decrypt can't reorder
   /// writes (TCP order must survive into the part file).
   Future<void> queue = Future.value();
@@ -163,10 +165,12 @@ class SyncManager with WidgetsBindingObserver {
   static final SyncManager instance = SyncManager._();
   SyncManager._();
 
-  static const MethodChannel _fgsChannel =
-      MethodChannel('com.clipyclone.clipy_android/sync_service');
-  static const MethodChannel _syncCryptoChannel =
-      MethodChannel('com.clipyclone.clipy_android/sync_crypto');
+  static const MethodChannel _fgsChannel = MethodChannel(
+    'com.clipyclone.clipy_android/sync_service',
+  );
+  static const MethodChannel _syncCryptoChannel = MethodChannel(
+    'com.clipyclone.clipy_android/sync_crypto',
+  );
 
   static const String _pairingSecretKey = 'clipy.sync.pairingSecret';
   static const String _endpointCacheKey = 'clipy.peerEndpoints.v2';
@@ -199,6 +203,7 @@ class SyncManager with WidgetsBindingObserver {
   static const Duration _fileIncomingIdleTimeout = Duration(minutes: 2);
   final Map<String, _IncomingFileTransfer> _incomingFiles = {};
   final Map<String, Completer<bool>> _fileAckWaiters = {};
+
   /// Cached at init so file.meta handlers can resolve the receive directory
   /// synchronously (StoragePaths goes through a MethodChannel).
   String? _receiveDirPath;
@@ -232,6 +237,7 @@ class SyncManager with WidgetsBindingObserver {
   bool _discoveryRunning = false;
   int _autoRediscoverFailStreak = 0;
   DateTime? _lastAutoRediscoverAt;
+
   /// A full /24 scan that arrived while another discovery run held
   /// [_discoveryRunning]; replayed once that run finishes (see _runDiscovery).
   bool _pendingAutoFullScan = false;
@@ -247,6 +253,7 @@ class SyncManager with WidgetsBindingObserver {
   set pairingSecret(String v) => _crypto.pairingSecret = v;
 
   final _lastHistoryFetchAt = <String, DateTime>{};
+
   /// Catch-up only — must not match FGS syncTick (30s) or Mac will replay
   /// ~200 history frames every tick.
   static const _historyFetchThrottle = Duration(minutes: 15);
@@ -272,17 +279,22 @@ class SyncManager with WidgetsBindingObserver {
   void _pruneStaleTimestampMaps() {
     final now = DateTime.now();
     _lastDialAt.removeWhere(
-        (_, t) => now.difference(t) > const Duration(minutes: 1));
+      (_, t) => now.difference(t) > const Duration(minutes: 1),
+    );
     _lastReconnectAttempt.removeWhere(
-        (_, t) => now.difference(t) > const Duration(minutes: 1));
+      (_, t) => now.difference(t) > const Duration(minutes: 1),
+    );
     _lastHistoryFetchResponse.removeWhere(
-        (_, t) => now.difference(t) > const Duration(minutes: 5));
+      (_, t) => now.difference(t) > const Duration(minutes: 5),
+    );
   }
 
   List<DiscoveredPeer> get availablePeers {
     final list = _discoveredPeers.values.toList()
-      ..sort((a, b) =>
-          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
+      ..sort(
+        (a, b) =>
+            a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
+      );
     return list;
   }
 
@@ -304,20 +316,23 @@ class SyncManager with WidgetsBindingObserver {
     // corrupt session identity (adoptSession dedup, role arbitration, auth lists).
     if (peerId.isEmpty || !_isValidUuid(peerId)) {
       if (peerId.isNotEmpty) {
-        appLog('peerId invalid format, regenerating: $peerId', level: 'warning');
+        appLog(
+          'peerId invalid format, regenerating: $peerId',
+          level: 'warning',
+        );
         await _pruneLegacyAuthorizedPeerIds(prefs, oldPeerId: peerId);
       }
       peerId = const Uuid().v4();
       await prefs.setString('peerId', peerId);
     }
-    displayName = prefs.getString('deviceName') ??
+    displayName =
+        prefs.getString('deviceName') ??
         (Platform.isAndroid ? 'Android' : 'Device');
     pairingSecret = prefs.getString(_pairingSecretKey) ?? '';
     _receiveDirPath = (await StoragePaths.receiveRootDirectory()).path;
     await _migrateAuthorizedPeerIds(prefs);
     await _migrateDualSyncAuth(prefs);
-    clipboardSyncPeerIds =
-        prefs.getStringList('clipboardSyncPeerIds') ?? [];
+    clipboardSyncPeerIds = prefs.getStringList('clipboardSyncPeerIds') ?? [];
     notificationSyncPeerIds =
         prefs.getStringList('notificationSyncPeerIds') ?? [];
     await _pruneLegacyAuthorizedPeerIds(prefs);
@@ -352,8 +367,9 @@ class SyncManager with WidgetsBindingObserver {
   }
 
   /// Canonical UUID v4 format: 8-4-4-4-12 hex digits with hyphens.
-  static final _uuidRegex =
-      RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+  static final _uuidRegex = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
 
   static bool _isValidUuid(String id) => _uuidRegex.hasMatch(id);
 
@@ -361,8 +377,10 @@ class SyncManager with WidgetsBindingObserver {
   /// from all three auth lists. These point at identities that no longer exist
   /// after peerId regeneration or protocol-v1→v2 upgrade, and would silently
   /// block fanout to the real peer (which now has a proper UUID).
-  Future<void> _pruneLegacyAuthorizedPeerIds(SharedPreferences prefs,
-      {String? oldPeerId}) async {
+  Future<void> _pruneLegacyAuthorizedPeerIds(
+    SharedPreferences prefs, {
+    String? oldPeerId,
+  }) async {
     bool prune(List<String> list, String key) {
       final before = list.length;
       final kept = list.where(_isValidUuid).toList();
@@ -428,7 +446,6 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
-
   /// Called from FGS / Application after process rebuild. Idempotent.
   Future<void> ensureStartedIfEnabled() async {
     if (!isEnabled) return;
@@ -455,8 +472,7 @@ class SyncManager with WidgetsBindingObserver {
     for (final id in authorized) {
       if (_sessions.containsKey(id)) {
         final pending = await PendingSyncRepository.instance.pendingHashes(id);
-        if (pending.isNotEmpty ||
-            (_inFlightHashes[id]?.isNotEmpty ?? false)) {
+        if (pending.isNotEmpty || (_inFlightHashes[id]?.isNotEmpty ?? false)) {
           busy = true;
         }
         unawaited(_flushPending(id));
@@ -465,8 +481,9 @@ class SyncManager with WidgetsBindingObserver {
         needDiscovery = true;
         final cached = _discoveredPeers[id];
         if (cached != null) {
-          unawaited(_dial(cached.host, cached.port,
-              reason: 'syncTick', peerId: id));
+          unawaited(
+            _dial(cached.host, cached.port, reason: 'syncTick', peerId: id),
+          );
         }
       }
     }
@@ -577,8 +594,7 @@ class SyncManager with WidgetsBindingObserver {
   void _startConnectivityMonitoring() {
     _connectivitySub?.cancel();
     var wasOffline = false;
-    _connectivitySub =
-        Connectivity().onConnectivityChanged.listen((results) {
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       final offline = results.every((r) => r == ConnectivityResult.none);
       if (offline) {
         wasOffline = true;
@@ -594,8 +610,9 @@ class SyncManager with WidgetsBindingObserver {
   /// Authorized cache dials only — full /24 scan is user refresh.
   Future<void> _recoverAfterNetworkRestore() async {
     await _loadEndpointCache();
-    final missing =
-        authorizedPeerIds.where((id) => !_sessions.containsKey(id)).toList();
+    final missing = authorizedPeerIds
+        .where((id) => !_sessions.containsKey(id))
+        .toList();
     if (missing.isEmpty) {
       appLog('Network restored; sessions intact, skip discovery');
       return;
@@ -610,8 +627,7 @@ class SyncManager with WidgetsBindingObserver {
       final mem = _discoveredPeers[id];
       if (mem != null) {
         cacheDialCount++;
-        unawaited(
-            _dial(mem.host, mem.port, reason: 'cache_dial', peerId: id));
+        unawaited(_dial(mem.host, mem.port, reason: 'cache_dial', peerId: id));
         continue;
       }
       final e = byId[id];
@@ -646,8 +662,10 @@ class SyncManager with WidgetsBindingObserver {
       try {
         session.socket.add(data);
       } catch (e) {
-        appLog('ping send failed to ${id.substring(0, id.length.clamp(0, 8))}: $e',
-            level: 'warning');
+        appLog(
+          'ping send failed to ${id.substring(0, id.length.clamp(0, 8))}: $e',
+          level: 'warning',
+        );
         await _closeSession(id, scheduleReconnect: true, keepaliveDriven: true);
         continue;
       }
@@ -655,23 +673,27 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
-  void _handleFrame(List<int> data,
-      {required String from, required String host}) {
+  void _handleFrame(
+    List<int> data, {
+    required String from,
+    required String host,
+  }) {
     final env = syncDecodeEnvelope(data);
     if (env == null || env.v != SyncEnvelope.version) return;
 
     switch (env.type) {
       case SyncType.ping:
-        final pong =
-            SyncEnvelope.make(type: SyncType.pong, peerId: peerId);
+        final pong = SyncEnvelope.make(type: SyncType.pong, peerId: peerId);
         final d = syncEncodeFrame(pong);
         final session = _sessions[from];
         if (d != null && session != null) {
           try {
             session.socket.add(d);
           } catch (e) {
-            appLog('pong send failed to ${from.substring(0, from.length.clamp(0, 8))}: $e',
-                level: 'warning');
+            appLog(
+              'pong send failed to ${from.substring(0, from.length.clamp(0, 8))}: $e',
+              level: 'warning',
+            );
           }
         }
         break;
@@ -688,8 +710,10 @@ class SyncManager with WidgetsBindingObserver {
         if (payload == null) return;
         final text = _decrypt(payload);
         if (text == null) {
-          appLog('history decrypt failed from ${from.substring(0, from.length.clamp(0, 8))}',
-              level: 'warning');
+          appLog(
+            'history decrypt failed from ${from.substring(0, from.length.clamp(0, 8))}',
+            level: 'warning',
+          );
           return;
         }
         final hash = env.hash ?? '';
@@ -697,14 +721,17 @@ class SyncManager with WidgetsBindingObserver {
           break;
         }
         unawaited(() async {
-          final ok = await ClipboardManager.instance
-              .handleRemoteSync(text, hash);
+          final ok = await ClipboardManager.instance.handleRemoteSync(
+            text,
+            hash,
+          );
           if (ok) {
             _replyAck(from, hash.isEmpty ? null : hash);
           } else {
             appLog(
-                'history persist failed; withholding ACK hash=${hash.substring(0, hash.length.clamp(0, 8))}',
-                level: 'warning');
+              'history persist failed; withholding ACK hash=${hash.substring(0, hash.length.clamp(0, 8))}',
+              level: 'warning',
+            );
           }
         }());
         break;
@@ -713,8 +740,7 @@ class SyncManager with WidgetsBindingObserver {
         if (payload == null) return;
         final text = _decrypt(payload);
         if (text == null) return;
-        NotificationManager.instance
-            .handleRemoteNotification(text, env.peerId);
+        NotificationManager.instance.handleRemoteNotification(text, env.peerId);
         break;
       case SyncType.notifDismiss:
         final payload = env.payload;
@@ -803,9 +829,12 @@ class SyncManager with WidgetsBindingObserver {
   }
 
   Future<void> _ingestHistoryFetchCatchUp(
-      String peerId, List<({String text, String hash})> items) async {
+    String peerId,
+    List<({String text, String hash})> items,
+  ) async {
     appLog(
-        'history.fetch catch-up flush ${peerId.substring(0, peerId.length.clamp(0, 8))}: ${items.length} frames');
+      'history.fetch catch-up flush ${peerId.substring(0, peerId.length.clamp(0, 8))}: ${items.length} frames',
+    );
     try {
       await ClipboardManager.instance.handleRemoteSyncBatch(items);
       for (final item in items) {
@@ -821,8 +850,9 @@ class SyncManager with WidgetsBindingObserver {
   Future<void> _respondToHistoryFetch(String remotePeerId) async {
     if (!clipboardSyncPeerIds.contains(remotePeerId)) {
       appLog(
-          'history.fetch from unauthorized ${remotePeerId.substring(0, remotePeerId.length.clamp(0, 8))}; ignoring',
-          level: 'warning');
+        'history.fetch from unauthorized ${remotePeerId.substring(0, remotePeerId.length.clamp(0, 8))}; ignoring',
+        level: 'warning',
+      );
       return;
     }
     final last = _lastHistoryFetchResponse[remotePeerId];
@@ -833,10 +863,12 @@ class SyncManager with WidgetsBindingObserver {
     _lastHistoryFetchResponse[remotePeerId] = now;
     final session = _sessions[remotePeerId];
     if (session == null) return;
-    final recent = await ClipboardRepository.instance
-        .fetchRecentTexts(limit: _historyFetchRespondLimit);
+    final recent = await ClipboardRepository.instance.fetchRecentTexts(
+      limit: _historyFetchRespondLimit,
+    );
     appLog(
-        'sync.ack history.fetch from ${remotePeerId.substring(0, remotePeerId.length.clamp(0, 8))}: pushing ${recent.length} text entries');
+      'sync.ack history.fetch from ${remotePeerId.substring(0, remotePeerId.length.clamp(0, 8))}: pushing ${recent.length} text entries',
+    );
     // Oldest first so the peer's list ends with the newest on top after ingest.
     var batchCount = 0;
     for (final entry in recent.reversed) {
@@ -872,16 +904,21 @@ class SyncManager with WidgetsBindingObserver {
 
   void _replyAck(String peerId, String? hash) {
     if (hash == null || hash.isEmpty) return;
-    final env =
-        SyncEnvelope.make(type: SyncType.ack, peerId: this.peerId, hash: hash);
+    final env = SyncEnvelope.make(
+      type: SyncType.ack,
+      peerId: this.peerId,
+      hash: hash,
+    );
     final data = syncEncodeFrame(env);
     final session = _sessions[peerId];
     if (data == null || session == null) return;
     try {
       session.socket.add(data);
     } catch (e) {
-      appLog('ack send failed to ${peerId.substring(0, peerId.length.clamp(0, 8))}: $e',
-          level: 'warning');
+      appLog(
+        'ack send failed to ${peerId.substring(0, peerId.length.clamp(0, 8))}: $e',
+        level: 'warning',
+      );
     }
   }
 
@@ -923,8 +960,10 @@ class SyncManager with WidgetsBindingObserver {
     await _fanout(env, requireAuth: requireAuth);
   }
 
-  Future<void> setClipboardSyncTarget(String peerId,
-      {required bool enabled}) async {
+  Future<void> setClipboardSyncTarget(
+    String peerId, {
+    required bool enabled,
+  }) async {
     final updated = List<String>.from(clipboardSyncPeerIds);
     if (enabled) {
       if (!updated.contains(peerId)) updated.add(peerId);
@@ -941,8 +980,10 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
-  Future<void> setNotificationSyncTarget(String peerId,
-      {required bool enabled}) async {
+  Future<void> setNotificationSyncTarget(
+    String peerId, {
+    required bool enabled,
+  }) async {
     final updated = List<String>.from(notificationSyncPeerIds);
     if (enabled) {
       if (!updated.contains(peerId)) updated.add(peerId);
@@ -952,7 +993,9 @@ class SyncManager with WidgetsBindingObserver {
     notificationSyncPeerIds = updated;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(
-        'notificationSyncPeerIds', notificationSyncPeerIds);
+      'notificationSyncPeerIds',
+      notificationSyncPeerIds,
+    );
     await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
     triggerCrossBandDiscovery();
     if (enabled && _sessions.containsKey(peerId)) {
@@ -967,14 +1010,16 @@ class SyncManager with WidgetsBindingObserver {
   }
 
   Future<void> removeAuthorizedPeer(String peerId) async {
-    clipboardSyncPeerIds =
-        List<String>.from(clipboardSyncPeerIds)..remove(peerId);
-    notificationSyncPeerIds =
-        List<String>.from(notificationSyncPeerIds)..remove(peerId);
+    clipboardSyncPeerIds = List<String>.from(clipboardSyncPeerIds)
+      ..remove(peerId);
+    notificationSyncPeerIds = List<String>.from(notificationSyncPeerIds)
+      ..remove(peerId);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('clipboardSyncPeerIds', clipboardSyncPeerIds);
     await prefs.setStringList(
-        'notificationSyncPeerIds', notificationSyncPeerIds);
+      'notificationSyncPeerIds',
+      notificationSyncPeerIds,
+    );
     await prefs.setStringList('authorizedPeerIds', authorizedPeerIds);
   }
 
@@ -990,7 +1035,6 @@ class SyncManager with WidgetsBindingObserver {
       await start();
     }
   }
-
 
   String? _encrypt(String text) => _crypto.encryptText(text);
   String? _decrypt(String text) => _crypto.decryptText(text);
@@ -1011,5 +1055,4 @@ class SyncManager with WidgetsBindingObserver {
 
   static String? encryptStatic(String text) => instance._encrypt(text);
   static String? decryptStatic(String text) => instance._decrypt(text);
-
 }

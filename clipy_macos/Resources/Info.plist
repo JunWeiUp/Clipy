@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>ClipyClone</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.yourdomain.ClipyClone</string>
+    <key>CFBundleName</key>
+    <string>ClipyClone</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Clipy needs local network access to sync clipboard content with your other devices.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Clipy needs screen recording permission to capture screenshots.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Clipy needs microphone access to record voice audio in screen recordings.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Clipy needs camera access to show the webcam overlay in screen recordings.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_clipy-sync._tcp</string>
+    </array>
+</dict>
+</plist>

@@ -20,6 +20,7 @@ class NotificationPackageGroup {
 /// Result of [NotificationRepository.upsert].
 class NotificationUpsertResult {
   final bool accepted;
+
   /// Local entries removed because this post replaces them (same slot / WeChat
   /// conversation). Callers should dismiss these on peers before posting new.
   final List<NotificationEntry> replaced;
@@ -37,8 +38,10 @@ class NotificationRepository {
   static final NotificationRepository instance = NotificationRepository._();
 
   static const duplicateWindowMs = 30000;
+
   /// Hard cap so long-running installs don't grow the DB without bound.
   static const maxRows = 5000;
+
   /// WeChat updates the same conversation notification in-place (same person /
   /// same chat title). Treat those as replacements, not new history rows.
   static const wechatPackageName = 'com.tencent.mm';
@@ -48,9 +51,11 @@ class NotificationRepository {
 
   NotificationEntry _fromRow(Map<String, Object?> row) {
     final extras = Map<String, dynamic>.from(
-        jsonDecode(row['extras_json'] as String? ?? '{}') as Map);
+      jsonDecode(row['extras_json'] as String? ?? '{}') as Map,
+    );
     final archivedCol = (row['is_archived'] as int? ?? 0) == 1;
-    final archivedExtra = extras['clipyArchived'] == true ||
+    final archivedExtra =
+        extras['clipyArchived'] == true ||
         extras['clipyArchived']?.toString() == 'true';
     return NotificationEntry(
       id: row['id'] as String,
@@ -127,8 +132,12 @@ class NotificationRepository {
       if (_isDuplicate(existing, entry)) {
         return NotificationUpsertResult.rejected;
       }
-      await db.update('notifications', _toRow(entry),
-          where: 'id = ?', whereArgs: [entry.id]);
+      await db.update(
+        'notifications',
+        _toRow(entry),
+        where: 'id = ?',
+        whereArgs: [entry.id],
+      );
       return const NotificationUpsertResult(accepted: true);
     }
 
@@ -151,8 +160,11 @@ class NotificationRepository {
           await _archiveInPlace(db, existing);
         } else {
           replaced.add(existing);
-          await db.delete('notifications',
-              where: 'id = ?', whereArgs: [existing.id]);
+          await db.delete(
+            'notifications',
+            where: 'id = ?',
+            whereArgs: [existing.id],
+          );
         }
       }
     }
@@ -172,8 +184,11 @@ class NotificationRepository {
       }
     }
 
-    await db.insert('notifications', _toRow(entry),
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+      'notifications',
+      _toRow(entry),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
     _insertsSinceTrim++;
     if (_insertsSinceTrim >= 50) {
       _insertsSinceTrim = 0;
@@ -205,7 +220,11 @@ class NotificationRepository {
     );
     if (thresholdRow.isEmpty) return;
     final threshold = thresholdRow.first['post_time'] as int;
-    await db.delete('notifications', where: 'post_time < ?', whereArgs: [threshold]);
+    await db.delete(
+      'notifications',
+      where: 'post_time < ?',
+      whereArgs: [threshold],
+    );
   }
 
   /// True when [incoming] is an exact content re-send of [existing].
@@ -223,7 +242,9 @@ class NotificationRepository {
   }
 
   Future<int> count() async {
-    final result = await (await _db).rawQuery('SELECT COUNT(*) AS c FROM notifications');
+    final result = await (await _db).rawQuery(
+      'SELECT COUNT(*) AS c FROM notifications',
+    );
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
@@ -231,26 +252,32 @@ class NotificationRepository {
     required int offset,
     required int limit,
   }) async {
-    final rows = await (await _db).rawQuery('''
+    final rows = await (await _db).rawQuery(
+      '''
       SELECT package_name, app_name, COUNT(*) AS cnt, MAX(post_time) AS latest
       FROM notifications
       GROUP BY package_name
       ORDER BY latest DESC
       LIMIT ? OFFSET ?
-    ''', [limit, offset]);
+    ''',
+      [limit, offset],
+    );
     return rows
-        .map((row) => NotificationPackageGroup(
-              packageName: row['package_name'] as String,
-              appName: row['app_name'] as String,
-              count: row['cnt'] as int,
-              latestPostTime: row['latest'] as int,
-            ))
+        .map(
+          (row) => NotificationPackageGroup(
+            packageName: row['package_name'] as String,
+            appName: row['app_name'] as String,
+            count: row['cnt'] as int,
+            latestPostTime: row['latest'] as int,
+          ),
+        )
         .toList();
   }
 
   Future<int> packageGroupCount() async {
     final result = await (await _db).rawQuery(
-        'SELECT COUNT(DISTINCT package_name) AS c FROM notifications');
+      'SELECT COUNT(DISTINCT package_name) AS c FROM notifications',
+    );
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
@@ -288,8 +315,11 @@ class NotificationRepository {
   }
 
   Future<void> removeByNotificationKey(String key) async {
-    await (await _db).delete('notifications',
-        where: 'notification_key = ?', whereArgs: [key]);
+    await (await _db).delete(
+      'notifications',
+      where: 'notification_key = ?',
+      whereArgs: [key],
+    );
   }
 
   Future<void> clearAll() async {
@@ -298,7 +328,8 @@ class NotificationRepository {
 
   Future<List<String>> distinctPackageNames() async {
     final rows = await (await _db).rawQuery(
-        'SELECT DISTINCT package_name FROM notifications ORDER BY package_name');
+      'SELECT DISTINCT package_name FROM notifications ORDER BY package_name',
+    );
     return rows.map((r) => r['package_name'] as String).toList();
   }
 
@@ -366,16 +397,12 @@ class NotificationRepository {
     required String hash,
   }) async {
     final db = await _db;
-    await db.insert(
-      'pending_notification_sync',
-      {
-        'notification_id': notificationId,
-        'content': content,
-        'hash': hash,
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('pending_notification_sync', {
+      'notification_id': notificationId,
+      'content': content,
+      'hash': hash,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> removePendingSync(String notificationId) async {
@@ -396,8 +423,9 @@ class NotificationRepository {
   /// Cheap EXISTS probe for the flush fast path — fetchAllPendingSync would
   /// materialize up to 500 rows on every syncTick.
   Future<bool> hasPendingSync() async {
-    final rows = await (await _db)
-        .rawQuery('SELECT 1 FROM pending_notification_sync LIMIT 1');
+    final rows = await (await _db).rawQuery(
+      'SELECT 1 FROM pending_notification_sync LIMIT 1',
+    );
     return rows.isNotEmpty;
   }
 
@@ -410,10 +438,15 @@ class NotificationRepository {
     final cutoff = DateTime.now()
         .subtract(Duration(days: maxAgeDays))
         .millisecondsSinceEpoch;
-    await db.delete('pending_notification_sync',
-        where: 'created_at < ?', whereArgs: [cutoff]);
-    final count = Sqflite.firstIntValue(await db
-            .rawQuery('SELECT COUNT(*) FROM pending_notification_sync')) ??
+    await db.delete(
+      'pending_notification_sync',
+      where: 'created_at < ?',
+      whereArgs: [cutoff],
+    );
+    final count =
+        Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM pending_notification_sync'),
+        ) ??
         0;
     if (count > maxRows) {
       await db.rawDelete(

@@ -21,12 +21,12 @@ class FileTransferRecord {
   });
 
   Map<String, dynamic> toDisplayJson() => {
-        'fileName': fileName,
-        'filePath': filePath,
-        'fileSize': fileSize,
-        'senderName': senderName,
-        'date': createdAt,
-      };
+    'fileName': fileName,
+    'filePath': filePath,
+    'fileSize': fileSize,
+    'senderName': senderName,
+    'date': createdAt,
+  };
 }
 
 class FileTransferRepository {
@@ -55,27 +55,33 @@ class FileTransferRepository {
     final db = await _db;
     // Delete the received files too, otherwise the Clipy/ directory grows forever
     // even though the DB rows are capped.
-    final expired = await db.rawQuery('''
+    final expired = await db.rawQuery(
+      '''
       SELECT file_path FROM file_transfers
       WHERE id NOT IN (
         SELECT id FROM file_transfers
         ORDER BY created_at DESC
         LIMIT ?
       )
-    ''', [maxRows]);
+    ''',
+      [maxRows],
+    );
     for (final row in expired) {
       final path = row['file_path'] as String?;
       if (path == null) continue;
       await _deleteReceivedFileIfManaged(path);
     }
-    await db.rawDelete('''
+    await db.rawDelete(
+      '''
       DELETE FROM file_transfers
       WHERE id NOT IN (
         SELECT id FROM file_transfers
         ORDER BY created_at DESC
         LIMIT ?
       )
-    ''', [maxRows]);
+    ''',
+      [maxRows],
+    );
   }
 
   /// Only delete files inside our own receive directories; records may also
@@ -109,24 +115,31 @@ class FileTransferRepository {
       offset: offset,
     );
     return rows
-        .map((row) => FileTransferRecord(
-              id: row['id'] as int,
-              fileName: row['file_name'] as String,
-              filePath: row['file_path'] as String,
-              fileSize: row['file_size'] as int,
-              senderName: row['sender_name'] as String,
-              createdAt: row['created_at'] as int,
-            ))
+        .map(
+          (row) => FileTransferRecord(
+            id: row['id'] as int,
+            fileName: row['file_name'] as String,
+            filePath: row['file_path'] as String,
+            fileSize: row['file_size'] as int,
+            senderName: row['sender_name'] as String,
+            createdAt: row['created_at'] as int,
+          ),
+        )
         .toList();
   }
 
   Future<int> count() async {
-    final result =
-        await (await _db).rawQuery('SELECT COUNT(*) AS c FROM file_transfers');
+    final result = await (await _db).rawQuery(
+      'SELECT COUNT(*) AS c FROM file_transfers',
+    );
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
   Future<void> deleteById(int id) async {
-    await (await _db).delete('file_transfers', where: 'id = ?', whereArgs: [id]);
+    await (await _db).delete(
+      'file_transfers',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 }

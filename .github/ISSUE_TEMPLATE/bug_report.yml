@@ -1,0 +1,29 @@
+name: Bug report / 问题反馈
+description: Report a reproducible problem without sharing private clipboard content.
+body:
+  - type: markdown
+    attributes:
+      value: "For security issues, read SECURITY.md. Redact clipboard contents, notifications, pairing secrets, account names and local IPs from logs."
+  - type: input
+    id: environment
+    attributes:
+      label: App version and OS / 应用版本与系统
+      placeholder: "Clipy version, macOS/Android version, device model"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce / 复现步骤
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual behavior / 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized logs or screenshots / 已脱敏的日志或截图

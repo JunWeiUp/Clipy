@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository:
+    name: Repository checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: bash scripts/check.sh repo
+
+  android:
+    name: Flutter checks and Android build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Read pinned Flutter version
+        id: flutter
+        run: echo "version=$(jq -r .flutter .fvmrc)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+        working-directory: clipy_android
+      - run: bash scripts/check.sh flutter
+      - name: Build Android without release credentials
+        working-directory: clipy_android
+        run: flutter build apk --debug --no-pub
+
+  macos:
+    name: macOS compile and bundle validation
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      INSTALL_APP: "0"
+      LAUNCH_APP: "0"
+      SIGN_IDENTITY: "-"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: xcodebuild -version
+      - run: bash scripts/check.sh macos
+      - name: Validate generated bundle
+        run: |
+          plutil -lint clipy_macos/ClipyClone.app/Contents/Info.plist
+          codesign --verify --deep --strict clipy_macos/ClipyClone.app

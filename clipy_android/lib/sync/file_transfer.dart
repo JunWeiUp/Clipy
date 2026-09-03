@@ -20,34 +20,43 @@ extension SyncFileTransferMethods on SyncManager {
     if (!await file.exists()) return false;
     final length = await file.length();
     if (length > SyncManager.fileMaxBytes) {
-      appLog('sendFile: ${file.path} exceeds '
-          '${SyncManager.fileMaxBytes} bytes', level: 'warning');
+      appLog(
+        'sendFile: ${file.path} exceeds '
+        '${SyncManager.fileMaxBytes} bytes',
+        level: 'warning',
+      );
       return false;
     }
 
     final session = await _waitForSession(peerId, const Duration(seconds: 8));
     if (session == null) {
-      appLog('sendFile: no session with ${peerId.substring(0, peerId.length.clamp(0, 8))}',
-          level: 'warning');
+      appLog(
+        'sendFile: no session with ${peerId.substring(0, peerId.length.clamp(0, 8))}',
+        level: 'warning',
+      );
       return false;
     }
 
     final fileId = const Uuid().v4();
     final fileName = file.path.split(Platform.pathSeparator).last;
-    final chunkSize = SyncManager.fileChunkSize;
-    final chunkCount = length == 0 ? 0 : ((length + chunkSize - 1) ~/ chunkSize);
+    const chunkSize = SyncManager.fileChunkSize;
+    final chunkCount = length == 0
+        ? 0
+        : ((length + chunkSize - 1) ~/ chunkSize);
 
     void emit(double progress, {bool completed = false, bool failed = false}) {
-      _fileProgressController.add(FileProgress(
-        fileId: fileId,
-        fileName: fileName,
-        progress: progress,
-        receivedBytes: (length * progress).round(),
-        totalBytes: length,
-        isCompleted: completed,
-        isFailed: failed,
-        isOutgoing: true,
-      ));
+      _fileProgressController.add(
+        FileProgress(
+          fileId: fileId,
+          fileName: fileName,
+          progress: progress,
+          receivedBytes: (length * progress).round(),
+          totalBytes: length,
+          isCompleted: completed,
+          isFailed: failed,
+          isOutgoing: true,
+        ),
+      );
     }
 
     emit(0);
@@ -70,13 +79,15 @@ extension SyncFileTransferMethods on SyncManager {
         emit(0, failed: true);
         return false;
       }
-      final metaFrame = syncEncodeFrame(SyncEnvelope.make(
-        type: SyncType.fileMeta,
-        peerId: peerId,
-        name: displayName,
-        hash: sha256Hex,
-        payload: metaPayload,
-      ));
+      final metaFrame = syncEncodeFrame(
+        SyncEnvelope.make(
+          type: SyncType.fileMeta,
+          peerId: peerId,
+          name: displayName,
+          hash: sha256Hex,
+          payload: metaPayload,
+        ),
+      );
       if (metaFrame == null) {
         _fileAckWaiters.remove(fileId);
         emit(0, failed: true);
@@ -110,17 +121,19 @@ extension SyncFileTransferMethods on SyncManager {
             emit(0, failed: true);
             return false;
           }
-          final frame = syncEncodeFrame(SyncEnvelope(
-            v: SyncEnvelope.version,
-            type: SyncType.fileChunk,
-            // Deterministic msgId = fileId so the receiver can route chunks
-            // even with concurrent transfers from the same peer.
-            msgId: fileId,
-            peerId: peerId,
-            name: displayName,
-            ts: DateTime.now().millisecondsSinceEpoch / 1000.0,
-            payload: payload,
-          ));
+          final frame = syncEncodeFrame(
+            SyncEnvelope(
+              v: SyncEnvelope.version,
+              type: SyncType.fileChunk,
+              // Deterministic msgId = fileId so the receiver can route chunks
+              // even with concurrent transfers from the same peer.
+              msgId: fileId,
+              peerId: peerId,
+              name: displayName,
+              ts: DateTime.now().millisecondsSinceEpoch / 1000.0,
+              payload: payload,
+            ),
+          );
           if (frame == null) {
             _fileAckWaiters.remove(fileId);
             emit(0, failed: true);
@@ -151,10 +164,7 @@ extension SyncFileTransferMethods on SyncManager {
       final timeout = Duration(
         seconds: (45 + length ~/ (200 * 1024)).clamp(45, 600),
       );
-      final ok = await waiter.future.timeout(
-        timeout,
-        onTimeout: () => false,
-      );
+      final ok = await waiter.future.timeout(timeout, onTimeout: () => false);
       emit(1, completed: ok, failed: !ok);
       return ok;
     } on SocketException catch (e) {
@@ -182,7 +192,9 @@ extension SyncFileTransferMethods on SyncManager {
         dialed = true;
         final peer = _discoveredPeers[peerId];
         if (peer != null) {
-          unawaited(_dial(peer.host, peer.port, reason: 'direct', peerId: peerId));
+          unawaited(
+            _dial(peer.host, peer.port, reason: 'direct', peerId: peerId),
+          );
         } else {
           unawaited(() async {
             for (final e in await _readEndpointCache()) {
@@ -220,8 +232,10 @@ extension SyncFileTransferMethods on SyncManager {
     if (payload == null) return;
     final plain = _decrypt(payload);
     if (plain == null) {
-      appLog('file.meta decrypt failed from ${from.substring(0, from.length.clamp(0, 8))}',
-          level: 'warning');
+      appLog(
+        'file.meta decrypt failed from ${from.substring(0, from.length.clamp(0, 8))}',
+        level: 'warning',
+      );
       return;
     }
     final Map<String, dynamic> meta;
@@ -238,7 +252,10 @@ extension SyncFileTransferMethods on SyncManager {
     final sha256Hex = meta['sha256'] as String? ?? '';
     if (fileId.isEmpty || name.isEmpty || size < 0 || chunkSize <= 0) return;
     if (size > SyncManager.fileMaxBytes) {
-      appLog('file.meta rejected (too large): $name ($size bytes)', level: 'warning');
+      appLog(
+        'file.meta rejected (too large): $name ($size bytes)',
+        level: 'warning',
+      );
       _sendFileAck(from, fileId: fileId, ok: false, error: 'tooLarge');
       return;
     }
@@ -276,13 +293,15 @@ extension SyncFileTransferMethods on SyncManager {
     )..raf = raf;
     _incomingFiles[fileId] = incoming;
     _armIncomingIdleTimer(fileId);
-    _fileProgressController.add(FileProgress(
-      fileId: fileId,
-      fileName: incoming.fileName,
-      progress: 0,
-      receivedBytes: 0,
-      totalBytes: size,
-    ));
+    _fileProgressController.add(
+      FileProgress(
+        fileId: fileId,
+        fileName: incoming.fileName,
+        progress: 0,
+        receivedBytes: 0,
+        totalBytes: size,
+      ),
+    );
     // Zero-byte files carry no chunks; finish immediately.
     if (incoming.chunkCount == 0) {
       _incomingFiles.remove(fileId);
@@ -319,12 +338,14 @@ extension SyncFileTransferMethods on SyncManager {
     incoming.queue = incoming.queue
         .then((_) => _processFileChunk(env, incoming))
         .catchError((Object e) {
-      appLog('file.chunk processing error: $e', level: 'error');
-    });
+          appLog('file.chunk processing error: $e', level: 'error');
+        });
   }
 
   Future<void> _processFileChunk(
-      SyncEnvelope env, _IncomingFileTransfer incoming) async {
+    SyncEnvelope env,
+    _IncomingFileTransfer incoming,
+  ) async {
     // A restart (duplicate meta) or discard superseded this state.
     if (_incomingFiles[incoming.fileId] != incoming) return;
     final payload = env.payload;
@@ -344,21 +365,30 @@ extension SyncFileTransferMethods on SyncManager {
     } catch (e) {
       appLog('file.chunk write failed: $e', level: 'error');
       _discardIncomingFile(incoming.fileId);
-      _sendFileAck(incoming.peerId,
-          fileId: incoming.fileId, ok: false, error: 'ioError');
+      _sendFileAck(
+        incoming.peerId,
+        fileId: incoming.fileId,
+        ok: false,
+        error: 'ioError',
+      );
       _emitIncomingFailed(incoming);
       return;
     }
     incoming.received.add(index);
     _armIncomingIdleTimer(incoming.fileId);
     final received = incoming.received.length;
-    _fileProgressController.add(FileProgress(
-      fileId: incoming.fileId,
-      fileName: incoming.fileName,
-      progress: (received / incoming.chunkCount).clamp(0.0, 1.0),
-      receivedBytes: (received * incoming.chunkSize).clamp(0, incoming.fileSize),
-      totalBytes: incoming.fileSize,
-    ));
+    _fileProgressController.add(
+      FileProgress(
+        fileId: incoming.fileId,
+        fileName: incoming.fileName,
+        progress: (received / incoming.chunkCount).clamp(0.0, 1.0),
+        receivedBytes: (received * incoming.chunkSize).clamp(
+          0,
+          incoming.fileSize,
+        ),
+        totalBytes: incoming.fileSize,
+      ),
+    );
     if (received >= incoming.chunkCount) {
       _incomingFiles.remove(incoming.fileId);
       incoming.idleTimer?.cancel();
@@ -390,8 +420,10 @@ extension SyncFileTransferMethods on SyncManager {
       waiter.complete(ok);
     }
     if (!ok) {
-      appLog('file.ack rejected ($error) for file ${fileId.substring(0, fileId.length.clamp(0, 8))}',
-          level: 'warning');
+      appLog(
+        'file.ack rejected ($error) for file ${fileId.substring(0, fileId.length.clamp(0, 8))}',
+        level: 'warning',
+      );
     }
   }
 
@@ -409,12 +441,17 @@ extension SyncFileTransferMethods on SyncManager {
       final actual = await _hashFile(incoming.partFile);
       if (actual != incoming.sha256Hex) {
         appLog(
-            'file transfer hash mismatch for ${incoming.fileName}: '
-            'expected ${incoming.sha256Hex.substring(0, 8)} got ${actual.substring(0, 8)}',
-            level: 'warning');
+          'file transfer hash mismatch for ${incoming.fileName}: '
+          'expected ${incoming.sha256Hex.substring(0, 8)} got ${actual.substring(0, 8)}',
+          level: 'warning',
+        );
         _discardIncomingFile(incoming.fileId, removeState: false);
-        _sendFileAck(incoming.peerId,
-            fileId: incoming.fileId, ok: false, error: 'hashMismatch');
+        _sendFileAck(
+          incoming.peerId,
+          fileId: incoming.fileId,
+          ok: false,
+          error: 'hashMismatch',
+        );
         _emitIncomingFailed(incoming);
         return;
       }
@@ -429,52 +466,70 @@ extension SyncFileTransferMethods on SyncManager {
         senderName: incoming.senderName,
       );
       _sendFileAck(incoming.peerId, fileId: incoming.fileId, ok: true);
-      _fileProgressController.add(FileProgress(
-        fileId: incoming.fileId,
-        fileName: incoming.fileName,
-        progress: 1,
-        receivedBytes: incoming.fileSize,
-        totalBytes: incoming.fileSize,
-        isCompleted: true,
-      ));
+      _fileProgressController.add(
+        FileProgress(
+          fileId: incoming.fileId,
+          fileName: incoming.fileName,
+          progress: 1,
+          receivedBytes: incoming.fileSize,
+          totalBytes: incoming.fileSize,
+          isCompleted: true,
+        ),
+      );
       _fileReceivedController.add(incoming.fileName);
-      appLog('Received file ${incoming.fileName} (${incoming.fileSize} bytes) '
-          'from ${incoming.senderName}');
+      appLog(
+        'Received file ${incoming.fileName} (${incoming.fileSize} bytes) '
+        'from ${incoming.senderName}',
+      );
     } catch (e) {
       appLog('file complete failed: $e', level: 'error');
       _discardIncomingFile(incoming.fileId, removeState: false);
-      _sendFileAck(incoming.peerId,
-          fileId: incoming.fileId, ok: false, error: 'ioError');
+      _sendFileAck(
+        incoming.peerId,
+        fileId: incoming.fileId,
+        ok: false,
+        error: 'ioError',
+      );
       _emitIncomingFailed(incoming);
     }
   }
 
   void _emitIncomingFailed(_IncomingFileTransfer incoming) {
-    _fileProgressController.add(FileProgress(
-      fileId: incoming.fileId,
-      fileName: incoming.fileName,
-      progress: 0,
-      receivedBytes: 0,
-      totalBytes: incoming.fileSize,
-      isFailed: true,
-    ));
+    _fileProgressController.add(
+      FileProgress(
+        fileId: incoming.fileId,
+        fileName: incoming.fileName,
+        progress: 0,
+        receivedBytes: 0,
+        totalBytes: incoming.fileSize,
+        isFailed: true,
+      ),
+    );
   }
 
-  void _sendFileAck(String peerId,
-      {required String fileId, required bool ok, String? error}) {
+  void _sendFileAck(
+    String peerId, {
+    required String fileId,
+    required bool ok,
+    String? error,
+  }) {
     final session = _sessions[peerId];
     if (session == null) return;
-    final payload = _encrypt(jsonEncode({
-      'fileId': fileId,
-      'ok': ok,
-      if (error != null) 'error': error,
-    }));
+    final payload = _encrypt(
+      jsonEncode({
+        'fileId': fileId,
+        'ok': ok,
+        if (error != null) 'error': error,
+      }),
+    );
     if (payload == null) return;
-    final data = syncEncodeFrame(SyncEnvelope.make(
-      type: SyncType.fileAck,
-      peerId: peerId,
-      payload: payload,
-    ));
+    final data = syncEncodeFrame(
+      SyncEnvelope.make(
+        type: SyncType.fileAck,
+        peerId: peerId,
+        payload: payload,
+      ),
+    );
     if (data == null) return;
     try {
       session.socket.add(data);
@@ -487,11 +542,13 @@ extension SyncFileTransferMethods on SyncManager {
     final incoming = _incomingFiles[fileId];
     if (incoming == null) return;
     incoming.idleTimer?.cancel();
-    incoming.idleTimer =
-        Timer(SyncManager._fileIncomingIdleTimeout, () {
+    incoming.idleTimer = Timer(SyncManager._fileIncomingIdleTimeout, () {
       final entry = _incomingFiles.remove(fileId);
       if (entry == null) return;
-      appLog('Incoming file ${entry.fileName} timed out; discarded', level: 'warning');
+      appLog(
+        'Incoming file ${entry.fileName} timed out; discarded',
+        level: 'warning',
+      );
       entry.idleTimer?.cancel();
       try {
         entry.raf?.closeSync();
@@ -505,8 +562,9 @@ extension SyncFileTransferMethods on SyncManager {
   /// Drop an incoming transfer (state + part file). Session close and
   /// duplicate meta both funnel through here.
   void _discardIncomingFile(String fileId, {bool removeState = true}) {
-    final incoming =
-        removeState ? _incomingFiles.remove(fileId) : _incomingFiles[fileId];
+    final incoming = removeState
+        ? _incomingFiles.remove(fileId)
+        : _incomingFiles[fileId];
     if (incoming == null) return;
     incoming.idleTimer?.cancel();
     try {

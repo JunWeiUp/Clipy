@@ -4,16 +4,20 @@ set -euo pipefail
 # Flutter Android APK build script.
 # This is separate from build_macos_app.sh, which builds the macOS .app bundle.
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ANDROID_DIR="${SCRIPT_DIR}/clipy_android"
-DIST_DIR="${SCRIPT_DIR}/dist"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/build_common.sh
+source "${REPO_ROOT}/scripts/lib/build_common.sh"
+resolve_build_version
+ANDROID_DIR="${REPO_ROOT}/clipy_android"
+DIST_DIR="${REPO_ROOT}/dist"
 
 APP_NAME="ClipyClone"
-APP_VERSION="${APP_VERSION:-1.0.0}"
-BUILD_NUMBER="${BUILD_NUMBER:-1}"
 TARGET_PLATFORM="${TARGET_PLATFORM:-android-arm,android-arm64}"
 SPLIT_PER_ABI="${SPLIT_PER_ABI:-1}"
-
+validate_boolean SPLIT_PER_ABI "${SPLIT_PER_ABI}"
+if [ "${SPLIT_PER_ABI}" = 1 ] && [ "${TARGET_PLATFORM}" != android-arm,android-arm64 ]; then
+    fail "Split packaging supports TARGET_PLATFORM=android-arm,android-arm64; use SPLIT_PER_ABI=0 for a custom target"
+fi
 
 echo "Starting Android APK build for ${APP_NAME}..."
 
@@ -32,7 +36,7 @@ mkdir -p "${DIST_DIR}"
 cd "${ANDROID_DIR}"
 
 echo "Resolving Flutter dependencies..."
-flutter pub get
+flutter pub get --enforce-lockfile
 
 BUILD_ARGS=(
     build

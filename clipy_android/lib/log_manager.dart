@@ -8,7 +8,10 @@ class LogManager extends ChangeNotifier {
 
   Timer? _notifyDebounce;
 
-  Future<List<AppLogRecord>> fetchPage({required int offset, required int limit}) {
+  Future<List<AppLogRecord>> fetchPage({
+    required int offset,
+    required int limit,
+  }) {
     return AppLogRepository.instance.fetchPage(offset: offset, limit: limit);
   }
 

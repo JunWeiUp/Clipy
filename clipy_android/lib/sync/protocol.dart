@@ -65,22 +65,23 @@ class SyncEnvelope {
   }
 
   Map<String, dynamic> toJson() => {
-        'v': v,
-        'type': type,
-        'msgId': msgId,
-        'peerId': peerId,
-        if (name != null) 'name': name,
-        if (port != null) 'port': port,
-        'ts': ts,
-        if (hash != null) 'hash': hash,
-        if (payload != null) 'payload': payload,
-      };
+    'v': v,
+    'type': type,
+    'msgId': msgId,
+    'peerId': peerId,
+    if (name != null) 'name': name,
+    if (port != null) 'port': port,
+    'ts': ts,
+    if (hash != null) 'hash': hash,
+    if (payload != null) 'payload': payload,
+  };
 }
 
 class SyncType {
   static const hello = 'hello';
   static const welcome = 'welcome';
   static const history = 'history';
+
   /// Device-list one-shot text send; no mutual authorization required.
   static const historyDirect = 'history.direct';
   static const historyFetch = 'history.fetch';
@@ -132,23 +133,20 @@ SyncEnvelope? syncDecodeEnvelope(List<int> data) {
 }
 
 /// Pull one length-prefixed frame from [buffer], leaving any remainder.
-List<int>? syncTryTakeFrame(BytesBuilder buffer,
-    {int maxFrameLength = syncMaxFrameLength}) {
+List<int>? syncTryTakeFrame(
+  BytesBuilder buffer, {
+  int maxFrameLength = syncMaxFrameLength,
+}) {
   final bytes = buffer.toBytes();
   if (bytes.length < 4) {
-    buffer.clear();
-    buffer.add(bytes);
     return null;
   }
-  final length = ByteData.sublistView(Uint8List.fromList(bytes.sublist(0, 4)))
-      .getUint32(0, Endian.big);
+  final length = ByteData.sublistView(bytes, 0, 4).getUint32(0, Endian.big);
   if (length <= 0 || length > maxFrameLength) {
     buffer.clear();
     return null;
   }
   if (bytes.length < 4 + length) {
-    buffer.clear();
-    buffer.add(bytes);
     return null;
   }
   final frame = bytes.sublist(4, 4 + length);

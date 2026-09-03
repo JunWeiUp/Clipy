@@ -43,6 +43,11 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
 
 ## Crypto
 
+Security boundaries, including public empty-secret compatibility keys and the
+difference between device allow-lists and authenticated identity, are documented
+in [SECURITY.md](../SECURITY.md). This is a trusted-LAN protocol, not an
+Internet-facing authenticated transport.
+
 - Payload ciphertext: **AES-GCM-256**, wire form `base64(nonce12 ‖ ciphertext ‖ tag)`.
 - Empty user pairing secret → legacy key `SHA256("ClipySyncSecret2026")` (compat only).
 - Non-empty pairing secret → **HKDF-SHA256**:
@@ -50,6 +55,8 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
   - info: `aes-256-gcm`
   - length: 32
 - Parity tests: `clipy_android/test/hkdf_parity_test.dart`, `sync_crypto_test.dart`.
+- Framing regression tests: `clipy_android/test/sync_protocol_test.dart`.
+- Loopback file-probe tests: `clipy_android/test/e2e_file_send_test.dart` (no real peers).
 
 ## Discovery
 

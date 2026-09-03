@@ -134,9 +134,9 @@ class _PaginatedClipboardHistoryListState
     final peers = SyncManager.instance.availablePeers;
     if (peers.isEmpty) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.noDevicesFound)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.noDevicesFound)));
       return;
     }
 
@@ -150,32 +150,43 @@ class _PaginatedClipboardHistoryListState
               padding: const EdgeInsets.all(16),
               child: Text(
                 l10n.sendText,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
-            ...peers.map(
-              (p) {
-                final shortId = p.peerId.length > 8
-                    ? p.peerId.substring(0, 8)
-                    : p.peerId;
-                return ListTile(
-                  leading: const Icon(Icons.devices),
-                  title: Text(p.displayName),
-                  subtitle: Text(shortId, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-                  onTap: () => Navigator.pop(sheetContext, p),
-                );
-              },
-            ),
+            ...peers.map((p) {
+              final shortId = p.peerId.length > 8
+                  ? p.peerId.substring(0, 8)
+                  : p.peerId;
+              return ListTile(
+                leading: const Icon(Icons.devices),
+                title: Text(p.displayName),
+                subtitle: Text(
+                  shortId,
+                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                ),
+                onTap: () => Navigator.pop(sheetContext, p),
+              );
+            }),
           ],
         ),
       ),
     );
 
     if (peer == null || !context.mounted) return;
-    final success = await SyncManager.instance.sendTextToPeer(text, peerId: peer.peerId);
+    final success = await SyncManager.instance.sendTextToPeer(
+      text,
+      peerId: peer.peerId,
+    );
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(success ? l10n.textSentTo(peer.displayName) : l10n.sendFailed)),
+      SnackBar(
+        content: Text(
+          success ? l10n.textSentTo(peer.displayName) : l10n.sendFailed,
+        ),
+      ),
     );
   }
 
@@ -230,9 +241,9 @@ class _PaginatedClipboardHistoryListState
               widget.onFileTap?.call(entry);
             } else {
               ClipboardManager.instance.copyToClipboard(entry.item);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(l10n.copiedToClipboard)),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(l10n.copiedToClipboard)));
             }
           },
           onLongPress: !isFile && entry.item.type == 'text'
@@ -249,8 +260,6 @@ class MacHistoryTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PaginatedClipboardHistoryList(
-      onFileTap: null,
-    );
+    return const PaginatedClipboardHistoryList(onFileTap: null);
   }
 }

@@ -2,80 +2,110 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version, for example 1.2.0 or v1.2.0"
+        description: "Version X.Y.Z or vX.Y.Z; creates a draft for review"
         required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
   release:
-    name: Build and publish release
-    runs-on: macos-latest
-
+    name: Build release draft
+    needs: checks
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      INSTALL_APP: "0"
+      LAUNCH_APP: "0"
+      SIGN_IDENTITY: "-"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Resolve and validate build metadata
+        id: version
+        env:
+          RAW_VERSION: ${{ inputs.version || github.ref_name }}
+        shell: bash
+        run: |
+          REPO_ROOT="$GITHUB_WORKSPACE"
+          source scripts/lib/build_common.sh
+          APP_VERSION="${RAW_VERSION#v}"
+          BASE_BUILD="$(awk '/^version:/ {split($2, v, "+"); print v[2]; exit}' clipy_android/pubspec.yaml)"
+          BUILD_NUMBER="$((BASE_BUILD + GITHUB_RUN_NUMBER))"
+          resolve_build_version
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "tag=v$APP_VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: "17"
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      - name: Read pinned Flutter version
+        id: flutter
+        run: echo "version=$(jq -r .flutter .fvmrc)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          flutter-version: ${{ steps.flutter.outputs.version }}
           channel: stable
           cache: true
-
-      - name: Resolve release version
-        id: version
-        shell: bash
+      - name: Prepare Android release signing
+        env:
+          CLIPY_KEYSTORE_BASE64: ${{ secrets.CLIPY_KEYSTORE_BASE64 }}
+          CLIPY_KEYSTORE_PASSWORD: ${{ secrets.CLIPY_KEYSTORE_PASSWORD }}
+          CLIPY_KEY_ALIAS: ${{ secrets.CLIPY_KEY_ALIAS }}
+          CLIPY_KEY_PASSWORD: ${{ secrets.CLIPY_KEY_PASSWORD }}
         run: |
-          RAW_VERSION="${{ github.event.inputs.version || github.ref_name }}"
-          VERSION="${RAW_VERSION#v}"
-          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "tag=v${VERSION}" >> "${GITHUB_OUTPUT}"
-
-      - name: Build macOS app (Swift)
+          test -n "$CLIPY_KEYSTORE_BASE64" && test -n "$CLIPY_KEYSTORE_PASSWORD" && test -n "$CLIPY_KEY_ALIAS" && test -n "$CLIPY_KEY_PASSWORD" || {
+            echo "Release signing secrets are required; see docs/DEVELOPMENT.md" >&2
+            exit 1
+          }
+          umask 077
+          printf '%s' "$CLIPY_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/clipy-release.jks"
+      - name: Build both platforms
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build }}
+          CLIPY_KEYSTORE_PATH: ${{ runner.temp }}/clipy-release.jks
+          CLIPY_KEYSTORE_PASSWORD: ${{ secrets.CLIPY_KEYSTORE_PASSWORD }}
+          CLIPY_KEY_ALIAS: ${{ secrets.CLIPY_KEY_ALIAS }}
+          CLIPY_KEY_PASSWORD: ${{ secrets.CLIPY_KEY_PASSWORD }}
         run: |
-          APP_VERSION="${{ steps.version.outputs.version }}" \
-          BUILD_NUMBER="${{ github.run_number }}" \
-          ./build_macos_app.sh
-
-      - name: Package macOS app
+          bash build_macos_app.sh
+          bash build_android_apk.sh
+      - name: Package macOS and checksums
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          mkdir -p dist
-          ditto -c -k --keepParent clipy_macos/ClipyClone.app "dist/ClipyClone-macOS-v${{ steps.version.outputs.version }}.zip"
-
-      - name: Build Android APK
-        working-directory: clipy_android
-        run: |
-          flutter pub get
-          flutter build apk --release \
-            --split-per-abi \
-            --target-platform android-arm,android-arm64 \
-            --build-name "${{ steps.version.outputs.version }}" \
-            --build-number "${{ github.run_number }}"
-
-      - name: Package Android APK
-        run: |
-          cp clipy_android/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
-            "dist/ClipyClone-Android-armeabi-v7a-v${{ steps.version.outputs.version }}.apk"
-          cp clipy_android/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
-            "dist/ClipyClone-Android-arm64-v8a-v${{ steps.version.outputs.version }}.apk"
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+          ditto -c -k --keepParent clipy_macos/ClipyClone.app "dist/ClipyClone-macOS-v${APP_VERSION}.zip"
+          ditto -c -k --keepParent clipy_macos/ClipyClone.app.dSYM "dist/ClipyClone-macOS-symbols-v${APP_VERSION}.zip"
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/
+          cd dist
+          shasum -a 256 ./*.apk ./*.zip > SHA256SUMS.txt
+      - name: Create draft for licensing and signing review
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Clipy ${{ steps.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
+          draft: true
+          fail_on_unmatched_files: true
           files: dist/*
+      - name: Remove temporary signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/clipy-release.jks"

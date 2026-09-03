@@ -43,9 +43,9 @@ extension SyncReliabilityMethods on SyncManager {
     final auth = _authIdsForType(env.type);
     final targets = requireAuth
         ? availablePeers
-            .where((p) => auth.contains(p.peerId))
-            .map((p) => p.peerId)
-            .toList()
+              .where((p) => auth.contains(p.peerId))
+              .map((p) => p.peerId)
+              .toList()
         : _discoveredPeers.keys.toList();
 
     if (targets.isEmpty) {
@@ -59,11 +59,16 @@ extension SyncReliabilityMethods on SyncManager {
     }
 
     for (final id in targets) {
-      final delivered =
-          await _deliver(data, type: env.type, peerId: id, hash: env.hash);
+      final delivered = await _deliver(
+        data,
+        type: env.type,
+        peerId: id,
+        hash: env.hash,
+      );
       appLog(
-          'fanout ${env.type} to ${id.substring(0, id.length.clamp(0, 8))}: '
-          'session deliver=$delivered');
+        'fanout ${env.type} to ${id.substring(0, id.length.clamp(0, 8))}: '
+        'session deliver=$delivered',
+      );
       // Mirror Mac: keep encoded frame until ACK after a successful send.
       if (_isQueueable(env.type) && delivered) {
         await _enqueuePending(data, env.type, id, env.hash);
@@ -71,11 +76,13 @@ extension SyncReliabilityMethods on SyncManager {
     }
   }
 
-  Future<bool> _deliver(List<int> data,
-      {required String type,
-      required String peerId,
-      String? hash,
-      String dialReason = 'deliver'}) async {
+  Future<bool> _deliver(
+    List<int> data, {
+    required String type,
+    required String peerId,
+    String? hash,
+    String dialReason = 'deliver',
+  }) async {
     final session = _sessions[peerId];
     if (session != null) {
       try {
@@ -95,8 +102,7 @@ extension SyncReliabilityMethods on SyncManager {
     final reason = type == SyncType.historyDirect ? 'direct' : dialReason;
     final peer = _discoveredPeers[peerId];
     if (peer != null) {
-      unawaited(
-          _dial(peer.host, peer.port, reason: reason, peerId: peerId));
+      unawaited(_dial(peer.host, peer.port, reason: reason, peerId: peerId));
     } else {
       unawaited(() async {
         for (final e in await _readEndpointCache()) {
@@ -115,7 +121,11 @@ extension SyncReliabilityMethods on SyncManager {
   }
 
   Future<void> _enqueuePending(
-      List<int> data, String type, String peerId, String? hash) async {
+    List<int> data,
+    String type,
+    String peerId,
+    String? hash,
+  ) async {
     if (hash == null || hash.isEmpty) return;
     // Keep a small in-memory mirror for same-process flush before SQLite returns.
     final cutoff = DateTime.now().subtract(SyncManager._pendingTtl);
@@ -123,13 +133,15 @@ extension SyncReliabilityMethods on SyncManager {
     _pendingQueue.removeWhere((f) => f.peerId == peerId && f.hash == hash);
     final perPeer = _pendingQueue.where((f) => f.peerId == peerId).length;
     if (perPeer < SyncManager._pendingMax) {
-      _pendingQueue.add(_PendingFrame(
-        peerId: peerId,
-        data: data,
-        type: type,
-        hash: hash,
-        enqueueAt: DateTime.now(),
-      ));
+      _pendingQueue.add(
+        _PendingFrame(
+          peerId: peerId,
+          data: data,
+          type: type,
+          hash: hash,
+          enqueueAt: DateTime.now(),
+        ),
+      );
     }
     await PendingSyncRepository.instance.enqueue(
       peerId: peerId,
@@ -177,13 +189,16 @@ extension SyncReliabilityMethods on SyncManager {
 
     if (filtered.isNotEmpty) {
       final skipped = filtered
-          .where((f) =>
-              _isQueueable(f.type) &&
-              (_inFlightHashes[peerId]?.contains(f.hash) ?? false))
+          .where(
+            (f) =>
+                _isQueueable(f.type) &&
+                (_inFlightHashes[peerId]?.contains(f.hash) ?? false),
+          )
           .length;
       appLog(
-          'Flushing ${filtered.length} pending frame(s) to $peerId'
-          '${skipped > 0 ? ' (skipped $skipped in-flight)' : ''}');
+        'Flushing ${filtered.length} pending frame(s) to $peerId'
+        '${skipped > 0 ? ' (skipped $skipped in-flight)' : ''}',
+      );
       for (final frame in filtered) {
         if (_isQueueable(frame.type) &&
             (_inFlightHashes[peerId]?.contains(frame.hash) ?? false)) {
@@ -196,15 +211,19 @@ extension SyncReliabilityMethods on SyncManager {
                 .putIfAbsent(peerId, () => <String>{})
                 .add(frame.hash);
           } else {
-            await PendingSyncRepository.instance
-                .remove(peerId: peerId, hash: frame.hash);
+            await PendingSyncRepository.instance.remove(
+              peerId: peerId,
+              hash: frame.hash,
+            );
             _pendingQueue.removeWhere(
-                (f) => f.peerId == peerId && f.hash == frame.hash);
+              (f) => f.peerId == peerId && f.hash == frame.hash,
+            );
           }
         } catch (e) {
           appLog(
-              'flushPending ${frame.type} send failed to ${peerId.substring(0, peerId.length.clamp(0, 8))}: $e',
-              level: 'warning');
+            'flushPending ${frame.type} send failed to ${peerId.substring(0, peerId.length.clamp(0, 8))}: $e',
+            level: 'warning',
+          );
           return;
         }
       }
@@ -215,8 +234,9 @@ extension SyncReliabilityMethods on SyncManager {
 
     // Legacy plaintext queue (pre-pending_sync) — re-encode once then drop.
     if (allowClipboard) {
-      final persisted =
-          await PendingTextSyncRepository.instance.fetchByPeer(peerId);
+      final persisted = await PendingTextSyncRepository.instance.fetchByPeer(
+        peerId,
+      );
       for (final entry in persisted) {
         if (_inFlightHashes[peerId]?.contains(entry.hash) ?? false) continue;
         final payload = _encrypt(entry.data);
@@ -242,8 +262,9 @@ extension SyncReliabilityMethods on SyncManager {
           await PendingTextSyncRepository.instance.removeByHash(entry.hash);
         } catch (e) {
           appLog(
-              'flushPending history(legacy) send failed to ${peerId.substring(0, peerId.length.clamp(0, 8))}: $e',
-              level: 'warning');
+            'flushPending history(legacy) send failed to ${peerId.substring(0, peerId.length.clamp(0, 8))}: $e',
+            level: 'warning',
+          );
           return;
         }
       }
@@ -251,17 +272,17 @@ extension SyncReliabilityMethods on SyncManager {
 
     // NotificationManager's own offline queue (content JSON) — keep for now.
     if (!allowNotification) return;
-    final notifPending =
-        await NotificationRepository.instance.fetchAllPendingSync();
+    final notifPending = await NotificationRepository.instance
+        .fetchAllPendingSync();
     if (notifPending.isNotEmpty) {
       appLog(
-          'Flushing ${notifPending.length} pending notification(s) to $peerId');
+        'Flushing ${notifPending.length} pending notification(s) to $peerId',
+      );
     }
     for (final row in notifPending) {
       final content = row['content'] as String? ?? '';
-      final hash = (row['hash'] as String?) ??
-          (row['notification_id'] as String?) ??
-          '';
+      final hash =
+          (row['hash'] as String?) ?? (row['notification_id'] as String?) ?? '';
       if (content.isEmpty || hash.isEmpty) continue;
       if (_inFlightHashes[peerId]?.contains(hash) ?? false) continue;
       final payload = _encrypt(content);
@@ -286,8 +307,9 @@ extension SyncReliabilityMethods on SyncManager {
         );
       } catch (e) {
         appLog(
-            'flushPending notif.post send failed to ${peerId.substring(0, peerId.length.clamp(0, 8))}: $e',
-            level: 'warning');
+          'flushPending notif.post send failed to ${peerId.substring(0, peerId.length.clamp(0, 8))}: $e',
+          level: 'warning',
+        );
         return;
       }
     }
@@ -299,11 +321,11 @@ extension SyncReliabilityMethods on SyncManager {
     _pendingQueue.removeWhere((f) => f.peerId == from && f.hash == hash);
     if (_pendingQueue.length != before) {
       appLog(
-          'ACK from ${from.substring(0, from.length.clamp(0, 8))} cleared pending for hash ${hash.substring(0, hash.length.clamp(0, 8))}');
+        'ACK from ${from.substring(0, from.length.clamp(0, 8))} cleared pending for hash ${hash.substring(0, hash.length.clamp(0, 8))}',
+      );
     }
     _inFlightHashes[from]?.remove(hash);
-    unawaited(
-        PendingSyncRepository.instance.remove(peerId: from, hash: hash));
+    unawaited(PendingSyncRepository.instance.remove(peerId: from, hash: hash));
     unawaited(PendingTextSyncRepository.instance.removeByHash(hash));
   }
 
@@ -315,19 +337,22 @@ extension SyncReliabilityMethods on SyncManager {
     );
     final cutoff = DateTime.now().subtract(SyncManager._pendingAckRetryAge);
     final stale = due
-        .where((f) =>
-            (f.type == SyncType.history ||
-                f.type == SyncType.historyDirect) &&
-            !f.enqueueAt.isAfter(cutoff))
+        .where(
+          (f) =>
+              (f.type == SyncType.history ||
+                  f.type == SyncType.historyDirect) &&
+              !f.enqueueAt.isAfter(cutoff),
+        )
         .toList();
     if (stale.isEmpty) return;
     for (final frame in stale) {
       _inFlightHashes[peerId]?.remove(frame.hash);
     }
     appLog(
-        'sync.pending Retrying ${stale.length} stale pending history frame(s) to '
-        '${peerId.substring(0, peerId.length.clamp(0, 8))} '
-        '(no ACK ≥${SyncManager._pendingAckRetryAge.inSeconds}s)');
+      'sync.pending Retrying ${stale.length} stale pending history frame(s) to '
+      '${peerId.substring(0, peerId.length.clamp(0, 8))} '
+      '(no ACK ≥${SyncManager._pendingAckRetryAge.inSeconds}s)',
+    );
     await _flushPending(peerId);
   }
 

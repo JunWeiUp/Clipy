@@ -35,11 +35,12 @@ class HistoryEntry {
   final String? sourceApp;
   final String? contentHash;
 
-  HistoryEntry(
-      {required this.item,
-      required this.date,
-      this.sourceApp,
-      this.contentHash});
+  HistoryEntry({
+    required this.item,
+    required this.date,
+    this.sourceApp,
+    this.contentHash,
+  });
 
   Map<String, dynamic> toJson() {
     return {
@@ -61,7 +62,8 @@ class HistoryEntry {
     } else if (json['date'] is num) {
       // Swift Reference Date (Jan 1, 2001)
       date = DateTime.fromMillisecondsSinceEpoch(
-          (json['date'] * 1000 + 978307200000).toInt());
+        (json['date'] * 1000 + 978307200000).toInt(),
+      );
     } else {
       date = DateTime.now();
     }
@@ -86,9 +88,11 @@ class NotificationEntry {
   final int postTime;
   final String? groupKey;
   final bool isClearable;
+
   /// WeChat (and similar) in-place updates: previous snapshot kept with this flag
   /// so history retains every message while the live slot stays unique.
   final bool isArchived;
+
   /// 同步状态：0 = 待同步（默认），1 = Mac 已 ack 确认送达。
   /// 仅在本地维护，不随 toJson 序列化到 wire（Mac 侧按 id 去重，不需要此字段）。
   final int syncState;
@@ -143,23 +147,24 @@ class NotificationEntry {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'notificationKey': notificationKey,
-        'packageName': packageName,
-        'appName': appName,
-        'title': title,
-        'subtitle': subtitle,
-        'body': body,
-        'postTime': postTime,
-        'groupKey': groupKey,
-        'isClearable': isClearable,
-        'isArchived': isArchived,
-        'extras': extras,
-      };
+    'id': id,
+    'notificationKey': notificationKey,
+    'packageName': packageName,
+    'appName': appName,
+    'title': title,
+    'subtitle': subtitle,
+    'body': body,
+    'postTime': postTime,
+    'groupKey': groupKey,
+    'isClearable': isClearable,
+    'isArchived': isArchived,
+    'extras': extras,
+  };
 
   factory NotificationEntry.fromJson(Map<String, dynamic> json) {
     final extras = Map<String, dynamic>.from(json['extras'] as Map? ?? {});
-    final archivedFlag = json['isArchived'] == true ||
+    final archivedFlag =
+        json['isArchived'] == true ||
         extras['clipyArchived'] == true ||
         extras['clipyArchived']?.toString() == 'true';
     return NotificationEntry(
@@ -170,7 +175,8 @@ class NotificationEntry {
       title: json['title'],
       subtitle: json['subtitle'],
       body: json['body'] ?? '',
-      postTime: (json['postTime'] as num?)?.toInt() ??
+      postTime:
+          (json['postTime'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch,
       groupKey: json['groupKey'],
       isClearable: json['isClearable'] ?? true,
@@ -192,10 +198,10 @@ class NotificationDismissRequest {
   });
 
   Map<String, dynamic> toJson() => {
-        'packageName': packageName,
-        'groupKey': groupKey,
-        'notificationKey': notificationKey,
-      };
+    'packageName': packageName,
+    'groupKey': groupKey,
+    'notificationKey': notificationKey,
+  };
 
   factory NotificationDismissRequest.fromJson(Map<String, dynamic> json) {
     return NotificationDismissRequest(

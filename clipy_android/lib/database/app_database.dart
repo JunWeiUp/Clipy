@@ -53,20 +53,24 @@ class AppDatabase {
             )
           ''');
           await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_peer ON pending_text_sync(target_peer_id)');
+            'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_peer ON pending_text_sync(target_peer_id)',
+          );
           await db.execute(
-              'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_hash ON pending_text_sync(hash)');
+            'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_hash ON pending_text_sync(hash)',
+          );
         }
         if (oldVersion < 4) {
           await db.execute(
-              'ALTER TABLE notifications ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
+            'ALTER TABLE notifications ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0',
+          );
         }
         if (oldVersion < 5) {
           // sync_state: 0 = 待同步（默认），1 = Mac 已 ack 确认送达。
           // 用于 refreshActiveNotifications 的 backfill：只把 sync_state=0
           // 且不在 pending_notification_sync 队列里的通知补发，已 ack 的不重复补。
           await db.execute(
-              'ALTER TABLE notifications ADD COLUMN sync_state INTEGER NOT NULL DEFAULT 0');
+            'ALTER TABLE notifications ADD COLUMN sync_state INTEGER NOT NULL DEFAULT 0',
+          );
         }
         if (oldVersion < 6) {
           await _createPendingSyncTable(db);
@@ -89,7 +93,8 @@ class AppDatabase {
       )
     ''');
     await db.execute(
-        'CREATE INDEX idx_clipboard_created ON clipboard_history(created_at DESC)');
+      'CREATE INDEX idx_clipboard_created ON clipboard_history(created_at DESC)',
+    );
 
     await db.execute('''
       CREATE TABLE notifications (
@@ -110,9 +115,11 @@ class AppDatabase {
       )
     ''');
     await db.execute(
-        'CREATE INDEX idx_notifications_package_time ON notifications(package_name, post_time DESC)');
+      'CREATE INDEX idx_notifications_package_time ON notifications(package_name, post_time DESC)',
+    );
     await db.execute(
-        'CREATE INDEX idx_notifications_post_time ON notifications(post_time DESC)');
+      'CREATE INDEX idx_notifications_post_time ON notifications(post_time DESC)',
+    );
 
     await db.execute('''
       CREATE TABLE file_transfers (
@@ -125,7 +132,8 @@ class AppDatabase {
       )
     ''');
     await db.execute(
-        'CREATE INDEX idx_file_transfers_created ON file_transfers(created_at DESC)');
+      'CREATE INDEX idx_file_transfers_created ON file_transfers(created_at DESC)',
+    );
 
     await db.execute('''
       CREATE TABLE app_logs (
@@ -136,7 +144,8 @@ class AppDatabase {
       )
     ''');
     await db.execute(
-        'CREATE INDEX idx_app_logs_created ON app_logs(created_at DESC)');
+      'CREATE INDEX idx_app_logs_created ON app_logs(created_at DESC)',
+    );
 
     await db.execute('''
       CREATE TABLE IF NOT EXISTS pending_notification_sync (
@@ -158,9 +167,11 @@ class AppDatabase {
       )
     ''');
     await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_peer ON pending_text_sync(target_peer_id)');
+      'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_peer ON pending_text_sync(target_peer_id)',
+    );
     await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_hash ON pending_text_sync(hash)');
+      'CREATE INDEX IF NOT EXISTS idx_pending_text_sync_hash ON pending_text_sync(hash)',
+    );
 
     await _createPendingSyncTable(db);
   }
@@ -178,8 +189,10 @@ class AppDatabase {
       )
     ''');
     await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_pending_sync_peer ON pending_sync(peer_id)');
+      'CREATE INDEX IF NOT EXISTS idx_pending_sync_peer ON pending_sync(peer_id)',
+    );
     await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_pending_sync_enqueue ON pending_sync(enqueue_at)');
+      'CREATE INDEX IF NOT EXISTS idx_pending_sync_enqueue ON pending_sync(enqueue_at)',
+    );
   }
 }

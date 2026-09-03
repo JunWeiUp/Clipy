@@ -1,16 +1,27 @@
-# clipy_android
+# Clipy Flutter / Android
 
-A new Flutter project.
+Clipboard history, LAN sync, file transfer and Android notification mirroring.
+This is the mobile application, not a reusable pub.dev package.
 
-## Getting Started
+From the repository root:
 
-This project is a starting point for a Flutter application.
+```bash
+cd clipy_android
+flutter pub get --enforce-lockfile
+cd ..
+bash scripts/check.sh flutter
+cd clipy_android
+flutter build apk --debug --no-pub
+```
 
-A few resources to get you started if this is your first Flutter project:
+Use Flutter 3.41.7 and JDK 17. `lib/main.dart` is intentionally small;
+`lib/app/` owns startup/headless integration and `lib/features/` owns pages.
+Repositories live in `lib/database/`; wire code is in `lib/sync/`.
+Android platform channels and services are in `android/app/src/main/kotlin/`.
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+The `ios/` target is experimental: it is not validated in CI and does not provide
+the Android-native notification/background-service integration.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+See [Development and signing](../docs/DEVELOPMENT.md),
+[Architecture](../docs/ARCHITECTURE.md), [Protocol](../docs/PROTOCOL.md),
+[Contributing](../CONTRIBUTING.md) and [Security](../SECURITY.md).

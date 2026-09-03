@@ -20,7 +20,10 @@ class ClipboardRepository {
     );
   }
 
-  Future<List<HistoryEntry>> fetchPage({required int offset, required int limit}) async {
+  Future<List<HistoryEntry>> fetchPage({
+    required int offset,
+    required int limit,
+  }) async {
     final rows = await (await _db).query(
       'clipboard_history',
       orderBy: 'created_at DESC',
@@ -31,7 +34,9 @@ class ClipboardRepository {
   }
 
   Future<int> count() async {
-    final result = await (await _db).rawQuery('SELECT COUNT(*) AS c FROM clipboard_history');
+    final result = await (await _db).rawQuery(
+      'SELECT COUNT(*) AS c FROM clipboard_history',
+    );
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
@@ -105,17 +110,13 @@ class ClipboardRepository {
     var inserted = 0;
     await db.transaction((txn) async {
       for (final entry in entries) {
-        final result = await txn.insert(
-          'clipboard_history',
-          {
-            'content_hash': entry.contentHash,
-            'item_type': entry.item.type,
-            'item_value': entry.item.value.toString(),
-            'source_app': entry.sourceApp,
-            'created_at': entry.date.millisecondsSinceEpoch,
-          },
-          conflictAlgorithm: ConflictAlgorithm.ignore,
-        );
+        final result = await txn.insert('clipboard_history', {
+          'content_hash': entry.contentHash,
+          'item_type': entry.item.type,
+          'item_value': entry.item.value.toString(),
+          'source_app': entry.sourceApp,
+          'created_at': entry.date.millisecondsSinceEpoch,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
         // insert returns 0 (actually the rowid, but 0 for ignored) when the
         // UNIQUE constraint triggered an IGNORE. SQLite's insertOrIgnore in
         // sqflite returns the rowid; 0 means it was ignored.
@@ -128,14 +129,17 @@ class ClipboardRepository {
   Future<void> trimToLimit(int limit) async {
     if (limit <= 0) return;
     final db = await _db;
-    await db.rawDelete('''
+    await db.rawDelete(
+      '''
       DELETE FROM clipboard_history
       WHERE id NOT IN (
         SELECT id FROM clipboard_history
         ORDER BY created_at DESC
         LIMIT ?
       )
-    ''', [limit]);
+    ''',
+      [limit],
+    );
   }
 
   Future<void> clearAll() async {
@@ -152,9 +156,6 @@ class ClipboardRepository {
       'SELECT content_hash FROM clipboard_history WHERE content_hash IN ($placeholders)',
       hashes,
     );
-    return rows
-        .map((r) => r['content_hash'])
-        .whereType<String>()
-        .toSet();
+    return rows.map((r) => r['content_hash']).whereType<String>().toSet();
   }
 }

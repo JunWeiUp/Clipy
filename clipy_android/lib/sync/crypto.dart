@@ -55,7 +55,8 @@ class SyncCrypto {
     final Uint8List bytes;
     if (secret.isEmpty) {
       bytes = Uint8List.fromList(
-          sha256.convert(utf8.encode(legacySharedSecret)).bytes);
+        sha256.convert(utf8.encode(legacySharedSecret)).bytes,
+      );
     } else {
       bytes = hkdfSha256(
         ikm: utf8.encode(secret),
@@ -75,7 +76,8 @@ class SyncCrypto {
       final k = key();
       final rng = Random.secure();
       final iv = enc.IV(
-          Uint8List.fromList(List<int>.generate(12, (_) => rng.nextInt(256))));
+        Uint8List.fromList(List<int>.generate(12, (_) => rng.nextInt(256))),
+      );
       final encrypter = enc.Encrypter(enc.AES(k, mode: enc.AESMode.gcm));
       final encrypted = encrypter.encrypt(text, iv: iv);
       final combined = Uint8List.fromList([...iv.bytes, ...encrypted.bytes]);
@@ -109,8 +111,13 @@ class SyncCrypto {
   Future<String?> encryptBytes(List<int> bytes) async {
     final nonce = _randomNonce();
     final keyBytes = key().bytes;
-    final native = await (SyncCrypto.nativeAesGcm
-        ?.call('seal', keyBytes, nonce, Uint8List.fromList(bytes), null));
+    final native = await (SyncCrypto.nativeAesGcm?.call(
+      'seal',
+      keyBytes,
+      nonce,
+      Uint8List.fromList(bytes),
+      null,
+    ));
     if (native != null) {
       return base64Encode(native);
     }
@@ -131,13 +138,19 @@ class SyncCrypto {
       if (data.length <= 28) return null;
       final nonce = data.sublist(0, 12);
       final sealed = data.sublist(12);
-      final native = await (SyncCrypto.nativeAesGcm
-          ?.call('open', key().bytes, nonce, null, sealed));
+      final native = await (SyncCrypto.nativeAesGcm?.call(
+        'open',
+        key().bytes,
+        nonce,
+        null,
+        sealed,
+      ));
       if (native != null) return native;
       final k = key();
       final encrypter = enc.Encrypter(enc.AES(k, mode: enc.AESMode.gcm));
       return Uint8List.fromList(
-          encrypter.decryptBytes(enc.Encrypted(sealed), iv: enc.IV(nonce)));
+        encrypter.decryptBytes(enc.Encrypted(sealed), iv: enc.IV(nonce)),
+      );
     } catch (_) {
       return null;
     }
@@ -153,9 +166,11 @@ class SyncCrypto {
   /// (seal) / plaintext (open), or null → pure-Dart fallback. Kept as a hook
   /// so this file stays pure Dart (unit tests / dart-run tools import it).
   static Future<Uint8List?> Function(
-      String op,
-      Uint8List key,
-      Uint8List nonce,
-      Uint8List? plain,
-      Uint8List? sealed)? nativeAesGcm;
+    String op,
+    Uint8List key,
+    Uint8List nonce,
+    Uint8List? plain,
+    Uint8List? sealed,
+  )?
+  nativeAesGcm;
 }

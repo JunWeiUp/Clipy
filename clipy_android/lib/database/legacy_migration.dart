@@ -17,7 +17,10 @@ class LegacyMigration {
 
     final dir = await StoragePaths.appStorageDirectory();
     await _importClipboard(db, File('${dir.path}/history.json'));
-    await _importNotifications(db, File('${dir.path}/notification_history.jsonl'));
+    await _importNotifications(
+      db,
+      File('${dir.path}/notification_history.jsonl'),
+    );
     await _importFileHistory(db, prefs);
 
     await prefs.setInt(_prefKey, _targetVersion);
@@ -31,7 +34,9 @@ class LegacyMigration {
       final list = jsonDecode(content) as List<dynamic>;
       final batch = db.batch();
       for (final item in list) {
-        final entry = HistoryEntry.fromJson(Map<String, dynamic>.from(item as Map));
+        final entry = HistoryEntry.fromJson(
+          Map<String, dynamic>.from(item as Map),
+        );
         batch.insert(
           'clipboard_history',
           _clipboardRow(entry),
@@ -60,14 +65,16 @@ class LegacyMigration {
     if (!await file.exists()) return;
     try {
       final batch = db.batch();
-      await for (final line in file
-          .openRead()
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())) {
+      await for (final line
+          in file
+              .openRead()
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())) {
         final trimmed = line.trim();
         if (trimmed.isEmpty) continue;
         final entry = NotificationEntry.fromJson(
-            Map<String, dynamic>.from(jsonDecode(trimmed) as Map));
+          Map<String, dynamic>.from(jsonDecode(trimmed) as Map),
+        );
         batch.insert(
           'notifications',
           _notificationRow(entry),
@@ -78,7 +85,10 @@ class LegacyMigration {
       await file.rename('${file.path}.migrated.bak');
       appLog('LegacyMigration: imported notifications');
     } catch (e) {
-      appLog('LegacyMigration: notifications import error: $e', level: 'warning');
+      appLog(
+        'LegacyMigration: notifications import error: $e',
+        level: 'warning',
+      );
     }
   }
 
@@ -100,7 +110,9 @@ class LegacyMigration {
   }
 
   static Future<void> _importFileHistory(
-      Database db, SharedPreferences prefs) async {
+    Database db,
+    SharedPreferences prefs,
+  ) async {
     final jsonStr = prefs.getString('fileHistory');
     if (jsonStr == null || jsonStr.isEmpty) return;
     try {
@@ -113,7 +125,8 @@ class LegacyMigration {
           'file_path': map['filePath'] ?? '',
           'file_size': (map['fileSize'] as num?)?.toInt() ?? 0,
           'sender_name': map['senderName'] ?? '',
-          'created_at': (map['date'] as num?)?.toInt() ??
+          'created_at':
+              (map['date'] as num?)?.toInt() ??
               DateTime.now().millisecondsSinceEpoch,
         });
       }
@@ -121,7 +134,10 @@ class LegacyMigration {
       await prefs.remove('fileHistory');
       appLog('LegacyMigration: imported file history');
     } catch (e) {
-      appLog('LegacyMigration: file history import error: $e', level: 'warning');
+      appLog(
+        'LegacyMigration: file history import error: $e',
+        level: 'warning',
+      );
     }
   }
 }

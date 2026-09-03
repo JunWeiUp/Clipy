@@ -14,7 +14,7 @@ enum ClipboardBackingStore {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         let dir = appSupport
-            .appendingPathComponent("com.sw33tlie.macshot", isDirectory: true)
+            .appendingPathComponent("com.clipyclone.screenshot", isDirectory: true)
             .appendingPathComponent(subdirectory, isDirectory: true)
         if !FileManager.default.fileExists(atPath: dir.path) {
             try? FileManager.default.createDirectory(
