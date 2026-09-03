@@ -78,13 +78,17 @@ class FileTransferRepository {
     ''', [maxRows]);
   }
 
-  /// Only delete files inside our own Clipy/ receive directory; records may
-  /// also point at user files that were SENT from this device.
+  /// Only delete files inside our own receive directories; records may also
+  /// point at user files that were SENT from this device. Covers both the
+  /// public `Download/Clipy/` (current) and the legacy app-private `Clipy/`.
   Future<void> _deleteReceivedFileIfManaged(String path) async {
     try {
+      final prefixes = <String>[];
+      final downloads = await StoragePaths.publicDownloadsDirectory();
+      if (downloads != null) prefixes.add('${downloads.path}/Clipy/');
       final appDir = await StoragePaths.appStorageDirectory();
-      final managedPrefix = '${appDir.path}/Clipy/';
-      if (!path.startsWith(managedPrefix)) return;
+      prefixes.add('${appDir.path}/Clipy/');
+      if (!prefixes.any(path.startsWith)) return;
       final file = File(path);
       if (await file.exists()) {
         await file.delete();

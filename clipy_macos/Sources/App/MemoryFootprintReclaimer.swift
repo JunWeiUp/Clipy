@@ -24,6 +24,41 @@ enum MemoryFootprintReclaimer {
         ) { _ in
             reclaimIfIdle()
         }
+        startIdleMonitor()
+    }
+
+    private static var idleMonitor: DispatchSourceTimer?
+    /// Settled baseline (AppKit/SwiftUI runtime + SQLite) sits around
+    /// 50-70MB; only pay the reclaim cost when something big is lingering.
+    private static let idleReclaimFootprintThreshold: Int64 = 80 * 1_048_576
+
+    /// Periodic fallback reclaim. This LSUIElement agent never receives
+    /// didResignActive/didHide, so without a timer the only reclaim triggers
+    /// are menu close and search-window teardown — memory stuck after any
+    /// other path (sync file transfer, image copy, …) stayed forever. Every
+    /// minute after a startup grace period, with no visible windows, no open
+    /// menu, and a footprint above the framework baseline, run the full idle
+    /// reclaim and shrink the SQLite page cache.
+    private static func startIdleMonitor() {
+        guard idleMonitor == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + 5 * 60, repeating: 60)
+        timer.setEventHandler {
+            guard let footprint = currentFootprintBytes(),
+                  footprint > idleReclaimFootprintThreshold else { return }
+            DispatchQueue.main.async {
+                guard !hasVisibleInteractiveWindows(),
+                      MenuController.active?.isMenuBarMenuOpen != true else { return }
+                let before = currentFootprintBytes()
+                reclaimIfIdle()
+                AppDatabase.shared.shrinkMemory()
+                if let before, let after = currentFootprintBytes(), before - after > 1_048_576 {
+                    appLog("Memory: idle reclaim \(before) -> \(after) bytes (freed \(before - after))", level: .info)
+                }
+            }
+        }
+        timer.resume()
+        idleMonitor = timer
     }
 
     static func reclaimIfIdle() {

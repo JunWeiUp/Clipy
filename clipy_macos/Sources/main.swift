@@ -1,5 +1,12 @@
 import AppKit
 
+// OCR child mode must branch before any AppKit state exists: this same
+// executable is re-invoked with a flag as a short-lived Vision worker, and
+// must never build NSApplication.
+if CommandLine.arguments.contains(OCRSubprocess.childModeArgument) {
+    OCRSubprocess.runChildMode()
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

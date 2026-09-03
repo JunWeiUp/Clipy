@@ -1149,6 +1149,16 @@ class _HomePageState extends State<HomePage> {
   Future<void> _openFolder(String filePath) async {
     try {
       await _channel.invokeMethod('openFolder', {'path': filePath});
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      final message = e.code == 'FILE_NOT_FOUND'
+          ? context.l10n.fileNotFound
+          : e.code == 'NO_ACTIVITY'
+              ? context.l10n.noFileManager
+              : context.l10n.couldNotOpenFolder(e.code);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1893,9 +1903,14 @@ class _ReceivedFilesPageState extends State<ReceivedFilesPage> {
   }
 
   Future<void> _deleteFile(FileTransferRecord file) async {
-    final ioFile = File(file.filePath);
-    if (await ioFile.exists()) {
-      await ioFile.delete();
+    try {
+      final ioFile = File(file.filePath);
+      if (await ioFile.exists()) {
+        await ioFile.delete();
+      }
+    } catch (_) {
+      // Best-effort: drop the record even when the file itself
+      // cannot be removed (e.g. shared storage without permission).
     }
     await FileTransferRepository.instance.deleteById(file.id);
     setState(() {
@@ -1914,6 +1929,16 @@ class _ReceivedFilesPageState extends State<ReceivedFilesPage> {
   Future<void> _openFolder(String filePath) async {
     try {
       await _channel.invokeMethod('openFolder', {'path': filePath});
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      final message = e.code == 'FILE_NOT_FOUND'
+          ? context.l10n.fileNotFound
+          : e.code == 'NO_ACTIVITY'
+              ? context.l10n.noFileManager
+              : context.l10n.couldNotOpenFolder(e.code);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

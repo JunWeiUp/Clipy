@@ -119,6 +119,11 @@ extension SyncSessionMethods on SyncManager {
       } else {
         appLog('Dial $reason $host:$peerPort failed: connect($label)',
             level: 'warning');
+        // A dead authorized endpoint is the auto-rediscover signal; scan/
+        // direct dials have no stable peer identity to count against.
+        if (resolved != null && authorizedPeerIds.contains(resolved)) {
+          noteAuthorizedDialFailure();
+        }
       }
       return;
     }
@@ -308,6 +313,7 @@ extension SyncSessionMethods on SyncManager {
 
     _reconnectBackoffSec[env.peerId] = 1;
     _reconnectTimers.remove(env.peerId)?.cancel();
+    noteSessionEstablished();
     _recordPeer(env.peerId, name, host, peerPort);
     await _persistEndpoint(env.peerId, name, host, peerPort);
     if (session.buffer.length > 0) {

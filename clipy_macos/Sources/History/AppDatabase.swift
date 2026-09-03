@@ -43,12 +43,27 @@ final class AppDatabase {
         let pragmas = [
             "PRAGMA journal_mode=WAL;",       // readers don't block writers
             "PRAGMA synchronous=NORMAL;",      // safe under WAL, fewer fsync
-            "PRAGMA cache_size=-20000;",       // ~20MB page cache (negative = KB)
+            // 8MB is ample for the hot queries (50-row menu summaries, 100-row
+            // notification pages); a bigger cache just raised the resident
+            // footprint of this always-running agent. shrinkMemory() releases
+            // it again on the idle reclaim path.
+            "PRAGMA cache_size=-8000;",        // ~8MB page cache (negative = KB)
             "PRAGMA mmap_size=268435456;",     // 256MB memory-mapped I/O
             "PRAGMA temp_store=MEMORY;"        // temp tables/indexes in RAM
         ]
         for sql in pragmas {
             sqliteExec(db, sql, context: "pragma \(sql)")
+        }
+    }
+
+    /// Hands the page cache back to the OS (`sqlite3_db_release_memory`, the
+    /// C API for `PRAGMA shrink_memory`). Called from the idle reclaim path;
+    /// the cache refills lazily on subsequent queries, so the only cost is a
+    /// few extra page reads after an idle period.
+    func shrinkMemory() {
+        guard let db else { return }
+        queue.sync {
+            _ = sqlite3_db_release_memory(db)
         }
     }
 

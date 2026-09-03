@@ -1,25 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Theme applied to the Android Window while the process is starting when the OS's Dark Mode setting is off -->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- LaunchTheme/NormalTheme unchanged below; TimerPreset added for the
+         timer panel's preset duration pills (2 rows x 3). -->
     <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
-        <!-- Show a splash screen on the activity. Automatically removed when
-             the Flutter engine draws its first frame -->
         <item name="android:windowBackground">@drawable/launch_background</item>
     </style>
-    <!-- Theme applied to the Android Window as soon as the process has started.
-         This theme determines the color of the Android Window while the
-         Flutter UI initializes, as well as behind your Flutter UI while it's
-         running.
-
-         This Theme is only used starting with V2 of the Flutter Android embedding. -->
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
-    <!-- Translucent fullscreen theme for the timer widget's drag-to-set panel;
-         the panel layout draws its own dark scrim and card. -->
-    <style name="TimerPanelTheme" parent="@android:style/Theme.Translucent.NoTitleBar.Fullscreen">
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:windowIsTranslucent">true</item>
-        <item name="android:backgroundDimEnabled">true</item>
+    <!-- Opaque fullscreen dark theme for the timer wheel page; the layout
+         draws pure black and every element on it. -->
+    <style name="TimerPanelTheme" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:windowIsTranslucent">false</item>
+    </style>
+
+    <style name="TimerPreset">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">42dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_margin">5dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:background">@drawable/timer_preset_bg</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/timer_preset_text</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
     </style>
 </resources>

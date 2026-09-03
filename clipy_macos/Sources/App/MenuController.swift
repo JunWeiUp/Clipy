@@ -19,6 +19,13 @@ class MenuController: NSObject {
     /// 打开期间禁止全量 removeAllItems 重建——重建会销毁正在 hover/展开的 item
     /// 导致"无法选中"，并重新发起所有缩略图/HTML 标题异步加载导致布局抖动。
     private var isMenuOpen = false
+    /// Read-only exposure for the idle memory monitor — it must skip a
+    /// reclaim while the menu is being tracked without touching menu state.
+    var isMenuBarMenuOpen: Bool { isMenuOpen }
+    /// The live instance (MenuController is created by AppDelegate, not a
+    /// singleton). The idle memory monitor reads the menu-open flag through
+    /// it, from the main thread only.
+    private(set) static weak var active: MenuController?
     /// 打开期间发生过数据变化（历史/片段/通知），关闭后再重建一次保证下次最新。
     private var isMenuDirtyWhileOpen = false
 
@@ -28,6 +35,7 @@ class MenuController: NSObject {
     
     override init() {
         super.init()
+        MenuController.active = self
         setupStatusItem()
         setupClipboardObserver()
         setupSnippetObserver()
@@ -312,6 +320,14 @@ class MenuController: NSObject {
         screenshotSubmenu.addItem(screenshotPreferencesItem)
         screenshotItem.submenu = screenshotSubmenu
         menu.addItem(screenshotItem)
+
+        let generatePasswordItem = NSMenuItem(
+            title: L10n.t(.generatePassword) + "...",
+            action: #selector(openPasswordGenerator),
+            keyEquivalent: "P"
+        )
+        generatePasswordItem.target = self
+        menu.addItem(generatePasswordItem)
 
         let notificationCount = NotificationManager.shared.notificationCount
         let notificationItem = NSMenuItem(
@@ -800,6 +816,11 @@ class MenuController: NSObject {
     @objc private func openSearch() {
         NSApp.activate(ignoringOtherApps: true)
         SearchWindow.shared.showWindow()
+    }
+
+    @objc private func openPasswordGenerator() {
+        NSApp.activate(ignoringOtherApps: true)
+        PasswordGeneratorWindow.show()
     }
 
     @objc private func registerGlobalHotKeys() {

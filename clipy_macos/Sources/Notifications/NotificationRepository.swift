@@ -67,6 +67,75 @@ final class NotificationRepository {
         queue.sync { fetchByIdLocked(id) }
     }
 
+    /// SQL-side substring search across title/subtitle/body/app/package, so
+    /// the notification window never pulls the whole table into memory to
+    /// filter it. Results are capped by `limit`.
+    func search(query: String, limit: Int) -> [NotificationManager.NotificationEntry] {
+        queue.sync { searchLocked(query: query, limit: limit) }
+    }
+
+    /// Keeps only the newest `keepLatest` rows (mirror-history retention so
+    /// the SQLite table cannot grow forever). Returns the number deleted.
+    @discardableResult
+    func prune(keepLatest: Int) -> Int {
+        queue.sync {
+            guard let db, keepLatest > 0 else { return 0 }
+            let sql = """
+            DELETE FROM phone_notifications WHERE rowid NOT IN (
+                SELECT rowid FROM phone_notifications ORDER BY post_time DESC LIMIT ?
+            )
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                sqliteLogFailure(db, "notification prune prepare")
+                return 0
+            }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int(stmt, 1, Int32(keepLatest))
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                sqliteLogFailure(db, "notification prune")
+                return 0
+            }
+            return Int(sqlite3_changes(db))
+        }
+    }
+
+    private func searchLocked(query: String, limit: Int) -> [NotificationManager.NotificationEntry] {
+        guard let db, limit > 0 else { return [] }
+        // LIKE is case-insensitive for ASCII by default and case is not a
+        // concept for CJK; escape the wildcard metacharacters in the query.
+        let escaped = query
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+        let pattern = "%\(escaped)%"
+        let sql = """
+        SELECT id, notification_key, package_name, app_name, title, subtitle, body,
+               post_time, group_key, is_clearable, extras_json
+        FROM phone_notifications
+        WHERE title LIKE ?1 ESCAPE '\\'
+           OR subtitle LIKE ?1 ESCAPE '\\'
+           OR body LIKE ?1 ESCAPE '\\'
+           OR app_name LIKE ?1 ESCAPE '\\'
+           OR package_name LIKE ?1 ESCAPE '\\'
+        ORDER BY post_time DESC
+        LIMIT ?2
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        bindText(stmt, 1, pattern)
+        sqlite3_bind_int(stmt, 2, Int32(limit))
+
+        var entries: [NotificationManager.NotificationEntry] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let entry = entryFromStatement(stmt) {
+                entries.append(entry)
+            }
+        }
+        return entries
+    }
+
     /// Distinct (packageName, appName) of all received notifications, ordered by
     /// most recent arrival. Used by Settings to render the app picker.
     func fetchUniqueApps() -> [AppIdentity] {

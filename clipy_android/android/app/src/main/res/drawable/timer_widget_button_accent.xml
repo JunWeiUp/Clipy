@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Filled accent pill for the running-state pause button
-     (swapped in via RemoteViews.setInt setBackgroundResource). -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="#4F9CF9" />
-    <corners android:radius="12dp" />
-</shape>

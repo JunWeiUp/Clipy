@@ -1,31 +1,11 @@
-import AppKit
 import Vision
 
 enum ImageOCRService {
-    private static let queue = DispatchQueue(label: "com.clipy.image-ocr", qos: .userInitiated)
-
-    static func recognize(cgImage: CGImage, completion: @escaping (String?) -> Void) {
-        recognize(cgImage: cgImage, languages: PreferencesManager.shared.screenshotOCRLanguage, completion: completion)
-    }
-
-    static func recognize(
-        cgImage: CGImage,
-        languages: ScreenshotOCRLanguage,
-        completion: @escaping (String?) -> Void
-    ) {
-        queue.async {
-            let text = recognizeSync(cgImage: cgImage, languages: languages)
-            DispatchQueue.main.async {
-                completion(text)
-            }
-        }
-    }
-
-    static func recognizeSync(cgImage: CGImage) -> String? {
-        recognizeSync(cgImage: cgImage, languages: PreferencesManager.shared.screenshotOCRLanguage)
-    }
-
-    static func recognizeSync(cgImage: CGImage, languages: ScreenshotOCRLanguage) -> String? {
+    /// In-process recognition. Vision keeps its models resident for the rest
+    /// of the process lifetime once loaded (~100MB, not releasable), so this
+    /// is only the fallback for when the OCR subprocess cannot be spawned —
+    /// normal traffic goes through `OCRSubprocess`.
+    static func recognizeInProcess(cgImage: CGImage, languages: ScreenshotOCRLanguage) -> String? {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
@@ -50,14 +30,5 @@ enum ImageOCRService {
         } catch {
             return nil
         }
-    }
-
-    static func recognize(image: NSImage) -> String? {
-        // Use bestCGImage to get the native-pixel CGImage (the rep attached by
-        // fromCapture), not cgImage(forProposedRect:) which can re-rasterize.
-        guard let cgImage = ScreenshotImageProcessor.bestCGImage(from: image) else {
-            return nil
-        }
-        return recognizeSync(cgImage: cgImage)
     }
 }

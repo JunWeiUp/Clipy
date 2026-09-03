@@ -7,9 +7,12 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.PowerManager
+import android.provider.DocumentsContract
 import android.provider.Settings
 import android.util.Log
+import android.webkit.MimeTypeMap
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -47,8 +50,7 @@ class MainActivity: FlutterActivity() {
             if (call.method == "openFolder") {
                 val path = call.argument<String>("path")
                 if (path != null) {
-                    openFolder(path)
-                    result.success(null)
+                    openFolder(path, result)
                 } else {
                     result.error("INVALID_ARGUMENT", "Path is null", null)
                 }
@@ -344,34 +346,113 @@ class MainActivity: FlutterActivity() {
         }
     }
 
-    private fun openFolder(path: String) {
+    /**
+     * Open the system file manager at [path]'s containing folder. Received
+     * files live in the public Download/Clipy/ directory, so the folder is
+     * browsable by any file manager; legacy app-private entries fall back to
+     * opening the file itself through FileProvider.
+     */
+    private fun openFolder(path: String, result: MethodChannel.Result) {
         val file = File(path)
-        val parentDir = file.parentFile ?: return
-
+        val dir = file.parentFile
+        if (dir == null || !dir.exists()) {
+            result.error("FILE_NOT_FOUND", "File or folder does not exist: $path", null)
+            return
+        }
         try {
-            val intent = Intent(Intent.ACTION_VIEW)
+            if (openDirectoryInFileManager(dir)) {
+                result.success(null)
+                return
+            }
+            if (file.exists() && openFileInViewer(file)) {
+                result.success(null)
+                return
+            }
+            result.error("NO_ACTIVITY", "No file manager or viewer available for $path", null)
+        } catch (e: Exception) {
+            result.error("OPEN_FAILED", e.message ?: "Failed to open folder", null)
+        }
+    }
+
+    /**
+     * ACTION_VIEW on a DocumentsContract directory URI — the standard way to
+     * ask the system file manager (DocumentsUI / OEM explorer) to open a
+     * specific folder. Only meaningful for shared external storage; app-internal
+     * paths are not browsable by other apps, so they return false immediately.
+     *
+     * Launches a known file-manager package directly when one matches: the
+     * resolver chooser on several ROMs is polluted by apps that greedily
+     * register for arbitrary VIEW mime types.
+     */
+    private fun openDirectoryInFileManager(dir: File): Boolean {
+        @Suppress("DEPRECATION")
+        val storageRoot = Environment.getExternalStorageDirectory()?.absolutePath ?: return false
+        val absolute = dir.absolutePath
+        if (!absolute.startsWith(storageRoot)) return false
+        val relative = absolute.removePrefix(storageRoot).trim('/')
+        if (relative.isEmpty()) return false
+        val uri = DocumentsContract.buildDocumentUri(
+            "com.android.externalstorage.documents",
+            "primary:$relative",
+        )
+        for (mime in arrayOf(DocumentsContract.Document.MIME_TYPE_DIR, "resource/folder")) {
+            val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val handlers = try {
+                packageManager.queryIntentActivities(intent, 0)
+            } catch (e: Exception) {
+                emptyList()
+            }
+            if (handlers.isEmpty()) continue
+            val knownFileManagers = setOf(
+                "com.google.android.documentsui",
+                "com.android.documentsui",
+                "com.android.fileexplorer",
+                "com.mi.android.globalFileexplorer",
+                "com.sec.android.app.myfiles",
+                "com.huawei.hidisk",
+                "com.heytap.filemanager",
+                "com.baidu.motor.filemanager",
+            )
+            val target = handlers
+                .map { it.activityInfo.packageName }
+                .firstOrNull { it in knownFileManagers }
+            if (target != null) {
+                intent.setPackage(target)
+            }
+            try {
+                startActivity(intent)
+                return true
+            } catch (e: Exception) {
+                Log.w("ClipyMain", "Directory view failed for $uri ($mime)", e)
+            }
+        }
+        return false
+    }
+
+    /** Last resort: hand the file itself to a viewer app via FileProvider. */
+    private fun openFileInViewer(file: File): Boolean {
+        return try {
             val uri = FileProvider.getUriForFile(
                 this,
                 "${packageName}.fileprovider",
-                parentDir
+                file,
             )
-
-            // Try to use a generic MIME type that file managers might handle
-            intent.setDataAndType(uri, "resource/folder")
+            val mime = MimeTypeMap.getSingleton()
+                .getMimeTypeFromExtension(file.extension.lowercase()) ?: "*/*"
+            val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
             if (intent.resolveActivity(packageManager) != null) {
                 startActivity(intent)
+                true
             } else {
-                // Fallback: Try with "*/*" MIME type
-                intent.setDataAndType(uri, "*/*")
-                if (intent.resolveActivity(packageManager) != null) {
-                    startActivity(intent)
-                }
+                false
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w("ClipyMain", "Cannot open file ${file.path}", e)
+            false
         }
     }
 }

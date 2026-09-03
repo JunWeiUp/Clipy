@@ -184,6 +184,13 @@ class SyncManager with WidgetsBindingObserver {
   static const int _syncTickBusyMs = 30000;
   static const int _syncTickIdleMs = 90000;
 
+  // Auto-rediscovers a peer whose cached endpoint died (e.g. the Mac's DHCP
+  // address changed): after this many consecutive authorized dial failures,
+  // run one full /24 scan — throttled by the cooldown so a dead address can't
+  // trigger a scan on every tick.
+  static const int _autoRediscoverFailThreshold = 2;
+  static const Duration _autoRediscoverCooldown = Duration(minutes: 10);
+
   // File transfer (see sync/file_transfer.dart).
   /// 1 MiB plaintext ≈ 1.37 MiB base64 frame — well under the 2 MiB cap and
   /// half the per-frame overhead of the old 512 KiB size.
@@ -223,6 +230,11 @@ class SyncManager with WidgetsBindingObserver {
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   bool _isRefreshingDiscovery = false;
   bool _discoveryRunning = false;
+  int _autoRediscoverFailStreak = 0;
+  DateTime? _lastAutoRediscoverAt;
+  /// A full /24 scan that arrived while another discovery run held
+  /// [_discoveryRunning]; replayed once that run finishes (see _runDiscovery).
+  bool _pendingAutoFullScan = false;
 
   bool isEnabled = false;
   int port = 5566;
@@ -301,7 +313,7 @@ class SyncManager with WidgetsBindingObserver {
     displayName = prefs.getString('deviceName') ??
         (Platform.isAndroid ? 'Android' : 'Device');
     pairingSecret = prefs.getString(_pairingSecretKey) ?? '';
-    _receiveDirPath = (await StoragePaths.appStorageDirectory()).path;
+    _receiveDirPath = (await StoragePaths.receiveRootDirectory()).path;
     await _migrateAuthorizedPeerIds(prefs);
     await _migrateDualSyncAuth(prefs);
     clipboardSyncPeerIds =

@@ -24,6 +24,8 @@
     <!-- Timer widget: exact "time's up" alarm. Denied by default on 31+ when
          targeting 33+; TimerWidgetProvider falls back to an inexact alarm. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Timer full-screen alert when the countdown finishes (alarm-style). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:label="Clipy Android"
@@ -125,6 +127,17 @@
             android:theme="@style/TimerPanelTheme"
             android:excludeFromRecents="true"
             android:noHistory="true" />
+
+        <!-- Full-screen alert for a finished countdown; launched by the
+             notification's full-screen intent (shows over the lock screen). -->
+        <activity
+            android:name=".TimerRingingActivity"
+            android:exported="false"
+            android:theme="@style/TimerPanelTheme"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
 
         <!-- Overrides WorkManager's own type-less declaration. Its
              SystemForegroundService hosts the "foreground" SyncGuardWorker; a

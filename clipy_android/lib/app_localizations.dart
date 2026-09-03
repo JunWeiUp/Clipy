@@ -137,6 +137,8 @@ class AppStrings {
   String receivedFile(String fileName) => _t('已接收文件：$fileName', 'Received file: $fileName');
   String get view => _t('查看', 'View');
   String couldNotOpenFolder(Object error) => _t('无法打开文件夹：$error', 'Could not open folder: $error');
+  String get fileNotFound => _t('文件不存在或已被删除', 'File not found or already deleted');
+  String get noFileManager => _t('未找到可用的文件管理器', 'No file manager available');
   String get clipyHistory => _t('Clipy 历史', 'Clipy History');
   String get receivedFiles => _t('已接收文件', 'Received Files');
   String get viewLogs => _t('查看日志', 'View Logs');

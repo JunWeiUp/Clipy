@@ -131,7 +131,10 @@ extension SyncManager {
             inflight.wait()
             flightLock.lock(); inFlightCount += 1; flightLock.unlock()
             syncQueue.async { [weak self] in
-                let ok = self?.writeFrameToSession(fd, frame) ?? false
+                // Already executing on syncQueue: call the locked writer
+                // directly. Going through writeFrameToSession here would
+                // dispatch_sync our own queue and trip GCD's deadlock trap.
+                let ok = self?.writeFrameOnSyncQueue(fd, frame) ?? false
                 flightLock.lock()
                 inFlightCount -= 1
                 let nowEmpty = inFlightCount == 0
@@ -188,12 +191,19 @@ extension SyncManager {
         return ok
     }
 
-    /// Write one frame on the sync queue with the retired-fd guard.
+    /// Write one frame with the retired-fd guard. Safe from any queue except
+    /// syncQueue itself — callers already on syncQueue must use
+    /// `writeFrameOnSyncQueue` directly or they deadlock.
     private func writeFrameToSession(_ fd: Int32, _ data: Data) -> Bool {
         syncQueue.sync {
-            guard !retiredFDs.contains(fd), sessions.values.first(where: { $0.fd == fd }) != nil else { return false }
-            return writeAll(fd, data)
+            writeFrameOnSyncQueue(fd, data)
         }
+    }
+
+    /// Must run on syncQueue.
+    private func writeFrameOnSyncQueue(_ fd: Int32, _ data: Data) -> Bool {
+        guard !retiredFDs.contains(fd), sessions.values.first(where: { $0.fd == fd }) != nil else { return false }
+        return writeAll(fd, data)
     }
 
     /// Poll briefly for a live session, dialing `direct` (no auth, like the

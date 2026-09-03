@@ -112,6 +112,8 @@ enum AppWindowSize {
     static let search = CGSize(width: 1200, height: 800)
     static let editor = CGSize(width: 800, height: 600)
     static let log = CGSize(width: 800, height: 500)
+    static let passwordGenerator = CGSize(width: 460, height: 520)
+    static let passwordGeneratorMin = CGSize(width: 420, height: 470)
     static let listMin = CGSize(width: 480, height: 320)
     static let searchMin = CGSize(width: 800, height: 680)
     static let notificationMin = CGSize(width: 560, height: 360)
