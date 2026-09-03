@@ -1,50 +1,61 @@
+<p align="right"><a href="README.md">English</a> &nbsp; / &nbsp; <b>简体中文</b></p>
+
 <div align="center">
 
-<img src="Logo.png" alt="Clipy" width="160" height="160" />
+<img src="Logo.png" alt="Clipy" width="96" height="96" />
 
 # Clipy
 
-**原生 macOS 菜单栏剪贴板管理 + 截图工具，支持与手机端进行局域网加密同步。**
+**让 Mac 和 Android，共享你的剪贴板。**
 
-剪贴板历史 · 片段与快捷键 · 截图标注与端侧 OCR · 全局搜索 ·
-手机通知镜像 · AES-GCM 加密同步与文件传输
+找回复制过的内容，在另一台设备上继续使用。局域网同步，无需账号。
 
-[中文](README_ZH.md) | [English](README.md)
+**[下载 macOS 版 →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-macOS-v1.0.15.zip)** &nbsp; · &nbsp; **[下载 Android 版 →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-Android-arm64-v8a-v1.0.15.apk)**
 
-[![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?include_prereleases&label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
+<sub>v1.0.15 · macOS 13+，Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED_ZH.md#下载与版本">其他安装包与版本说明</a></sub>
+
+[![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
-[![Platform](https://img.shields.io/badge/平台-macOS%2013%2B%20·%20Android-blue?logo=apple)](#-下载)
-[![Language](https://img.shields.io/badge/构建于-Swift%20·%20Flutter-orange?logo=swift&logoColor=white)](#-架构)
 [![License review](https://img.shields.io/badge/license-review_required-orange)](THIRD_PARTY_NOTICES.md)
-[![Stars](https://img.shields.io/github/stars/JunWeiUp/Clipy?style=social&logo=star)](https://github.com/JunWeiUp/Clipy/stargazers)
 
 </div>
 
-[开发指南](docs/DEVELOPMENT.md) · [架构地图](docs/ARCHITECTURE.md) · [贡献规范](CONTRIBUTING.md) · [安全说明](SECURITY.md)
+> **版本说明：**上方下载入口对应已发布的 v1.0.15，`master` 分支包含此后的更新。其中，私有配对密钥设置尚未包含在 v1.0.15 中；启用同步前请先阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
 
 > 发布前注意：截图模块移植自 macshot，需先完成[第三方许可核对](THIRD_PARTY_NOTICES.md)，再发布新的组合二进制。根目录的 MIT 文本不能代表该模块的完整许可条件。
 
----
-
-## ✨ 为什么选择 Clipy
-
-Clipy 常驻菜单栏，悄悄增强你的剪贴板。除了保存你复制的每一条内容，它还内置了**带端侧 OCR 的完整截图与标注工具**、覆盖全部历史的**全局搜索**，以及**加密同步**——把 Android 手机的剪贴板、文件和通知实时镜像到 Mac。无需云端、无需账号，一切都在你的局域网内完成。
-
-- 🔒 **本地优先** —— 在可信网络中使用 **AES-GCM 256 位**加密同步载荷，请配置私有配对密钥；历史媒体可选静态加密，密钥存放在 macOS 钥匙串。详见[安全边界](SECURITY.md)。
-- ⚡ **原生轻量** —— macOS 端纯 Swift/AppKit（不占 Dock），移动端 Flutter。
-- 🌍 **双语界面** —— 随时在中文与英文之间切换。
-
-## 🖼️ 截图
+## 看看实际界面
 
 <p align="center">
-  <img src="res/search.png" width="560" alt="全局搜索，支持正则与类型 / 来源 App / 日期筛选" />
+  <img src="res/search.png" width="640" alt="Clipy 全局搜索的真实界面：剪贴板历史、内容预览，以及类型、来源应用和日期筛选。" />
 </p>
 
-<p align="center"><sub>全局搜索（<kbd>⇧</kbd><kbd>⌘</kbd><kbd>F</kbd>）—— 正则、类型 / 来源 App / 日期筛选、结果排序。</sub></p>
+<p align="center"><sub>按 <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> 找回之前复制的内容。截图来自真实应用，支持中英文界面。</sub></p>
 
-> **截图标注工具**、**通知镜像** 的截图即将补充。
+## 让日常衔接更顺手
 
-## 🚀 功能
+| 当你需要…… | Clipy 可以帮你…… |
+| --- | --- |
+| 找回之前复制的链接或文字 | 按类型、来源应用和日期搜索剪贴板历史。 |
+| 在 Mac 和 Android 之间传递复制的内容 | 在可信局域网中跨设备同步。 |
+| 重复使用常用回复或代码片段 | 在 macOS 上管理片段，并设置快捷键。 |
+
+macOS 端使用原生 Swift / AppKit，Android 端使用 Flutter。截图标注、OCR 和通知镜像等功能见[完整功能说明](#完整功能说明)，同步的信任边界见[安全说明](SECURITY.md)。
+
+## 三步开始使用
+
+1. **安装对应版本。** macOS 解压后，将 `ClipyClone.app` 移到「应用程序」；Android 安装 APK。Mac 端入口在菜单栏。详见[平台与首次启动说明](docs/GETTING_STARTED_ZH.md)。
+2. **试试剪贴板历史。** 复制一段无敏感信息的测试文字，打开菜单栏应用，再按 <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> 搜索。使用相关功能时，再按提示授予对应权限。
+3. **连接另一台设备。** 按[对应版本的同步步骤](docs/GETTING_STARTED_ZH.md#连接-mac-与-android)设置，首次测试时保持两端应用打开，并分别开启向目标设备的剪贴板共享。
+
+**[安装与常见问题](docs/GETTING_STARTED_ZH.md)** · **[反馈问题](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[建议新功能](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
+
+如果 Clipy 帮到了你的日常工作，欢迎在 [GitHub 点个 ⭐](https://github.com/JunWeiUp/Clipy)，让更多人发现它。中文或英文反馈都欢迎。
+
+## 完整功能说明
+
+<details>
+<summary><b>展开剪贴板、截图、同步与通知功能</b></summary>
 
 ### 📋 剪贴板历史
 - 自动捕获**文本、RTF、HTML、PDF、图片、文件**。
@@ -97,18 +108,10 @@ Clipy 常驻菜单栏，悄悄增强你的剪贴板。除了保存你复制的�
 请只在可信网络中启用同步，并配置足够强的私有配对密钥。密钥留空会使用源码中公开的兼容密钥，**无法对知道源码的攻击者提供保密性**。授权设备列表不是密码学身份认证，单次文本与文件发送也有不同的授权规则。完整说明见 [SECURITY.md](SECURITY.md)。
 </details>
 
-## ⬇️ 下载
+</details>
 
-前往 [**Releases**](https://github.com/JunWeiUp/Clipy/releases) 页面获取最新构建：
-
-| 平台 | 产物 |
-| --- | --- |
-| macOS 13+（Apple Silicon） | `ClipyClone-macOS-v<version>.zip` |
-| Android（64 位） | `ClipyClone-Android-arm64-v8a-v<version>.apk` |
-| Android（32 位） | `ClipyClone-Android-armeabi-v7a-v<version>.apk` |
-| iOS（实验性） | 仅保留源码目标，未通过 CI 验证 |
-
-> 首次启动时，请在「系统设置 → 隐私与安全性」中授予**辅助功能**（粘贴模拟）、**屏幕录制**（截图）和**本地网络**（同步）权限。
+<details>
+<summary><b>开发者文档：构建、架构与同步协议</b></summary>
 
 ## 🛠️ 从源码构建
 
@@ -178,6 +181,8 @@ res/                      # README 图片资源
 assets/                   # Logo 与应用图标
 ```
 
+</details>
+
 ## 🤝 贡献
 
 欢迎用中文或英文提交 Issue 和 Pull Request！先阅读[贡献规范](CONTRIBUTING.md)与[架构地图](docs/ARCHITECTURE.md)。贡献代码：
@@ -196,6 +201,8 @@ git push origin v1.1.0
 ```
 
 也可以手动触发 `Release` workflow，并输入类似 `1.1.0` 的版本号。发布草稿前请完成[发布清单](docs/DEVELOPMENT.md#release-checklist)，尤其是许可与签名核对。
+
+可使用[更新说明模板](docs/RELEASE_NOTES_TEMPLATE.md)，说明用户可见的变化、升级步骤与实际提供的平台版本。
 
 ## 📄 许可证
 

@@ -1,50 +1,61 @@
+<p align="right"><b>English</b> &nbsp; / &nbsp; <a href="README_ZH.md">简体中文</a></p>
+
 <div align="center">
 
-<img src="Logo.png" alt="Clipy" width="160" height="160" />
+<img src="Logo.png" alt="Clipy" width="96" height="96" />
 
 # Clipy
 
-**A native macOS menu-bar clipboard manager & screenshot tool, with encrypted LAN sync to your phone.**
+**Your Mac clipboard, connected to Android.**
 
-Clipboard history · Snippets & hotkeys · Screenshot annotation & on-device OCR · Global search ·
-Phone-notification mirror · AES-GCM encrypted sync & file transfer
+Find what you copied. Reuse it on another device. Keep sync on your local network, with no account required.
 
-[English](README.md) | [中文](README_ZH.md)
+**[Download for macOS →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-macOS-v1.0.15.zip)** &nbsp; · &nbsp; **[Download for Android →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-Android-arm64-v8a-v1.0.15.apk)**
 
-[![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?include_prereleases&label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
+<sub>v1.0.15 · macOS 13+ on Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds and version notes</a></sub>
+
+[![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
-[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B%20·%20Android-blue?logo=apple)](#-download)
-[![Language](https://img.shields.io/badge/built%20with-Swift%20·%20Flutter-orange?logo=swift&logoColor=white)](#-architecture)
 [![License review](https://img.shields.io/badge/license-review_required-orange)](THIRD_PARTY_NOTICES.md)
-[![Stars](https://img.shields.io/github/stars/JunWeiUp/Clipy?style=social&logo=star)](https://github.com/JunWeiUp/Clipy/stargazers)
 
 </div>
 
-[Development](docs/DEVELOPMENT.md) · [Architecture](docs/ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+> **Version notes:** the download links above point to the published v1.0.15 release. The `master` branch includes newer changes. In particular, private pairing-secret settings are not included in v1.0.15; read the [sync version notes](docs/GETTING_STARTED.md#sync-version-notes) before enabling sync.
 
 > Release readiness: the macshot-derived screenshot module needs a [third-party license review](THIRD_PARTY_NOTICES.md) before new combined binaries are published. The repository's MIT text is not a complete licensing statement for that module.
 
----
-
-## ✨ Why Clipy
-
-Clipy lives in your menu bar and quietly supercharges your clipboard. Beyond saving everything you copy, it bundles a **full screenshot & annotation tool with on-device OCR**, a **global search across your history**, and **encrypted sync** that mirrors your Android phone's clipboard, files, and notifications straight to your Mac — no cloud, no account, everything stays on your local network.
-
-- 🔒 **Local-first** — sync payloads use **AES-GCM 256-bit** on trusted networks; configure a private pairing secret. History media can be encrypted at rest with keys in the macOS Keychain. See [security limitations](SECURITY.md).
-- ⚡ **Native & lightweight** — pure Swift/AppKit on macOS (stays out of your Dock), Flutter on mobile.
-- 🌍 **Bilingual** — switch between 中文 and English at any time.
-
-## 🖼️ Screenshots
+## See it in use
 
 <p align="center">
-  <img src="res/search.png" width="560" alt="Global search with regex and type / source-app / date filters" />
+  <img src="res/search.png" width="640" alt="Actual Clipy search interface in Chinese, with clipboard history, content preview, and type, source-app, and date filters." />
 </p>
 
-<p align="center"><sub>Global search (<kbd>⇧</kbd><kbd>⌘</kbd><kbd>F</kbd>) — regex, type / source-app / date filters, ranked results.</sub></p>
+<p align="center"><sub>Press <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> to find an earlier copy. Actual app screenshot; English and Chinese interfaces are available.</sub></p>
 
-> Screenshots for the **screenshot & annotation tool** and **notification mirror** coming soon.
+## Made for everyday handoffs
 
-## 🚀 Features
+| When you want to… | Clipy helps you… |
+| --- | --- |
+| Find a link or paragraph you copied earlier | Search clipboard history by type, source app, or date. |
+| Move copied text between Mac and Android | Sync across devices on your trusted local network. |
+| Reuse the same reply or code fragment | Organize snippets and assign shortcuts on macOS. |
+
+Native Swift / AppKit on macOS, Flutter on Android. Screenshot annotation, OCR, and notification mirroring are also included in the [feature reference](#feature-reference). For the sync trust model, see [Security](SECURITY.md).
+
+## Get started in three steps
+
+1. **Install your build.** Unzip the macOS download and move `ClipyClone.app` to Applications, or install the Android APK. Clipy runs in the Mac menu bar. See [platform and first-launch details](docs/GETTING_STARTED.md).
+2. **Try clipboard history.** Copy a harmless test phrase, open the menu-bar app, then use <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> to find it. Grant permissions when you use the corresponding feature.
+3. **Connect a second device.** Follow the [version-specific sync setup](docs/GETTING_STARTED.md#connect-mac-and-android). Keep both apps open for the first test and enable clipboard sharing for your intended device in each direction.
+
+**[Installation & troubleshooting](docs/GETTING_STARTED.md)** · **[Report a problem](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[Suggest a feature](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
+
+If Clipy helps with your daily workflow, a [⭐ on GitHub](https://github.com/JunWeiUp/Clipy) helps other people find it. Feedback is welcome in English or Chinese.
+
+## Feature reference
+
+<details>
+<summary><b>Explore clipboard, screenshots, sync, and notifications</b></summary>
 
 ### 📋 Clipboard history
 - Captures **text, RTF, HTML, PDF, images, and files** automatically.
@@ -97,18 +108,10 @@ Clipy lives in your menu bar and quietly supercharges your clipboard. Beyond sav
 Use sync only on trusted networks and configure a strong private pairing secret. An empty secret uses a public compatibility key and does **not** protect traffic from someone who knows the source. The authorized-devices list is not cryptographic identity verification; one-shot text/file transfers have different authorization rules. See [SECURITY.md](SECURITY.md) for the full limitations.
 </details>
 
-## ⬇️ Download
+</details>
 
-Grab the latest build from the [**Releases**](https://github.com/JunWeiUp/Clipy/releases) page:
-
-| Platform | Artifact |
-| --- | --- |
-| macOS 13+ (Apple Silicon) | `ClipyClone-macOS-v<version>.zip` |
-| Android (64-bit) | `ClipyClone-Android-arm64-v8a-v<version>.apk` |
-| Android (32-bit) | `ClipyClone-Android-armeabi-v7a-v<version>.apk` |
-| iOS (experimental) | Source target only; not validated in CI |
-
-> On first launch, grant **Accessibility** (paste simulation), **Screen Recording** (screenshots), and **Local Network** (sync) permissions in System Settings → Privacy & Security.
+<details>
+<summary><b>For developers: build, architecture, and protocol</b></summary>
 
 ## 🛠️ Build from source
 
@@ -178,6 +181,8 @@ res/                      # README assets
 assets/                   # Logo & app icons
 ```
 
+</details>
+
 ## 🤝 Contributing
 
 Issues and pull requests are welcome in English or Chinese. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [architecture map](docs/ARCHITECTURE.md). To contribute code:
@@ -196,6 +201,8 @@ git push origin v1.1.0
 ```
 
 The `Release` workflow can also be triggered manually with a version like `1.1.0`. Complete the [release checklist](docs/DEVELOPMENT.md#release-checklist), including licensing and signing review, before publishing the draft.
+
+Use the [release notes template](docs/RELEASE_NOTES_TEMPLATE.md) to explain user-visible changes, upgrade steps, and the platforms included in each release.
 
 ## 📄 License
 
