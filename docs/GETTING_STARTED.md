@@ -4,13 +4,15 @@
 
 ## Downloads
 
-These links point to **v1.0.15, published August 5, 2026**. They are versioned downloads, not automatic pointers to future releases. See [all releases](https://github.com/JunWeiUp/Clipy/releases) for newer builds and their notes.
+These links point to **v1.0.17, published September 3, 2026**, currently marked Latest. They are versioned downloads, not automatic pointers to future releases. See [all releases](https://github.com/JunWeiUp/Clipy/releases) for newer builds and their notes.
 
 | Device | Download |
 | --- | --- |
-| Mac with Apple Silicon, macOS 13+ | [macOS ZIP](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-macOS-v1.0.15.zip) |
-| Android, arm64 | [64-bit APK](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-Android-arm64-v8a-v1.0.15.apk) |
-| Android, armeabi-v7a | [32-bit APK](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-Android-armeabi-v7a-v1.0.15.apk) |
+| Mac with Apple Silicon, macOS 13+ | [macOS ZIP](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-macOS-v1.0.17.zip) |
+| Android, arm64 | [64-bit APK](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-Android-arm64-v8a-v1.0.17.apk) |
+| Android, armeabi-v7a | [32-bit APK](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-Android-armeabi-v7a-v1.0.17.apk) |
+
+The release also provides [SHA-256 checksums](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/SHA256SUMS.txt) for the APK and ZIP files. Published packages use build **10057**; local source defaults to **10040**. If replacing a release APK with a local build, use the same signing key and a higher build number; do not uninstall without backing up app data.
 
 The macOS ZIP contains an **arm64** application; it is not an Intel or universal build. There is no published iOS installer in this release. The iOS source target is experimental. For development builds, read [Development](DEVELOPMENT.md).
 
@@ -26,21 +28,21 @@ The project's current build workflow does not notarize the app. Verify the downl
 
 ## Sync version notes
 
-The current `main` source and the downloadable v1.0.15 are different:
+The published v1.0.17 and current `main` source provide pairing settings that the older v1.0.15 release did not:
 
 | Build | Pairing behavior |
 | --- | --- |
-| Published v1.0.15 | Uses a public compatibility key; no private pairing-secret setting in its UI. It does not provide confidentiality against someone who knows that key. |
-| Current development source | Exposes a private pairing-secret setting. Set the same strong, non-empty secret on both devices; an empty value falls back to compatibility mode. |
+| Legacy v1.0.15 | Uses a public compatibility key; no private pairing-secret setting in its UI. It does not provide confidentiality against someone who knows that key. |
+| Published v1.0.17 / current source | Exposes a private pairing-secret setting. Set the same strong, non-empty secret on both devices; an empty value falls back to compatibility mode. |
 
-The intended environment is a trusted local network. For a v1.0.15 sync trial, use non-sensitive sample text; do not use that release to synchronize secrets. A private secret in a development build does not add authenticated device identity or remove all protocol limitations. Read [Security](../SECURITY.md) before enabling sync.
+The intended environment is a trusted local network. If you still use v1.0.15, use only non-sensitive sample text; do not use that release to synchronize secrets. A private secret in v1.0.17 does not add authenticated device identity or remove all protocol limitations. Read [Security](../SECURITY.md) before enabling sync.
 
-New combined macOS releases also require the existing [third-party license review](../THIRD_PARTY_NOTICES.md). This guide does not describe the development branch as a newly published release.
+The existing [third-party license review](../THIRD_PARTY_NOTICES.md) remains open. Published release status does not mean that review has been completed.
 
 ## Connect Mac and Android
 
 1. Put both devices on a trusted local network and keep both apps open for the first test. Prefer the same app version on both ends.
-2. In a development build that has **Pairing secret** in Settings, save the same strong, private value on both devices **before** enabling LAN sync. v1.0.15 has no such setting; apply the limitations above. Avoid mixing private-secret mode with an older build that cannot use that secret.
+2. In v1.0.17, save the same strong, private **Pairing secret** in Settings on both devices **before** enabling LAN sync. v1.0.15 has no such setting; apply the limitations above. Avoid mixing private-secret mode with an older build that cannot use that secret.
 3. Enable LAN sync. In each device's device list, enable clipboard sharing to the intended other device. These outgoing sharing switches are directional; configure both ends for two-way automatic sharing. Notification sharing is a separate option.
 4. Copy non-sensitive test text on the Mac and check the Android history. To test the other direction, keep the Android app in the foreground, use its clipboard/import controls as needed, and check Mac history. Android background clipboard capture depends on OS restrictions and the permissions available on your device.
 
@@ -50,7 +52,7 @@ Check that both apps have sync enabled, their listener ports match (default **55
 
 ### Devices appear, but text does not arrive
 
-Check the outgoing clipboard-sharing switch on the **sending** device. For development builds, check that pairing secrets match. Then retry with both apps visible and non-sensitive sample text. A missing Android notification permission affects notification mirroring and should be investigated separately from clipboard sharing.
+Check the outgoing clipboard-sharing switch on the **sending** device. In v1.0.17, check that pairing secrets match. Then retry with both apps visible and non-sensitive sample text. A missing Android notification permission affects notification mirroring and should be investigated separately from clipboard sharing.
 
 ### How do I change language?
 

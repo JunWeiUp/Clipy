@@ -1,20 +1,15 @@
-<p align="right"><b>English</b> &nbsp; / &nbsp; <a href="README_ZH.md">简体中文</a></p>
-
 <div align="center">
+  <img src="Logo.png" alt="Clipy — two linked clipboard sheets" width="112" height="112" />
+  <h1>Clipy</h1>
+  <p><strong>Your Mac clipboard, connected to Android.</strong></p>
+  <p>Find what you copied. Reuse it on another device. Keep sync on your local network, with no account required.</p>
+  <p><strong>English</strong> · <a href="README_ZH.md">简体中文</a></p>
 
-<img src="Logo.png" alt="Clipy" width="96" height="96" />
+**[Download for macOS →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-macOS-v1.0.17.zip)** &nbsp; · &nbsp; **[Download for Android →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-Android-arm64-v8a-v1.0.17.apk)**
 
-# Clipy
+<sub>Latest release: v1.0.17 · macOS 13+ on Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds and version notes</a></sub>
 
-**Your Mac clipboard, connected to Android.**
-
-Find what you copied. Reuse it on another device. Keep sync on your local network, with no account required.
-
-**[Download for macOS →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-macOS-v1.0.15.zip)** &nbsp; · &nbsp; **[Download for Android →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.15/ClipyClone-Android-arm64-v8a-v1.0.15.apk)**
-
-<sub>Published v1.0.15 · macOS 13+ on Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds and version notes</a></sub>
-
-Current source version: **1.0.17** · Build **10040** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.17** · Default local build **10040** · [Build metadata](clipy_android/pubspec.yaml)
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
@@ -22,19 +17,11 @@ Current source version: **1.0.17** · Build **10040** · [Build metadata](clipy_
 
 </div>
 
-> **Version notes:** the download links above point to the published v1.0.15 release. The `main` branch includes newer changes. In particular, private pairing-secret settings are not included in v1.0.15; read the [sync version notes](docs/GETTING_STARTED.md#sync-version-notes) before enabling sync.
+> **Version notes:** [v1.0.17](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.17) is published and marked Latest. It includes redesigned macOS and Android icons, with adaptive and themed icons on Android. Private pairing-secret settings are available in this release; users upgrading from v1.0.15 should read the [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
 The Release badge tracks published stable releases, not the current source version or unpublished drafts.
 
-> Release readiness: the macshot-derived screenshot module needs a [third-party license review](THIRD_PARTY_NOTICES.md) before new combined binaries are published. The repository's MIT text is not a complete licensing statement for that module.
-
-## See it in use
-
-<p align="center">
-  <img src="res/search.png" width="640" alt="Actual Clipy search interface in Chinese, with clipboard history, content preview, and type, source-app, and date filters." />
-</p>
-
-<p align="center"><sub>Press <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> to find an earlier copy. Actual app screenshot; English and Chinese interfaces are available.</sub></p>
+> License notice: the macshot-derived screenshot module still needs a [third-party license review](THIRD_PARTY_NOTICES.md). A published release does not mean that review is complete. The repository's MIT text is not a complete licensing statement for that module.
 
 ## Made for everyday handoffs
 
@@ -169,6 +156,8 @@ iOS remains experimental and is not validated by this project's CI.
 
 Both root build scripts default to `version: X.Y.Z+N` in [`clipy_android/pubspec.yaml`](clipy_android/pubspec.yaml): `X.Y.Z` is the application version and `N` is the build number. `APP_VERSION` and `BUILD_NUMBER` can explicitly override them for a build. When changing versions, update **both README files** in the same change and keep build numbers increasing; installing over a newer CI build may require a higher `BUILD_NUMBER`.
 
+The published v1.0.17 packages use build **10057** (source build 10040 + Release run 17). To replace that Android APK with a local build, retain the same signing key and explicitly set a higher `BUILD_NUMBER`; the default local build number is not the published package's build number.
+
 Run `bash scripts/check.sh all` from the root for local quality checks.
 
 ## 🏗️ Architecture
@@ -237,6 +226,8 @@ git push origin "v${VERSION}"
 ```
 
 The `Release` workflow can also be triggered manually with the matching `X.Y.Z` version. Do not move or overwrite existing version tags. Complete the [release checklist](docs/DEVELOPMENT.md#release-checklist), including licensing and signing review, before publishing the draft.
+
+The workflow intentionally sets `draft: true`: a successful build does not automatically publish a release or make it Latest. After review, edit the draft on GitHub, leave **This is a pre-release** unchecked, select **Set as latest release**, and click **Publish release**. No rebuild or tag replacement is needed. Then update the published-version text and download links in both README files and both getting-started guides. See [GitHub's release instructions](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository).
 
 Use the [release notes template](docs/RELEASE_NOTES_TEMPLATE.md) to explain user-visible changes, upgrade steps, and the platforms included in each release.
 

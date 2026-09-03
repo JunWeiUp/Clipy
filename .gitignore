@@ -58,3 +58,9 @@ __pycache__/
 *.db-wal
 *.sqlite
 *.sqlite3
+
+# Personal exports and the legacy screenshot of real clipboard history
+**/snippets.json
+**/history.json
+**/notifications.json
+/res/search.png

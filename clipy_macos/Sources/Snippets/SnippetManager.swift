@@ -145,6 +145,7 @@ class SnippetManager {
         folders.first { $0.id == id }
     }
 
+    // Ship only synthetic examples. Never seed personal contacts, credentials, or work content.
     private func createDefaultSnippets() {
         let greetings = SnippetFolder(id: UUID(), title: "Greetings", snippets: [
             Snippet(id: UUID(), title: "Hi", content: "Hi there!"),
@@ -154,7 +155,7 @@ class SnippetManager {
         let work = SnippetFolder(id: UUID(), title: "Work", snippets: [
             Snippet(id: UUID(), title: "Thanks", content: "Thank you!"),
             Snippet(id: UUID(), title: "Check", content: "I'll check it."),
-            Snippet(id: UUID(), title: "Email", content: "My Email: example@gmail.com")
+            Snippet(id: UUID(), title: "Example Email", content: "hello@example.com")
         ])
         folders = [greetings, work]
         saveSnippets()
