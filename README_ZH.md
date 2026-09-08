@@ -7,7 +7,7 @@
   <img src="res/readme/connected-hero.webp" alt="Clipy 概念插画：文字、图片与链接在 Mac 和 Android 手机之间流动" width="1120" />
   <br /><br />
 
-**[下载 macOS 版 ↗](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-macOS-v1.0.18.zip)** &nbsp;&nbsp; · &nbsp;&nbsp; **[下载 Android 版 ↗](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-Android-arm64-v8a-v1.0.18.apk)**
+**[下载 macOS 版 ↗](https://github.com/JunWeiUp/Clipy/releases/latest)** &nbsp;&nbsp; · &nbsp;&nbsp; **[下载 Android 版 ↗](https://github.com/JunWeiUp/Clipy/releases/latest)**
 
 <sub>最新正式版：v1.0.18 · macOS 13+ / Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED_ZH.md#下载与版本">其他安装包与安装说明</a></sub>
 

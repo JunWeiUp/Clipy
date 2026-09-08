@@ -7,7 +7,7 @@
   <img src="res/readme/connected-hero.webp" alt="Clipy concept illustration: text, images and links flowing between a Mac and an Android phone" width="1120" />
   <br /><br />
 
-**[Download for macOS ↗](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-macOS-v1.0.18.zip)** &nbsp;&nbsp; · &nbsp;&nbsp; **[Download for Android ↗](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-Android-arm64-v8a-v1.0.18.apk)**
+**[Download for macOS ↗](https://github.com/JunWeiUp/Clipy/releases/latest)** &nbsp;&nbsp; · &nbsp;&nbsp; **[Download for Android ↗](https://github.com/JunWeiUp/Clipy/releases/latest)**
 
 <sub>Latest release: v1.0.18 · macOS 13+ / Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds & installation</a></sub>
 
