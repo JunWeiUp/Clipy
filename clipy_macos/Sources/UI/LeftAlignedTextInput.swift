@@ -67,7 +67,7 @@ struct LeftAlignedTextEditor: NSViewRepresentable {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
-        scrollView.borderType = .bezelBorder
+        scrollView.borderType = .noBorder
         scrollView.drawsBackground = true
 
         let textView = NSTextView()
@@ -75,9 +75,12 @@ struct LeftAlignedTextEditor: NSViewRepresentable {
         textView.isEditable = true
         textView.isSelectable = true
         textView.importsGraphics = false
-        textView.font = NSFont.systemFont(ofSize: AppFont.bodySize)
+        textView.font = NSFont.systemFont(ofSize: 14)
         textView.alignment = .left
-        textView.textContainerInset = NSSize(width: 4, height: 4)
+        textView.textContainerInset = NSSize(width: AppSpacing.xl, height: AppSpacing.lg)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 6
+        textView.defaultParagraphStyle = paragraph
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
         textView.isVerticallyResizable = true

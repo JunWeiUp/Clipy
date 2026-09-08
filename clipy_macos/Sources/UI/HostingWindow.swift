@@ -10,7 +10,7 @@ final class HostingWindow<Content: View>: NSWindow, NSWindowDelegate {
         frameAutosaveName: String? = nil,
         @ViewBuilder content: () -> Content
     ) {
-        var styleMask: StyleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
+        var styleMask: StyleMask = [.titled, .closable, .miniaturizable]
         if resizable {
             styleMask.insert(.resizable)
         }
@@ -45,11 +45,12 @@ final class HostingWindow<Content: View>: NSWindow, NSWindowDelegate {
             }
         }
 
-        // Liquid Glass：透明窗口 + 毛玻璃背景层。
-        backgroundColor = .clear
-        isOpaque = false
+        // Standard windows use readable, opaque content and the native title bar.
+        // Capture overlays have their own canvas chrome and lifecycle.
+        backgroundColor = .windowBackgroundColor
+        isOpaque = true
         titlebarAppearsTransparent = true
-        titleVisibility = .hidden
+        titleVisibility = .visible
         if #available(macOS 13.0, *) {
             titlebarSeparatorStyle = .none
         }
@@ -58,6 +59,8 @@ final class HostingWindow<Content: View>: NSWindow, NSWindowDelegate {
         center()
 
         let root = content()
+            .font(AppFont.body)
+            .tint(AppColor.accent)
             .environmentObject(AppLanguageObserver.shared)
         let intendedFrame = frame
         let hostingController = NSHostingController(rootView: root)
@@ -65,24 +68,8 @@ final class HostingWindow<Content: View>: NSWindow, NSWindowDelegate {
             hostingController.sizingOptions = [.minSize]
         }
 
-        // 用 NSVisualEffectView 作为窗口背景，HostingController 的内容浮于其上，
-        // 让整个窗口内容呈现统一的毛玻璃质感。
-        let effect = NSVisualEffectView()
-        effect.material = .underWindowBackground
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        effect.wantsLayer = true
-
         let container = NSView(frame: NSRect(origin: .zero, size: size))
         container.wantsLayer = true
-        effect.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(effect)
-        NSLayoutConstraint.activate([
-            effect.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            effect.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            effect.topAnchor.constraint(equalTo: container.topAnchor),
-            effect.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
 
         hostingController.view.translatesAutoresizingMaskIntoConstraints = false
         hostingController.view.wantsLayer = true
@@ -106,11 +93,12 @@ final class HostingWindow<Content: View>: NSWindow, NSWindowDelegate {
     }
 
     func show() {
+        let wasVisible = isVisible
         makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
         // 极轻克制的窗口淡入：仅 transform/opacity，遵守系统「减少动态效果」。
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if wasVisible || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             alphaValue = 1
         } else {
             alphaValue = 0

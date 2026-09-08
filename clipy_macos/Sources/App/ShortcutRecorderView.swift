@@ -25,11 +25,10 @@ class ShortcutRecorderView: NSView {
 
     private func setupUI() {
         wantsLayer = true
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         layer?.cornerRadius = AppCornerRadius.small
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.borderWidth = 0.5
 
+        label.font = AppFont.resolveFont(size: AppFont.bodySize, weight: .medium)
         label.alignment = .center
         label.isEditable = false
         label.isSelectable = false
@@ -43,6 +42,7 @@ class ShortcutRecorderView: NSView {
         clearButton.imagePosition = .imageOnly
         clearButton.bezelStyle = .circular
         clearButton.isBordered = false
+        clearButton.contentTintColor = .secondaryLabelColor
         clearButton.target = self
         clearButton.action = #selector(clearShortcut)
         clearButton.isHidden = true
@@ -65,6 +65,19 @@ class ShortcutRecorderView: NSView {
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             trailingToEdge,
         ])
+        updateColors()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
+    }
+
+    private func updateColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            layer?.borderColor = (isRecording ? NSColor.controlAccentColor : NSColor.separatorColor).cgColor
+        }
     }
 
     func refreshLocalizedStrings() {
@@ -75,21 +88,19 @@ class ShortcutRecorderView: NSView {
     }
 
     private func updateDisplay() {
+        updateColors()
         if isRecording {
             label.stringValue = L10n.t(.recordingShortcut)
-            layer?.borderColor = NSColor.controlAccentColor.cgColor
             clearButton.isHidden = true
             labelTrailingToClearConstraint?.isActive = false
             labelTrailingToEdgeConstraint?.isActive = true
         } else if let combo = combo {
             label.stringValue = combo.displayString
-            layer?.borderColor = NSColor.separatorColor.cgColor
             clearButton.isHidden = false
             labelTrailingToEdgeConstraint?.isActive = false
             labelTrailingToClearConstraint?.isActive = true
         } else {
             label.stringValue = L10n.t(.recordShortcut)
-            layer?.borderColor = NSColor.separatorColor.cgColor
             clearButton.isHidden = true
             labelTrailingToClearConstraint?.isActive = false
             labelTrailingToEdgeConstraint?.isActive = true

@@ -65,6 +65,7 @@ jobs:
         with:
           persist-credentials: false
       - run: xcodebuild -version
+      - run: bash scripts/test_macos_core.sh
       - run: bash scripts/check.sh macos
       - name: Validate generated bundle
         run: |

@@ -5,12 +5,13 @@ struct StatusBarView: View {
 
     var body: some View {
         HStack {
-            Spacer()
             Text(text)
                 .font(AppFont.caption)
                 .foregroundStyle(.secondary)
+            Spacer()
         }
-        .padding(.horizontal, AppSpacing.sm)
-        .padding(.vertical, AppSpacing.xs / 2)
+        .padding(.horizontal, AppSpacing.md)
+        .padding(.vertical, 7)
+        .background(AppColor.groupedBackground)
     }
 }

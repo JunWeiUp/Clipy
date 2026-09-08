@@ -10,11 +10,11 @@ struct HistoryPreviewView: View {
             if let entry {
                 previewContent(for: entry)
             } else {
-                EmptyStateView(message: L10n.t(.selectHistoryToPreview))
+                EmptyStateView(message: L10n.t(.selectHistoryToPreview), symbol: "doc.text.magnifyingglass")
             }
         }
         .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.clear)
+        .background(AppColor.groupedBackground)
     }
 
     @ViewBuilder
@@ -28,32 +28,30 @@ struct HistoryPreviewView: View {
     }
 
     private func previewHeader(for entry: HistoryEntry) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(typeLabel(for: entry.item))
-                    .font(AppFont.caption)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: AppSpacing.xs) {
+            HStack(spacing: AppSpacing.xs) {
+                Text(typeLabel(for: entry.item)).font(AppFont.section)
                 if entry.isPinned {
-                    Label(L10n.t(.pinToTop), systemImage: "pin.fill")
-                        .font(AppFont.caption)
-                        .foregroundStyle(.orange)
-                        .labelStyle(.titleOnly)
+                    Image(systemName: "pin.fill")
+                        .foregroundStyle(.secondary)
+                        .help(L10n.t(.pinToTop))
                 }
-            }
-            if let source = entry.sourceApp {
-                Text("\(L10n.t(.source)): \(source)")
+                Spacer()
+                Text(RelativeTimeFormatter.string(from: entry.date))
                     .font(AppFont.caption)
                     .foregroundStyle(.secondary)
             }
-            Text("\(L10n.t(.time)): \(RelativeTimeFormatter.string(from: entry.date))")
-                .font(AppFont.caption)
-                .foregroundStyle(.secondary)
-            Text("\(L10n.t(.pasteCount)): \(entry.useCount)")
-                .font(AppFont.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: AppSpacing.xs) {
+                if let source = entry.sourceApp {
+                    Text(source).lineLimit(1)
+                }
+                Spacer()
+                Text("\(L10n.t(.pasteCount)): \(entry.useCount)")
+            }
+            .font(AppFont.caption)
+            .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, AppSpacing.sm)
-        .padding(.vertical, AppSpacing.xs)
+        .padding(AppSpacing.md)
     }
 
     @ViewBuilder

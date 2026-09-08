@@ -79,6 +79,33 @@ final class HistoryRepository {
         }
     }
 
+    /// Keyset pages release the SQLite queue between batches. Full-text/regex
+    /// matching happens outside the queue, never over a full history array.
+    func searchPage(filters: SearchHistoryFilters, beforeRowid: Int64, limit: Int) -> (entries: [HistoryEntry], cursor: Int64?) {
+        queue.sync {
+            guard let db else { return ([], nil) }
+            let built = queryBuilder.buildQuery(limit: limit, filters: filters, textQuery: nil, beforeRowid: beforeRowid)
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, built.sql, -1, &stmt, nil) == SQLITE_OK else { return ([], nil) }
+            defer { sqlite3_finalize(stmt) }
+            for (index, value) in built.bindValues {
+                switch value {
+                case .text(let value): bindText(stmt, index, value)
+                case .double(let value): sqlite3_bind_double(stmt, index, value)
+                case .int(let value): sqlite3_bind_int(stmt, index, value)
+                case .int64(let value): sqlite3_bind_int64(stmt, index, value)
+                }
+            }
+            var entries: [HistoryEntry] = []
+            var cursor: Int64?
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                cursor = sqlite3_column_int64(stmt, 0)
+                if let entry = serializer.entryFromStatement(stmt, includeSearchIndex: true) { entries.append(entry) }
+            }
+            return (entries, cursor)
+        }
+    }
+
     func fetchFiltered(
         filters: SearchHistoryFilters,
         textQuery: String? = nil,
@@ -100,6 +127,19 @@ final class HistoryRepository {
     /// request from a peer that just (re)appeared and wants to catch up on what
     /// it missed while offline. Skips pinned-bias ordering — strictly by date —
     /// so a freshly-restarted Android gets chronological history.
+    func recentTextRowids(limit: Int) -> [Int64] {
+        queue.sync {
+            guard let db else { return [] }
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT rowid FROM history_entries WHERE item_type = 'text' ORDER BY date DESC, rowid DESC LIMIT ?", -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int(stmt, 1, Int32(clamping: limit))
+            var ids: [Int64] = []
+            while sqlite3_step(stmt) == SQLITE_ROW { ids.append(sqlite3_column_int64(stmt, 0)) }
+            return ids.reversed()
+        }
+    }
+
     func fetchRecentTexts(limit: Int = 200) -> [(text: String, hash: String?, date: Date)] {
         let entries = fetchFiltered(
             filters: SearchHistoryFilters(typeFilter: .text),
@@ -500,6 +540,8 @@ final class HistoryRepository {
                     bindText(stmt, index, stringValue)
                 case .double(let doubleValue):
                     sqlite3_bind_double(stmt, index, doubleValue)
+                case .int64(let value):
+                    sqlite3_bind_int64(stmt, index, value)
                 case .int(let intValue):
                     sqlite3_bind_int(stmt, index, intValue)
                 }

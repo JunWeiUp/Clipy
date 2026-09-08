@@ -33,6 +33,22 @@ The Release badge tracks published stable releases, not the current source versi
 
 Native Swift / AppKit on macOS, Flutter on Android. Screenshot annotation, OCR, and notification mirroring are also included in the [feature reference](#feature-reference). For the sync trust model, see [Security](SECURITY.md).
 
+## Screenshots
+
+English interface with fictional example content, captured from the current source build.
+
+**Snippet Library** — Browse folders, find a snippet, and edit or copy it in one place.
+
+<img src="res/screenshots/macos-snippets-en.png" alt="Clipy Snippet Library in English with folder navigation, searchable snippets and a focused document editor" width="1120" />
+
+**Clipboard History** — Scan recent copies while keeping the full content in view.
+
+<img src="res/screenshots/macos-history-en.png" alt="Clipy clipboard history in English with filters, recent items and a text preview" width="1080" />
+
+**Preferences** — Scroll through categories, or jump to a section from the sidebar.
+
+<img src="res/screenshots/macos-preferences-en.png" alt="Clipy Preferences in English with sidebar navigation and continuous scrolling" width="760" />
+
 ## Get started in three steps
 
 1. **Install your build.** Unzip the macOS download and move `ClipyClone.app` to Applications, or install the Android APK. Clipy runs in the Mac menu bar. See [platform and first-launch details](docs/GETTING_STARTED.md).
@@ -78,6 +94,13 @@ If Clipy helps with your daily workflow, a [⭐ on GitHub](https://github.com/Ju
 - **Regex** support, plus filters by **type, source app, and date**.
 - Ranked results, multi-select, copy/paste, and pin straight from results.
 
+### 📖 Word lookup (macOS)
+- Open from the clipboard menu or press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>D</kbd>; change or disable the shortcut in Preferences.
+- Look up English words and short phrases for Chinese definitions, parts of speech, American IPA, word forms, related phrases and bilingual examples. Click a phrase to look it up.
+- Play American pronunciation; if dictionary audio fails, use an installed system American English voice. Missing IPA, phrases or examples are shown explicitly.
+- On opening, a single English word in the clipboard is automatically filled into the focused input; press Return to look it up. Sentences, URLs, files and multiple words are ignored. Queries require internet access and are sent to Youdao Dictionary only after submission; no lookup history is kept. Closing the window cancels requests and audio and releases results.
+- Uses Youdao's web dictionary endpoints without an API key; these are not a versioned public API and may change or become unavailable. Each result links to its source.
+
 ### 🔄 Encrypted LAN sync
 - **AES-GCM 256-bit** encrypted transport between macOS and Android.
 - Devices discover each other via **/24 subnet scan** and **manual IP:port** (works across 2.4G/5G subnets) — no cloud, no account.
@@ -89,8 +112,13 @@ If Clipy helps with your daily workflow, a [⭐ on GitHub](https://github.com/Ju
 - See your Android phone's notifications right on your Mac.
 - **Two-way** dismiss and clear-all; per-app **allow-list** filter.
 
+### macOS interface
+- Native title bars, readable light/dark content surfaces, consistent SF Symbols, spacing and controls.
+- Compact menu with quick tools and six recent clipboard entries; older history, snippets and devices are grouped in submenus.
+- Preferences and screenshot settings scroll continuously across categories; the sidebar follows the visible section and supports click-to-jump. See the [macOS design standard](docs/MACOS_DESIGN.md) for UI development guidance.
+
 ### ⌨️ Global hotkeys & 🌍 i18n
-- Hotkeys for search, screenshots, and every snippet.
+- Hotkeys for search, word lookup, screenshots, and every snippet.
 - Chinese / English UI; native macOS and Flutter Android. The iOS target is experimental and not built or device-tested in CI; Android-native features are not available there by default.
 
 <details>
@@ -158,7 +186,7 @@ Both root build scripts default to `version: X.Y.Z+N` in [`clipy_android/pubspec
 
 The published v1.0.17 packages use build **10057** (source build 10040 + Release run 17). To replace that Android APK with a local build, retain the same signing key and explicitly set a higher `BUILD_NUMBER`; the default local build number is not the published package's build number.
 
-Run `bash scripts/check.sh all` from the root for local quality checks.
+Run `bash scripts/check.sh all` from the root for local quality checks. On macOS, also run `bash scripts/test_macos_core.sh` for search, word lookup and socket regressions; it uses a temporary test executable without installing or launching the app.
 
 ## 🏗️ Architecture
 

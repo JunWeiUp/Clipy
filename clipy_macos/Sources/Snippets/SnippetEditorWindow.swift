@@ -43,7 +43,8 @@ final class SnippetEditorWindow {
             },
             update: { window in
                 window.title = L10n.t(.snippetEditorTitle)
-            }
+            },
+            onShow: { [weak self] in self?.viewModel?.activate() }
         )
     }
 }

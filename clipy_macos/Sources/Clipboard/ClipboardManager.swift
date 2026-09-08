@@ -756,80 +756,9 @@ class ClipboardManager {
         )).map(\.entry)
     }
 
-    func searchHistory(options: SearchHistoryOptions) -> [HistorySearchResult] {
-        let parsed = HistorySearchQueryParser.parse(options.query)
-        let effectiveType = parsed.typeFilter ?? options.typeFilter
-        let effectiveSource = parsed.sourceApp ?? options.sourceApp
-        let effectivePinnedOnly = parsed.pinnedOnly || options.pinnedOnly
-        let effectivePath = parsed.pathContains ?? options.pathContains
-        let effectiveURLOnly = parsed.urlOnly || options.urlOnly
-        let textQuery = parsed.textTerms.joined(separator: " ")
-
-        let trimmed = textQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let browseLoadedOnly = trimmed.isEmpty && !hasActiveSearchFilters(
-            options: options,
-            effectiveType: effectiveType,
-            effectiveSource: effectiveSource,
-            effectivePinnedOnly: effectivePinnedOnly,
-            effectivePath: effectivePath,
-            effectiveURLOnly: effectiveURLOnly
-        )
-        let filters = SearchHistoryFilters(
-            typeFilter: effectiveType,
-            sourceApp: effectiveSource,
-            dateFilter: options.dateFilter,
-            pinnedOnly: effectivePinnedOnly,
-            pathContains: effectivePath,
-            urlOnly: effectiveURLOnly
-        )
-        let ordered = browseLoadedOnly
-            ? repository.fetch(limit: options.browseLimit ?? menuHistoryLimit)
-            : repository.fetchFiltered(
-                filters: filters,
-                textQuery: trimmed.isEmpty ? nil : trimmed,
-                includeSearchIndex: false,
-                limit: maxHistoryItems
-            )
-        let filtered = ordered.filter { entry in
-            if let category = options.contentCategory, !category.matches(entry) {
-                return false
-            }
-            if effectiveURLOnly {
-                let text = entry.resolvedText ?? entry.item.title
-                guard text.contains("://") else { return false }
-            }
-            return true
-        }
-
-        guard !trimmed.isEmpty else {
-            return filtered.map {
-                HistorySearchResult(entry: $0, highlightRanges: [])
-            }
-        }
-
-        return HistorySearchRanker.rank(
-            entries: filtered,
-            query: trimmed,
-            useRegex: options.useRegex,
-            loadFullTextIfNeeded: true
-        )
-    }
-
-    private func hasActiveSearchFilters(
-        options: SearchHistoryOptions,
-        effectiveType: HistoryTypeFilter,
-        effectiveSource: String?,
-        effectivePinnedOnly: Bool,
-        effectivePath: String?,
-        effectiveURLOnly: Bool
-    ) -> Bool {
-        effectiveType != .all
-            || effectiveSource != nil
-            || effectivePinnedOnly
-            || effectivePath != nil
-            || effectiveURLOnly
-            || options.contentCategory != nil
-            || options.dateFilter != .all
+    func searchHistory(options: SearchHistoryOptions, cancellation: HistorySearchCancellation? = nil) -> [HistorySearchResult] {
+        HistorySearchService.search(options: options, repository: repository,
+                                    defaultLimit: menuHistoryLimit, cancellation: cancellation)
     }
 
     func removeHistoryEntry(_ entry: HistoryEntry) {

@@ -31,24 +31,27 @@ struct LogView: View {
         AppListWindowLayout(statusText: statusText) {
             AppWindowHeader {
                 HStack(spacing: AppSpacing.sm) {
-                    TextField(L10n.t(.searchLogs), text: $viewModel.searchText)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: .infinity)
+                    HStack(spacing: AppSpacing.xs) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField(L10n.t(.searchLogs), text: $viewModel.searchText).textFieldStyle(.plain)
+                    }
+                    .modifier(AppInputSurface())
+                    .frame(maxWidth: .infinity)
 
                     Button(action: copyLogs) {
                         Label(L10n.t(.copyAll), systemImage: "doc.on.doc")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(AppToolbarButtonStyle())
 
                     Button(action: revealLogFile) {
                         Label(L10n.t(.revealLogFile), systemImage: "folder")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(AppToolbarButtonStyle())
 
                     Button(action: { logManager.clear() }) {
                         Label(L10n.t(.clear), systemImage: "trash")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(AppToolbarButtonStyle())
                 }
             }
         } content: {

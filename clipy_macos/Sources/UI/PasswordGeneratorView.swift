@@ -69,7 +69,7 @@ struct PasswordGeneratorView: View {
                     Button(action: { viewModel.regenerate() }) {
                         Label(L10n.t(.passwordRegenerate), systemImage: "arrow.clockwise")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(AppToolbarButtonStyle())
                     Button(action: { viewModel.copyToClipboard() }) {
                         Label(L10n.t(.passwordCopy), systemImage: "doc.on.doc")
                     }
@@ -84,13 +84,13 @@ struct PasswordGeneratorView: View {
                     Section {
                         VStack(spacing: AppSpacing.xs) {
                             Text(viewModel.password.isEmpty ? "—" : viewModel.password)
-                                .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 22, weight: .medium, design: .monospaced))
                                 .textSelection(.enabled)
                                 .multilineTextAlignment(.center)
                                 .lineLimit(2)
                                 .minimumScaleFactor(0.5)
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 6)
+                                .padding(.vertical, AppSpacing.md)
                             HStack(spacing: AppSpacing.sm) {
                                 strengthBadge
                                 Spacer()

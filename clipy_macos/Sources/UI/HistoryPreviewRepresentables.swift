@@ -130,7 +130,7 @@ struct PlainTextPreviewRepresentable: NSViewRepresentable {
         textView.font = NSFont.monospacedSystemFont(ofSize: AppFont.bodySize, weight: .regular)
         textView.textColor = .textColor
         textView.backgroundColor = .textBackgroundColor
-        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.textContainerInset = NSSize(width: AppSpacing.md, height: AppSpacing.md)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.textContainer?.widthTracksTextView = true

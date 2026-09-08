@@ -21,6 +21,43 @@ extension Notification.Name {
 }
 
 enum L10nKey: String {
+    case wordLookup
+    case wordPlaceholder
+    case wordSearch
+    case wordLoading
+    case wordInvalidQuery
+    case wordNotFound
+    case wordNetworkError
+    case wordTryAgain
+    case wordMeanings
+    case wordInflections
+    case wordPhrases
+    case wordExamples
+    case wordNoPhrases
+    case wordNoExamples
+    case wordLookupPhrase
+    case wordSource
+    case wordWelcome
+    case wordWelcomeDetail
+    case wordPrivacy
+    case wordAmerican
+    case wordNoIPA
+    case wordPlayAudio
+    case wordStopAudio
+    case wordAudioLoading
+    case wordRecordedAudio
+    case wordSystemAudio
+    case wordAudioUnavailable
+    case wordShortcut
+    case wordShortcutDescription
+    case wordShortcutConflict
+    case menuRecentHistory
+    case designDeviceName
+    case designGeneral
+    case designPermissions
+    case designOutput
+    case designDrawing
+    case designEffects
     case recordShortcut
     case recordingShortcut
     case preferences
@@ -70,6 +107,19 @@ enum L10nKey: String {
     case chooseFileToSend
     case send
     case sendFailed
+    case snippetFolders
+    case snippetLibrary
+    case snippetSearch
+    case snippetFolderSettings
+    case snippetAutosave
+    case snippetCopied
+    case snippetEmptyFolder
+    case snippetEmptyHint
+    case snippetCharacters
+    case snippetActions
+    case snippetLibraryActions
+    case snippetFolderCount
+    case snippetMoveHint
     case snippetEditorTitle
     case nameColumn
     case newFolder
@@ -337,6 +387,43 @@ struct L10n {
 
     private static let table: [AppLanguage: [L10nKey: String]] = [
         .zh: [
+            .menuRecentHistory: "最近复制",
+            .designDeviceName: "设备名称",
+            .designGeneral: "通用",
+            .designPermissions: "权限",
+            .designOutput: "输出与预览",
+            .designDrawing: "滚动与标注",
+            .designEffects: "美化与特效",
+            .wordLookup: "单词查询",
+            .wordPlaceholder: "输入英文单词或短语，如 take",
+            .wordSearch: "查询",
+            .wordLoading: "正在查词…",
+            .wordInvalidQuery: "请输入 80 个字符以内的英文单词或短语",
+            .wordNotFound: "未找到这个单词",
+            .wordNetworkError: "暂时无法连接词典或读取结果",
+            .wordTryAgain: "检查拼写或网络后，按回车重新查询。",
+            .wordMeanings: "词性与释义",
+            .wordInflections: "词形变化",
+            .wordPhrases: "相关短语",
+            .wordExamples: "双语例句",
+            .wordNoPhrases: "词典暂未提供相关短语。",
+            .wordNoExamples: "词典暂未提供例句。",
+            .wordLookupPhrase: "查询这个短语",
+            .wordSource: "来源：有道词典 · 查看完整词条",
+            .wordWelcome: "从一个单词开始",
+            .wordWelcomeDetail: "输入单词，按回车查看词义、美式音标、短语和例句。",
+            .wordPrivacy: "打开时自动填入剪贴板中的英文单词 · 按回车后联网查询 · 数据来自有道词典",
+            .wordAmerican: "美",
+            .wordNoIPA: "词典暂未提供美式音标",
+            .wordPlayAudio: "美式发音",
+            .wordStopAudio: "停止播放",
+            .wordAudioLoading: "正在加载美式发音…",
+            .wordRecordedAudio: "有道美式发音",
+            .wordSystemAudio: "词典音频不可用，正在使用系统美式英语朗读",
+            .wordAudioUnavailable: "发音暂不可用，请重试或在系统设置中下载美式英语语音。",
+            .wordShortcut: "单词查询快捷键",
+            .wordShortcutDescription: "在任何应用中打开单词窗口，默认 ⌃⌥D；也可从菜单栏进入。",
+            .wordShortcutConflict: "快捷键注册失败，可能已被占用，请换一个组合。",
             .recordShortcut: "点击录制快捷键",
             .recordingShortcut: "录制中...",
             .preferences: "偏好设置",
@@ -349,7 +436,7 @@ struct L10n {
             .deviceNameUpdated: "设备名称已更新为“%@”，同步服务已重启。",
             .ok: "确定",
             .historyLimit: "历史数量：",
-            .moreHistory: "  更多...",
+            .moreHistory: "更多历史",
             .changesNextCopy: "（修改后立即生效）",
             .excludedBundleIds: "排除的 Bundle ID（用逗号分隔）：",
             .enableLanSync: "启用局域网同步",
@@ -388,6 +475,19 @@ struct L10n {
             .fileReceivedBody: "来自 %@：%@（已存入“下载/Clipy”）",
             .send: "发送",
             .sendFailed: "发送失败。目标设备可能离线或网络连接异常。",
+            .snippetFolders: "文件夹",
+            .snippetLibrary: "片段库",
+            .snippetSearch: "搜索此文件夹",
+            .snippetFolderSettings: "文件夹设置",
+            .snippetAutosave: "更改自动保存",
+            .snippetCopied: "已复制",
+            .snippetEmptyFolder: "这个文件夹还没有片段",
+            .snippetEmptyHint: "新建一个片段，把常用内容留在手边。",
+            .snippetCharacters: "%d 个字符",
+            .snippetActions: "更多片段操作",
+            .snippetLibraryActions: "片段库操作",
+            .snippetFolderCount: "%d 个片段",
+            .snippetMoveHint: "拖动以调整顺序",
             .snippetEditorTitle: "Clipy - 片段编辑器",
             .nameColumn: "名称",
             .newFolder: "新文件夹",
@@ -642,6 +742,43 @@ struct L10n {
             .passwordStrengthVeryStrong: "极强",
         ],
         .en: [
+            .menuRecentHistory: "Recently Copied",
+            .designDeviceName: "Device Name",
+            .designGeneral: "General",
+            .designPermissions: "Permissions",
+            .designOutput: "Output & Preview",
+            .designDrawing: "Scroll & Annotate",
+            .designEffects: "Image Effects",
+            .wordLookup: "Word Lookup",
+            .wordPlaceholder: "Enter an English word or phrase, e.g. take",
+            .wordSearch: "Look up",
+            .wordLoading: "Looking up…",
+            .wordInvalidQuery: "Enter an English word or phrase within 80 characters",
+            .wordNotFound: "No entry found",
+            .wordNetworkError: "The dictionary is unavailable or returned an unreadable response",
+            .wordTryAgain: "Check your spelling or connection, then press Return to retry.",
+            .wordMeanings: "Parts of speech & meanings",
+            .wordInflections: "Word forms",
+            .wordPhrases: "Related phrases",
+            .wordExamples: "Bilingual examples",
+            .wordNoPhrases: "No related phrases provided by the dictionary.",
+            .wordNoExamples: "No examples provided by the dictionary.",
+            .wordLookupPhrase: "Look up this phrase",
+            .wordSource: "Source: Youdao Dictionary · View full entry",
+            .wordWelcome: "Start with a word",
+            .wordWelcomeDetail: "Enter a word and press Return for meanings, American IPA, phrases and examples.",
+            .wordPrivacy: "Prefills a single English word from your clipboard on opening. Press Return to query Youdao online.",
+            .wordAmerican: "US",
+            .wordNoIPA: "American IPA is not available for this entry",
+            .wordPlayAudio: "American pronunciation",
+            .wordStopAudio: "Stop",
+            .wordAudioLoading: "Loading American pronunciation…",
+            .wordRecordedAudio: "Youdao American pronunciation",
+            .wordSystemAudio: "Dictionary audio unavailable; using the system American English voice",
+            .wordAudioUnavailable: "Audio unavailable. Retry or download an American English voice in System Settings.",
+            .wordShortcut: "Word Lookup Shortcut",
+            .wordShortcutDescription: "Open Word Lookup from any app (default: ⌃⌥D), or from the menu bar.",
+            .wordShortcutConflict: "The shortcut could not be registered. It may be in use; choose another combination.",
             .recordShortcut: "Click to record shortcut",
             .recordingShortcut: "Recording...",
             .preferences: "Preferences",
@@ -654,7 +791,7 @@ struct L10n {
             .deviceNameUpdated: "Device name updated to \"%@\". Sync services restarted.",
             .ok: "OK",
             .historyLimit: "History Limit:",
-            .moreHistory: "  More...",
+            .moreHistory: "Earlier History",
             .changesNextCopy: "(Takes effect immediately)",
             .excludedBundleIds: "Excluded Bundle IDs (comma separated):",
             .enableLanSync: "Enable LAN Sync",
@@ -693,6 +830,19 @@ struct L10n {
             .fileReceivedBody: "From %@: %@ (saved to Downloads/Clipy)",
             .send: "Send",
             .sendFailed: "Send failed. The target device may be offline or the network connection may be unstable.",
+            .snippetFolders: "Folders",
+            .snippetLibrary: "Snippet Library",
+            .snippetSearch: "Search this folder",
+            .snippetFolderSettings: "Folder Settings",
+            .snippetAutosave: "Changes save automatically",
+            .snippetCopied: "Copied",
+            .snippetEmptyFolder: "No snippets in this folder",
+            .snippetEmptyHint: "Create a snippet to keep useful text close at hand.",
+            .snippetCharacters: "%d characters",
+            .snippetActions: "More Snippet Actions",
+            .snippetLibraryActions: "Library Actions",
+            .snippetFolderCount: "%d snippets",
+            .snippetMoveHint: "Drag to reorder",
             .snippetEditorTitle: "Clipy - Snippet Editor",
             .nameColumn: "Name",
             .newFolder: "New Folder",

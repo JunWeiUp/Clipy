@@ -2,10 +2,13 @@ import AppKit
 import SwiftUI
 
 enum AppSpacing {
+    static let xxs: CGFloat = 4
     static let xs: CGFloat = 8
     static let sm: CGFloat = 12
     static let md: CGFloat = 16
     static let lg: CGFloat = 20
+    static let xl: CGFloat = 24
+    static let section: CGFloat = 28
 }
 
 enum AppFont {
@@ -18,6 +21,8 @@ enum AppFont {
     static var body: Font { .system(size: bodySize) }
     static var secondary: Font { .system(size: secondarySize) }
     static var emptyState: Font { .system(size: emptyStateSize) }
+    static var title: Font { .system(size: 20, weight: .semibold) }
+    static var section: Font { .system(size: 13, weight: .semibold) }
 }
 
 // MARK: - Crash-safe AppKit text attributes
@@ -75,21 +80,13 @@ extension AppFont {
 }
 
 enum AppRowHeight {
-    static let compact: CGFloat = 28
-    static let standard: CGFloat = 36
-    static let group: CGFloat = 40
-}
-
-/// 标题栏（红黄绿按钮条）相关尺寸，用于 fullSizeContentView 下让出空间。
-enum AppTitleBar {
-    /// 标题栏高度，顶部 padding 用。
-    static let height: CGFloat = 28
-    /// 交通灯按钮的实际占用宽度（含到窗口边缘的间距），左侧 leading 内容让出。
-    static let trafficLightsWidth: CGFloat = 56
+    static let compact: CGFloat = 30
+    static let standard: CGFloat = 40
+    static let group: CGFloat = 44
 }
 
 enum AppCornerRadius {
-    static let small: CGFloat = 4
+    static let small: CGFloat = 6
     static let medium: CGFloat = 8
     static let large: CGFloat = 12
     static let badge: CGFloat = 10
@@ -106,16 +103,17 @@ enum ScreenshotChrome {
 }
 
 enum AppWindowSize {
-    static let settings = CGSize(width: 420, height: 560)
-    static let screenshotSettings = CGSize(width: 460, height: 640)
+    static let settings = CGSize(width: 760, height: 620)
+    static let settingsMin = CGSize(width: 660, height: 480)
+    static let screenshotSettings = CGSize(width: 800, height: 680)
     static let list = CGSize(width: 720, height: 500)
-    static let search = CGSize(width: 1200, height: 800)
-    static let editor = CGSize(width: 800, height: 600)
+    static let search = CGSize(width: 1080, height: 720)
+    static let editor = CGSize(width: 1120, height: 720)
     static let log = CGSize(width: 800, height: 500)
     static let passwordGenerator = CGSize(width: 460, height: 520)
     static let passwordGeneratorMin = CGSize(width: 420, height: 470)
     static let listMin = CGSize(width: 480, height: 320)
-    static let searchMin = CGSize(width: 800, height: 680)
+    static let searchMin = CGSize(width: 800, height: 520)
     static let notificationMin = CGSize(width: 560, height: 360)
-    static let editorMin = CGSize(width: 640, height: 480)
+    static let editorMin = CGSize(width: 920, height: 540)
 }

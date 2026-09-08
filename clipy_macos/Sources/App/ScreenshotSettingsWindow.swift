@@ -17,7 +17,7 @@ final class ScreenshotSettingsWindow {
                 HostingWindow(
                     title: L10n.t(.screenshotPreferences),
                     size: AppWindowSize.screenshotSettings,
-                    minSize: CGSize(width: 420, height: 480),
+                    minSize: AppWindowSize.settingsMin,
                     resizable: true,
                     frameAutosaveName: "ScreenshotSettingsWindow"
                 ) {

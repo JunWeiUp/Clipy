@@ -81,7 +81,9 @@ final class PendingSyncRepository {
     // MARK: - Read
 
     /// All due (non-expired) pending frames for a peer, oldest first.
-    func fetchDue(forPeer peerId: String, ttl: TimeInterval) -> [PendingFrame] {
+    func fetchDue(forPeer peerId: String, ttl: TimeInterval,
+                  excluding: Set<String> = [], includeData: Bool = true,
+                  isAllowed: (String) -> Bool = { _ in true }) -> [PendingFrame] {
         queue.sync {
             guard let db else { return [] }
             let cutoff = Date().addingTimeInterval(-ttl).timeIntervalSince1970
@@ -98,7 +100,7 @@ final class PendingSyncRepository {
             defer { sqlite3_finalize(stmt) }
             bindText(stmt, 1, peerId)
             sqlite3_bind_double(stmt, 2, cutoff)
-            return readRows(stmt)
+            return readRows(stmt, excluding: excluding, includeData: includeData, isAllowed: isAllowed)
         }
     }
 
@@ -184,15 +186,19 @@ final class PendingSyncRepository {
         return Int(sqlite3_column_int(stmt, 0))
     }
 
-    private func readRows(_ stmt: OpaquePointer?) -> [PendingFrame] {
+    private func readRows(_ stmt: OpaquePointer?, excluding: Set<String>, includeData: Bool, isAllowed: (String) -> Bool) -> [PendingFrame] {
         var frames: [PendingFrame] = []
+        var bytes = 0
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let pid = optionalString(stmt, 0),
                   let hash = optionalString(stmt, 1),
                   let type = optionalString(stmt, 2) else { continue }
+            if excluding.contains(hash) || !isAllowed(type) { continue }
             let blobSize = sqlite3_column_bytes(stmt, 3)
             guard blobSize > 0, let blobPtr = sqlite3_column_blob(stmt, 3) else { continue }
-            let data = Data(bytes: blobPtr, count: Int(blobSize))
+            if includeData && !frames.isEmpty && bytes + Int(blobSize) > 4 * 1024 * 1024 { break }
+            let data = includeData ? Data(bytes: blobPtr, count: Int(blobSize)) : Data()
+            bytes += data.count
             let ts = sqlite3_column_double(stmt, 4)
             frames.append(PendingFrame(
                 peerId: pid,

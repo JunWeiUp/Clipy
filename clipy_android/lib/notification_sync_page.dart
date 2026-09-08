@@ -4,6 +4,7 @@ import 'app_localizations.dart';
 import 'clipboard_manager.dart';
 import 'database/notification_repository.dart';
 import 'models.dart';
+import 'utils/async_refresh_controller.dart';
 import 'notification_manager.dart';
 import 'notification_health_monitor.dart';
 
@@ -32,7 +33,7 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   final Set<String> _expandedApps = {};
   final Set<String> _collapsedSections = {};
   List<_HistoryListItem> _historyItems = [];
-  final Map<String, List<NotificationEntry>> _packageNotificationsCache = {};
+  final _historyRefresh = AsyncRefreshController();
   bool _appsLoaded = false;
   bool _appsLoading = false;
 
@@ -53,13 +54,7 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     _notifSubscription = NotificationManager.instance.onNotificationsChanged
         .listen((_) {
           if (!mounted) return;
-          unawaited(
-            _rebuildHistoryItems().then((_) {
-              if (mounted && _tabController.index == _historyTabIndex) {
-                setState(() {});
-              }
-            }),
-          );
+          unawaited(_rebuildHistoryItems());
         });
     _collectedSub = NotificationManager.instance.onCollectedPackagesChanged
         .listen((_) {
@@ -76,6 +71,8 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _historyRefresh.dispose();
     _tabController.removeListener(_handleTabChanged);
     _tabController.dispose();
     _searchDebounce?.cancel();
@@ -141,7 +138,11 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     return items;
   }
 
-  Future<void> _rebuildHistoryItems() async {
+  Future<void> _rebuildHistoryItems() =>
+      _historyRefresh.refresh(_loadHistoryItems);
+
+  Future<void> _loadHistoryItems(bool Function() isCurrent) async {
+    if (!mounted || !isCurrent()) return;
     final l10n = context.l10n;
     final totalCount = await NotificationManager.instance.count();
     final appCount = await NotificationRepository.instance.packageGroupCount();
@@ -151,11 +152,11 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     );
 
     if (totalCount == 0) {
-      if (mounted) setState(() => _historyItems = const []);
+      if (mounted && isCurrent()) setState(() => _historyItems = const []);
       return;
     }
 
-    if (!mounted) return;
+    if (!mounted || !isCurrent()) return;
 
     final rows = <_HistoryListItem>[
       _HistoryListItem.summary(
@@ -181,17 +182,16 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     }
 
     Future<void> appendGroup(NotificationPackageGroup group) async {
+      if (!isCurrent()) return;
       final isExpanded = _expandedApps.contains(group.packageName);
       List<NotificationEntry>? expandedItems;
       if (isExpanded) {
-        expandedItems =
-            _packageNotificationsCache[group.packageName] ??
-            await NotificationRepository.instance.fetchByPackage(
-              group.packageName,
-              offset: 0,
-              limit: _notificationsPerPackage,
-            );
-        _packageNotificationsCache[group.packageName] = expandedItems;
+        expandedItems = await NotificationRepository.instance.fetchByPackage(
+          group.packageName,
+          offset: 0,
+          limit: _notificationsPerPackage,
+        );
+        if (!isCurrent()) return;
       }
 
       rows.add(
@@ -249,18 +249,17 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
       sectionGroups: notCollectedGroups,
     );
 
-    if (mounted) setState(() => _historyItems = rows);
+    if (mounted && isCurrent()) setState(() => _historyItems = rows);
   }
 
   Future<List<NotificationEntry>> _notificationsForPackage(
     String packageName,
   ) async {
-    return _packageNotificationsCache[packageName] ??
-        await NotificationRepository.instance.fetchByPackage(
-          packageName,
-          offset: 0,
-          limit: 500,
-        );
+    return NotificationRepository.instance.fetchByPackage(
+      packageName,
+      offset: 0,
+      limit: 500,
+    );
   }
 
   @override
@@ -745,7 +744,6 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                     notification.id,
                   );
                 }
-                _packageNotificationsCache.remove(item.packageName);
               },
               onDeleteAll: () async {
                 final notifications = await _notificationsForPackage(
@@ -756,7 +754,6 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                     notification.id,
                   );
                 }
-                _packageNotificationsCache.remove(item.packageName);
               },
               onCopyAll: () async {
                 // Resolve the messenger before the await: `context` may be

@@ -221,8 +221,9 @@ enum ToolbarActionPreferences {
 
 class ToolbarLayout {
 
-    // Default theme colors (Flameshot purple style)
-    static let defaultAccentColor = NSColor(calibratedRed: 0.55, green: 0.30, blue: 0.85, alpha: 1.0)
+    // Capture tools share the app accent, with dark chrome for canvas contrast.
+    // Explicit user-customized toolbar colors continue to take precedence.
+    static let defaultAccentColor = NSColor.controlAccentColor
     static let defaultIconColor = NSColor.white
     static let defaultBgColor = NSColor(white: 0.12, alpha: 1.0)
 
@@ -249,7 +250,7 @@ class ToolbarLayout {
         return defaultBgColor
     }
     static var handleColor: NSColor { accentColor }
-    static let cornerRadius: CGFloat = 6
+    static let cornerRadius: CGFloat = AppCornerRadius.medium
 
     /// Save accent color to UserDefaults.
     static func saveAccentColor(_ color: NSColor) {
