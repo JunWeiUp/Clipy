@@ -29,6 +29,86 @@ void main() {
     expect((await repository.latestEntry())!.item.value, 'new');
     expect((await repository.latestEntry())!.date.millisecondsSinceEpoch, 2);
   });
+  test(
+    'search filters the full database before paging and escapes LIKE wildcards',
+    () async {
+      for (var i = 0; i < 65; i++) {
+        await repository.insert(
+          HistoryEntry(
+            item: HistoryItem(
+              type: 'text',
+              value: i == 0 ? "100%_done 'quoted'" : 'note $i',
+            ),
+            contentHash: 'hash-$i',
+            sourceApp: i == 1 ? 'Mail' : 'Notes',
+            date: DateTime.fromMillisecondsSinceEpoch(i),
+          ),
+        );
+      }
+      final found = await repository.fetchPage(
+        offset: 0,
+        limit: 2,
+        query: "100%_done 'quoted'",
+      );
+      expect(found.single.item.value, "100%_done 'quoted'");
+      expect(
+        await repository.fetchPage(offset: 0, limit: 2, query: '100%_missing'),
+        isEmpty,
+      );
+      expect(
+        (await repository.fetchPage(
+          offset: 0,
+          limit: 2,
+          query: 'mail',
+        )).single.sourceApp,
+        'Mail',
+      );
+    },
+  );
+
+  test('file and link filters are applied before the result limit', () async {
+    await repository.insert(
+      HistoryEntry(
+        item: HistoryItem(type: 'fileURL', value: '/downloads/readme.txt'),
+        date: DateTime(2026),
+        contentHash: 'file',
+      ),
+    );
+    await repository.insert(
+      HistoryEntry(
+        item: HistoryItem(type: 'text', value: 'https://example.com'),
+        date: DateTime(2026, 2),
+        contentHash: 'link',
+      ),
+    );
+    await repository.insert(
+      HistoryEntry(
+        item: HistoryItem(type: 'text', value: 'ordinary text'),
+        date: DateTime(2026, 3),
+        contentHash: 'text',
+      ),
+    );
+    expect(
+      (await repository.fetchPage(
+        offset: 0,
+        limit: 1,
+        filter: 'files',
+      )).single.item.type,
+      'fileURL',
+    );
+    expect(
+      (await repository.fetchPage(
+        offset: 0,
+        limit: 1,
+        filter: 'links',
+      )).single.contentHash,
+      'link',
+    );
+    expect(
+      await repository.fetchPage(offset: 0, limit: 1, filter: 'images'),
+      isEmpty,
+    );
+  });
   test('failed insert rolls back deletion of the existing record', () async {
     await repository.insert(entry('old', 1));
     await db.execute(

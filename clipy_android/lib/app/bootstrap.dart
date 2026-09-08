@@ -10,6 +10,7 @@ import 'package:clipy_android/notification_health_monitor.dart';
 import 'package:clipy_android/app_localizations.dart';
 import 'package:clipy_android/database/app_database.dart';
 import 'package:clipy_android/app/app.dart';
+import 'package:clipy_android/ui/app_theme.dart';
 
 /// Whether core managers finished bootstrap in this isolate.
 bool _coreBootstrapped = false;
@@ -88,6 +89,7 @@ Future<void> _attachUi() async {
 
   try {
     await AppLanguageController.instance.init();
+    await AppAppearance.instance.init();
   } catch (e) {
     debugPrint('AppLanguageController init error: $e');
   }

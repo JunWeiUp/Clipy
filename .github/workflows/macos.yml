@@ -1,0 +1,95 @@
+name: macOS Build
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and package macOS (Apple Silicon, ad-hoc)
+    runs-on: macos-26
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      INSTALL_APP: "0"
+      LAUNCH_APP: "0"
+      SIGN_IDENTITY: "-"
+      MACOS_ARCH: arm64
+      GENERATE_DSYM: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: xcodebuild -version
+      - run: bash scripts/check.sh repo
+      - name: Resolve build metadata
+        id: version
+        run: |
+          REPO_ROOT="$GITHUB_WORKSPACE"
+          source scripts/lib/build_common.sh
+          resolve_build_version
+          BUILD_NUMBER="$((BUILD_NUMBER + GITHUB_RUN_NUMBER))"
+          resolve_build_version
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+      - run: bash scripts/test_macos_core.sh
+      - name: Build with ad-hoc signing
+        run: bash scripts/check.sh macos
+      - name: Package and verify download
+        run: |
+          APP=clipy_macos/ClipyClone.app
+          plutil -lint "$APP/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")" = "$APP_VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")" = "$BUILD_NUMBER"
+          test "$(lipo -archs "$APP/Contents/MacOS/ClipyClone")" = "$MACOS_ARCH"
+          codesign --verify --deep --strict "$APP"
+          codesign -dv "$APP" 2>&1 | grep -Fx 'Signature=adhoc'
+
+          mkdir -p dist/macos
+          PACKAGE="ClipyClone-macOS-${MACOS_ARCH}-v${APP_VERSION}-build${BUILD_NUMBER}"
+          ditto -c -k --keepParent "$APP" "dist/macos/$PACKAGE.zip"
+          ditto -c -k --keepParent "$APP.dSYM" "dist/macos/$PACKAGE-symbols.zip"
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/macos/
+          cp docs/MACOS_INSTALL.md dist/macos/INSTALL.md
+          printf 'Version: %s\nBuild: %s\nArchitecture: %s\nCommit: %s\nRun: %s/%s/actions/runs/%s\nSigning: ad-hoc (not notarized)\n' \
+            "$APP_VERSION" "$BUILD_NUMBER" "$MACOS_ARCH" "$GITHUB_SHA" \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > dist/macos/BUILD.txt
+          (cd dist/macos && shasum -a 256 ./*.zip > SHA256SUMS.txt && shasum -a 256 -c SHA256SUMS.txt)
+
+          # Verify the delivered archive, including executable permissions and signature.
+          VERIFY_DIR="$(mktemp -d "$RUNNER_TEMP/clipy-archive.XXXXXX")"
+          trap 'rm -rf "$VERIFY_DIR"' EXIT
+          ditto -x -k "dist/macos/$PACKAGE.zip" "$VERIFY_DIR"
+          test -x "$VERIFY_DIR/ClipyClone.app/Contents/MacOS/ClipyClone"
+          codesign --verify --deep --strict "$VERIFY_DIR/ClipyClone.app"
+      - name: Upload macOS download
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ClipyClone-macOS-arm64-v${{ steps.version.outputs.version }}-build${{ steps.version.outputs.build }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/macos/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Download instructions
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          {
+            echo '## macOS download / 下载'
+            printf '[Download build / 下载构建产物](%s)\n\n' "$ARTIFACT_URL"
+            printf 'Version: %s · Build: %s · Apple Silicon (arm64) · macOS 13+\n\n' "$APP_VERSION" "$BUILD_NUMBER"
+            echo 'Ad-hoc signed; no Developer ID or Apple notarization. 临时签名，未经 Apple 公证。'
+            echo 'Sign in to GitHub to download; artifacts are retained for 30 days. 登录 GitHub 后下载，保留 30 天。'
+            echo 'Extract the artifact, then the app ZIP (not the symbols ZIP); move ClipyClone.app to Applications.'
+            echo '解压下载文件，再解压应用 ZIP（非 symbols ZIP），将 ClipyClone.app 移到「应用程序」。'
+            echo 'If blocked as unverified, use System Settings → Privacy & Security → Open Anyway for this trusted app.'
+            echo '若提示无法验证，确认信任来源后到「系统设置 → 隐私与安全 → 仍要打开」。详见包内 INSTALL.md。'
+          } >> "$GITHUB_STEP_SUMMARY"

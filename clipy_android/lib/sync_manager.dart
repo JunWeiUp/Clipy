@@ -243,6 +243,7 @@ class SyncManager with WidgetsBindingObserver {
   bool _pendingAutoFullScan = false;
 
   bool isEnabled = false;
+  bool get isServerRunning => _server != null;
   int port = 5566;
   List<String> clipboardSyncPeerIds = [];
   List<String> notificationSyncPeerIds = [];
@@ -1032,6 +1033,37 @@ class SyncManager with WidgetsBindingObserver {
     if (isEnabled) {
       await stop();
       await Future.delayed(const Duration(seconds: 1));
+      await start();
+    }
+  }
+
+  /// The connection editor saves a complete, validated configuration once,
+  /// rather than persisting partial port numbers on each keystroke.
+  Future<void> updateConnectionSettings({
+    required String name,
+    required int listeningPort,
+    required String secret,
+  }) async {
+    final nextName = name.trim();
+    final nextSecret = secret.trim();
+    if (nextName.isEmpty || listeningPort < 1 || listeningPort > 65535) {
+      throw ArgumentError('Invalid connection settings');
+    }
+    if (displayName == nextName &&
+        port == listeningPort &&
+        pairingSecret == nextSecret) {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('deviceName', nextName);
+    await prefs.setInt('syncPort', listeningPort);
+    await prefs.setString(_pairingSecretKey, nextSecret);
+    displayName = nextName;
+    port = listeningPort;
+    pairingSecret = nextSecret;
+    _crypto.clearKeyCache();
+    if (isEnabled) {
+      await stop();
       await start();
     }
   }

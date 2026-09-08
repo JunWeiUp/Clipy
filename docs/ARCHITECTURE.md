@@ -25,7 +25,7 @@ clipy_android/
   lib/features/              devices, history, settings, logs, transfers
   lib/database/              repositories and migrations
   lib/sync/                  protocol, crypto, sessions, discovery, reliability
-  lib/ui/                    shared history widgets
+  lib/ui/                    shared theme, components and history widgets
   android/app/src/main/      Kotlin services, platform channels, timer widget
   test/                      deterministic Flutter/protocol tests
   tool/                      explicitly invoked integration probes

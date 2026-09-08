@@ -1,327 +1,247 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:clipy_android/sync_manager.dart';
-import 'package:clipy_android/notification_manager.dart';
-import 'package:clipy_android/app_localizations.dart';
-import 'package:clipy_android/features/devices/device_widgets.dart';
+import '../../app_localizations.dart';
+import '../../ui/app_components.dart';
+import '../../ui/app_theme.dart';
+import '../devices/devices_page.dart';
 
 class MobileSettingsContent extends StatefulWidget {
   final VoidCallback onOpenLogs;
   final VoidCallback onOpenReceivedFiles;
-
   const MobileSettingsContent({
     super.key,
     required this.onOpenLogs,
     required this.onOpenReceivedFiles,
   });
-
   @override
   State<MobileSettingsContent> createState() => _MobileSettingsContentState();
 }
 
-class _MobileSettingsContentState extends State<MobileSettingsContent> {
+class _MobileSettingsContentState extends State<MobileSettingsContent>
+    with WidgetsBindingObserver {
   static const _widgetChannel = MethodChannel(
     'com.clipyclone.clipy_android/widget',
   );
-  late TextEditingController _portController;
-  late TextEditingController _nameController;
-  StreamSubscription? _devicesSubscription;
-  List<DiscoveredPeer> _availableDevices = [];
   bool _timerWidgetPinned = false;
+  bool _pinning = false;
 
   @override
   void initState() {
     super.initState();
-    _portController = TextEditingController(
-      text: SyncManager.instance.port.toString(),
-    );
-    _nameController = TextEditingController(
-      text: SyncManager.instance.displayName,
-    );
-    _availableDevices = SyncManager.instance.availablePeers;
-    _devicesSubscription = SyncManager.instance.onPeersChanged.listen((peers) {
-      if (mounted) {
-        setState(() {
-          _availableDevices = peers;
-        });
-      }
-    });
-    _refreshTimerWidgetPinned();
-    // On-demand device discovery: this page shows the device list, so trigger
-    // a single subnet scan here. Results refresh via onPeersChanged.
-    SyncManager.instance.triggerCrossBandDiscovery();
+    WidgetsBinding.instance.addObserver(this);
+    _refreshPinned();
   }
 
   @override
   void dispose() {
-    _portController.dispose();
-    _nameController.dispose();
-    _devicesSubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
-  Future<void> _refreshTimerWidgetPinned() async {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshPinned();
+  }
+
+  Future<void> _refreshPinned() async {
     try {
       final pinned =
           await _widgetChannel.invokeMethod<bool>('isTimerWidgetPinned') ??
           false;
-      if (mounted) {
-        setState(() => _timerWidgetPinned = pinned);
-      }
+      if (mounted) setState(() => _timerWidgetPinned = pinned);
     } catch (_) {
-      // Native side unavailable — keep the current state.
+      /* Not every platform supports launcher widgets. */
     }
   }
 
-  Future<void> _requestPinTimerWidget(AppStrings l10n) async {
-    var ok = false;
+  Future<void> _pin() async {
+    if (_pinning) return;
+    setState(() => _pinning = true);
     try {
-      ok =
+      final ok =
           await _widgetChannel.invokeMethod<bool>('requestPinTimerWidget') ??
           false;
+      if (!mounted) return;
+      showClipyMessage(
+        context,
+        ok
+            ? context.l10n.timerWidgetPinRequested
+            : context.l10n.timerWidgetPinFailed,
+      );
+      if (ok) {
+        await Future<void>.delayed(const Duration(seconds: 3));
+        if (mounted) await _refreshPinned();
+      }
     } catch (_) {
-      ok = false;
+      if (mounted) showClipyMessage(context, context.l10n.timerWidgetPinFailed);
+    } finally {
+      if (mounted) setState(() => _pinning = false);
     }
-    if (!mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          ok ? l10n.timerWidgetPinRequested : l10n.timerWidgetPinFailed,
-        ),
-      ),
-    );
-    if (ok) {
-      // Give the user time to confirm the system pin dialog before re-checking.
-      await Future<void>.delayed(const Duration(seconds: 3));
-      await _refreshTimerWidgetPinned();
-    }
-  }
-
-  Widget _buildTimerWidgetCard(AppStrings l10n) {
-    return Card(
-      margin: const EdgeInsets.all(12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            const Icon(Icons.timer_outlined, color: Colors.blue, size: 36),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    l10n.timerWidgetTitle,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    l10n.timerWidgetDesc,
-                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                  ),
-                ],
-              ),
-            ),
-            if (_timerWidgetPinned)
-              const Icon(Icons.check_circle, color: Colors.green)
-            else
-              ElevatedButton(
-                onPressed: () => _requestPinTimerWidget(l10n),
-                child: Text(l10n.addToHomeScreen),
-              ),
-          ],
-        ),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ListTile(
-          title: Text(l10n.languageLabel),
-          trailing: DropdownButton<AppLanguage>(
-            value: AppLanguageController.instance.language,
-            onChanged: (language) async {
-              if (language == null) return;
-              await AppLanguageController.instance.setLanguage(language);
-              if (mounted) setState(() {});
-            },
-            items: AppLanguage.values.map((language) {
-              return DropdownMenuItem(
-                value: language,
-                child: Text(language.displayName),
-              );
-            }).toList(),
-          ),
-        ),
-        const Divider(),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _nameController,
-                  decoration: InputDecoration(
-                    labelText: l10n.deviceNameForSync,
-                    border: const OutlineInputBorder(),
-                    hintText: l10n.enterDeviceName,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ClipySection(
+            title: l10n.personalize,
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const ClipyIcon(Icons.palette_outlined),
+                  title: Text(l10n.appearance),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<ThemeMode>(
+                      showSelectedIcon: false,
+                      segments: [
+                        ButtonSegment(
+                          value: ThemeMode.system,
+                          label: Text(l10n.systemTheme),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.light,
+                          label: Text(l10n.lightTheme),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.dark,
+                          label: Text(l10n.darkTheme),
+                        ),
+                      ],
+                      selected: {AppAppearance.instance.mode},
+                      onSelectionChanged: (value) async {
+                        await AppAppearance.instance.setMode(value.first);
+                        if (mounted) setState(() {});
+                      },
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: () async {
-                  final newName = _nameController.text.trim();
-                  if (newName.isNotEmpty) {
-                    final messenger = ScaffoldMessenger.of(context);
-                    final message = l10n.deviceNameUpdated;
-                    await SyncManager.instance.updateDeviceName(newName);
-                    if (mounted) {
-                      messenger.showSnackBar(SnackBar(content: Text(message)));
-                    }
-                  }
-                },
-                child: Text(l10n.save),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: Text(
-            l10n.syncLocalNameHintFor(
-              SyncManager.instance.displayName,
-              SyncManager.instance.peerId.length > 8
-                  ? SyncManager.instance.peerId.substring(0, 8)
-                  : SyncManager.instance.peerId,
-            ),
-            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-          ),
-        ),
-        const Divider(),
-        SwitchListTile(
-          title: Text(l10n.enableLanSync),
-          value: SyncManager.instance.isEnabled,
-          onChanged: (value) async {
-            SyncManager.instance.isEnabled = value;
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setBool('syncEnabled', value);
-            if (value) {
-              unawaited(
-                NotificationManager.instance.requestNotificationPermission(),
-              );
-              await SyncManager.instance.start();
-            } else {
-              await SyncManager.instance.stop();
-            }
-            setState(() {});
-          },
-        ),
-        if (SyncManager.instance.isEnabled)
-          FutureBuilder<List<String>>(
-            future: SyncManager.instance.localIPv4Addresses(),
-            builder: (context, snapshot) {
-              final ips = snapshot.data;
-              if (ips == null || ips.isEmpty) {
-                return const SizedBox.shrink();
-              }
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '${l10n.myIPAddress}: ${ips.join(', ')}',
-                    style: Theme.of(context).textTheme.bodySmall,
+                const Divider(indent: 20, endIndent: 20),
+                ListTile(
+                  leading: const ClipyIcon(Icons.language_rounded),
+                  title: Text(l10n.languageLabel),
+                  trailing: DropdownButtonHideUnderline(
+                    child: DropdownButton<AppLanguage>(
+                      value: AppLanguageController.instance.language,
+                      onChanged: (language) async {
+                        if (language == null) return;
+                        await AppLanguageController.instance.setLanguage(
+                          language,
+                        );
+                        if (mounted) setState(() {});
+                      },
+                      items: AppLanguage.values
+                          .map(
+                            (language) => DropdownMenuItem(
+                              value: language,
+                              child: Text(language.displayName),
+                            ),
+                          )
+                          .toList(),
+                    ),
                   ),
                 ),
-              );
-            },
-          ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: TextField(
-            controller: _portController,
-            decoration: InputDecoration(
-              labelText: l10n.syncPort,
-              border: const OutlineInputBorder(),
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (value) async {
-              final port = int.tryParse(value);
-              if (port != null) {
-                SyncManager.instance.port = port;
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setInt('syncPort', port);
-              }
-            },
-          ),
-        ),
-        const SyncTargetDeviceList(),
-        const Divider(),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: Text(
-            l10n.lanDevices,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: Colors.blue,
+              ],
             ),
           ),
-        ),
-        if (_availableDevices.isEmpty)
-          ListTile(
-            title: Text(l10n.noDevicesFound),
-            subtitle: Text(l10n.sameWifiHint),
-          )
-        else
-          ..._availableDevices.map((peer) => LanDeviceActionTile(peer: peer)),
-        const Divider(),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: Text(
-            l10n.homeWidgetSection,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: Colors.blue,
+          ClipySection(
+            title: l10n.homeWidgetSection,
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const ClipyIcon(Icons.timer_outlined),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          l10n.timerWidgetTitle,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    l10n.timerWidgetDesc,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton.tonalIcon(
+                    onPressed: _timerWidgetPinned || _pinning ? null : _pin,
+                    icon: Icon(
+                      _timerWidgetPinned
+                          ? Icons.check_circle_outline
+                          : Icons.add_rounded,
+                    ),
+                    label: Text(
+                      _timerWidgetPinned
+                          ? l10n.timerWidgetAdded
+                          : l10n.addToHomeScreen,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-        _buildTimerWidgetCard(l10n),
-        const Divider(),
-        ListTile(
-          leading: const Icon(Icons.folder_open),
-          title: Text(l10n.receivedFiles),
-          onTap: widget.onOpenReceivedFiles,
-        ),
-        ListTile(
-          leading: const Icon(Icons.list_alt),
-          title: Text(l10n.viewLogs),
-          subtitle: Text(l10n.appRuntimeLogs),
-          onTap: widget.onOpenLogs,
-        ),
-        const Divider(),
-        ListTile(
-          title: Text(l10n.about),
-          subtitle: Text(
-            'ClipyClone ${Platform.isIOS ? 'iOS' : 'Android'} v1.0.0',
+          ClipySection(
+            title: l10n.toolsAndSupport,
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const ClipyIcon(Icons.tune_rounded),
+                  title: Text(l10n.connectionSettings),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => showModalBottomSheet<bool>(
+                    context: context,
+                    isScrollControlled: true,
+                    builder: (_) => const ConnectionEditor(),
+                  ),
+                ),
+                const Divider(indent: 76, endIndent: 20),
+                ListTile(
+                  leading: const ClipyIcon(Icons.folder_open_rounded),
+                  title: Text(l10n.receivedFiles),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: widget.onOpenReceivedFiles,
+                ),
+                const Divider(indent: 76, endIndent: 20),
+                ListTile(
+                  leading: const ClipyIcon(Icons.article_outlined),
+                  title: Text(l10n.viewLogs),
+                  subtitle: Text(l10n.appRuntimeLogs),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: widget.onOpenLogs,
+                ),
+              ],
+            ),
           ),
-        ),
-      ],
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              children: [
+                Text('Clipy', style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 6),
+                Text(
+                  l10n.aboutClipy,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

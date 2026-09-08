@@ -28,10 +28,40 @@ class ClipboardRepository {
   Future<List<HistoryEntry>> fetchPage({
     required int offset,
     required int limit,
+    String query = '',
+    String filter = 'all',
   }) async {
+    final conditions = <String>[];
+    final args = <Object?>[];
+    if (query.trim().isNotEmpty) {
+      // Bind and escape LIKE metacharacters: searching "100%" is literal.
+      final escaped = query
+          .trim()
+          .replaceAll('!', '!!')
+          .replaceAll('%', '!%')
+          .replaceAll('_', '!_');
+      conditions.add(
+        "((item_type IN ('text', 'fileURL') AND item_value LIKE ? ESCAPE '!') OR source_app LIKE ? ESCAPE '!')",
+      );
+      args.addAll(['%$escaped%', '%$escaped%']);
+    }
+    switch (filter) {
+      case 'text':
+        conditions.add("item_type = 'text'");
+      case 'links':
+        conditions.add(
+          "item_type = 'text' AND (LOWER(TRIM(item_value)) LIKE 'https://%' OR LOWER(TRIM(item_value)) LIKE 'http://%')",
+        );
+      case 'files':
+        conditions.add("item_type = 'fileURL'");
+      case 'images':
+        conditions.add("item_type = 'image'");
+    }
     final rows = await (await _db).query(
       'clipboard_history',
-      orderBy: 'created_at DESC',
+      where: conditions.isEmpty ? null : conditions.join(' AND '),
+      whereArgs: args,
+      orderBy: 'created_at DESC, id DESC',
       limit: limit,
       offset: offset,
     );

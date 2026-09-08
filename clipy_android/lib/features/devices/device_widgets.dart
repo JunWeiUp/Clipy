@@ -3,32 +3,37 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:clipy_android/sync_manager.dart';
-import 'package:clipy_android/app_localizations.dart';
+import '../../sync_manager.dart';
+import '../../app_localizations.dart';
+import '../../ui/app_components.dart';
 
 Future<void> pickAndSendFileToDevice(
   BuildContext context,
   DiscoveredPeer peer,
 ) async {
   final l10n = context.l10n;
-  final result = await FilePicker.pickFiles(allowMultiple: false);
-  if (result == null || result.files.isEmpty) return;
-  final path = result.files.single.path;
-  if (path == null) return;
-  final file = File(path);
-  if (!file.existsSync()) return;
-  final success = await SyncManager.instance.sendFileToPeer(
-    file,
-    peerId: peer.peerId,
-  );
-  if (context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          success ? l10n.fileSentTo(peer.displayName) : l10n.sendFailed,
-        ),
-      ),
+  try {
+    final result = await FilePicker.pickFiles(allowMultiple: false);
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null) return;
+    final file = File(path);
+    if (!await file.exists()) {
+      if (context.mounted) showClipyMessage(context, l10n.fileNotFound);
+      return;
+    }
+    final success = await SyncManager.instance.sendFileToPeer(
+      file,
+      peerId: peer.peerId,
     );
+    if (context.mounted) {
+      showClipyMessage(
+        context,
+        success ? l10n.fileSentTo(peer.displayName) : l10n.sendFailed,
+      );
+    }
+  } catch (_) {
+    if (context.mounted) showClipyMessage(context, l10n.sendFailed);
   }
 }
 
@@ -38,126 +43,111 @@ Future<void> showSendTextToDeviceDialog(
   String? initialText,
 }) async {
   final l10n = context.l10n;
-  final controller = TextEditingController(text: initialText ?? '');
-  final confirmed = await showDialog<bool>(
+  final text = await showDialog<String>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text(l10n.sendTextTo(peer.displayName)),
-      content: TextField(
-        controller: controller,
-        autofocus: true,
-        maxLines: 6,
-        minLines: 3,
-        decoration: InputDecoration(
-          hintText: l10n.enterTextToSend,
-          border: const OutlineInputBorder(),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext, false),
-          child: Text(l10n.cancel),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext, true),
-          child: Text(l10n.send),
-        ),
-      ],
-    ),
+    builder: (_) => _SendTextDialog(peer: peer, initialText: initialText),
   );
-  if (confirmed != true || controller.text.trim().isEmpty) return;
-  final success = await SyncManager.instance.sendTextToPeer(
-    controller.text,
-    peerId: peer.peerId,
-  );
-  if (context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          success ? l10n.textSentTo(peer.displayName) : l10n.sendFailed,
-        ),
-      ),
+  if (text == null || !context.mounted) return;
+  try {
+    final success = await SyncManager.instance.sendTextToPeer(
+      text,
+      peerId: peer.peerId,
     );
+    if (context.mounted) {
+      showClipyMessage(
+        context,
+        success ? l10n.textSentTo(peer.displayName) : l10n.sendFailed,
+      );
+    }
+  } catch (_) {
+    if (context.mounted) showClipyMessage(context, l10n.sendFailed);
   }
+}
+
+class _SendTextDialog extends StatefulWidget {
+  const _SendTextDialog({required this.peer, this.initialText});
+  final DiscoveredPeer peer;
+  final String? initialText;
+  @override
+  State<_SendTextDialog> createState() => _SendTextDialogState();
+}
+
+class _SendTextDialogState extends State<_SendTextDialog> {
+  late final _text = TextEditingController(text: widget.initialText);
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(context.l10n.sendTextTo(widget.peer.displayName)),
+    content: TextField(
+      controller: _text,
+      autofocus: true,
+      minLines: 3,
+      maxLines: 6,
+      onChanged: (_) => setState(() {}),
+      decoration: InputDecoration(hintText: context.l10n.enterTextToSend),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text(context.l10n.cancel),
+      ),
+      FilledButton(
+        onPressed: _text.text.trim().isEmpty
+            ? null
+            : () => Navigator.pop(context, _text.text),
+        child: Text(context.l10n.send),
+      ),
+    ],
+  );
 }
 
 class LanDeviceActionTile extends StatelessWidget {
   final DiscoveredPeer peer;
-
   const LanDeviceActionTile({super.key, required this.peer});
-
   @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    final shortId = peer.peerId.length > 8
-        ? peer.peerId.substring(0, 8)
-        : peer.peerId;
-    return ListTile(
-      leading: const Icon(Icons.devices),
-      title: Text(peer.displayName),
-      subtitle: Text(
-        shortId,
-        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-      ),
-      trailing: PopupMenuButton<String>(
-        onSelected: (value) {
-          if (value == 'text') {
-            showSendTextToDeviceDialog(context, peer);
-          } else if (value == 'file') {
-            pickAndSendFileToDevice(context, peer);
-          }
-        },
-        itemBuilder: (context) => [
-          PopupMenuItem(
-            value: 'text',
-            child: ListTile(
-              leading: const Icon(Icons.short_text),
-              title: Text(l10n.sendText),
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-            ),
-          ),
-          PopupMenuItem(
-            value: 'file',
-            child: ListTile(
-              leading: const Icon(Icons.upload_file),
-              title: Text(l10n.sendFile),
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => ListTile(
+    leading: const ClipyIcon(Icons.devices_rounded),
+    title: Text(peer.displayName),
+    subtitle: Text(peer.host),
+    trailing: PopupMenuButton<String>(
+      tooltip: context.l10n.moreActions,
+      onSelected: (value) => value == 'text'
+          ? showSendTextToDeviceDialog(context, peer)
+          : pickAndSendFileToDevice(context, peer),
+      itemBuilder: (_) => [
+        PopupMenuItem(value: 'text', child: Text(context.l10n.sendText)),
+        PopupMenuItem(value: 'file', child: Text(context.l10n.sendFile)),
+      ],
+    ),
+  );
 }
 
 class SyncTargetDeviceList extends StatefulWidget {
   const SyncTargetDeviceList({super.key});
-
   @override
   State<SyncTargetDeviceList> createState() => _SyncTargetDeviceListState();
 }
 
 class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
   StreamSubscription? _subscription;
-  List<DiscoveredPeer> _availablePeers = [];
-  bool _isRefreshing = false;
-
+  List<DiscoveredPeer> _peers = [];
+  bool _refreshing = false;
+  final Set<String> _busy = {};
   @override
   void initState() {
     super.initState();
-    _availablePeers = SyncManager.instance.availablePeers;
+    _peers = SyncManager.instance.availablePeers;
     _subscription = SyncManager.instance.onPeersChanged.listen((peers) {
-      if (mounted) {
-        setState(() => _availablePeers = peers);
-      }
+      if (mounted) setState(() => _peers = peers);
     });
-    // On-demand device discovery: this list is the primary place users view
-    // the device list, so a single subnet scan is triggered here. Results
-    // refresh the list via onPeersChanged. Replaces the old periodic rescan
-    // to save power.
-    SyncManager.instance.triggerCrossBandDiscovery();
+    if (SyncManager.instance.isEnabled) {
+      SyncManager.instance.triggerCrossBandDiscovery();
+    }
   }
 
   @override
@@ -166,344 +156,395 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
     super.dispose();
   }
 
-  Future<void> _refreshDevices() async {
-    if (_isRefreshing || !SyncManager.instance.isEnabled) return;
-    setState(() => _isRefreshing = true);
+  Future<void> _refresh() async {
+    if (_refreshing || !SyncManager.instance.isEnabled) return;
+    setState(() => _refreshing = true);
     try {
       await SyncManager.instance.refreshDiscovery(
         pruneCache: true,
         scanFullSubnet: true,
       );
-      if (mounted) {
-        setState(() => _availablePeers = SyncManager.instance.availablePeers);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(context.l10n.devicesRefreshed)));
-      }
+      if (mounted) setState(() => _peers = SyncManager.instance.availablePeers);
+    } catch (_) {
+      if (mounted) showClipyMessage(context, context.l10n.operationFailed);
     } finally {
-      if (mounted) setState(() => _isRefreshing = false);
+      if (mounted) setState(() => _refreshing = false);
     }
   }
 
-  List<String> get _authRowIds {
-    final online = _availablePeers.map((p) => p.peerId).toSet();
-    final auth = SyncManager.instance.authorizedPeerIds.toSet();
-    return {...auth, ...online}.toList()..sort();
+  Future<void> _change(String id, Future<void> Function() action) async {
+    if (_busy.contains(id)) return;
+    setState(() => _busy.add(id));
+    try {
+      await action();
+    } catch (_) {
+      if (mounted) showClipyMessage(context, context.l10n.operationFailed);
+    } finally {
+      if (mounted) setState(() => _busy.remove(id));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final rowIds = _authRowIds;
+    final manager = SyncManager.instance;
+    final colors = Theme.of(context).colorScheme;
+    final ids = {
+      ...manager.authorizedPeerIds,
+      ..._peers.map((p) => p.peerId),
+    }.toList()..sort();
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  l10n.authorizedDevices,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue,
-                  ),
-                ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                l10n.authorizedDevices,
+                style: Theme.of(context).textTheme.titleMedium,
               ),
-              TextButton.icon(
-                onPressed: SyncManager.instance.isEnabled && !_isRefreshing
-                    ? _refreshDevices
-                    : null,
-                icon: _isRefreshing
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.refresh, size: 18),
-                label: Text(
-                  _isRefreshing ? l10n.refreshingDevices : l10n.refreshDevices,
-                ),
-              ),
-            ],
-          ),
+            ),
+            IconButton(
+              onPressed: manager.isEnabled && !_refreshing ? _refresh : null,
+              tooltip: l10n.refreshDevices,
+              icon: _refreshing
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh_rounded),
+            ),
+          ],
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          padding: const EdgeInsets.only(bottom: 16),
           child: Text(
-            l10n.syncTargetsHint,
-            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            l10n.syncTargetsSummary,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
           ),
         ),
-        if (rowIds.isEmpty)
-          ListTile(
-            title: Text(l10n.noDevicesFound),
-            subtitle: Text(l10n.sameWifiHint),
-          )
-        else
-          ...rowIds.map((peerId) {
-            DiscoveredPeer? online;
-            for (final p in _availablePeers) {
-              if (p.peerId == peerId) {
-                online = p;
-                break;
-              }
-            }
-            final clipOn = SyncManager.instance.clipboardSyncPeerIds.contains(
-              peerId,
-            );
-            final notifOn = SyncManager.instance.notificationSyncPeerIds
-                .contains(peerId);
-            final title =
-                online?.displayName ??
-                SyncManager.instance.resolvedPeerLabel(peerId);
-            final subtitle = online != null
-                ? '${online.host}:${online.port}'
-                : peerId;
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+        if (ids.isEmpty)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ListTile(
-                    dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                    title: Text(title),
-                    subtitle: Text(
-                      subtitle,
-                      style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          online != null
-                              ? l10n.deviceOnline
-                              : l10n.deviceOffline,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: online != null
-                                ? Colors.green[700]
-                                : Colors.grey[600],
-                          ),
-                        ),
-                        if (clipOn || notifOn)
-                          IconButton(
-                            icon: const Icon(
-                              Icons.delete_outline,
-                              color: Colors.red,
-                            ),
-                            tooltip: l10n.delete,
-                            onPressed: () async {
-                              await SyncManager.instance.removeAuthorizedPeer(
-                                peerId,
-                              );
-                              if (mounted) setState(() {});
-                            },
-                          ),
-                      ],
-                    ),
+                  const ClipyIcon(Icons.devices_other_rounded, size: 64),
+                  const SizedBox(height: 16),
+                  Text(
+                    l10n.noDevicesFound,
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  SwitchListTile(
-                    dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                    title: Text(l10n.syncClipboardToDevice),
-                    value: clipOn,
-                    onChanged: (value) async {
-                      await SyncManager.instance.setClipboardSyncTarget(
-                        peerId,
-                        enabled: value,
-                      );
-                      if (mounted) setState(() {});
-                    },
+                  const SizedBox(height: 6),
+                  Text(
+                    manager.isEnabled ? l10n.sameWifiHint : l10n.diagSyncOff,
+                    textAlign: TextAlign.center,
                   ),
-                  SwitchListTile(
-                    dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                    title: Text(l10n.syncNotificationsToDevice),
-                    value: notifOn,
-                    onChanged: (value) async {
-                      await SyncManager.instance.setNotificationSyncTarget(
-                        peerId,
-                        enabled: value,
-                      );
-                      if (mounted) setState(() {});
-                    },
-                  ),
-                  const Divider(height: 1),
                 ],
               ),
-            );
-          }),
+            ),
+          ),
+        for (final id in ids)
+          Builder(
+            builder: (context) {
+              final matches = _peers.where((p) => p.peerId == id);
+              final peer = matches.isEmpty ? null : matches.first;
+              final clipboard = manager.clipboardSyncPeerIds.contains(id);
+              final notifications = manager.notificationSyncPeerIds.contains(
+                id,
+              );
+              final busy = _busy.contains(id);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Card(
+                  child: Column(
+                    children: [
+                      ListTile(
+                        leading: const ClipyIcon(Icons.computer_rounded),
+                        title: Text(
+                          peer?.displayName ?? manager.resolvedPeerLabel(id),
+                        ),
+                        subtitle: Text(
+                          peer == null
+                              ? l10n.deviceOffline
+                              : '${l10n.deviceOnline} · ${peer.host}',
+                          style: TextStyle(color: colors.onSurfaceVariant),
+                        ),
+                        trailing: clipboard || notifications
+                            ? IconButton(
+                                onPressed: busy
+                                    ? null
+                                    : () async {
+                                        final confirmed = await confirmRemoval(
+                                          context,
+                                          title: l10n.delete,
+                                          message: l10n.removeDeviceConfirm,
+                                        );
+                                        if (confirmed && mounted) {
+                                          await _change(
+                                            id,
+                                            () => manager.removeAuthorizedPeer(
+                                              id,
+                                            ),
+                                          );
+                                        }
+                                      },
+                                tooltip: l10n.delete,
+                                icon: const Icon(Icons.link_off_rounded),
+                              )
+                            : null,
+                      ),
+                      const Divider(indent: 20, endIndent: 20),
+                      SwitchListTile(
+                        title: Text(l10n.syncClipboardToDevice),
+                        value: clipboard,
+                        onChanged: busy
+                            ? null
+                            : (value) => _change(
+                                id,
+                                () => manager.setClipboardSyncTarget(
+                                  id,
+                                  enabled: value,
+                                ),
+                              ),
+                      ),
+                      SwitchListTile(
+                        title: Text(l10n.syncNotificationsToDevice),
+                        value: notifications,
+                        onChanged: busy
+                            ? null
+                            : (value) => _change(
+                                id,
+                                () => manager.setNotificationSyncTarget(
+                                  id,
+                                  enabled: value,
+                                ),
+                              ),
+                      ),
+                      if (peer != null)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              FilledButton.tonalIcon(
+                                onPressed: !manager.isEnabled || busy
+                                    ? null
+                                    : () => _change(
+                                        id,
+                                        () => showSendTextToDeviceDialog(
+                                          context,
+                                          peer,
+                                        ),
+                                      ),
+                                icon: const Icon(Icons.notes_rounded, size: 18),
+                                label: Text(l10n.sendText),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: !manager.isEnabled || busy
+                                    ? null
+                                    : () => _change(
+                                        id,
+                                        () => pickAndSendFileToDevice(
+                                          context,
+                                          peer,
+                                        ),
+                                      ),
+                                icon: const Icon(
+                                  Icons.upload_file_outlined,
+                                  size: 18,
+                                ),
+                                label: Text(l10n.sendFile),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
       ],
     );
   }
 }
 
-/// Manually-configured sync peers (host:port) for cross-band / cross-subnet
-/// discovery when mDNS multicast is isolated by the router.
 class ManualPeerSection extends StatefulWidget {
   const ManualPeerSection({super.key});
-
   @override
   State<ManualPeerSection> createState() => _ManualPeerSectionState();
 }
 
 class _ManualPeerSectionState extends State<ManualPeerSection> {
-  List<String> _manualPeers = [];
-
+  List<String> _peers = [];
+  bool _busy = false;
   @override
   void initState() {
     super.initState();
-    _loadManualPeers();
+    _load();
   }
 
-  Future<void> _loadManualPeers() async {
+  Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
     if (mounted) {
-      setState(() {
-        _manualPeers = prefs.getStringList('manualSyncPeers') ?? [];
-      });
+      setState(() => _peers = prefs.getStringList('manualSyncPeers') ?? []);
     }
   }
 
-  bool _isValidIPv4(String s) {
-    final parts = s.split('.');
-    if (parts.length != 4) return false;
-    for (final p in parts) {
-      final v = int.tryParse(p);
-      if (v == null || v < 0 || v > 255) return false;
+  Future<void> _save(String entry, {bool remove = false}) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final peers = prefs.getStringList('manualSyncPeers') ?? [];
+      if (remove) {
+        peers.remove(entry);
+      } else if (!peers.contains(entry)) {
+        peers.add(entry);
+      }
+      await prefs.setStringList('manualSyncPeers', peers);
+      if (mounted) setState(() => _peers = peers);
+      if (!remove) SyncManager.instance.triggerCrossBandDiscovery();
+    } catch (_) {
+      if (mounted) showClipyMessage(context, context.l10n.operationFailed);
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
-    return true;
   }
 
-  Future<void> _addPeer() async {
-    final hostController = TextEditingController();
-    final portController = TextEditingController(
-      text: '${SyncManager.instance.port}',
-    );
-    final formKey = GlobalKey<FormState>();
-
+  Future<void> _add() async {
     final entry = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('添加设备'),
-        content: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: hostController,
-                decoration: const InputDecoration(
-                  labelText: 'IP 地址',
-                  hintText: '192.168.1.20',
-                ),
-                validator: (v) {
-                  final s = v?.trim() ?? '';
-                  if (!_isValidIPv4(s)) return '请输入合法 IPv4 地址';
-                  return null;
-                },
-              ),
-              TextFormField(
-                controller: portController,
-                decoration: const InputDecoration(labelText: '端口'),
-                keyboardType: TextInputType.number,
-                validator: (v) {
-                  final p = int.tryParse(v ?? '');
-                  if (p == null || p < 1 || p > 65535) return '端口范围 1-65535';
-                  return null;
-                },
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              if (formKey.currentState?.validate() ?? false) {
-                Navigator.pop(
-                  ctx,
-                  '${hostController.text.trim()}:${portController.text.trim()}',
-                );
-              }
-            },
-            child: const Text('添加'),
-          ),
-        ],
-      ),
+      builder: (_) => const _ManualPeerDialog(),
     );
-
-    if (entry == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList('manualSyncPeers') ?? [];
-    if (!list.contains(entry)) {
-      list.add(entry);
-      await prefs.setStringList('manualSyncPeers', list);
-      setState(() => _manualPeers = list);
-      SyncManager.instance.triggerCrossBandDiscovery();
-    }
-  }
-
-  Future<void> _removePeer(String entry) async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList('manualSyncPeers') ?? [];
-    list.remove(entry);
-    await prefs.setStringList('manualSyncPeers', list);
-    setState(() => _manualPeers = list);
+    if (entry != null && mounted) await _save(entry);
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.all(20),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
-          child: Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  '手动添加设备（跨频段/跨子网）',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue,
-                  ),
-                ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                context.l10n.manualDevices,
+                style: Theme.of(context).textTheme.titleMedium,
               ),
-              TextButton.icon(
-                onPressed: SyncManager.instance.isEnabled ? _addPeer : null,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('添加'),
-              ),
-            ],
-          ),
+            ),
+            IconButton(
+              onPressed: SyncManager.instance.isEnabled && !_busy ? _add : null,
+              tooltip: context.l10n.addDevice,
+              icon: const Icon(Icons.add_rounded),
+            ),
+          ],
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-          child: Text(
-            '当自动发现失效（如 2.4G/5G 隔离）时，在对端查看 IP 后手动添加。',
-            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-          ),
+        Text(
+          context.l10n.manualDevicesHint,
+          style: Theme.of(context).textTheme.bodySmall,
         ),
-        ..._manualPeers.map(
-          (entry) => ListTile(
-            leading: const Icon(Icons.dns, size: 20),
-            title: Text(entry),
+        for (final peer in _peers)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(peer),
+            leading: const Icon(Icons.dns_outlined),
             trailing: IconButton(
-              icon: const Icon(Icons.delete_outline, size: 20),
-              onPressed: () => _removePeer(entry),
+              tooltip: context.l10n.delete,
+              onPressed: _busy ? null : () => _save(peer, remove: true),
+              icon: const Icon(Icons.close_rounded),
             ),
           ),
-        ),
       ],
-    );
+    ),
+  );
+}
+
+class _ManualPeerDialog extends StatefulWidget {
+  const _ManualPeerDialog();
+  @override
+  State<_ManualPeerDialog> createState() => _ManualPeerDialogState();
+}
+
+class _ManualPeerDialogState extends State<_ManualPeerDialog> {
+  final _host = TextEditingController();
+  late final _port = TextEditingController(
+    text: '${SyncManager.instance.port}',
+  );
+  final _form = GlobalKey<FormState>();
+  @override
+  void dispose() {
+    _host.dispose();
+    _port.dispose();
+    super.dispose();
   }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(context.l10n.addDevice),
+    content: Form(
+      key: _form,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextFormField(
+            controller: _host,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: context.l10n.ipAddress,
+              hintText: '192.168.1.20',
+            ),
+            validator: (value) {
+              final parts = value?.trim().split('.') ?? [];
+              if (parts.length != 4 ||
+                  parts.any(
+                    (part) =>
+                        !RegExp(r'^\d{1,3}$').hasMatch(part) ||
+                        int.parse(part) > 255,
+                  )) {
+                return context.l10n.invalidIP;
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            controller: _port,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(labelText: context.l10n.syncPort),
+            validator: (value) {
+              final number = int.tryParse(value?.trim() ?? '');
+              return number == null || number < 1 || number > 65535
+                  ? context.l10n.invalidPort
+                  : null;
+            },
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text(context.l10n.cancel),
+      ),
+      FilledButton(
+        onPressed: () {
+          if (_form.currentState!.validate()) {
+            Navigator.pop(
+              context,
+              '${_host.text.trim()}:${int.parse(_port.text.trim())}',
+            );
+          }
+        },
+        child: Text(context.l10n.add),
+      ),
+    ],
+  );
 }

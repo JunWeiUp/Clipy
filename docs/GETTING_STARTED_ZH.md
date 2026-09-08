@@ -4,15 +4,15 @@
 
 ## 下载与版本
 
-以下链接对应 **2026 年 9 月 3 日发布的 v1.0.17**，目前已设为 Latest，不会自动切换到未来版本。新版本及更新说明请查看[全部发布](https://github.com/JunWeiUp/Clipy/releases)。
+以下链接对应 **2026 年 9 月 8 日发布的 v1.0.18**，目前已设为 Latest，不会自动切换到未来版本。新版本及更新说明请查看[全部发布](https://github.com/JunWeiUp/Clipy/releases)。
 
 | 设备 | 下载 |
 | --- | --- |
-| Apple Silicon Mac，macOS 13+ | [macOS ZIP](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-macOS-v1.0.17.zip) |
-| Android，arm64 | [64 位 APK](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-Android-arm64-v8a-v1.0.17.apk) |
-| Android，armeabi-v7a | [32 位 APK](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-Android-armeabi-v7a-v1.0.17.apk) |
+| Apple Silicon Mac，macOS 13+ | [macOS ZIP](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-macOS-v1.0.18.zip) |
+| Android，arm64 | [64 位 APK](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-Android-arm64-v8a-v1.0.18.apk) |
+| Android，armeabi-v7a | [32 位 APK](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-Android-armeabi-v7a-v1.0.18.apk) |
 
-发布页另附 APK 和 ZIP 的 [SHA-256 校验文件](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/SHA256SUMS.txt)。正式安装包构建号为 **10057**，本地源码默认值为 **10040**；如需用本地构建覆盖正式 APK，应使用相同签名密钥和更高构建号，不要在未备份数据时卸载应用。
+发布页另附 APK 和 ZIP 的 [SHA-256 校验文件](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/SHA256SUMS.txt)。正式安装包构建号为 **10078**，本地源码默认值为 **10060**；如需用本地构建覆盖正式 APK，应使用相同签名密钥和更高构建号，不要在未备份数据时卸载应用。
 
 macOS ZIP 中是 **arm64** 应用，不是 Intel 或通用架构版本。本次发布没有 iOS 安装包，iOS 源码目标仍为实验性。开发版构建方法见[开发指南](DEVELOPMENT.md)。
 
@@ -28,21 +28,21 @@ macOS ZIP 中是 **arm64** 应用，不是 Intel 或通用架构版本。本次�
 
 ## 同步版本差异
 
-已发布的 v1.0.17 和当前 `main` 源码提供了旧版 v1.0.15 没有的配对设置：
+已发布的 v1.0.18 和当前 `main` 源码提供了旧版 v1.0.15 没有的配对设置：
 
 | 版本 | 配对行为 |
 | --- | --- |
 | 旧版 v1.0.15 | 使用公开的兼容密钥，界面没有私有配对密钥设置；无法对已知该密钥的人提供保密性。 |
-| 已发布的 v1.0.17 / 当前源码 | 已提供私有配对密钥设置。两端需配置相同、足够强且非空的私有值；留空仍会使用兼容模式。 |
+| 已发布的 v1.0.18 / 当前源码 | 已提供私有配对密钥设置。两端需配置相同、足够强且非空的私有值；留空仍会使用兼容模式。 |
 
-同步面向可信局域网。如果仍使用 v1.0.15，请只使用无敏感信息的示例文字，不要同步密码等秘密。v1.0.17 的私有密钥也不等于经过认证的设备身份，无法消除所有协议限制。启用前请阅读[安全说明](../SECURITY.md)。
+同步面向可信局域网。如果仍使用 v1.0.15，请只使用无敏感信息的示例文字，不要同步密码等秘密。v1.0.18 的私有密钥也不等于经过认证的设备身份，无法消除所有协议限制。启用前请阅读[安全说明](../SECURITY.md)。
 
 已有的[第三方许可核对](../THIRD_PARTY_NOTICES.md)仍未完成，版本已公开发布不代表许可核对已经完成。
 
 ## 连接 Mac 与 Android
 
 1. 两台设备连接可信局域网，首次测试时保持两端应用打开，尽量使用相同版本。
-2. 使用 v1.0.17 时，先在两端设置中保存相同、足够强的「配对密钥」，再启用局域网同步。v1.0.15 没有这个选项，请按上面的限制使用；不要把私有密钥模式与不支持该密钥的旧版混用。
+2. 使用 v1.0.18 时，先在两端设置中保存相同、足够强的「配对密钥」，再启用局域网同步。v1.0.15 没有这个选项，请按上面的限制使用；不要把私有密钥模式与不支持该密钥的旧版混用。
 3. 启用局域网同步，在各自的设备列表中，打开向目标设备共享剪贴板的开关。这是发送方向的设置，需要双向自动共享时，两端都要配置。通知共享是独立选项。
 4. 在 Mac 复制无敏感信息的测试文字，到 Android 历史中检查。测试反向传输时，保持 Android 应用在前台，按需使用应用内的剪贴板导入操作，再查看 Mac 历史。Android 后台剪贴板捕获会受到系统版本和设备权限限制。
 
@@ -52,7 +52,7 @@ macOS ZIP 中是 **arm64** 应用，不是 Intel 或通用架构版本。本次�
 
 ### 能看到设备，但文字没有传过去
 
-先检查**发送端**是否打开了向目标设备共享剪贴板的开关。v1.0.17 还要确认两端配对密钥一致。保持两端应用可见，再用无敏感信息的文字测试。Android 通知权限影响的是通知镜像，应与剪贴板共享分别排查。
+先检查**发送端**是否打开了向目标设备共享剪贴板的开关。v1.0.18 还要确认两端配对密钥一致。保持两端应用可见，再用无敏感信息的文字测试。Android 通知权限影响的是通知镜像，应与剪贴板共享分别排查。
 
 ### 怎么切换语言？
 

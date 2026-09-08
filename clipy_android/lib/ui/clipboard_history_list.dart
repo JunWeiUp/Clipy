@@ -1,15 +1,21 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../app_localizations.dart';
 import '../clipboard_manager.dart';
-import '../log_manager.dart';
+import '../features/history/history_feed_controller.dart';
 import '../models.dart';
 import '../sync_manager.dart';
+import 'app_components.dart';
 
 class PaginatedClipboardHistoryList extends StatefulWidget {
   final void Function(HistoryEntry entry)? onFileTap;
-
-  const PaginatedClipboardHistoryList({super.key, this.onFileTap});
+  final HistoryFeedController? controller;
+  const PaginatedClipboardHistoryList({
+    super.key,
+    this.onFileTap,
+    this.controller,
+  });
 
   @override
   State<PaginatedClipboardHistoryList> createState() =>
@@ -18,248 +24,498 @@ class PaginatedClipboardHistoryList extends StatefulWidget {
 
 class _PaginatedClipboardHistoryListState
     extends State<PaginatedClipboardHistoryList> {
-  static const _pageSize = 50;
-  // Coalesce a burst of ClipboardManager notifications (e.g. a reconnect-driven
-  // pending-frame resend that fires one notify per frame) into a single list
-  // rebuild. Without this, N notifies => N full clear+rebuild passes — a visible
-  // refresh storm.
-  static const _refreshDebounce = Duration(milliseconds: 300);
-
-  final ScrollController _scrollController = ScrollController();
-  final List<HistoryEntry> _entries = [];
-  bool _loading = false;
-  bool _hasMore = true;
+  final _scrollController = ScrollController();
+  final _searchController = TextEditingController();
+  late final HistoryFeedController _feed;
   Timer? _refreshTimer;
+  Timer? _searchTimer;
+  Timer? _copiedTimer;
+  HistoryEntry? _copied;
 
   @override
   void initState() {
     super.initState();
-    _loadMore();
+    _feed =
+        widget.controller ??
+        HistoryFeedController(ClipboardManager.instance.fetchPage);
+    _feed.addListener(_changed);
+    if (_feed.entries.isEmpty) unawaited(_feed.refresh());
     _scrollController.addListener(_onScroll);
-    ClipboardManager.instance.addListener(_refreshFromDb);
+    if (widget.controller == null) {
+      ClipboardManager.instance.addListener(_refreshFromDb);
+    }
+  }
+
+  void _changed() {
+    if (!mounted) return;
+    setState(() {});
+    // Small windows / large screens can fit an entire page without scrolling.
+    // Continue only while content does not fill the viewport.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted &&
+          _scrollController.hasClients &&
+          !_feed.failed &&
+          _scrollController.position.maxScrollExtent == 0 &&
+          _feed.hasMore &&
+          !_feed.loading) {
+        unawaited(_feed.loadMore());
+      }
+    });
   }
 
   @override
   void dispose() {
-    ClipboardManager.instance.removeListener(_refreshFromDb);
+    if (widget.controller == null) {
+      ClipboardManager.instance.removeListener(_refreshFromDb);
+    }
+    _feed.removeListener(_changed);
+    if (widget.controller == null) _feed.dispose();
     _refreshTimer?.cancel();
+    _searchTimer?.cancel();
+    _copiedTimer?.cancel();
     _scrollController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
   void _refreshFromDb() {
-    if (!mounted) return;
-    // Debounce: a rapid burst of notifications only schedules one rebuild once
-    // the burst settles. Each new notification reschedules the timer.
     _refreshTimer?.cancel();
-    _refreshTimer = Timer(_refreshDebounce, _applyRefresh);
-  }
-
-  void _applyRefresh() {
-    if (!mounted) return;
-    // If a load is in progress, do nothing here — the debounce timer in
-    // _refreshFromDb will re-fire _applyRefresh once the current load settles
-    // and the next notification arrives. This avoids the old _pendingRefresh
-    // self-recursion that caused the endless refresh cascade.
-    if (_loading) return;
-    _hasMore = true;
-    _loadMore(reset: true);
+    _refreshTimer = Timer(
+      const Duration(milliseconds: 300),
+      () => _feed.refresh(),
+    );
   }
 
   void _onScroll() {
-    if (!_hasMore || _loading) return;
-    if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 200) {
-      _loadMore();
+    if (_scrollController.position.extentAfter < 240 && !_feed.failed) {
+      unawaited(_feed.loadMore());
     }
   }
 
-  Future<void> _loadMore({bool reset = false}) async {
-    if (_loading) return;
-    _loading = true;
-    final offset = reset ? 0 : _entries.length;
-    List<HistoryEntry> page;
+  void _search({String? filter}) {
+    _searchTimer?.cancel();
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+    unawaited(_feed.search(_searchController.text, filter ?? _feed.filter));
+  }
+
+  Future<void> _copy(HistoryEntry entry) async {
     try {
-      page = await ClipboardManager.instance.fetchPage(
-        offset: offset,
-        limit: _pageSize,
-      );
-    } catch (e) {
-      // Database not ready / locked / corrupted — must reset _loading or the
-      // UI spins forever (empty list + _loading=true renders an endless
-      // CircularProgressIndicator at the bottom of an empty ListView).
-      appLog('_loadMore fetchPage error: $e', level: 'warning');
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _hasMore = false;
-        });
-      }
-      return;
+      await ClipboardManager.instance.copyToClipboard(entry.item);
+      if (!mounted) return;
+      unawaited(HapticFeedback.selectionClick());
+      setState(() => _copied = entry);
+      showClipyMessage(context, context.l10n.copiedToClipboard);
+      _copiedTimer?.cancel();
+      _copiedTimer = Timer(const Duration(seconds: 2), () {
+        if (mounted) setState(() => _copied = null);
+      });
+    } catch (_) {
+      if (mounted) showClipyMessage(context, context.l10n.operationFailed);
     }
-    if (!mounted) {
-      _loading = false;
-      return;
-    }
-    setState(() {
-      if (reset) {
-        if (_entriesSameContent(page)) {
-          _loading = false;
-          return;
-        }
-        _entries.clear();
-      }
-      _entries.addAll(page);
-      _hasMore = page.length == _pageSize;
-      _loading = false;
-    });
   }
 
-  /// True if [page] contains the same content hashes as the currently
-  /// displayed entries (order-independent). Used to suppress a pointless
-  /// rebuild during a notify storm. Order-insensitive because insertBatch uses
-  /// INSERT OR IGNORE (existing rows keep their created_at), but a genuinely
-  // new entry landing at the top is a real change worth showing.
-  bool _entriesSameContent(List<HistoryEntry> page) {
-    if (page.length != _entries.length) return false;
-    final current = _entries.map((e) => e.contentHash).toSet();
-    for (final e in page) {
-      if (!current.contains(e.contentHash)) return false;
-    }
-    return true;
-  }
-
-  Future<void> _showSendTextSheet(BuildContext context, String text) async {
+  Future<void> _send(String text) async {
     final l10n = context.l10n;
     final peers = SyncManager.instance.availablePeers;
     if (peers.isEmpty) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.noDevicesFound)));
+      showClipyMessage(context, l10n.noDevicesFound);
       return;
     }
-
     final peer = await showModalBottomSheet<DiscoveredPeer>(
       context: context,
+      isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                l10n.sendText,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * .65,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  l10n.sendText,
+                  style: Theme.of(context).textTheme.titleLarge,
                 ),
               ),
-            ),
-            ...peers.map((p) {
-              final shortId = p.peerId.length > 8
-                  ? p.peerId.substring(0, 8)
-                  : p.peerId;
-              return ListTile(
-                leading: const Icon(Icons.devices),
-                title: Text(p.displayName),
-                subtitle: Text(
-                  shortId,
-                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              ...peers.map(
+                (p) => ListTile(
+                  leading: const ClipyIcon(Icons.devices_rounded),
+                  title: Text(p.displayName),
+                  subtitle: Text(p.host),
+                  onTap: () => Navigator.pop(sheetContext, p),
                 ),
-                onTap: () => Navigator.pop(sheetContext, p),
-              );
-            }),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
-
-    if (peer == null || !context.mounted) return;
-    final success = await SyncManager.instance.sendTextToPeer(
-      text,
-      peerId: peer.peerId,
-    );
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
+    if (peer == null || !mounted) return;
+    try {
+      final success = await SyncManager.instance.sendTextToPeer(
+        text,
+        peerId: peer.peerId,
+      );
+      if (mounted) {
+        showClipyMessage(
+          context,
           success ? l10n.textSentTo(peer.displayName) : l10n.sendFailed,
+        );
+      }
+    } catch (_) {
+      if (mounted) showClipyMessage(context, l10n.sendFailed);
+    }
+  }
+
+  Future<void> _preview(HistoryEntry entry) => showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * .65,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                context.l10n.preview,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    entry.item.type == 'text' || entry.item.type == 'fileURL'
+                        ? entry.item.value.toString()
+                        : entry.item.title,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              if (entry.item.type == 'text')
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        _copy(entry);
+                      },
+                      icon: const Icon(Icons.copy_rounded),
+                      label: Text(context.l10n.copyContent),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        _send(entry.item.value.toString());
+                      },
+                      icon: const Icon(Icons.send_outlined),
+                      label: Text(context.l10n.send),
+                    ),
+                  ],
+                ),
+            ],
+          ),
         ),
       ),
-    );
+    ),
+  );
+
+  String _dateLabel(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(date.year, date.month, date.day);
+    if (day == today) return context.l10n.today;
+    if (day == DateTime(today.year, today.month, today.day - 1)) {
+      return context.l10n.yesterday;
+    }
+    return MaterialLocalizations.of(context).formatMediumDate(date);
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    // Empty + loading: show a centered spinner instead of an empty ListView
-    // with a bottom CircularProgressIndicator (which looks like endless
-    // spinning on a blank screen — the "一直转圈圈" symptom).
-    if (_entries.isEmpty && _loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_entries.isEmpty) {
-      return Center(
-        child: Text(
-          l10n.noClipboardHistory,
-          style: TextStyle(color: Colors.grey[500], fontSize: 16),
-        ),
-      );
-    }
-
-    return ListView.builder(
-      controller: _scrollController,
-      itemCount: _entries.length + (_hasMore ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (index >= _entries.length) {
-          return const Padding(
-            padding: EdgeInsets.all(16),
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-        final entry = _entries[index];
-        final isFile = entry.item.type == 'fileURL';
-        return ListTile(
-          leading: Icon(
-            isFile ? Icons.insert_drive_file_outlined : Icons.short_text,
-            color: isFile ? Colors.blue : null,
-          ),
-          title: Text(
-            entry.item.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(
-            l10n.sourceAndDate(
-              entry.sourceApp,
-              entry.date.toString().split('.')[0],
+    final colors = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+          child: TextField(
+            controller: _searchController,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: l10n.searchHistory,
+              prefixIcon: const Icon(Icons.search_rounded),
+              suffixIcon: _searchController.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: l10n.clearSearch,
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: () {
+                        _searchController.clear();
+                        _search();
+                      },
+                    ),
             ),
+            onSubmitted: (_) => _search(),
+            onChanged: (_) {
+              setState(() {});
+              _searchTimer?.cancel();
+              _searchTimer = Timer(const Duration(milliseconds: 250), _search);
+            },
           ),
-          onTap: () {
-            if (isFile) {
-              widget.onFileTap?.call(entry);
-            } else {
-              ClipboardManager.instance.copyToClipboard(entry.item);
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text(l10n.copiedToClipboard)));
-            }
-          },
-          onLongPress: !isFile && entry.item.type == 'text'
-              ? () => _showSendTextSheet(context, entry.item.value as String)
-              : null,
-        );
-      },
+        ),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+          child: Row(
+            children: [
+              for (final filter in [
+                ('all', l10n.allItems),
+                ('text', l10n.textItems),
+                ('links', l10n.linkItems),
+                ('files', l10n.fileItems),
+                ('images', l10n.imageItems),
+              ])
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(filter.$2),
+                    selected: _feed.filter == filter.$1,
+                    onSelected: (_) => _search(filter: filter.$1),
+                    showCheckmark: false,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _feed.entries.isEmpty
+              ? (_feed.loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : ClipyEmptyState(
+                        icon: _feed.failed
+                            ? Icons.cloud_off_rounded
+                            : (_feed.query.isNotEmpty || _feed.filter != 'all'
+                                  ? Icons.search_off_rounded
+                                  : Icons.content_paste_rounded),
+                        title: _feed.failed
+                            ? l10n.loadFailed
+                            : (_feed.query.isNotEmpty || _feed.filter != 'all'
+                                  ? l10n.nothingFound
+                                  : l10n.noClipboardHistory),
+                        message: _feed.failed
+                            ? l10n.retryHint
+                            : (_feed.query.isNotEmpty || _feed.filter != 'all'
+                                  ? l10n.changeSearchHint
+                                  : l10n.historyEmptyHint),
+                        action: _feed.failed
+                            ? FilledButton(
+                                onPressed: _feed.refresh,
+                                child: Text(l10n.retry),
+                              )
+                            : null,
+                      ))
+              : RefreshIndicator(
+                  onRefresh: _feed.refresh,
+                  child: ListView.builder(
+                    key: const PageStorageKey('clipboard-history'),
+                    controller: _scrollController,
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                    itemCount: _feed.entries.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == _feed.entries.length) {
+                        if (_feed.failed) {
+                          return Center(
+                            child: TextButton(
+                              onPressed: _feed.refresh,
+                              child: Text(l10n.retry),
+                            ),
+                          );
+                        }
+                        return _feed.loading
+                            ? const Padding(
+                                padding: EdgeInsets.all(20),
+                                child: Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                              )
+                            : const SizedBox(height: 8);
+                      }
+                      final entry = _feed.entries[index];
+                      final isFile = entry.item.type == 'fileURL';
+                      final isText = entry.item.type == 'text';
+                      final uri = isText
+                          ? Uri.tryParse(entry.item.value.toString().trim())
+                          : null;
+                      final isLink =
+                          uri?.scheme == 'http' || uri?.scheme == 'https';
+                      final icon = isFile
+                          ? Icons.description_outlined
+                          : isLink
+                          ? Icons.link_rounded
+                          : isText
+                          ? Icons.notes_rounded
+                          : Icons.image_outlined;
+                      final label = _dateLabel(entry.date);
+                      final showDate =
+                          index == 0 ||
+                          _dateLabel(_feed.entries[index - 1].date) != label;
+                      final title = isFile
+                          ? entry.item.value.toString().split('/').last
+                          : entry.item.title;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (showDate)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(4, 12, 4, 12),
+                              child: Text(
+                                label,
+                                style: Theme.of(context).textTheme.titleSmall
+                                    ?.copyWith(color: colors.onSurfaceVariant),
+                              ),
+                            ),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Card(
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(24),
+                                onTap: () {
+                                  if (isFile) {
+                                    widget.onFileTap?.call(entry);
+                                  } else if (isText) {
+                                    _copy(entry);
+                                  } else {
+                                    _preview(entry);
+                                  }
+                                },
+                                onLongPress: () => _preview(entry),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(18),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            icon,
+                                            size: 18,
+                                            color: colors.primary,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(
+                                              entry.sourceApp ?? 'Clipy',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .labelMedium
+                                                  ?.copyWith(
+                                                    color:
+                                                        colors.onSurfaceVariant,
+                                                  ),
+                                            ),
+                                          ),
+                                          Text(
+                                            MaterialLocalizations.of(
+                                              context,
+                                            ).formatTimeOfDay(
+                                              TimeOfDay.fromDateTime(
+                                                entry.date,
+                                              ),
+                                            ),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelSmall
+                                                ?.copyWith(
+                                                  color:
+                                                      colors.onSurfaceVariant,
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        title,
+                                        maxLines: 3,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyLarge
+                                            ?.copyWith(height: 1.45),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              isFile
+                                                  ? entry.item.value.toString()
+                                                  : isText
+                                                  ? l10n.tapToCopy
+                                                  : l10n.preview,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .labelSmall
+                                                  ?.copyWith(
+                                                    color:
+                                                        colors.onSurfaceVariant,
+                                                  ),
+                                            ),
+                                          ),
+                                          AnimatedSwitcher(
+                                            duration:
+                                                MediaQuery.disableAnimationsOf(
+                                                  context,
+                                                )
+                                                ? Duration.zero
+                                                : const Duration(
+                                                    milliseconds: 180,
+                                                  ),
+                                            child: Icon(
+                                              _copied == entry
+                                                  ? Icons.check_rounded
+                                                  : isFile
+                                                  ? Icons.folder_open_rounded
+                                                  : isText
+                                                  ? Icons.copy_rounded
+                                                  : Icons.open_in_full_rounded,
+                                              key: ValueKey(_copied == entry),
+                                              size: 18,
+                                              color: colors.primary,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+        ),
+      ],
     );
   }
 }
 
 class MacHistoryTab extends StatelessWidget {
   const MacHistoryTab({super.key});
-
   @override
-  Widget build(BuildContext context) {
-    return const PaginatedClipboardHistoryList(onFileTap: null);
-  }
+  Widget build(BuildContext context) => const PaginatedClipboardHistoryList();
 }

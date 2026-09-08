@@ -1,67 +1,124 @@
 <div align="center">
-  <img src="Logo.png" alt="Clipy — two linked clipboard sheets" width="112" height="112" />
+  <img src="Logo.png" alt="Clipy" width="72" height="72" />
   <h1>Clipy</h1>
-  <p><strong>Your Mac clipboard, connected to Android.</strong></p>
-  <p>Find what you copied. Reuse it on another device. Keep sync on your local network, with no account required.</p>
+  <h3>Copy here. Continue there.</h3>
+  <p>A clipboard with a memory. A bridge between your Mac and Android.</p>
   <p><strong>English</strong> · <a href="README_ZH.md">简体中文</a></p>
+  <img src="res/readme/connected-hero.webp" alt="Clipy concept illustration: text, images and links flowing between a Mac and an Android phone" width="1120" />
+  <br /><br />
 
-**[Download for macOS →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-macOS-v1.0.17.zip)** &nbsp; · &nbsp; **[Download for Android →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-Android-arm64-v8a-v1.0.17.apk)**
+**[Download for macOS ↗](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-macOS-v1.0.18.zip)** &nbsp;&nbsp; · &nbsp;&nbsp; **[Download for Android ↗](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-Android-arm64-v8a-v1.0.18.apk)**
 
-<sub>Latest release: v1.0.17 · macOS 13+ on Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds and version notes</a></sub>
+<sub>Latest release: v1.0.18 · macOS 13+ / Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds & installation</a></sub>
 
-Current source version: **1.0.18** · Default local build **10060** · [Build metadata](clipy_android/pubspec.yaml)
-
-[![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
+[![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=1262f3)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
 [![License review](https://img.shields.io/badge/license-review_required-orange)](THIRD_PARTY_NOTICES.md)
 
+**[A closer look](#a-closer-look)** · **[Android](#at-home-on-android)** · **[Get started](#get-started-in-three-steps)** · **[All features](#feature-reference)**
+
 </div>
 
-> **Version notes:** [v1.0.17](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.17) is published and marked Latest. It includes redesigned macOS and Android icons, with adaptive and themed icons on Android. Private pairing-secret settings are available in this release; users upgrading from v1.0.15 should read the [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
+<br />
 
-The Release badge tracks published stable releases, not the current source version or unpublished drafts.
+<table>
+<tr>
+<td width="33%" valign="top">
 
-> License notice: the macshot-derived screenshot module still needs a [third-party license review](THIRD_PARTY_NOTICES.md). A published release does not mean that review is complete. The repository's MIT text is not a complete licensing statement for that module.
+### Find it again.
 
-## Made for everyday handoffs
+That link. That paragraph. That thing you copied yesterday. Keep it in your history and bring it back with a search.
 
-| When you want to… | Clipy helps you… |
-| --- | --- |
-| Find a link or paragraph you copied earlier | Search clipboard history by type, source app, or date. |
-| Move copied text between Mac and Android | Sync across devices on your trusted local network. |
-| Reuse the same reply or code fragment | Organize snippets and assign shortcuts on macOS. |
+</td>
+<td width="33%" valign="top">
 
-Native Swift / AppKit on macOS, Flutter on Android. Screenshot annotation, OCR, and notification mirroring are also included in the [feature reference](#feature-reference). For the sync trust model, see [Security](SECURITY.md).
+### Take it with you.
 
-## Screenshots
+Share clipboard content and send files between Mac and Android on your trusted local network. No account required.
 
-Styled English interface previews with fictional example content. Click any image to view the original app capture.
+</td>
+<td width="33%" valign="top">
 
-**Menu Bar** — Your clipboard, snippets, word lookup, and everyday tools, always within reach.
+### Make it a shortcut.
 
-<a href="res/screenshots/macos-menu-en.png"><img src="res/screenshots/macos-menu-showcase.png" alt="Clipy Menu Bar — English interface with a soft paper illustration background" width="1120" /></a>
+Keep reusable replies and code in your Mac snippet library. Add a hotkey. Save yourself the next round of typing.
 
-**Snippet Library** — Browse folders, find a snippet, and edit or copy it in one place.
+</td>
+</tr>
+</table>
 
-<a href="res/screenshots/macos-snippets-en.png"><img src="res/screenshots/macos-snippets-showcase.png" alt="Clipy Snippet Library — English interface with a soft paper illustration background" width="1120" /></a>
+## A closer look
 
-**Clipboard History** — Scan recent copies while keeping the full content in view.
+### A little menu. A lot within reach.
 
-<a href="res/screenshots/macos-history-en.png"><img src="res/screenshots/macos-history-showcase.png" alt="Clipy Clipboard History — English interface with a soft paper illustration background" width="1120" /></a>
+Search, word lookup, screenshots and recent copies, right in your Mac menu bar. Native Swift / AppKit, with no Dock window to keep open.
 
-**Preferences** — Scroll through categories, or jump to a section from the sidebar.
+<a href="res/screenshots/macos-menu-en.png"><img src="res/screenshots/macos-menu-showcase.webp" alt="Clipy menu bar: search, recent copies, snippets and everyday tools" width="1120" /></a>
 
-<a href="res/screenshots/macos-preferences-en.png"><img src="res/screenshots/macos-preferences-showcase.png" alt="Clipy Preferences — English interface with a soft paper illustration background" width="1120" /></a>
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### Your clipboard, with a memory.
+
+Filter by content type, source app or date. See the full preview before you reuse an item.
+
+<a href="res/screenshots/macos-history-en.png"><img src="res/screenshots/macos-history-showcase.webp" alt="Clipboard history with a searchable list and content preview" width="560" /></a>
+
+</td>
+<td width="50%" valign="top">
+
+### Good words deserve a second use.
+
+Folders on the left, snippets in the middle, your writing on the right. Find, edit and copy without losing your place.
+
+<a href="res/screenshots/macos-snippets-en.png"><img src="res/screenshots/macos-snippets-showcase.webp" alt="Three-column snippet library with folders, search and editor" width="560" /></a>
+
+</td>
+</tr>
+</table>
+
+**Capture an idea, too.** On Mac, take a screenshot, annotate it, extract text with OCR or pin it to your screen. Scrolling capture, screen recording and word lookup are also included. [Explore the tools ↓](#feature-reference)
+
+## At home on Android
+
+A fresh four-tab layout for **History · Devices · Notifications · Settings**. Search saved content, choose where to share, and switch between light, dark and system appearance. Short transitions preserve your place; copy feedback tells you when an action has finished.
+
+<p align="center">
+  <a href="res/screenshots/android-history-en.png"><img src="res/screenshots/android-history-en.png" alt="Android clipboard history with search, type filters and grouped content cards" width="30%" /></a>&nbsp;
+  <a href="res/screenshots/android-devices-en.png"><img src="res/screenshots/android-devices-en.png" alt="Android device page with local sync and connection settings" width="30%" /></a>&nbsp;
+  <a href="res/screenshots/android-settings-dark-en.png"><img src="res/screenshots/android-settings-dark-en.png" alt="Android settings in dark appearance" width="30%" /></a>
+</p>
+
+<sub>Android previews show this working source revision; the redesign is not included in the v1.0.18 download above. Captures use fictional data in an isolated emulator. Mac showcase images use decorative styling and link to their original captures. The header is a concept illustration. [Image sources & production notes](res/screenshots/README.md)</sub>
+
+<details>
+<summary><b>One more detail: preferences that stay out of your way</b></summary>
+
+Scroll continuously through Mac preferences, or jump to a category from the sidebar.
+
+<a href="res/screenshots/macos-preferences-en.png"><img src="res/screenshots/macos-preferences-showcase.webp" alt="Mac preferences with continuous scrolling and category navigation" width="920" /></a>
+
+</details>
 
 ## Get started in three steps
 
-1. **Install your build.** Unzip the macOS download and move `ClipyClone.app` to Applications, or install the Android APK. Clipy runs in the Mac menu bar. See [platform and first-launch details](docs/GETTING_STARTED.md).
-2. **Try clipboard history.** Copy a harmless test phrase, open the menu-bar app, then use <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> to find it. Grant permissions when you use the corresponding feature.
-3. **Connect a second device.** Follow the [version-specific sync setup](docs/GETTING_STARTED.md#connect-mac-and-android). Keep both apps open for the first test and enable clipboard sharing for your intended device in each direction.
+1. **Install Clipy.** Move the Mac app to Applications, or install the Android APK. The Mac app lives in your menu bar. See the [installation guide](docs/GETTING_STARTED.md), including [first launch on macOS](docs/MACOS_INSTALL.md).
+2. **Copy something worth keeping.** Keep Clipy open on Android for your first test. On Mac, press <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> to search your history.
+3. **Connect your devices.** Use the same trusted Wi-Fi and matching private pairing secrets, then enable outgoing sharing for your chosen device. [Follow the connection steps](docs/GETTING_STARTED.md#connect-mac-and-android).
 
 **[Installation & troubleshooting](docs/GETTING_STARTED.md)** · **[Report a problem](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[Suggest a feature](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
 
-If Clipy helps with your daily workflow, a [⭐ on GitHub](https://github.com/JunWeiUp/Clipy) helps other people find it. Feedback is welcome in English or Chinese.
+> **Before sharing:** sync is designed for trusted networks; set a strong private pairing secret. Read the [security boundaries](SECURITY.md). The macshot-derived screenshot module still needs a [third-party license review](THIRD_PARTY_NOTICES.md); the combined application must not be assumed to be MIT-only.
+
+<details>
+<summary><b>Versions, downloads and source builds</b></summary>
+
+Current source version: **1.0.18** · Default local build **10060** · [Build metadata](clipy_android/pubspec.yaml)
+
+The latest published release is [v1.0.18](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.18), build **10078**. Source screenshots can include newer, uncommitted changes. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
+
+</details>
 
 ## Feature reference
 
@@ -74,7 +131,7 @@ If Clipy helps with your daily workflow, a [⭐ on GitHub](https://github.com/Ju
 - **File-aware** — shows the source file path and can reveal it in Finder.
 - **Exclude apps** by bundle id (password managers, Keychain, etc.).
 - Configurable history limit and lazy-loaded menu for a tiny memory footprint.
-- Optional **at-rest encryption** of history media (keys in macOS Keychain).
+- Optional **at-rest encryption** of history media (key stored in a local file with owner-only permissions; see [Security](SECURITY.md)).
 
 ### ✂️ Snippets (macOS)
 - Organize reusable text/code in **folders**, drag-to-reorder.
@@ -158,6 +215,12 @@ INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh
 
 Local macOS builds are ad-hoc signed, not Developer ID signed or notarized. See [build and signing options](docs/DEVELOPMENT.md#macos).
 
+**Build on GitHub:** open [Actions → macOS Build](https://github.com/JunWeiUp/Clipy/actions/workflows/macos.yml) and choose **Run workflow** to build just the Mac app, with no signing secrets or Android setup. Pushes to `main`/`master` and pull requests run the same Mac job through CI.
+
+After the Mac job succeeds, download its artifact from the run summary (GitHub sign-in required; retained for 30 days). It includes the **Apple Silicon / macOS 13+** app ZIP, symbols ZIP, SHA-256 checksums and installation instructions.
+
+These are ad-hoc signed development builds, not published releases. See the [first-launch guide](docs/MACOS_INSTALL.md) for **Privacy & Security → Open Anyway** and permissions after updates. Version tags continue to create the existing combined Release draft.
+
 ### Android (Flutter)
 
 Requirements: Flutter **3.41.7** (see `.fvmrc`), JDK 17 and the Android SDK.
@@ -188,7 +251,7 @@ iOS remains experimental and is not validated by this project's CI.
 
 Both root build scripts default to `version: X.Y.Z+N` in [`clipy_android/pubspec.yaml`](clipy_android/pubspec.yaml): `X.Y.Z` is the application version and `N` is the build number. `APP_VERSION` and `BUILD_NUMBER` can explicitly override them for a build. When changing versions, update **both README files** in the same change and keep build numbers increasing; installing over a newer CI build may require a higher `BUILD_NUMBER`.
 
-The published v1.0.17 packages use build **10057** (source build 10040 + Release run 17). To replace that Android APK with a local build, retain the same signing key and explicitly set a higher `BUILD_NUMBER`; the default local build number is not the published package's build number.
+The published v1.0.18 packages use build **10078** (source build 10060 + Release run 18). To replace that Android APK with a local build, retain the same signing key and explicitly set a higher `BUILD_NUMBER`; the default local build number is not the published package's build number.
 
 Run `bash scripts/check.sh all` from the root for local quality checks. On macOS, also run `bash scripts/test_macos_core.sh` for search, word lookup and socket regressions; it uses a temporary test executable without installing or launching the app.
 

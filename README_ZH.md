@@ -1,67 +1,124 @@
 <div align="center">
-  <img src="Logo.png" alt="Clipy — 相连的双页剪贴板图标" width="112" height="112" />
+  <img src="Logo.png" alt="Clipy" width="72" height="72" />
   <h1>Clipy</h1>
-  <p><strong>让 Mac 和 Android，共享你的剪贴板。</strong></p>
-  <p>找回复制过的内容，在另一台设备上继续使用。局域网同步，无需账号。</p>
+  <h3>在这里复制，在那里继续。</h3>
+  <p>记住复制过的内容，连接你的 Mac 与 Android。</p>
   <p><a href="README.md">English</a> · <strong>简体中文</strong></p>
+  <img src="res/readme/connected-hero.webp" alt="Clipy 概念插画：文字、图片与链接在 Mac 和 Android 手机之间流动" width="1120" />
+  <br /><br />
 
-**[下载 macOS 版 →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-macOS-v1.0.17.zip)** &nbsp; · &nbsp; **[下载 Android 版 →](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.17/ClipyClone-Android-arm64-v8a-v1.0.17.apk)**
+**[下载 macOS 版 ↗](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-macOS-v1.0.18.zip)** &nbsp;&nbsp; · &nbsp;&nbsp; **[下载 Android 版 ↗](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-Android-arm64-v8a-v1.0.18.apk)**
 
-<sub>最新正式版：v1.0.17 · macOS 13+，Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED_ZH.md#下载与版本">其他安装包与版本说明</a></sub>
+<sub>最新正式版：v1.0.18 · macOS 13+ / Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED_ZH.md#下载与版本">其他安装包与安装说明</a></sub>
 
-当前源码版本：**1.0.18** · 默认本地构建号 **10060** · [构建版本配置](clipy_android/pubspec.yaml)
-
-[![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
+[![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=1262f3)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
 [![License review](https://img.shields.io/badge/license-review_required-orange)](THIRD_PARTY_NOTICES.md)
 
+**[看看界面](#从菜单栏开始)** · **[Android](#在-android-上也很顺手)** · **[开始使用](#三步开始使用)** · **[完整功能](#完整功能说明)**
+
 </div>
 
-> **版本说明：**[v1.0.17](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.17) 已正式发布并设为 Latest，包含重新设计的 macOS、Android 图标，以及 Android 自适应与单色主题图标。本版本已提供私有配对密钥设置；从 v1.0.15 升级的用户请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
+<br />
 
-Release 徽章显示已公开发布的稳定版本，不代表当前源码版本，也不包含尚未发布的草稿。
+<table>
+<tr>
+<td width="33%" valign="top">
 
-> 许可说明：截图模块移植自 macshot，[第三方许可核对](THIRD_PARTY_NOTICES.md)仍未完成。版本已公开发布不代表许可核对已经完成，根目录的 MIT 文本不能代表该模块的完整许可条件。
+### 复制过，就找得回。
 
-## 让日常衔接更顺手
+刚才的链接、昨天的文字、临时复制的资料。留在历史里，需要时搜索一下。
 
-| 当你需要…… | Clipy 可以帮你…… |
-| --- | --- |
-| 找回之前复制的链接或文字 | 按类型、来源应用和日期搜索剪贴板历史。 |
-| 在 Mac 和 Android 之间传递复制的内容 | 在可信局域网中跨设备同步。 |
-| 重复使用常用回复或代码片段 | 在 macOS 上管理片段，并设置快捷键。 |
+</td>
+<td width="33%" valign="top">
 
-macOS 端使用原生 Swift / AppKit，Android 端使用 Flutter。截图标注、OCR 和通知镜像等功能见[完整功能说明](#完整功能说明)，同步的信任边界见[安全说明](SECURITY.md)。
+### 换台设备，接着用。
 
-## 界面截图
+在可信局域网中共享剪贴板，互传文件。Mac 与 Android 连起来，无需注册账号。
 
-以下为英文界面的美化展示图，内容均为虚构示例。点击任意图片可查看原始应用截图。
+</td>
+<td width="33%" valign="top">
 
-**菜单栏** — 搜索、单词查询、最近复制与常用工具，随手即可打开。
+### 常用的话，少打一遍。
 
-<a href="res/screenshots/macos-menu-en.png"><img src="res/screenshots/macos-menu-showcase.png" alt="Clipy Menu Bar — English interface with a soft paper illustration background" width="1120" /></a>
+把回复和代码放进 Mac 片段库，分好文件夹，再配上快捷键。下次直接调用。
 
-**片段库** — 文件夹、片段搜索与正文编辑三栏布局，编辑和复制在同一处完成。
+</td>
+</tr>
+</table>
 
-<a href="res/screenshots/macos-snippets-en.png"><img src="res/screenshots/macos-snippets-showcase.png" alt="Clipy Snippet Library — English interface with a soft paper illustration background" width="1120" /></a>
+## 从菜单栏开始
 
-**剪贴板历史** — 浏览最近复制的内容，同时查看完整预览。
+### 小小菜单，装下日常顺手的操作。
 
-<a href="res/screenshots/macos-history-en.png"><img src="res/screenshots/macos-history-showcase.png" alt="Clipy Clipboard History — English interface with a soft paper illustration background" width="1120" /></a>
+搜索、查词、截图和最近复制，都在 Mac 菜单栏里。原生 Swift / AppKit，无需让一个窗口一直占着 Dock。
 
-**偏好设置** — 连续滚动浏览各类选项，也可通过侧边栏快速跳转。
+<a href="res/screenshots/macos-menu-en.png"><img src="res/screenshots/macos-menu-showcase.webp" alt="Clipy 菜单栏：搜索、最近复制、片段与常用工具" width="1120" /></a>
 
-<a href="res/screenshots/macos-preferences-en.png"><img src="res/screenshots/macos-preferences-showcase.png" alt="Clipy Preferences — English interface with a soft paper illustration background" width="1120" /></a>
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 给剪贴板，多一点记忆。
+
+按内容类型、来源应用和日期筛选，先看完整预览，再复制使用。
+
+<a href="res/screenshots/macos-history-en.png"><img src="res/screenshots/macos-history-showcase.webp" alt="剪贴板历史：搜索列表与完整内容预览" width="560" /></a>
+
+</td>
+<td width="50%" valign="top">
+
+### 写过的好内容，值得再用一次。
+
+左边选文件夹，中间找片段，右边编辑正文。查找、修改和复制，在同一处完成。
+
+<a href="res/screenshots/macos-snippets-en.png"><img src="res/screenshots/macos-snippets-showcase.webp" alt="三栏片段库：文件夹、搜索与正文编辑器" width="560" /></a>
+
+</td>
+</tr>
+</table>
+
+**看到的灵感，也能留下。** 在 Mac 上截图、标注、OCR 提取文字，或直接贴到屏幕上。还有滚动长截图、录屏和单词查询。[看看这些工具 ↓](#完整功能说明)
+
+## 在 Android 上，也很顺手
+
+重新设计的 **历史 · 设备 · 通知 · 设置** 四个入口。搜索保存的内容，选择要共享的设备，自由切换浅色、深色和系统外观。短动效衔接页面，保留浏览位置，复制完成后给出明确反馈。
+
+<p align="center">
+  <a href="res/screenshots/android-history-en.png"><img src="res/screenshots/android-history-en.png" alt="Android 剪贴板历史：搜索、类型筛选和分组内容卡片" width="30%" /></a>&nbsp;
+  <a href="res/screenshots/android-devices-en.png"><img src="res/screenshots/android-devices-en.png" alt="Android 设备页：局域网同步与连接设置" width="30%" /></a>&nbsp;
+  <a href="res/screenshots/android-settings-dark-en.png"><img src="res/screenshots/android-settings-dark-en.png" alt="Android 深色外观下的设置页面" width="30%" /></a>
+</p>
+
+<sub>Android 展示当前工作区源码，以上 v1.0.18 下载包尚不包含本次改版；截图来自使用虚构数据的独立模拟器。Mac 美化展示图可点击查看原始捕获，顶部为概念插画。[图片来源与制作说明](res/screenshots/README.md)</sub>
+
+<details>
+<summary><b>再看一个细节：顺着浏览习惯的偏好设置</b></summary>
+
+连续滚动浏览 Mac 设置，也可从侧边栏直接跳到对应分类。
+
+<a href="res/screenshots/macos-preferences-en.png"><img src="res/screenshots/macos-preferences-showcase.webp" alt="Mac 偏好设置：连续滚动与侧边分类导航" width="920" /></a>
+
+</details>
 
 ## 三步开始使用
 
-1. **安装对应版本。** macOS 解压后，将 `ClipyClone.app` 移到「应用程序」；Android 安装 APK。Mac 端入口在菜单栏。详见[平台与首次启动说明](docs/GETTING_STARTED_ZH.md)。
-2. **试试剪贴板历史。** 复制一段无敏感信息的测试文字，打开菜单栏应用，再按 <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> 搜索。使用相关功能时，再按提示授予对应权限。
-3. **连接另一台设备。** 按[对应版本的同步步骤](docs/GETTING_STARTED_ZH.md#连接-mac-与-android)设置，首次测试时保持两端应用打开，并分别开启向目标设备的剪贴板共享。
+1. **安装 Clipy。** Mac 解压后移入「应用程序」，Android 安装 APK。Mac 端入口在菜单栏。详见[安装指南](docs/GETTING_STARTED_ZH.md)与 [macOS 首次启动说明](docs/MACOS_INSTALL.md)。
+2. **复制一段想留下的内容。** Android 首次测试时保持 Clipy 打开；在 Mac 上按 <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> 搜索历史。
+3. **连接你的设备。** 连到同一个可信 Wi-Fi，设置相同的私有配对密钥，再开启向目标设备的共享。[按步骤连接](docs/GETTING_STARTED_ZH.md#连接-mac-与-android)。
 
 **[安装与常见问题](docs/GETTING_STARTED_ZH.md)** · **[反馈问题](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[建议新功能](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
 
-如果 Clipy 帮到了你的日常工作，欢迎在 [GitHub 点个 ⭐](https://github.com/JunWeiUp/Clipy)，让更多人发现它。中文或英文反馈都欢迎。
+> **开始共享前：** 同步面向可信局域网，请设置足够强的私有配对密钥，并了解[安全边界](SECURITY.md)。macshot 截图移植模块仍需完成[第三方许可核对](THIRD_PARTY_NOTICES.md)，不能将整个组合应用直接视为仅受 MIT 许可约束。
+
+<details>
+<summary><b>版本、下载与源码构建</b></summary>
+
+当前源码版本：**1.0.18** · 默认本地构建号 **10060** · [构建版本配置](clipy_android/pubspec.yaml)
+
+最新公开发布版本为 [v1.0.18](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.18)，构建号 **10078**。源码截图可能包含尚未提交的新改动；Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
+
+</details>
 
 ## 完整功能说明
 
@@ -74,7 +131,7 @@ macOS 端使用原生 Swift / AppKit，Android 端使用 Flutter。截图标注�
 - **文件感知** —— 显示源文件路径，并支持在 Finder 中定位。
 - 可按 bundle id **排除指定 App**（密码管理器、钥匙串等）。
 - 历史条数可配，菜单懒加载，内存占用极低。
-- 历史媒体文件可选**静态加密**（密钥存于 macOS 钥匙串）。
+- 历史媒体文件可选**静态加密**（密钥保存在仅所有者可读写的本地文件中，详见[安全说明](SECURITY.md)）。
 
 ### ✂️ 片段管理（macOS）
 - 用**文件夹**组织常用文本/代码，支持拖拽排序。
@@ -158,6 +215,12 @@ INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh
 
 本地 macOS 构建使用 ad-hoc 签名，不含 Developer ID 签名或公证。详见[构建与签名选项](docs/DEVELOPMENT.md#macos)。
 
+**在 GitHub 打包：**打开 [Actions → macOS Build](https://github.com/JunWeiUp/Clipy/actions/workflows/macos.yml)，点击 **Run workflow**，即可单独构建 Mac 应用，无需签名密钥或 Android 配置。推送到 `main`/`master` 和提交 PR 时，CI 也会调用同一 Mac 任务。
+
+Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留 30 天），内含 **Apple Silicon / macOS 13+** 应用 ZIP、调试符号 ZIP、SHA-256 校验文件和安装说明。
+
+这些是临时签名的开发构建，不代表已正式发布；首次打开的「**隐私与安全 → 仍要打开**」操作和更新后授权说明见[安装指南](docs/MACOS_INSTALL.md)。版本标签仍创建现有双端 Release 草稿。
+
 ### Android（Flutter）
 
 环境要求：Flutter **3.41.7**（见 `.fvmrc`）、JDK 17 与 Android SDK。
@@ -188,7 +251,7 @@ iOS 仍为实验性目标，尚未纳入本项目 CI 验证。
 
 两个根目录构建脚本默认读取 [`clipy_android/pubspec.yaml`](clipy_android/pubspec.yaml) 中的 `version: X.Y.Z+N`：`X.Y.Z` 为应用版本，`N` 为构建号；也可通过 `APP_VERSION`、`BUILD_NUMBER` 显式覆盖单次构建。版本变更时应在同一批改动中同步更新**中英文两份 README**，并保持构建号递增；若要覆盖更高构建号的 CI 包，本地需使用更高的 `BUILD_NUMBER`。
 
-已发布的 v1.0.17 安装包使用构建号 **10057**（源码构建号 10040 + Release 运行序号 17）。如需用本地构建覆盖该 Android APK，须保留相同签名密钥，并显式设置更高的 `BUILD_NUMBER`；默认本地构建号并不是已发布安装包的构建号。
+已发布的 v1.0.18 安装包使用构建号 **10078**（源码构建号 10060 + Release 运行序号 18）。如需用本地构建覆盖该 Android APK，须保留相同签名密钥，并显式设置更高的 `BUILD_NUMBER`；默认本地构建号并不是已发布安装包的构建号。
 
 在仓库根目录运行 `bash scripts/check.sh all` 可执行质量检查。macOS 上还需运行 `bash scripts/test_macos_core.sh`，验证搜索、单词查询与 socket 回归用例；它使用临时测试程序，不安装或启动应用。
 
