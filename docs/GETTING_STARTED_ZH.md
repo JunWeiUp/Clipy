@@ -12,7 +12,7 @@
 | Android，arm64 | [64 位 APK](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-Android-arm64-v8a-v1.0.18.apk) |
 | Android，armeabi-v7a | [32 位 APK](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-Android-armeabi-v7a-v1.0.18.apk) |
 
-发布页另附 APK 和 ZIP 的 [SHA-256 校验文件](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/SHA256SUMS.txt)。正式安装包构建号为 **10078**，本地源码默认值为 **10060**；如需用本地构建覆盖正式 APK，应使用相同签名密钥和更高构建号，不要在未备份数据时卸载应用。
+发布页另附 APK 和 ZIP 的 [SHA-256 校验文件](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/SHA256SUMS.txt)。正式安装包构建号为 **10078**，本地 v1.0.19 源码默认值为 **10080**；如需用本地构建覆盖正式 APK，应使用相同签名密钥和更高构建号，不要在未备份数据时卸载应用。
 
 macOS ZIP 中是 **arm64** 应用，不是 Intel 或通用架构版本。本次发布没有 iOS 安装包，iOS 源码目标仍为实验性。开发版构建方法见[开发指南](DEVELOPMENT.md)。
 
