@@ -3,7 +3,8 @@ import AppKit
 class MenuController: NSObject {
     private static let menuDisplayLimit = 50
     private static let menuShortcutHistoryLimit = 50
-    private static let menuIndent = "  "
+    private static let menuIndent = ""
+    private weak var devicesMenu: NSMenu?
 
     private static func indentedMenuTitle(_ title: String) -> String {
         menuIndent + title
@@ -76,30 +77,23 @@ class MenuController: NSObject {
     }
 
     private func buildSnippetSubmenu(for folder: SnippetFolder) -> NSMenu {
-        let menu = NSMenu()
-
-        let searchItem = NSMenuItem(title: L10n.t(.searchHistory), action: #selector(openSearch), keyEquivalent: "f")
-        searchItem.keyEquivalentModifierMask = [.command, .shift]
-        searchItem.target = self
-        menu.addItem(searchItem)
-        menu.addItem(NSMenuItem.separator())
-
-        if folder.snippets.isEmpty {
-            let emptyItem = NSMenuItem(title: L10n.t(.noSnippets), action: nil, keyEquivalent: "")
-            emptyItem.isEnabled = false
-            menu.addItem(emptyItem)
-            return menu
+        let menu = AppMenuStyle.menu()
+        let search = actionItem(L10n.t(.searchHistory), symbol: "magnifyingglass", action: #selector(openSearch))
+        if PreferencesManager.shared.isSearchGlobalShortcutEnabled {
+            AppMenuStyle.applyShortcut(PreferencesManager.shared.searchHistoryShortcut, to: search)
         }
-
+        menu.addItem(search)
+        menu.addItem(.separator())
+        menu.addItem(AppMenuStyle.header(AppMenuStyle.compactTitle(folder.title)))
+        if folder.snippets.isEmpty {
+            menu.addItem(AppMenuStyle.detail(L10n.t(.noSnippets)))
+        }
         for (index, snippet) in folder.snippets.enumerated() {
-            let menuIndex = (index + 1) % 10
-            let prefix = "\(menuIndex). "
-            let keyEquivalent = index < 10 ? "\(menuIndex)" : ""
-
-            let menuItem = NSMenuItem(title: prefix + snippet.title, action: #selector(menuItemClicked(_:)), keyEquivalent: keyEquivalent)
-            menuItem.target = self
-            menuItem.representedObject = SnippetMenuReference(snippetId: snippet.id)
-            menu.addItem(menuItem)
+            let item = actionItem(AppMenuStyle.compactTitle(snippet.title), symbol: "text.alignleft",
+                                  action: #selector(menuItemClicked(_:)), key: index < 10 ? "\((index + 1) % 10)" : "")
+            item.representedObject = SnippetMenuReference(snippetId: snippet.id)
+            item.toolTip = snippet.title
+            menu.addItem(item)
         }
 
         return menu
@@ -152,7 +146,7 @@ class MenuController: NSObject {
         // 菜单未打开：什么都不做，下次 menuNeedsUpdate 会整建。
         // 菜单已打开：禁止全量 removeAllItems 重建（会销毁正在交互的 item 并重新发起
         // 缩略图/HTML 标题异步加载，导致抖动与无法选中）。仅标记 dirty，
-        // 关闭后由 menuDidClose 重建一次；设备变化走 applyDeviceIncrementalUpdate 局部更新。
+        // 下次打开再统一重建；设备变化走 applyDeviceIncrementalUpdate 局部更新。
         guard isMenuOpen else { return }
         isMenuDirtyWhileOpen = true
     }
@@ -174,194 +168,116 @@ class MenuController: NSObject {
     }
 
     private func populateMenu(_ menu: NSMenu, with summaries: [HistorySummary]) {
-        // --- Clipboard / History ---
-        menu.addItem(makeSectionHeaderItem(
-            title: L10n.t(.history),
-            symbolName: "magnifyingglass",
-            toolTip: L10n.t(.searchHistory),
-            keyEquivalent: "f",
-            keyEquivalentModifierMask: [.command, .shift],
-            action: #selector(openSearch)
-        ) { [weak self] in
-            self?.openSearch()
-        })
+        AppMenuStyle.configure(menu)
 
-        if summaries.isEmpty {
-            let emptyItem = NSMenuItem(
-                title: Self.indentedMenuTitle(L10n.t(.noHistory)),
-                action: nil,
-                keyEquivalent: ""
-            )
-            emptyItem.isEnabled = false
-            menu.addItem(emptyItem)
-        } else {
-            addHistoryGroups(to: menu, summaries: Array(summaries.prefix(Self.menuDisplayLimit)), startIndex: 0)
+        // Frequently used tools stay at a stable position above changing history.
+        let search = actionItem(L10n.t(.searchHistory), symbol: "magnifyingglass", action: #selector(openSearch))
+        if PreferencesManager.shared.isSearchGlobalShortcutEnabled {
+            AppMenuStyle.applyShortcut(PreferencesManager.shared.searchHistoryShortcut, to: search)
         }
-        menu.addItem(NSMenuItem.separator())
+        menu.addItem(search)
+        let word = actionItem(L10n.t(.wordLookup), symbol: "character.book.closed", action: #selector(openWordLookup))
+        if PreferencesManager.shared.isWordShortcutEnabled {
+            AppMenuStyle.applyShortcut(PreferencesManager.shared.wordLookupShortcut, to: word)
+        }
+        menu.addItem(word)
 
-        // --- Snippets ---
-        menu.addItem(makeSectionHeaderItem(
-            title: L10n.t(.snippets),
-            symbolName: "square.and.pencil",
-            toolTip: L10n.t(.editSnippets),
-            keyEquivalent: "S",
-            keyEquivalentModifierMask: [.command],
-            action: #selector(openSnippetEditor)
-        ) { [weak self] in
-            self?.openSnippetEditor()
-        })
+        let capture = AppMenuStyle.menu()
+        capture.addItem(actionItem(L10n.t(.screenshotRegion), symbol: "viewfinder", action: #selector(startScreenshotRegion)))
+        capture.addItem(actionItem(L10n.t(.screenshotWindow), symbol: "macwindow", action: #selector(startScreenshotWindow)))
+        capture.addItem(actionItem(L10n.t(.screenshotFullscreen), symbol: "rectangle.inset.filled", action: #selector(startScreenshotFullscreen)))
+        capture.addItem(.separator())
+        capture.addItem(actionItem(L10n.t(.screenshotPreferences), symbol: "slider.horizontal.3", action: #selector(openScreenshotPreferences)))
+        menu.addItem(submenuItem(L10n.t(.screenshot), symbol: "camera", submenu: capture))
+        menu.addItem(.separator())
 
+        menu.addItem(AppMenuStyle.header(L10n.t(.menuRecentHistory)))
+        let recent = Array(summaries.prefix(Self.menuDisplayLimit))
+        if recent.isEmpty {
+            menu.addItem(AppMenuStyle.detail(L10n.t(.noHistory)))
+        } else {
+            let visibleCount = min(6, recent.count)
+            for index in 0..<visibleCount {
+                menu.addItem(makeHistoryMenuItem(summary: recent[index], indexInGroup: index, startIndex: 0))
+            }
+            if recent.count > visibleCount {
+                let older = AppMenuStyle.menu()
+                addHistoryGroups(to: older, summaries: Array(recent.dropFirst(visibleCount)), startIndex: visibleCount)
+                menu.addItem(submenuItem(L10n.t(.moreHistory), symbol: "clock.arrow.circlepath", submenu: older))
+            }
+        }
+        menu.addItem(.separator())
+
+        let snippets = AppMenuStyle.menu()
+        snippets.addItem(actionItem(L10n.t(.editSnippets), symbol: "square.and.pencil", action: #selector(openSnippetEditor), key: "S"))
+        snippets.addItem(.separator())
         if snippetManager.folders.isEmpty {
-            let emptyItem = NSMenuItem(
-                title: Self.indentedMenuTitle(L10n.t(.noSnippets)),
-                action: nil,
-                keyEquivalent: ""
-            )
-            emptyItem.isEnabled = false
-            menu.addItem(emptyItem)
-        } else {
-            for folder in snippetManager.folders {
-                let categoryMenu = NSMenu()
-                let categoryItem = NSMenuItem(
-                    title: Self.indentedMenuTitle(folder.title),
-                    action: nil,
-                    keyEquivalent: ""
-                )
-
-                for (index, snippet) in folder.snippets.enumerated() {
-                    let menuIndex = (index + 1) % 10
-                    let prefix = "\(menuIndex). "
-                    let keyEquivalent = index < 10 ? "\(menuIndex)" : ""
-
-                    let menuItem = NSMenuItem(
-                        title: prefix + snippet.title,
-                        action: #selector(menuItemClicked(_:)),
-                        keyEquivalent: keyEquivalent
-                    )
-                    menuItem.target = self
-                    menuItem.representedObject = SnippetMenuReference(snippetId: snippet.id)
-                    categoryMenu.addItem(menuItem)
-                }
-
-                categoryItem.submenu = categoryMenu
-                menu.addItem(categoryItem)
-            }
+            snippets.addItem(AppMenuStyle.detail(L10n.t(.noSnippets)))
         }
-        menu.addItem(NSMenuItem.separator())
+        for folder in snippetManager.folders {
+            let contents = AppMenuStyle.menu()
+            for (index, snippet) in folder.snippets.enumerated() {
+                let item = actionItem(AppMenuStyle.compactTitle(snippet.title), symbol: "text.alignleft",
+                                      action: #selector(menuItemClicked(_:)), key: index < 10 ? "\((index + 1) % 10)" : "")
+                item.representedObject = SnippetMenuReference(snippetId: snippet.id)
+                item.toolTip = snippet.title
+                contents.addItem(item)
+            }
+            if folder.snippets.isEmpty { contents.addItem(AppMenuStyle.detail(L10n.t(.noSnippets))) }
+            snippets.addItem(submenuItem(AppMenuStyle.compactTitle(folder.title), symbol: "folder", submenu: contents))
+        }
+        menu.addItem(submenuItem(L10n.t(.snippets), symbol: "square.on.square", submenu: snippets))
 
-        // --- Network ---
-        let syncEnabled = PreferencesManager.shared.isSyncEnabled
-        menu.addItem(makeSectionHeaderItem(
-            title: L10n.t(.lanDevices),
-            symbolName: "arrow.clockwise",
-            toolTip: L10n.t(.refreshDevices),
-            keyEquivalent: "r",
-            keyEquivalentModifierMask: [.command],
-            action: #selector(refreshLanDevices),
-            buttonEnabled: syncEnabled,
-            tag: Self.networkSectionHeaderTag
-        ) { [weak self] in
-            self?.refreshLanDevices()
-        })
-
-        let deviceEntries = SyncManager.shared.availableDeviceEntries
-        addDeviceItems(to: menu, entries: deviceEntries)
-
-        // Always show this device's LAN IP so the user knows which address
-        // peers should connect to (useful for manual peer entry on Android).
-        // 打固定 tag，作为设备区增量更新的右边界哨兵。
+        let devices = AppMenuStyle.menu()
+        devicesMenu = devices
+        let refresh = actionItem(L10n.t(.refreshDevices), symbol: "arrow.clockwise", action: #selector(refreshLanDevices), key: "r")
+        refresh.isEnabled = PreferencesManager.shared.isSyncEnabled
+        refresh.tag = Self.networkSectionHeaderTag
+        devices.addItem(refresh)
+        addDeviceItems(to: devices, entries: SyncManager.shared.availableDeviceEntries)
         let localIPs = SyncManager.shared.enumerateLocalIPv4s()
-        if let primaryIP = localIPs.first {
-            let ipTitle: String
-            if localIPs.count > 1 {
-                ipTitle = Self.indentedMenuTitle("\(L10n.format(.myIPAddress, primaryIP))  (\(localIPs.dropFirst().joined(separator: ", ")))")
-            } else {
-                ipTitle = Self.indentedMenuTitle(L10n.format(.myIPAddress, primaryIP))
-            }
-            let ipItem = NSMenuItem(title: ipTitle, action: nil, keyEquivalent: "")
-            ipItem.isEnabled = false
-            ipItem.tag = Self.networkLocalIPItemTag
-            menu.addItem(ipItem)
+        if let primary = localIPs.first {
+            let local = AppMenuStyle.detail(L10n.format(.myIPAddress, primary))
+            local.tag = Self.networkLocalIPItemTag
+            local.toolTip = localIPs.joined(separator: "\n")
+            devices.addItem(local)
         }
+        menu.addItem(submenuItem(L10n.t(.lanDevices), symbol: "network", submenu: devices))
 
-        menu.addItem(NSMenuItem.separator())
+        let count = NotificationManager.shared.notificationCount
+        let notifications = actionItem(L10n.t(.notificationSync) + (count > 0 ? " · \(count)" : ""),
+                                       symbol: "bell", action: #selector(openNotifications), key: "N")
+        menu.addItem(notifications)
+        menu.addItem(actionItem(L10n.t(.generatePassword), symbol: "key.horizontal", action: #selector(openPasswordGenerator), key: "P"))
+        menu.addItem(.separator())
+        menu.addItem(actionItem(L10n.t(.preferences), symbol: "gearshape", action: #selector(openPreferences), key: ","))
+        menu.addItem(actionItem(L10n.t(.showLogs), symbol: "list.bullet.rectangle", action: #selector(openLogs), key: "L"))
+        menu.addItem(.separator())
+        let quit = actionItem(L10n.t(.quit), symbol: "power", action: #selector(NSApplication.terminate(_:)), key: "q")
+        quit.target = NSApp
+        menu.addItem(quit)
+    }
 
-        // --- Tools / Settings ---
-        let screenshotItem = NSMenuItem(title: L10n.t(.screenshot), action: nil, keyEquivalent: "")
-        let screenshotSubmenu = NSMenu()
-        let regionItem = NSMenuItem(
-            title: L10n.t(.screenshotRegion),
-            action: #selector(startScreenshotRegion),
-            keyEquivalent: ""
-        )
-        regionItem.target = self
-        screenshotSubmenu.addItem(regionItem)
-        let windowItem = NSMenuItem(
-            title: L10n.t(.screenshotWindow),
-            action: #selector(startScreenshotWindow),
-            keyEquivalent: ""
-        )
-        windowItem.target = self
-        screenshotSubmenu.addItem(windowItem)
-        let fullscreenItem = NSMenuItem(
-            title: L10n.t(.screenshotFullscreen),
-            action: #selector(startScreenshotFullscreen),
-            keyEquivalent: ""
-        )
-        fullscreenItem.target = self
-        screenshotSubmenu.addItem(fullscreenItem)
-        screenshotSubmenu.addItem(NSMenuItem.separator())
-        let screenshotPreferencesItem = NSMenuItem(
-            title: L10n.t(.screenshotPreferences) + "...",
-            action: #selector(openScreenshotPreferences),
-            keyEquivalent: ""
-        )
-        screenshotPreferencesItem.target = self
-        screenshotSubmenu.addItem(screenshotPreferencesItem)
-        screenshotItem.submenu = screenshotSubmenu
-        menu.addItem(screenshotItem)
+    private func actionItem(_ title: String, symbol: String, action: Selector, key: String = "") -> NSMenuItem {
+        let item = NSMenuItem(title: title.replacingOccurrences(of: "...", with: "…"), action: action, keyEquivalent: key)
+        item.target = self
+        item.image = AppMenuStyle.icon(symbol)
+        return item
+    }
 
-        let generatePasswordItem = NSMenuItem(
-            title: L10n.t(.generatePassword) + "...",
-            action: #selector(openPasswordGenerator),
-            keyEquivalent: "P"
-        )
-        generatePasswordItem.target = self
-        menu.addItem(generatePasswordItem)
-
-        let notificationCount = NotificationManager.shared.notificationCount
-        let notificationItem = NSMenuItem(
-            title: "\(L10n.t(.notificationSync)) (\(notificationCount))...",
-            action: #selector(openNotifications),
-            keyEquivalent: "N"
-        )
-        notificationItem.target = self
-        notificationItem.toolTip = L10n.t(.enableNotificationSync)
-        menu.addItem(notificationItem)
-
-        let preferencesItem = NSMenuItem(
-            title: L10n.t(.preferences) + "...",
-            action: #selector(openPreferences),
-            keyEquivalent: ","
-        )
-        preferencesItem.target = self
-        menu.addItem(preferencesItem)
-        menu.addItem(NSMenuItem.separator())
-
-        // --- System ---
-        let logsItem = NSMenuItem(title: L10n.t(.showLogs), action: #selector(openLogs), keyEquivalent: "L")
-        logsItem.target = self
-        menu.addItem(logsItem)
-
-        menu.addItem(NSMenuItem(title: L10n.t(.quit), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    private func submenuItem(_ title: String, symbol: String, submenu: NSMenu) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.image = AppMenuStyle.icon(symbol)
+        item.submenu = submenu
+        return item
     }
 
     private func addHistoryGroups(to menu: NSMenu, summaries: [HistorySummary], startIndex: Int) {
         let groupSize = 10
         for start in stride(from: 0, to: summaries.count, by: groupSize) {
             let end = min(start + groupSize, summaries.count)
-            let groupMenu = NSMenu()
-            let groupTitle = "\(startIndex + start + 1) - \(startIndex + end)"
+            let groupMenu = AppMenuStyle.menu()
+            let groupTitle = "\(startIndex + start + 1)–\(startIndex + end)"
             let groupFolderItem = NSMenuItem(
                 title: Self.indentedMenuTitle(groupTitle),
                 action: nil,
@@ -370,10 +286,11 @@ class MenuController: NSObject {
 
             for i in start..<end {
                 let summary = summaries[i]
-                let menuItem = makeHistoryMenuItem(summary: summary, indexInGroup: i - start, startIndex: startIndex)
+                let menuItem = makeHistoryMenuItem(summary: summary, indexInGroup: i - start, startIndex: startIndex + start)
                 groupMenu.addItem(menuItem)
             }
 
+            groupFolderItem.image = AppMenuStyle.icon("clock")
             groupFolderItem.submenu = groupMenu
             menu.addItem(groupFolderItem)
         }
@@ -389,13 +306,15 @@ class MenuController: NSObject {
             action: nil,
             keyEquivalent: ""
         )
-        let deviceSubmenu = NSMenu()
+        deviceItem.image = AppMenuStyle.icon("desktopcomputer")
+        let deviceSubmenu = AppMenuStyle.menu()
 
         let sendTextItem = NSMenuItem(
             title: L10n.t(.sendText),
             action: #selector(sendTextClicked(_:)),
             keyEquivalent: ""
         )
+        sendTextItem.image = AppMenuStyle.icon("text.bubble")
         sendTextItem.target = self
         sendTextItem.representedObject = entry.peerId
         deviceSubmenu.addItem(sendTextItem)
@@ -405,6 +324,7 @@ class MenuController: NSObject {
             action: #selector(sendFileClicked(_:)),
             keyEquivalent: ""
         )
+        sendFileItem.image = AppMenuStyle.icon("doc")
         sendFileItem.target = self
         sendFileItem.representedObject = entry.peerId
         deviceSubmenu.addItem(sendFileItem)
@@ -438,7 +358,7 @@ class MenuController: NSObject {
     /// 区间定位：从 networkSectionHeaderTag 之后第一个 item 起，到 networkLocalIPItemTag（含）
     /// 之前的所有 item 视为设备项（含可能的空状态占位）。
     private func applyDeviceIncrementalUpdate() {
-        guard isMenuOpen, let menu = statusItem.menu else { return }
+        guard isMenuOpen, let menu = devicesMenu else { return }
 
         // 找到 Network section header 的索引。
         guard let headerIndex = menu.items.firstIndex(where: { $0.tag == Self.networkSectionHeaderTag }) else {
@@ -516,11 +436,10 @@ class MenuController: NSObject {
 
     
     private func makeHistoryMenuItem(summary: HistorySummary, indexInGroup: Int, startIndex: Int) -> NSMenuItem {
-        let rawTitle = summaryDisplayTitle(for: summary)
-        let displayTitle = rawTitle.count > 50 ? String(rawTitle.prefix(50)) + "..." : rawTitle
+        let displayTitle = AppMenuStyle.compactTitle(summaryDisplayTitle(for: summary))
 
         let menuIndex = (indexInGroup + 1) % 10
-        let prefix = "\(menuIndex). "
+        let prefix = ""
         let keyEquivalent = startIndex + indexInGroup < Self.menuShortcutHistoryLimit ? "\(menuIndex)" : ""
 
         if summary.item.isFile, let urls = summary.item.fileURLs {
@@ -556,7 +475,7 @@ class MenuController: NSObject {
             let manager = clipboardManager
             DispatchQueue.global(qos: .userInitiated).async { [weak htmlItem] in
                 guard let plainTitle = manager.plainText(for: entry), !plainTitle.isEmpty else { return }
-                let htmlDisplayTitle = plainTitle.count > 50 ? String(plainTitle.prefix(50)) + "..." : plainTitle
+                let htmlDisplayTitle = AppMenuStyle.compactTitle(plainTitle)
                 DispatchQueue.main.async {
                     htmlItem?.title = prefix + htmlDisplayTitle
                 }
@@ -583,19 +502,16 @@ class MenuController: NSObject {
         menuItem.target = self
         menuItem.representedObject = summary
         menuItem.toolTip = historyToolTip(for: summary)
+        menuItem.image = AppMenuStyle.icon(summary.asEntry().isPinned ? "pin" : "text.alignleft")
 
         if case .image(let path) = summary.item {
             // Thumbnails come from disk (possibly with decrypt + downsample on miss);
             // never block menu construction on that IO. 先挂一个与最终缩略图同尺寸的
             // 占位图标，使菜单项首次渲染即具备正确高度/左侧宽度，避免缩略图异步回来后
             // 项的高度/排版跳变。
-            let placeholderConfig = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
-            menuItem.image = NSImage(
-                systemSymbolName: "photo",
-                accessibilityDescription: L10n.t(.historyTypeImage)
-            )?.withSymbolConfiguration(placeholderConfig)
+            menuItem.image = AppMenuStyle.icon("photo")
             DispatchQueue.global(qos: .userInitiated).async { [weak menuItem] in
-                let thumbnail = HistoryThumbnailCache.thumbnail(for: path, size: NSSize(width: 32, height: 32))
+                let thumbnail = HistoryThumbnailCache.thumbnail(for: path, size: NSSize(width: 16, height: 16))
                 DispatchQueue.main.async {
                     menuItem?.image = thumbnail
                 }
@@ -616,7 +532,8 @@ class MenuController: NSObject {
         if key.length > 0, let cached = fileIconCache.object(forKey: key) {
             return cached
         }
-        let icon = NSWorkspace.shared.icon(forFile: path)
+        let icon = NSWorkspace.shared.icon(forFile: path).copy() as! NSImage
+        icon.size = NSSize(width: 16, height: 16)
         if key.length > 0 {
             fileIconCache.setObject(icon, forKey: key)
         }
@@ -818,6 +735,10 @@ class MenuController: NSObject {
         SearchWindow.shared.showWindow()
     }
 
+    @objc private func openWordLookup() {
+        WordLookupWindow.shared.showWindow()
+    }
+
     @objc private func openPasswordGenerator() {
         NSApp.activate(ignoringOtherApps: true)
         PasswordGeneratorWindow.show()
@@ -825,6 +746,7 @@ class MenuController: NSObject {
 
     @objc private func registerGlobalHotKeys() {
         SearchGlobalHotKeyManager.register()
+        WordGlobalHotKeyManager.register()
         ScreenshotGlobalHotKeyManager.register()
     }
 
@@ -852,32 +774,7 @@ class MenuController: NSObject {
         }
     }
 
-    private func makeSectionHeaderItem(
-        title: String,
-        symbolName: String,
-        toolTip: String,
-        keyEquivalent: String,
-        keyEquivalentModifierMask: NSEvent.ModifierFlags,
-        action: Selector,
-        buttonEnabled: Bool = true,
-        tag: Int = 0,
-        onAction: @escaping () -> Void
-    ) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
-        item.keyEquivalentModifierMask = keyEquivalentModifierMask
-        item.target = self
-        item.isEnabled = buttonEnabled
-        item.tag = tag
-        let headerView = SectionMenuHeaderView(
-            title: title,
-            symbolName: symbolName,
-            toolTip: toolTip,
-            buttonEnabled: buttonEnabled
-        )
-        headerView.onAction = onAction
-        item.view = headerView
-        return item
-    }
+
 }
 
 extension MenuController: NSMenuDelegate {
@@ -896,8 +793,8 @@ extension MenuController: NSMenuDelegate {
         // 摘要重新拉回内存，并渲染一张没人看得见的菜单。
         isMenuDirtyWhileOpen = false
         // 关闭即整树清空：menuNeedsUpdate 每次打开都全量重建，关闭后这棵
-        // item 树（50 条历史 representedObject 装箱 + 32px 缩略图 + 片段/
-        // 设备子菜单 + header views，约 0.5-1.5MB）滞留在常驻 statusItem
+        // item 树（50 条历史 representedObject 装箱 + 16px 缩略图 + 片段/
+        // 设备子菜单）滞留在常驻 statusItem
         // .menu 上纯属浪费，还会抵消下面的 releaseMenuMemory。
         menu.removeAllItems()
         clipboardManager.releaseMenuMemory()

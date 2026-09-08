@@ -341,6 +341,25 @@ class PreferencesManager {
         set { defaults.set(newValue, forKey: searchGlobalShortcutEnabledKey) }
     }
 
+    var isWordShortcutEnabled: Bool {
+        get { defaults.object(forKey: "wordShortcutEnabled") == nil || defaults.bool(forKey: "wordShortcutEnabled") }
+        set { defaults.set(newValue, forKey: "wordShortcutEnabled") }
+    }
+
+    var wordLookupShortcut: ShortcutCombo? {
+        get {
+            // An explicit clear must survive restart instead of restoring the default.
+            guard defaults.object(forKey: "wordLookupShortcut") != nil else {
+                return ShortcutCombo(keyCode: 0x02, modifierFlags: NSEvent.ModifierFlags([.control, .option]).rawValue)
+            }
+            guard let data = defaults.data(forKey: "wordLookupShortcut") else { return nil }
+            return try? JSONDecoder().decode(ShortcutCombo.self, from: data)
+        }
+        set {
+            defaults.set(newValue.flatMap { try? JSONEncoder().encode($0) } ?? Data(), forKey: "wordLookupShortcut")
+        }
+    }
+
     var searchHistoryShortcut: ShortcutCombo? {
         get {
             if let data = defaults.data(forKey: searchHistoryShortcutKey),

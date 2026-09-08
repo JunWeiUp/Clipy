@@ -469,15 +469,16 @@ struct NotificationView: View {
                     viewModel.onSearchTextChange()
                 }
         }
-        .padding(.horizontal, AppSpacing.sm)
-        .padding(.vertical, AppSpacing.xs)
+        .modifier(AppInputSurface())
+        .padding(.horizontal, AppSpacing.md)
+        .padding(.vertical, AppSpacing.sm)
     }
 
     private var notificationList: some View {
         let displayedGroups = viewModel.filteredGroups
         return ZStack {
             if displayedGroups.isEmpty {
-                EmptyStateView(message: viewModel.groups.isEmpty ? L10n.t(.noNotifications) : L10n.t(.noSearchResults))
+                EmptyStateView(message: viewModel.groups.isEmpty ? L10n.t(.noNotifications) : L10n.t(.noSearchResults), symbol: "bell")
             } else {
                 List(selection: $viewModel.selectedIDs) {
                     ForEach(displayedGroups) { group in
@@ -517,6 +518,7 @@ struct NotificationView: View {
         HStack {
             Text(group.appName)
                 .font(AppFont.body.weight(.semibold))
+                .lineLimit(1)
             Spacer()
             Button(action: { viewModel.toggleBanner(for: group.packageName) }) {
                 Image(systemName: viewModel.isBannerEnabled(for: group.packageName) ? "bell.badge.fill" : "bell.slash")
@@ -576,29 +578,32 @@ private struct NotificationToolbar: View {
     @Binding var showSettingsPopover: Bool
 
     var body: some View {
-        HStack(spacing: AppSpacing.xs) {
-            toolbarButton(title: L10n.t(.clearNotifications), systemImage: "trash", action: viewModel.clearLocal)
-            toolbarButton(title: L10n.t(.clearAllOnPhone), systemImage: "iphone.and.arrow.forward", action: viewModel.clearPhone)
-            Spacer(minLength: 0)
-            toolbarButton(title: L10n.t(.notificationSettings), systemImage: "gearshape") {
-                showSettingsPopover = true
+        AppWindowHeader {
+            HStack(spacing: AppSpacing.xs) {
+                Label(L10n.t(.phoneNotifications), systemImage: "bell")
+                    .font(AppFont.section)
+                Spacer(minLength: AppSpacing.sm)
+                toolbarButton(title: L10n.t(.copyContent), systemImage: "doc.on.doc", action: viewModel.copySelected)
+                    .disabled(viewModel.selectedIDs.isEmpty)
+                toolbarButton(title: L10n.t(.exportAction), systemImage: "square.and.arrow.up", action: viewModel.exportJSON)
+                toolbarButton(title: L10n.t(.notificationSettings), systemImage: "slider.horizontal.3") {
+                    showSettingsPopover = true
+                }
+                .popover(isPresented: $showSettingsPopover, arrowEdge: .top) { settingsPopover }
+                Menu {
+                    Button(permissionLabel, action: viewModel.openSystemNotificationSettings)
+                    Divider()
+                    Button(L10n.t(.clearNotifications), role: .destructive, action: viewModel.clearLocal)
+                    Button(L10n.t(.clearAllOnPhone), role: .destructive, action: viewModel.clearPhone)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help(L10n.t(.notificationSettings))
+                .accessibilityLabel(L10n.t(.notificationSettings))
             }
-            .popover(isPresented: $showSettingsPopover, arrowEdge: .top) {
-                settingsPopover
-            }
-            toolbarButton(
-                title: permissionLabel,
-                systemImage: permissionIcon
-            ) {
-                viewModel.openSystemNotificationSettings()
-            }
-            toolbarButton(title: L10n.t(.copyContent), systemImage: "doc.on.doc", action: viewModel.copySelected)
-            toolbarButton(title: "Export JSON", systemImage: "square.and.arrow.up", action: viewModel.exportJSON)
         }
-        .padding(.horizontal, AppSpacing.sm)
-        .padding(.top, AppTitleBar.height)
-        .padding(.bottom, AppSpacing.xs)
-        .background(.thinMaterial)
     }
 
     private var permissionLabel: String {
@@ -609,19 +614,13 @@ private struct NotificationToolbar: View {
         }
     }
 
-    private var permissionIcon: String {
-        switch viewModel.notificationAuthorized {
-        case .authorized: return "bell.badge.fill"
-        default: return "bell.slash"
-        }
-    }
-
     @ViewBuilder
     private func toolbarButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
+            Label(title, systemImage: systemImage).labelStyle(.iconOnly)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(AppToolbarButtonStyle())
+        .help(title)
     }
 
     private var settingsPopover: some View {

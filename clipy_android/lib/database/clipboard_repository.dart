@@ -3,10 +3,15 @@ import '../models.dart';
 import 'app_database.dart';
 
 class ClipboardRepository {
-  ClipboardRepository._();
+  ClipboardRepository._() : _database = null;
+
+  /// An explicit connection keeps storage tests isolated from app state.
+  ClipboardRepository.forDatabase(Database database) : _database = database;
+  final Database? _database;
   static final ClipboardRepository instance = ClipboardRepository._();
 
-  Future<Database> get _db => AppDatabase.instance.database;
+  Future<Database> get _db async =>
+      _database ?? await AppDatabase.instance.database;
 
   HistoryEntry _fromRow(Map<String, Object?> row) {
     return HistoryEntry(
@@ -79,19 +84,22 @@ class ClipboardRepository {
 
   Future<void> insert(HistoryEntry entry) async {
     final db = await _db;
-    if (entry.contentHash != null) {
-      await db.delete(
-        'clipboard_history',
-        where: 'content_hash = ?',
-        whereArgs: [entry.contentHash],
-      );
-    }
-    await db.insert('clipboard_history', {
-      'content_hash': entry.contentHash,
-      'item_type': entry.item.type,
-      'item_value': entry.item.value.toString(),
-      'source_app': entry.sourceApp,
-      'created_at': entry.date.millisecondsSinceEpoch,
+    // Delete and reinsert atomically: a failed write preserves the old row.
+    await db.transaction((txn) async {
+      if (entry.contentHash != null) {
+        await txn.delete(
+          'clipboard_history',
+          where: 'content_hash = ?',
+          whereArgs: [entry.contentHash],
+        );
+      }
+      await txn.insert('clipboard_history', {
+        'content_hash': entry.contentHash,
+        'item_type': entry.item.type,
+        'item_value': entry.item.value.toString(),
+        'source_app': entry.sourceApp,
+        'created_at': entry.date.millisecondsSinceEpoch,
+      });
     });
   }
 

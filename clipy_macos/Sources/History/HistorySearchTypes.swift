@@ -124,7 +124,8 @@ enum HistorySearchQueryParser {
         var freeText: [String] = []
 
         for token in query.split(whereSeparator: \.isWhitespace).map(String.init) {
-            if let parsed = parseToken(token) {
+            if let parsed = parseToken(token),
+               (typePrefixes + appPrefixes + pathPrefixes + ["pin", "url"]).contains(parsed.key) {
                 apply(parsed, to: &result)
             } else {
                 freeText.append(token)

@@ -1,5 +1,8 @@
 import AppKit
 
+#if CLIPY_CORE_TESTS
+runCoreRegressionTests()
+#else
 // OCR child mode must branch before any AppKit state exists: this same
 // executable is re-invoked with a flag as a short-lived Vision worker, and
 // must never build NSApplication.
@@ -10,6 +13,7 @@ if CommandLine.arguments.contains(OCRSubprocess.childModeArgument) {
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
+#endif
 
 // MARK: - Screenshot app integration
 // Conformance lets macshot's detached editor window route lifecycle events
@@ -93,4 +97,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+#if !CLIPY_CORE_TESTS
 app.run()
+#endif

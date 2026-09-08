@@ -12,7 +12,8 @@ enum HistorySearchRanker {
         entries: [HistoryEntry],
         query: String,
         useRegex: Bool = false,
-        loadFullTextIfNeeded: Bool = false
+        loadFullTextIfNeeded: Bool = false,
+        compiledRegex: NSRegularExpression? = nil
     ) -> [HistorySearchResult] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -27,12 +28,14 @@ enum HistorySearchRanker {
             return entries.map { HistorySearchResult(entry: $0, highlightRanges: []) }
         }
 
+        let regex = useRegex ? (compiledRegex ?? (try? NSRegularExpression(pattern: trimmed, options: [.caseInsensitive]))) : nil
+        if useRegex && regex == nil { return [] }
         let ranked = entries.compactMap { entry -> HistorySearchResult? in
             let displayText = entry.item.title
             if useRegex {
                 return regexResult(
                     entry: entry,
-                    pattern: trimmed,
+                    regex: regex!,
                     displayText: displayText,
                     loadFullTextIfNeeded: loadFullTextIfNeeded
                 )
@@ -59,21 +62,20 @@ enum HistorySearchRanker {
 
     private static func regexResult(
         entry: HistoryEntry,
-        pattern: String,
+        regex: NSRegularExpression,
         displayText: String,
         loadFullTextIfNeeded: Bool
     ) -> HistorySearchResult? {
         let fields = searchableTexts(
             for: entry,
-            terms: [pattern],
+            terms: [regex.pattern],
             loadFullTextIfNeeded: loadFullTextIfNeeded
         )
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
         for field in fields {
             let normalized = normalizeSearchText(field)
             let range = NSRange(normalized.startIndex..., in: normalized)
             if regex.firstMatch(in: normalized, options: [], range: range) != nil {
-                let ranges = regexRanges(in: displayText, pattern: pattern)
+                let ranges = regexRanges(in: displayText, regex: regex)
                 return HistorySearchResult(entry: entry, highlightRanges: ranges, score: 100)
             }
         }
@@ -180,22 +182,18 @@ enum HistorySearchRanker {
 
     static func highlightRanges(for text: String, terms: [String]) -> [Range<String.Index>] {
         var ranges: [Range<String.Index>] = []
-        let lower = text.lowercased()
         for term in terms where !term.isEmpty {
-            var searchStart = lower.startIndex
-            while searchStart < lower.endIndex,
-                  let found = lower.range(of: term, range: searchStart..<lower.endIndex) {
-                let start = text.index(text.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: found.lowerBound))
-                let end = text.index(text.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: found.upperBound))
-                ranges.append(start..<end)
+            var searchStart = text.startIndex
+            while searchStart < text.endIndex,
+                  let found = text.range(of: term, options: .caseInsensitive, range: searchStart..<text.endIndex) {
+                ranges.append(found)
                 searchStart = found.upperBound
             }
         }
         return mergeRanges(ranges)
     }
 
-    private static func regexRanges(in text: String, pattern: String) -> [Range<String.Index>] {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [] }
+    private static func regexRanges(in text: String, regex: NSRegularExpression) -> [Range<String.Index>] {
         let nsRange = NSRange(text.startIndex..., in: text)
         let matches = regex.matches(in: text, options: [], range: nsRange)
         return matches.compactMap { Range($0.range, in: text) }

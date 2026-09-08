@@ -14,13 +14,12 @@ extension SyncManager {
     static let fileChunkSize = 1024 * 1024
     static let fileMaxBytes = 512 * 1024 * 1024
     static let fileIncomingIdleTimeout: TimeInterval = 120
-    /// A whole chunk frame must fit in the socket send buffer so `send()`
-    /// returns promptly; otherwise two Macs blasting files at each other could
-    /// deadlock (both blocked writing, neither reading).
+    /// Kernel buffer sizing for throughput; correctness no longer relies on a
+    /// whole frame fitting here because writes are event-driven.
     static let fileSendBufferSize = 4 * 1024 * 1024
     /// Pipelined chunk writes: this many frames may sit in flight before the
-    /// sender pauses and waits. 8 × ~1.4 MiB ≈ 11 MiB burst memory.
-    static let fileMaxInflightChunks = 8
+    /// sender pauses and waits. 2 × ~1.4 MiB ≈ 2.8 MiB burst memory.
+    static let fileMaxInflightChunks = 2
 
     private struct FileMeta: Decodable {
         let fileId: String
@@ -47,9 +46,8 @@ extension SyncManager {
         sendFileToPeer(at: url, peerId: peer.peerId)
     }
 
-    /// Runs on `fileTransferQueue`. Frame writes hop through `syncQueue.sync`
-    /// so they serialize with session-close bookkeeping and never block reads
-    /// for longer than one chunk.
+    /// Runs on `fileTransferQueue`; at most two chunks await asynchronous writes.
+    /// Retaining the writer identity prevents writes into a replaced session.
     private func sendFileToPeerSync(at url: URL, peerId targetId: String) -> Bool {
         let values: URLResourceValues
         do {
@@ -65,7 +63,7 @@ extension SyncManager {
             return false
         }
 
-        guard let fd = waitForSessionFd(peerId: targetId, timeout: 8) else {
+        guard let writer = waitForSessionWriter(peerId: targetId, timeout: 8) else {
             appLog("sendFile: no session with \(targetId.prefix(8))", level: .warning)
             return false
         }
@@ -106,9 +104,19 @@ extension SyncManager {
             type: SyncType.fileMeta, peerId: peerId, name: displayName,
             hash: sha256Hex, payload: metaPayload
         )
-        guard let metaData = encodeFrame(metaEnvelope), writeFrameToSession(fd, metaData) else {
-            return fail("meta write failed")
+        guard let metaData = encodeFrame(metaEnvelope) else { return fail("meta encode failed") }
+        let metaSent = DispatchSemaphore(value: 0)
+        let metaLock = NSLock()
+        var metaOK = false
+        syncQueue.async {
+            self.enqueueFileFrame(metaData, writer: writer) { ok in
+                metaLock.lock(); metaOK = ok; metaLock.unlock()
+                metaSent.signal()
+            }
         }
+        metaSent.wait()
+        metaLock.lock(); let didSendMeta = metaOK; metaLock.unlock()
+        guard didSendMeta else { return fail("meta write failed") }
 
         guard let handle = try? FileHandle(forReadingFrom: url) else { return fail("cannot open file") }
         defer { try? handle.close() }
@@ -131,17 +139,20 @@ extension SyncManager {
             inflight.wait()
             flightLock.lock(); inFlightCount += 1; flightLock.unlock()
             syncQueue.async { [weak self] in
-                // Already executing on syncQueue: call the locked writer
-                // directly. Going through writeFrameToSession here would
-                // dispatch_sync our own queue and trip GCD's deadlock trap.
-                let ok = self?.writeFrameOnSyncQueue(fd, frame) ?? false
-                flightLock.lock()
-                inFlightCount -= 1
-                let nowEmpty = inFlightCount == 0
-                if !ok { writeFailed = true }
-                flightLock.unlock()
-                inflight.signal()
-                if nowEmpty { drain.signal() }
+                guard let self else {
+                    flightLock.lock(); writeFailed = true; inFlightCount -= 1; flightLock.unlock()
+                    inflight.signal(); drain.signal()
+                    return
+                }
+                self.enqueueFileFrame(frame, writer: writer) { ok in
+                    flightLock.lock()
+                    inFlightCount -= 1
+                    let nowEmpty = inFlightCount == 0
+                    if !ok { writeFailed = true }
+                    flightLock.unlock()
+                    inflight.signal()
+                    if nowEmpty { drain.signal() }
+                }
             }
         }
 
@@ -191,30 +202,27 @@ extension SyncManager {
         return ok
     }
 
-    /// Write one frame with the retired-fd guard. Safe from any queue except
-    /// syncQueue itself — callers already on syncQueue must use
-    /// `writeFrameOnSyncQueue` directly or they deadlock.
-    private func writeFrameToSession(_ fd: Int32, _ data: Data) -> Bool {
-        syncQueue.sync {
-            writeFrameOnSyncQueue(fd, data)
+    /// Producer retains at most two frames while waiting for FIFO space. Retry
+    /// capacity without blocking the session queue or copying frame bytes.
+    private func enqueueFileFrame(_ data: Data, writer: SyncSocketWriter,
+                                  deadline: DispatchTime = .now() + 10,
+                                  completion: @escaping (Bool) -> Void) {
+        guard !writer.isClosed, DispatchTime.now() < deadline else { completion(false); return }
+        if writer.canEnqueue(data) { writer.enqueue(data, completion: completion); return }
+        syncQueue.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self else { completion(false); return }
+            self.enqueueFileFrame(data, writer: writer, deadline: deadline, completion: completion)
         }
-    }
-
-    /// Must run on syncQueue.
-    private func writeFrameOnSyncQueue(_ fd: Int32, _ data: Data) -> Bool {
-        guard !retiredFDs.contains(fd), sessions.values.first(where: { $0.fd == fd }) != nil else { return false }
-        return writeAll(fd, data)
     }
 
     /// Poll briefly for a live session, dialing `direct` (no auth, like the
     /// text send) once along the way.
-    private func waitForSessionFd(peerId: String, timeout: TimeInterval) -> Int32? {
+    private func waitForSessionWriter(peerId: String, timeout: TimeInterval) -> SyncSocketWriter? {
         let deadline = Date().addingTimeInterval(timeout)
         var dialed = false
         while Date() < deadline {
-            if let fd = syncQueue.sync(execute: { sessions[peerId]?.fd }),
-               !syncQueue.sync(execute: { retiredFDs.contains(fd) }) {
-                return fd
+            if let writer = syncQueue.sync(execute: { sessions[peerId]?.writer }) {
+                return writer
             }
             if !dialed {
                 dialed = true
@@ -226,7 +234,7 @@ extension SyncManager {
             }
             Thread.sleep(forTimeInterval: 0.2)
         }
-        return syncQueue.sync(execute: { sessions[peerId]?.fd })
+        return syncQueue.sync(execute: { sessions[peerId]?.writer })
     }
 
     private func hashFile(at url: URL) -> String? {
@@ -387,7 +395,7 @@ extension SyncManager {
         if let error { object["error"] = error }
         guard let payload = encodeFileTransferJSON(object) else { return }
         let env = SyncEnvelope.make(type: SyncType.fileAck, peerId: self.peerId, payload: payload)
-        guard let data = encodeFrame(env), let fd = sessions[peerId]?.fd, writeAll(fd, data) else { return }
+        guard let data = encodeFrame(env), let fd = sessions[peerId]?.fd, sendSessionFrame(fd, data) else { return }
     }
 
     private func armIncomingIdleTimer(fileId: String) {

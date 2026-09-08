@@ -5,6 +5,7 @@ enum QueryBindValue {
     case text(String)
     case double(TimeInterval)
     case int(Int32)
+    case int64(Int64)
 }
 
 /// The result of building a history query: the SQL string and the ordered bind values.
@@ -23,7 +24,8 @@ final class HistoryQueryBuilder {
     func buildQuery(
         limit: Int,
         filters: SearchHistoryFilters?,
-        textQuery: String?
+        textQuery: String?,
+        beforeRowid: Int64? = nil
     ) -> BuiltQuery {
         var sql = "SELECT * FROM history_entries"
         var conditions: [String] = []
@@ -75,10 +77,16 @@ final class HistoryQueryBuilder {
             }
         }
 
+        if let beforeRowid {
+            conditions.append("rowid < ?")
+            bindValues.append((bindIndex, .int64(beforeRowid)))
+            bindIndex += 1
+        }
+
         if !conditions.isEmpty {
             sql += " WHERE " + conditions.joined(separator: " AND ")
         }
-        sql += " ORDER BY is_pinned DESC, date DESC"
+        sql += beforeRowid == nil ? " ORDER BY is_pinned DESC, date DESC" : " ORDER BY rowid DESC"
         if limit != Int.max {
             sql += " LIMIT ?"
             bindValues.append((bindIndex, .int(Int32(limit))))

@@ -27,6 +27,7 @@ final class SearchViewModel: ObservableObject {
 
     private var isLoadingMore = false
     private var searchGeneration = 0
+    private var searchCancellation: HistorySearchCancellation?
     private let searchQueue = DispatchQueue(label: "com.clipy.search", qos: .userInitiated)
     private static let historyChangeDebounce: TimeInterval = 0.25
 
@@ -50,13 +51,7 @@ final class SearchViewModel: ObservableObject {
     }
 
     private var canAutoLoadMore: Bool {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedQuery.isEmpty
-            && typeFilter == .all
-            && sourceAppFilter.isEmpty
-            && dateFilter == .all
-            && contentCategory == nil
-            && !useRegex
+        return results.count >= browseLimit
             && browseLimit < ClipboardManager.shared.totalHistoryCount
     }
 
@@ -117,6 +112,8 @@ final class SearchViewModel: ObservableObject {
     }
 
     func clearLoadedData() {
+        searchCancellation?.cancel()
+        searchGeneration += 1
         debounceWorkItem?.cancel()
         debounceWorkItem = nil
         historyChangeWorkItem?.cancel()
@@ -150,12 +147,16 @@ final class SearchViewModel: ObservableObject {
     }
 
     deinit {
+        searchCancellation?.cancel()
         if let historyObserver {
             NotificationCenter.default.removeObserver(historyObserver)
         }
     }
 
     func onQueryChange() {
+        searchCancellation?.cancel()
+        searchGeneration += 1
+        browseLimit = PreferencesManager.shared.historyLoadCount
         debounceWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             self?.performSearch(immediate: false)
@@ -171,12 +172,6 @@ final class SearchViewModel: ObservableObject {
             sourceAppFilter = ""
         }
         let selectedSourceApp = sourceAppFilter.isEmpty ? nil : sourceAppFilter
-        let isBrowseMode = trimmed.isEmpty
-            && typeFilter == .all
-            && sourceAppFilter.isEmpty
-            && dateFilter == .all
-            && contentCategory == nil
-            && !useRegex
         let options = SearchHistoryOptions(
             query: trimmed,
             typeFilter: typeFilter,
@@ -184,19 +179,23 @@ final class SearchViewModel: ObservableObject {
             dateFilter: dateFilter,
             contentCategory: contentCategory,
             useRegex: useRegex,
-            browseLimit: isBrowseMode ? browseLimit : nil
+            browseLimit: browseLimit
         )
 
         // SQLite fetch (up to historyLimit rows) plus ranking (which may read full
         // text from disk) can take long on large histories: run off the main thread
         // and drop stale generations.
+        searchCancellation?.cancel()
+        let cancellation = HistorySearchCancellation()
+        searchCancellation = cancellation
         searchGeneration += 1
         let generation = searchGeneration
         searchQueue.async { [weak self] in
+            guard !cancellation.isCancelled else { return }
             let sourceApps = manager.availableSourceApps()
-            let searchResults = manager.searchHistory(options: options)
+            let searchResults = manager.searchHistory(options: options, cancellation: cancellation)
             DispatchQueue.main.async {
-                guard let self, generation == self.searchGeneration else { return }
+                guard let self, !cancellation.isCancelled, generation == self.searchGeneration else { return }
                 self.availableSourceApps = sourceApps
                 self.applySearchResults(
                     searchResults,
@@ -370,12 +369,16 @@ struct SearchView: View {
             AppWindowHeader {
                 VStack(alignment: .leading, spacing: AppSpacing.xs) {
                     HStack(spacing: AppSpacing.sm) {
-                        TextField(L10n.t(.searchHistoryPlaceholder), text: $viewModel.query)
-                            .textFieldStyle(.roundedBorder)
+                        HStack(spacing: AppSpacing.xs) {
+                            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                            TextField(L10n.t(.searchHistoryPlaceholder), text: $viewModel.query)
+                            .textFieldStyle(.plain)
                             .focused($searchFocused)
                             .onChange(of: viewModel.query) { _ in
                                 viewModel.onQueryChange()
                             }
+                        }
+                        .modifier(AppInputSurface())
                         Toggle(L10n.t(.historyRegexSearch), isOn: $viewModel.useRegex)
                             .toggleStyle(.checkbox)
                             .onChange(of: viewModel.useRegex) { _ in
@@ -385,9 +388,9 @@ struct SearchView: View {
                             viewModel.clearAllHistory()
                         } label: {
                             Label(L10n.t(.clearHistory), systemImage: "trash")
-                                .labelStyle(.titleAndIcon)
+                                .labelStyle(.iconOnly)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(AppToolbarButtonStyle())
                         .help(L10n.t(.clearHistory))
                     }
 
@@ -469,8 +472,13 @@ struct SearchView: View {
             viewModel.contentCategory = category
             viewModel.onFilterChange()
         }
-        .buttonStyle(.bordered)
-        .tint(isSelected ? .accentColor : .secondary)
+        .buttonStyle(.plain)
+        .font(AppFont.secondary.weight(isSelected ? .semibold : .regular))
+        .foregroundStyle(isSelected ? AppColor.accent : .secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(isSelected ? AppColor.accent.opacity(0.12) : Color.primary.opacity(0.035), in: Capsule())
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var historyTable: some View {
@@ -480,23 +488,22 @@ struct SearchView: View {
                     .onDrag { dragItemProvider(for: result.entry) }
                     .onAppear { viewModel.onResultRowAppear(result) }
             }
-            TableColumn(L10n.t(.location)) { result in
-                Text(locationPreview(for: result.entry))
-                    .font(AppFont.secondary)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
+            .width(min: 220, ideal: 340, max: .infinity)
             TableColumn(L10n.t(.source)) { result in
                 Text(result.entry.sourceApp ?? "—")
                     .font(AppFont.secondary)
                     .foregroundStyle(.secondary)
             }
+            .width(min: 64, ideal: 80, max: 110)
             TableColumn(L10n.t(.time)) { result in
                 Text(RelativeTimeFormatter.string(from: result.entry.date))
                     .font(AppFont.secondary)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+            .width(68)
         }
+        .tableStyle(.inset(alternatesRowBackgrounds: false))
         .contextMenu(forSelectionType: HistoryEntry.ID.self) { ids in
             let entries = viewModel.results.filter { ids.contains($0.id) }.map(\.entry)
             if entries.count == 1, let entry = entries.first {
@@ -583,10 +590,21 @@ struct SearchView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.orange)
                 }
-                HighlightedText(
-                    text: contentPreview(for: result.entry),
-                    highlightRanges: viewModel.highlightRanges(for: result)
-                )
+                VStack(alignment: .leading, spacing: 3) {
+                    HighlightedText(
+                        text: contentPreview(for: result.entry),
+                        highlightRanges: viewModel.highlightRanges(for: result)
+                    )
+                    if let location = result.entry.item.locationSummary {
+                        Text(location)
+                            .font(AppFont.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(location)
+                    }
+                }
+                .padding(.vertical, 5)
             }
         }
     }
@@ -632,10 +650,6 @@ struct SearchView: View {
             return String(singleLine.prefix(80)) + "..."
         }
         return singleLine
-    }
-
-    private func locationPreview(for entry: HistoryEntry) -> String {
-        entry.item.locationSummary ?? "—"
     }
 
     private func dragItemProvider(for entry: HistoryEntry) -> NSItemProvider {

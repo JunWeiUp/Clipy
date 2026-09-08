@@ -57,7 +57,8 @@ class HotKeyManager {
         return hotkeys[id]
     }
 
-    func register(keyCode: Int, modifiers: UInt, id: UInt32, action: @escaping () -> Void) {
+    @discardableResult
+    func register(keyCode: Int, modifiers: UInt, id: UInt32, action: @escaping () -> Void) -> Bool {
         unregister(id: id)
 
         var carbonModifiers: UInt32 = 0
@@ -82,8 +83,10 @@ class HotKeyManager {
             hotkeys[id] = action
             hotkeyRefs[id] = ref
             lock.unlock()
+            return true
         } else {
             appLog("HotKeyManager: RegisterEventHotKey failed for id \(id) (\(status))", level: .warning)
+            return false
         }
     }
 

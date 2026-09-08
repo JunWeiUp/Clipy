@@ -156,9 +156,6 @@ extension SyncManager {
                 self.closeSession(peerId: peerId, scheduleReconnect: false)
             }
             if let client = self.acceptingClients.removeValue(forKey: fd) { client.source.cancel() }
-            // A recycled fd number may still sit in retiredFDs from its previous
-            // life; the new incarnation is live again.
-            retiredFDs.remove(fd)
             var session = Session(peerId: peerId, host: host, port: port, fd: fd, isClient: self.peerId < peerId)
             setNonBlocking(fd)
             // Chunked file transfer writes single frames up to ~1.4MB; make sure
@@ -169,7 +166,19 @@ extension SyncManager {
             var recvBuffer = Int32(SyncManager.fileSendBufferSize)
             setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &recvBuffer, socklen_t(MemoryLayout.size(ofValue: recvBuffer)))
             let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: self.syncQueue)
-            source.setEventHandler { [weak self] in self?.onSessionReadable(peerId: peerId) }
+            source.setEventHandler { [weak self] in
+                guard let self, self.sessions[peerId]?.fd == fd else { return }
+                self.onSessionReadable(peerId: peerId)
+            }
+            let writer = SyncSocketWriter(fd: fd, queue: self.syncQueue, onDrained: { [weak self] in
+                guard let self, self.sessions[peerId]?.fd == fd else { return }
+                self.pumpHistoryReplay(for: peerId)
+                self.flushPending(for: peerId)
+            }) { [weak self] in
+                guard let self, self.sessions[peerId]?.fd == fd else { return }
+                self.closeSession(peerId: peerId, scheduleReconnect: true)
+            }
+            session.writer = writer
             session.readSource = source
             self.sessions[peerId] = session
             source.resume()
@@ -239,9 +248,18 @@ extension SyncManager {
 
     func closeSession(peerId: String, scheduleReconnect: Bool, keepaliveDriven: Bool = false) {
         guard let session = sessions.removeValue(forKey: peerId) else { return }
-        session.readSource?.cancel()
-        retiredFDs.insert(session.fd)
-        Darwin.close(session.fd)
+        let cancellations = DispatchGroup()
+        if let source = session.readSource {
+            cancellations.enter()
+            source.setCancelHandler { cancellations.leave() }
+            source.cancel()
+        }
+        if let writer = session.writer {
+            cancellations.enter()
+            writer.cancel { cancellations.leave() }
+        }
+        cancellations.notify(queue: syncQueue) { Darwin.close(session.fd) }
+        if sessions.isEmpty { receiveScratch = Data() }
         inFlightHashes.removeValue(forKey: peerId)
         // Mid-transfer file chunks will never arrive on this socket again.
         discardIncomingFiles(from: peerId)
@@ -250,9 +268,10 @@ extension SyncManager {
         self.scheduleReconnect(peerId: peerId)
     }
 
-    func startListening() {
-        stopListening()
-        let port = syncPort, fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+    func startListening(port requestedPort: UInt16? = nil) {
+        guard listenSource == nil else { return }
+        if listenerClosing { listenerStartRequested = true; listenerRequestedPort = requestedPort; return }
+        let port = requestedPort ?? syncPort, fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { appLog("Failed to create listen socket", level: .error); return }
         var reuse: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout.size(ofValue: reuse)))
@@ -261,15 +280,33 @@ extension SyncManager {
         guard bindResult == 0, Darwin.listen(fd, 32) == 0 else { appLog("Failed to bind/listen on \(port): \(errno)", level: .error); Darwin.close(fd); return }
         listenFD = fd
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: syncQueue)
-        source.setEventHandler { [weak self] in self?.acceptClient() }
-        source.setCancelHandler { [weak self] in if let self, self.listenFD >= 0 { Darwin.close(self.listenFD); self.listenFD = -1 } }
+        source.setEventHandler { [weak self] in
+            guard let self, self.listenFD == fd else { return }
+            self.acceptClient()
+        }
+        source.setCancelHandler { [weak self] in
+            Darwin.close(fd)
+            guard let self else { return }
+            self.listenerClosing = false
+            if self.listenerStartRequested {
+                self.listenerStartRequested = false
+                let requestedPort = self.listenerRequestedPort
+                self.listenerRequestedPort = nil
+                self.startListening(port: requestedPort)
+            }
+        }
         listenSource = source; source.resume()
         appLog("Listening on 0.0.0.0:\(port)")
     }
 
     func stopListening() {
-        listenSource?.cancel(); listenSource = nil
-        if listenFD >= 0 { Darwin.close(listenFD); listenFD = -1 }
+        listenerStartRequested = false
+        listenerRequestedPort = nil
+        guard let source = listenSource else { return }
+        listenerClosing = true
+        listenSource = nil
+        listenFD = -1
+        source.cancel()
     }
 
     func acceptClient() {
@@ -336,6 +373,13 @@ extension SyncManager {
             }
             return true
         }
+    }
+
+    /// Accepted into a bounded session FIFO; only the handshake uses writeAll.
+    @discardableResult
+    func sendSessionFrame(_ fd: Int32, _ data: Data) -> Bool {
+        guard let writer = sessions.values.first(where: { $0.fd == fd })?.writer else { return false }
+        return writer.enqueue(data)
     }
 
     func readOneFrame(fd: Int32, timeout: TimeInterval, maxLength: Int = SyncManager.maxHandshakeFrameLength) -> Data? {

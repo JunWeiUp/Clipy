@@ -17,7 +17,7 @@ final class SettingsWindow {
                 HostingWindow(
                     title: L10n.t(.preferences),
                     size: AppWindowSize.settings,
-                    minSize: CGSize(width: 420, height: 560),
+                    minSize: AppWindowSize.settingsMin,
                     resizable: true,
                     frameAutosaveName: "SettingsWindow"
                 ) {

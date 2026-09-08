@@ -11,9 +11,9 @@ final class SnippetEditorViewModel: ObservableObject {
     @Published var selectedFolderId: UUID?
     @Published var selectedSnippetId: UUID?
     @Published var sidebarRevision = 0
-    @Published var draftTitle = ""
-    @Published var draftContent = ""
-    @Published var draftShortcut: ShortcutCombo?
+    @Published var searchQuery = ""
+    @Published var focusNewTitleID: UUID?
+    @Published var folderSettingsRequest = 0
 
     private var sidebarRefreshWorkItem: DispatchWorkItem?
     private var selectSnippetObserver: NSObjectProtocol?
@@ -25,6 +25,7 @@ final class SnippetEditorViewModel: ObservableObject {
             queue: .main
         ) { [weak self] notification in
             guard let snippetID = notification.object as? UUID else { return }
+            self?.searchQuery = ""
             self?.selectSnippet(snippetID)
             self?.reloadSidebar()
         }
@@ -41,9 +42,8 @@ final class SnippetEditorViewModel: ObservableObject {
         sidebarRefreshWorkItem = nil
         selectedFolderId = nil
         selectedSnippetId = nil
-        draftTitle = ""
-        draftContent = ""
-        draftShortcut = nil
+        searchQuery = ""
+        focusNewTitleID = nil
     }
 
     var currentSelection: SidebarSelection? {
@@ -58,62 +58,79 @@ final class SnippetEditorViewModel: ObservableObject {
 
     func selectFolder(_ id: UUID?) {
         selectedFolderId = id
-        selectedSnippetId = nil
-        syncDraftFromSelection()
+        searchQuery = ""
+        selectedSnippetId = id.flatMap { Self.latestFolder(matching: $0)?.snippets.first?.id }
     }
 
     func selectSnippet(_ id: UUID?) {
         selectedSnippetId = id
-        selectedFolderId = nil
-        syncDraftFromSelection()
+        if let id { selectedFolderId = Self.folderId(containingSnippetId: id) }
+    }
+
+    var selectedFolder: SnippetFolder? {
+        selectedFolderId.flatMap(Self.latestFolder)
+    }
+
+    var filteredSnippets: [Snippet] {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let snippets = selectedFolder?.snippets ?? []
+        guard !query.isEmpty else { return snippets }
+        return snippets.filter {
+            $0.title.localizedStandardContains(query) || $0.content.localizedStandardContains(query)
+        }
+    }
+
+    func activate() {
+        if currentSelection == nil { selectFolder(SnippetManager.shared.folders.first?.id) }
+        reloadSidebar()
+    }
+
+    func filterChanged() {
+        if !filteredSnippets.contains(where: { $0.id == selectedSnippetId }) {
+            selectSnippet(filteredSnippets.first?.id)
+        }
+    }
+
+    func persistTitle(_ title: String, for snippetId: UUID) {
+        guard let snippet = Self.latestSnippet(matching: snippetId), snippet.title != title else { return }
+        SnippetManager.shared.updateSnippetTitle(id: snippetId, title: title)
+        scheduleSidebarRefresh()
+    }
+
+    func renameFolder(_ id: UUID, title: String) {
+        guard let folder = Self.latestFolder(matching: id), folder.title != title else { return }
+        SnippetManager.shared.updateFolderTitle(id: id, title: title)
+        reloadSidebar()
+    }
+
+    func setFolderShortcut(_ id: UUID, shortcut: ShortcutCombo?) {
+        SnippetManager.shared.updateFolderShortcut(id: id, shortcut: shortcut)
+        reloadSidebar()
+    }
+
+    func deleteFolder(_ id: UUID) {
+        let alert = NSAlert()
+        alert.messageText = L10n.t(.confirmDeleteFolder)
+        alert.informativeText = L10n.t(.deleteFolderWarning)
+        alert.addButton(withTitle: L10n.t(.delete))
+        alert.addButton(withTitle: L10n.t(.cancel))
+        alert.alertStyle = .warning
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        SnippetManager.shared.deleteFolder(id: id)
+        selectFolder(SnippetManager.shared.folders.first?.id)
+        reloadSidebar()
     }
 
     func reloadSidebar() {
         sidebarRevision += 1
     }
 
-    func syncDraftFromSelection() {
-        if let snippetId = selectedSnippetId, let snippet = Self.latestSnippet(matching: snippetId) {
-            draftTitle = snippet.title
-            draftContent = snippet.content
-            draftShortcut = nil
-        } else if let folderId = selectedFolderId, let folder = Self.latestFolder(matching: folderId) {
-            draftTitle = folder.title
-            draftContent = ""
-            draftShortcut = folder.shortcut
-        } else {
-            draftTitle = ""
-            draftContent = ""
-            draftShortcut = nil
-        }
-    }
-
-    func persistDraftTitle() {
-        if let snippetId = selectedSnippetId {
-            SnippetManager.shared.updateSnippetTitle(id: snippetId, title: draftTitle)
-        } else if let folderId = selectedFolderId {
-            SnippetManager.shared.updateFolderTitle(id: folderId, title: draftTitle)
-        }
-        scheduleSidebarRefresh()
-    }
-
-    func persistDraftContent() {
-        guard let snippetId = selectedSnippetId else { return }
-        persistContent(draftContent, for: snippetId)
-    }
-
     /// Explicit-id variant for the debounced body editor, which must still save
     /// after a selection change or window close has cleared `selectedSnippetId`.
     func persistContent(_ content: String, for snippetId: UUID) {
+        guard let snippet = Self.latestSnippet(matching: snippetId), snippet.content != content else { return }
         SnippetManager.shared.updateSnippetContent(id: snippetId, content: content)
-        if selectedSnippetId == snippetId {
-            draftContent = content
-        }
-    }
-
-    func persistDraftShortcut() {
-        guard let folderId = selectedFolderId else { return }
-        SnippetManager.shared.updateFolderShortcut(id: folderId, shortcut: draftShortcut)
+        scheduleSidebarRefresh()
     }
 
     private func scheduleSidebarRefresh() {
@@ -128,6 +145,8 @@ final class SnippetEditorViewModel: ObservableObject {
     func addSnippet() {
         guard let folderId = destinationFolderIdForNewSnippet(),
               let newSnippet = SnippetManager.shared.addSnippet(to: folderId, title: L10n.t(.newSnippet), content: "") else { return }
+        searchQuery = ""
+        focusNewTitleID = newSnippet.id
         selectSnippet(newSnippet.id)
         reloadSidebar()
     }
@@ -137,6 +156,7 @@ final class SnippetEditorViewModel: ObservableObject {
         guard let folderId = SnippetManager.shared.folders.last?.id else { return }
         selectFolder(folderId)
         reloadSidebar()
+        folderSettingsRequest += 1
     }
 
     func deleteSelection() {
@@ -151,7 +171,7 @@ final class SnippetEditorViewModel: ObservableObject {
             alert.alertStyle = .warning
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             SnippetManager.shared.deleteFolder(id: folderId)
-            selectFolder(nil)
+            selectFolder(SnippetManager.shared.folders.first?.id)
         case .snippet(let snippetId):
             let next = Self.selectionAfterDeletingSnippet(snippetId)
             SnippetManager.shared.deleteSnippet(id: snippetId)
@@ -185,7 +205,7 @@ final class SnippetEditorViewModel: ObservableObject {
                 let xmlString = try String(contentsOf: url, encoding: .utf8)
                 SnippetManager.shared.importFromXML(xmlString)
                 DispatchQueue.main.async {
-                    self?.selectFolder(nil)
+                    self?.selectFolder(SnippetManager.shared.folders.first?.id)
                     self?.reloadSidebar()
                 }
             } catch {

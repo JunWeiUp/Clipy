@@ -89,6 +89,8 @@ final class SyncManager: NSObject {
         let port: UInt16
         var fd: Int32
         var readSource: DispatchSourceRead?
+        var writer: SyncSocketWriter?
+        var historyReplayRows: [Int64] = []
         var buffer = Data()
         var lastPong = Date()
         let isClient: Bool
@@ -100,6 +102,9 @@ final class SyncManager: NSObject {
 
     var listenFD: Int32 = -1
     var listenSource: DispatchSourceRead?
+    var listenerClosing = false
+    var listenerStartRequested = false
+    var listenerRequestedPort: UInt16?
     var acceptingClients: [Int32: (host: String, buffer: Data, source: DispatchSourceRead)] = [:]
     var inFlightHashes: [String: Set<String>] = [:]
     var lastHistoryFetchResponse: [String: Date] = [:]
@@ -108,7 +113,7 @@ final class SyncManager: NSObject {
     var lastPathStatus: NWPath.Status = .requiresConnection
 
     // MARK: File transfer state (SyncFileTransfer.swift)
-    // incomingFiles / fileAckWaiters / retiredFDs are only touched on syncQueue.
+    // incomingFiles / fileAckWaiters are only touched on syncQueue.
     struct IncomingFileState {
         let peerId: String
         let senderName: String
@@ -127,9 +132,6 @@ final class SyncManager: NSObject {
     }
     var incomingFiles: [String: IncomingFileState] = [:]
     var fileAckWaiters: [String: (Bool) -> Void] = [:]
-    /// fds closed by closeSession; guards file-chunk writers against writing
-    /// into a recycled descriptor. Cleared in adoptSession when a fd is reused.
-    var retiredFDs: Set<Int32> = []
     let fileTransferQueue = DispatchQueue(label: "com.clipy.sync.filetransfer")
 
     // MARK: - Lifecycle
@@ -324,7 +326,7 @@ final class SyncManager: NSObject {
         switch env.type {
         case SyncType.ping:
             let pong = SyncEnvelope.make(type: SyncType.pong, peerId: peerId)
-            if let data = encodeFrame(pong), let fd = sessions[remotePeerId]?.fd, !writeAll(fd, data) { appLog("pong send failed to \(remotePeerId.prefix(8))", level: .warning) }
+            if let data = encodeFrame(pong), let fd = sessions[remotePeerId]?.fd, !sendSessionFrame(fd, data) { appLog("pong send failed to \(remotePeerId.prefix(8))", level: .warning) }
         case SyncType.pong:
             if var session = sessions[remotePeerId] { session.lastPong = Date(); sessions[remotePeerId] = session }
         case SyncType.ack, SyncType.notifAck:
@@ -374,14 +376,27 @@ final class SyncManager: NSObject {
                 return
             }
             self.lastHistoryFetchResponse[remotePeerId] = Date()
-            let recent = HistoryRepository.shared.fetchRecentTexts(limit: 200)
-            appLog("history.fetch from \(remotePeerId.prefix(8)): pushing \(recent.count) text entr\(recent.count == 1 ? "y" : "ies")")
-            guard let fd = self.sessions[remotePeerId]?.fd else { return }
-            for entry in recent.reversed() {
-                guard let payload = self.encrypt(entry.text),
-                      let frame = self.encodeFrame(SyncEnvelope.make(type: SyncType.history, peerId: self.peerId, name: self.displayName, port: Int(self.syncPort), hash: entry.hash ?? "", payload: payload)),
-                      self.writeAll(fd, frame) else { return }
+            self.sessions[remotePeerId]?.historyReplayRows = HistoryRepository.shared.recentTextRowids(limit: 200)
+            self.pumpHistoryReplay(for: remotePeerId)
+        }
+    }
+
+    /// Keep row ids only. Resolve/encode one replay frame when the FIFO drains,
+    /// rather than retaining up to 200 full (possibly externalized) texts.
+    func pumpHistoryReplay(for peerId: String) {
+        guard var session = sessions[peerId], let writer = session.writer else { return }
+        while !session.historyReplayRows.isEmpty {
+            let rowid = session.historyReplayRows.removeFirst()
+            sessions[peerId]?.historyReplayRows = session.historyReplayRows
+            guard let entry = HistoryRepository.shared.fetchByRowid(rowid),
+                  let text = entry.resolvedText, let payload = encrypt(text),
+                  let frame = encodeFrame(SyncEnvelope.make(type: SyncType.history,
+                      peerId: self.peerId, name: displayName, port: Int(syncPort),
+                      hash: entry.contentHash ?? "", payload: payload)) else { continue }
+            if !writer.enqueue(frame) {
+                sessions[peerId]?.historyReplayRows.insert(rowid, at: 0)
             }
+            return
         }
     }
 
@@ -400,7 +415,7 @@ final class SyncManager: NSObject {
         for id in Array(sessions.keys) {
             guard let session = sessions[id] else { continue }
             if session.lastPong < cutoff { closeSession(peerId: id, scheduleReconnect: true, keepaliveDriven: true); continue }
-            if !writeAll(session.fd, data) { appLog("ping send failed to \(id.prefix(8))", level: .warning) }
+            if !sendSessionFrame(session.fd, data) { appLog("ping send failed to \(id.prefix(8))", level: .warning) }
             retryStalePendingHistory(for: id)
         }
     }
