@@ -9,7 +9,7 @@
 
 <sub>Latest release: v1.0.17 · macOS 13+ on Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds and version notes</a></sub>
 
-Current source version: **1.0.17** · Default local build **10040** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.18** · Default local build **10060** · [Build metadata](clipy_android/pubspec.yaml)
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
@@ -35,19 +35,23 @@ Native Swift / AppKit on macOS, Flutter on Android. Screenshot annotation, OCR, 
 
 ## Screenshots
 
-English interface with fictional example content, captured from the current source build.
+Styled English interface previews with fictional example content. Click any image to view the original app capture.
+
+**Menu Bar** — Your clipboard, snippets, word lookup, and everyday tools, always within reach.
+
+<a href="res/screenshots/macos-menu-en.png"><img src="res/screenshots/macos-menu-showcase.png" alt="Clipy Menu Bar — English interface with a soft paper illustration background" width="1120" /></a>
 
 **Snippet Library** — Browse folders, find a snippet, and edit or copy it in one place.
 
-<img src="res/screenshots/macos-snippets-en.png" alt="Clipy Snippet Library in English with folder navigation, searchable snippets and a focused document editor" width="1120" />
+<a href="res/screenshots/macos-snippets-en.png"><img src="res/screenshots/macos-snippets-showcase.png" alt="Clipy Snippet Library — English interface with a soft paper illustration background" width="1120" /></a>
 
 **Clipboard History** — Scan recent copies while keeping the full content in view.
 
-<img src="res/screenshots/macos-history-en.png" alt="Clipy clipboard history in English with filters, recent items and a text preview" width="1080" />
+<a href="res/screenshots/macos-history-en.png"><img src="res/screenshots/macos-history-showcase.png" alt="Clipy Clipboard History — English interface with a soft paper illustration background" width="1120" /></a>
 
 **Preferences** — Scroll through categories, or jump to a section from the sidebar.
 
-<img src="res/screenshots/macos-preferences-en.png" alt="Clipy Preferences in English with sidebar navigation and continuous scrolling" width="760" />
+<a href="res/screenshots/macos-preferences-en.png"><img src="res/screenshots/macos-preferences-showcase.png" alt="Clipy Preferences — English interface with a soft paper illustration background" width="1120" /></a>
 
 ## Get started in three steps
 

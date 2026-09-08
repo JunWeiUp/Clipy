@@ -9,7 +9,7 @@
 
 <sub>最新正式版：v1.0.17 · macOS 13+，Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED_ZH.md#下载与版本">其他安装包与版本说明</a></sub>
 
-当前源码版本：**1.0.17** · 默认本地构建号 **10040** · [构建版本配置](clipy_android/pubspec.yaml)
+当前源码版本：**1.0.18** · 默认本地构建号 **10060** · [构建版本配置](clipy_android/pubspec.yaml)
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=2ea44f)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
@@ -35,19 +35,23 @@ macOS 端使用原生 Swift / AppKit，Android 端使用 Flutter。截图标注�
 
 ## 界面截图
 
-以下为当前源码构建的英文界面，展示内容均为虚构示例。
+以下为英文界面的美化展示图，内容均为虚构示例。点击任意图片可查看原始应用截图。
 
-**片段库** — 文件夹、可搜索的片段列表与正文编辑三栏布局，编辑和复制在同一处完成。
+**菜单栏** — 搜索、单词查询、最近复制与常用工具，随手即可打开。
 
-<img src="res/screenshots/macos-snippets-en.png" alt="Clipy 英文片段库：文件夹导航、片段搜索与正文编辑三栏布局" width="1120" />
+<a href="res/screenshots/macos-menu-en.png"><img src="res/screenshots/macos-menu-showcase.png" alt="Clipy Menu Bar — English interface with a soft paper illustration background" width="1120" /></a>
+
+**片段库** — 文件夹、片段搜索与正文编辑三栏布局，编辑和复制在同一处完成。
+
+<a href="res/screenshots/macos-snippets-en.png"><img src="res/screenshots/macos-snippets-showcase.png" alt="Clipy Snippet Library — English interface with a soft paper illustration background" width="1120" /></a>
 
 **剪贴板历史** — 浏览最近复制的内容，同时查看完整预览。
 
-<img src="res/screenshots/macos-history-en.png" alt="Clipy 英文剪贴板历史：筛选条件、历史列表与文本预览" width="1080" />
+<a href="res/screenshots/macos-history-en.png"><img src="res/screenshots/macos-history-showcase.png" alt="Clipy Clipboard History — English interface with a soft paper illustration background" width="1120" /></a>
 
 **偏好设置** — 连续滚动浏览各类选项，也可通过侧边栏快速跳转。
 
-<img src="res/screenshots/macos-preferences-en.png" alt="Clipy 英文偏好设置：侧边分类导航与连续滚动设置项" width="760" />
+<a href="res/screenshots/macos-preferences-en.png"><img src="res/screenshots/macos-preferences-showcase.png" alt="Clipy Preferences — English interface with a soft paper illustration background" width="1120" /></a>
 
 ## 三步开始使用
 

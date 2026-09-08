@@ -1,11 +1,16 @@
 # macOS screenshots
 
-English screenshots of the current source build, captured on macOS using fictional local example content. The preview uses isolated storage and does not read the user's clipboard history or snippets.
+English screenshots of the current source build, captured on macOS using fictional local example content. The preview uses isolated storage and does not read the user’s clipboard history or snippets.
 
-- `macos-snippets-en.png` — Snippet Library, with folder navigation, searchable snippet list and document editor.
-- `macos-history-en.png` — Clipboard history, filters and text preview.
-- `macos-preferences-en.png` — Continuous settings document with sidebar navigation.
+Gallery order in both README files:
 
-These are captures of the running native application, not UI mockups. The capture area excludes the operating system title bar and screen-sharing indicator. Application controls, typography and content are unaltered. No private contacts, credentials, addresses or device history are included.
+1. `macos-menu-showcase.png` — Menu Bar: history, word lookup, snippets and everyday tools.
+2. `macos-snippets-showcase.png` — Snippet Library: folder navigation, search and editing.
+3. `macos-history-showcase.png` — Clipboard History: filters and full content preview.
+4. `macos-preferences-showcase.png` — Preferences: continuous settings with sidebar navigation.
+
+The showcase images use AI-assisted presentation styling: a shared ivory, pale blue and sage paper illustration background, headings and soft shadows. They are visual presentations, not pixel-exact UI references. Each README image links to its original `macos-*-en.png` application capture, which preserves the actual controls, typography and content. The original window captures exclude the operating system title bar and screen-sharing indicator; the menu capture includes the complete native menu. No private contacts, credentials or device history are included.
+
+`gallery-background.png` is the shared decorative illustration, generated with the built-in imagegen tool. The final presentation prompts are in [PROMPTS.md](PROMPTS.md). Keep original captures when regenerating the showcase images.
 
 Keep both README files in sync when replacing these images. Screenshots describe the source build and may include changes not yet in a published release.
