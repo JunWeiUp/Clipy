@@ -64,7 +64,42 @@ directory. No process is killed, and no TCC permissions are reset by the script.
 The icon is built from `Clipy/Resources/AppIcon.png`; permission metadata is in
 `clipy_macos/Resources/Info.plist`. New `.swift` files under `Sources/` are collected
 automatically. The release workflow currently creates **ad-hoc signed, non-notarized**
-macOS artifacts; a Developer ID/notarization pipeline remains separate work.
+macOS artifacts. Ad-hoc signing is also the explicit policy for the Mac CI job;
+it does not import certificates or use signing secrets.
+
+### macOS CI downloads
+
+`.github/workflows/macos.yml` is both a reusable workflow and the standalone
+**macOS Build** manual entry point. `ci.yml` calls it for main/master pushes,
+pull requests and CI runs; the existing Release checks reuse it too. Run
+**Actions → macOS Build → Run workflow** to build independently of Flutter,
+Android checks and Android signing credentials. The manual entry point becomes
+available once the workflow is on the repository's default branch.
+
+The job runs repository and native regression checks, builds with
+`SIGN_IDENTITY=-`, validates version metadata and arm64 architecture, then checks
+the signature both before packaging and after extracting the app ZIP. The app
+is zipped with `ditto` before upload to preserve its executable permissions.
+`INSTALL_APP=0` and `LAUNCH_APP=0` prevent installation or launch on the runner.
+
+The run summary links to an artifact containing the app ZIP, dSYM ZIP,
+`SHA256SUMS.txt`, `BUILD.txt`, license notices and the bilingual
+[installation guide](MACOS_INSTALL.md). Sign in to GitHub to download it within
+30 days. These builds target Apple Silicon / macOS 13+; they are not Intel or
+universal binaries, and are not public GitHub Releases.
+
+The app version comes from `clipy_android/pubspec.yaml`; the build number is the
+source build number plus the caller's `GITHUB_RUN_NUMBER`, matching the Release
+formula. Run numbers are scoped to each workflow, so build numbers across manual
+Mac, CI and Release runs are not a global sequence; reruns keep the same build
+number. Artifact names also include run ID and attempt to distinguish them.
+Check `BUILD.txt` when switching between build channels and use a higher
+`BUILD_NUMBER` for a local replacement of a newer installed build.
+
+Version tags and the combined manual **Release** workflow retain their existing
+draft behavior and asset names. The Mac artifact is uploaded as soon as its own
+job succeeds, even if a separate Android job later fails. Neither Mac CI nor the
+standalone manual workflow publishes a release or requires Developer ID signing.
 
 ## Android
 

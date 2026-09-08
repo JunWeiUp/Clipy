@@ -7,6 +7,7 @@ import 'models.dart';
 import 'utils/async_refresh_controller.dart';
 import 'notification_manager.dart';
 import 'notification_health_monitor.dart';
+import 'ui/app_components.dart';
 
 class NotificationSyncPage extends StatefulWidget {
   final bool embedded;
@@ -36,6 +37,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   final _historyRefresh = AsyncRefreshController();
   bool _appsLoaded = false;
   bool _appsLoading = false;
+  bool _appsFailed = false;
+  bool _historyLoading = true;
+  bool _historyFailed = false;
 
   /// Distinguishes first permission probe from a real denied→granted transition.
   bool _permissionStatusLoaded = false;
@@ -138,8 +142,16 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     return items;
   }
 
-  Future<void> _rebuildHistoryItems() =>
-      _historyRefresh.refresh(_loadHistoryItems);
+  Future<void> _rebuildHistoryItems() async {
+    try {
+      await _historyRefresh.refresh(_loadHistoryItems);
+      if (mounted) setState(() => _historyFailed = false);
+    } catch (_) {
+      if (mounted) setState(() => _historyFailed = true);
+    } finally {
+      if (mounted) setState(() => _historyLoading = false);
+    }
+  }
 
   Future<void> _loadHistoryItems(bool Function() isCurrent) async {
     if (!mounted || !isCurrent()) return;
@@ -290,14 +302,25 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   }
 
   Future<void> _loadInstalledApps() async {
-    if (mounted) setState(() => _appsLoading = true);
-    final apps = await NotificationManager.instance.getInstalledApps();
+    if (_appsLoading) return;
     if (mounted) {
       setState(() {
-        _installedApps = apps;
-        _appsLoaded = true;
-        _appsLoading = false;
+        _appsLoading = true;
+        _appsFailed = false;
       });
+    }
+    try {
+      final apps = await NotificationManager.instance.getInstalledApps();
+      if (mounted) {
+        setState(() {
+          _installedApps = apps;
+          _appsLoaded = true;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _appsFailed = true);
+    } finally {
+      if (mounted) setState(() => _appsLoading = false);
     }
   }
 
@@ -307,11 +330,8 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     final tabBar = TabBar(
       controller: _tabController,
       tabs: [
-        Tab(icon: const Icon(Icons.tune), text: l10n.settings),
-        Tab(
-          icon: const Icon(Icons.notifications),
-          text: l10n.notificationHistory,
-        ),
+        Tab(text: l10n.notificationSettings),
+        Tab(text: l10n.notificationHistory),
       ],
     );
     final body = TabBarView(
@@ -322,7 +342,32 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     if (widget.embedded) {
       return Column(
         children: [
-          Material(color: Theme.of(context).colorScheme.surface, child: tabBar),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                Expanded(child: tabBar),
+                PopupMenuButton<String>(
+                  tooltip: l10n.moreActions,
+                  onSelected: _handleMenuAction,
+                  itemBuilder: (_) => [
+                    PopupMenuItem(
+                      value: 'open_permission',
+                      child: Text(l10n.notificationListenerPermission),
+                    ),
+                    PopupMenuItem(
+                      value: 'clear_all',
+                      child: Text(l10n.clearNotificationHistory),
+                    ),
+                    PopupMenuItem(
+                      value: 'clear_on_phone',
+                      child: Text(l10n.clearAllNotifications),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
           Expanded(child: body),
         ],
       );
@@ -402,26 +447,20 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  Icons.filter_list,
-                  size: 20,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
                 Text(
                   l10n.syncNotificationsFrom,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
-                const Spacer(),
+                const SizedBox(height: 6),
                 Text(
-                  '收集 ${manager.collectedPackages.isEmpty ? "全部" : manager.collectedPackages.length} · 同步 ${manager.syncedPackages.isEmpty ? "全部" : manager.syncedPackages.length}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  l10n.packageSelection(
+                    manager.collectedPackages.length,
+                    manager.syncedPackages.length,
+                  ),
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
             ),
@@ -437,7 +476,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                 prefixIcon: const Icon(Icons.search, size: 20),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
+                  borderSide: BorderSide(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
                 ),
                 contentPadding: const EdgeInsets.symmetric(vertical: 0),
                 isDense: true,
@@ -479,6 +520,21 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
               child: Center(child: CircularProgressIndicator()),
             ),
           )
+        else if (_appsFailed)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  Text(l10n.loadFailed),
+                  TextButton(
+                    onPressed: _loadInstalledApps,
+                    child: Text(l10n.retry),
+                  ),
+                ],
+              ),
+            ),
+          )
         else if (appItems.isEmpty)
           SliverToBoxAdapter(
             child: Padding(
@@ -486,7 +542,9 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
               child: Center(
                 child: Text(
                   l10n.noAppsAvailable,
-                  style: TextStyle(color: Colors.grey[500]),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ),
@@ -515,19 +573,22 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: Colors.grey[600],
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(width: 6),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
             decoration: BoxDecoration(
-              color: Colors.grey[200],
+              color: Theme.of(context).colorScheme.surfaceContainerHigh,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
               '$count',
-              style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         ],
@@ -542,10 +603,21 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     final isCollected = manager.isPackageCollected(packageName);
     final isSynced = manager.isPackageSynced(packageName);
     return ListTile(
-      title: Text(appName, style: const TextStyle(fontSize: 14)),
+      leading: const ClipyIcon(Icons.apps_rounded, size: 36),
+      title: Text(
+        appName,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.titleSmall,
+      ),
       subtitle: Text(
         packageName,
-        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 11,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
       ),
       trailing: _CompactTogglePair(
         collectLabel: l10n.collect,
@@ -559,49 +631,62 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
   }
 
   Widget _buildPermissionCard(AppStrings l10n) {
+    final colors = Theme.of(context).colorScheme;
     return Card(
-      margin: const EdgeInsets.all(12),
-      color: _permissionGranted ? Colors.green[50] : Colors.orange[50],
+      margin: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+      color: _permissionGranted
+          ? colors.primaryContainer
+          : colors.tertiaryContainer,
       child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(
-              _permissionGranted ? Icons.check_circle : Icons.warning_amber,
-              color: _permissionGranted ? Colors.green : Colors.orange,
-              size: 36,
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
+            Row(
+              children: [
+                Icon(
+                  _permissionGranted
+                      ? Icons.verified_user_outlined
+                      : Icons.notifications_active_outlined,
+                  color: _permissionGranted
+                      ? colors.onPrimaryContainer
+                      : colors.onTertiaryContainer,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
                     _permissionGranted
                         ? l10n.permissionGranted
                         : l10n.notificationListenerPermission,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: _permissionGranted
+                          ? colors.onPrimaryContainer
+                          : colors.onTertiaryContainer,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _permissionGranted
-                        ? l10n.enableNotificationSync
-                        : l10n.permissionGuide,
-                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                  ),
-                ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _permissionGranted
+                  ? l10n.notificationIntro
+                  : l10n.permissionGuide,
+              style: TextStyle(
+                color: _permissionGranted
+                    ? colors.onPrimaryContainer
+                    : colors.onTertiaryContainer,
+                height: 1.5,
               ),
             ),
-            if (!_permissionGranted)
-              ElevatedButton(
-                onPressed: () {
-                  NotificationManager.instance.openListenerSettings();
-                },
+            if (!_permissionGranted) ...[
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () =>
+                    NotificationManager.instance.openListenerSettings(),
                 child: Text(l10n.grantPermission),
               ),
+            ],
           ],
         ),
       ),
@@ -614,18 +699,21 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
     final l10n = context.l10n;
 
     if (_historyItems.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.notifications_none, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              l10n.noNotificationHistory,
-              style: TextStyle(color: Colors.grey[500], fontSize: 16),
-            ),
-          ],
-        ),
+      if (_historyLoading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      return ClipyEmptyState(
+        icon: _historyFailed
+            ? Icons.cloud_off_outlined
+            : Icons.notifications_none_rounded,
+        title: _historyFailed ? l10n.loadFailed : l10n.noNotificationHistory,
+        message: _historyFailed ? l10n.retryHint : l10n.notificationEmptyHint,
+        action: _historyFailed
+            ? FilledButton(
+                onPressed: _rebuildHistoryItems,
+                child: Text(l10n.retry),
+              )
+            : null,
       );
     }
 
@@ -638,10 +726,16 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
             return _buildHistorySummary(l10n, item);
           case _HistoryListItemKind.sectionHeader:
             final sectionKey = item.sectionKey!;
-            final (IconData icon, Color? iconColor) = switch (sectionKey) {
-              'synced' => (Icons.sync, Colors.blue[700]),
-              'collected' => (Icons.check_circle_outline, Colors.green[700]),
-              _ => (Icons.block, Colors.grey[500]),
+            final (IconData icon, Color iconColor) = switch (sectionKey) {
+              'synced' => (Icons.sync, Theme.of(context).colorScheme.primary),
+              'collected' => (
+                Icons.check_circle_outline,
+                Theme.of(context).colorScheme.primary,
+              ),
+              _ => (
+                Icons.block,
+                Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             };
             return InkWell(
               onTap: () async {
@@ -657,7 +751,7 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                   horizontal: 16,
                   vertical: 10,
                 ),
-                color: Colors.grey[100],
+                color: Theme.of(context).colorScheme.surfaceContainerLow,
                 child: Row(
                   children: [
                     Icon(
@@ -665,7 +759,7 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                           ? Icons.chevron_right
                           : Icons.expand_more,
                       size: 18,
-                      color: Colors.grey[600],
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                     const SizedBox(width: 4),
                     Icon(icon, size: 16, color: iconColor),
@@ -675,7 +769,7 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        color: Colors.grey[700],
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -685,12 +779,15 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                         vertical: 1,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.grey[300],
+                        color: Theme.of(context).colorScheme.outlineVariant,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
                         '${item.sectionCount}',
-                        style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
                   ],
@@ -756,22 +853,19 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                 }
               },
               onCopyAll: () async {
-                // Resolve the messenger before the await: `context` may be
-                // unmounted by the time the notifications load, and looking it
-                // up then throws.
-                final messenger = ScaffoldMessenger.of(context);
-                final message = l10n.copiedToClipboard;
-                final notifications = await _notificationsForPackage(
-                  item.packageName!,
-                );
-                final text = notifications
-                    .map(_notificationDetailText)
-                    .join('\n\n');
-                ClipboardManager.instance.copyToClipboard(
-                  HistoryItem(type: 'text', value: text),
-                );
-                if (!mounted) return;
-                messenger.showSnackBar(SnackBar(content: Text(message)));
+                try {
+                  final notifications = await _notificationsForPackage(
+                    item.packageName!,
+                  );
+                  if (!mounted) return;
+                  await _copyNotificationText(
+                    notifications.map(_notificationDetailText).join('\n\n'),
+                  );
+                } catch (_) {
+                  if (context.mounted) {
+                    showClipyMessage(context, l10n.operationFailed);
+                  }
+                }
               },
             );
           case _HistoryListItemKind.notification:
@@ -806,17 +900,8 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                 );
                 NotificationManager.instance.removeNotification(entry.id);
               },
-              onCopy: () {
-                ClipboardManager.instance.copyToClipboard(
-                  HistoryItem(
-                    type: 'text',
-                    value: _notificationDetailText(entry),
-                  ),
-                );
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text(l10n.copiedToClipboard)));
-              },
+              onCopy: () =>
+                  _copyNotificationText(_notificationDetailText(entry)),
               onOpen: () =>
                   NotificationManager.instance.openNotification(entry),
               onShowDetails: () => _showNotificationDetails(entry),
@@ -848,12 +933,15 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
             decoration: BoxDecoration(
-              color: Colors.grey[300],
+              color: Theme.of(context).colorScheme.outlineVariant,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
               '${item.appCount}',
-              style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
           const Spacer(),
@@ -870,6 +958,19 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
         ],
       ),
     );
+  }
+
+  Future<bool> _copyNotificationText(String text) async {
+    try {
+      await ClipboardManager.instance.copyToClipboard(
+        HistoryItem(type: 'text', value: text),
+      );
+      if (mounted) showClipyMessage(context, context.l10n.copiedToClipboard);
+      return true;
+    } catch (_) {
+      if (mounted) showClipyMessage(context, context.l10n.operationFailed);
+      return false;
+    }
   }
 
   String _notificationDetailText(NotificationEntry entry) {
@@ -939,17 +1040,11 @@ class _NotificationSyncPageState extends State<NotificationSyncPage>
                   ),
                   const SizedBox(width: 8),
                   TextButton.icon(
-                    onPressed: () {
-                      ClipboardManager.instance.copyToClipboard(
-                        HistoryItem(
-                          type: 'text',
-                          value: _notificationDetailText(entry),
-                        ),
+                    onPressed: () async {
+                      final copied = await _copyNotificationText(
+                        _notificationDetailText(entry),
                       );
-                      Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(context.l10n.copiedToClipboard)),
-                      );
+                      if (copied && ctx.mounted) Navigator.pop(ctx);
                     },
                     icon: const Icon(Icons.copy),
                     label: Text(context.l10n.copyContent),
@@ -1195,7 +1290,7 @@ class _NotificationTile extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
-                      color: Colors.orange.shade800,
+                      color: Theme.of(context).colorScheme.tertiary,
                     ),
                   ),
                 ),
@@ -1204,12 +1299,18 @@ class _NotificationTile extends StatelessWidget {
                   body,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               const SizedBox(height: 2),
               Text(
                 '${entry.appName} · $timeDisplay · ${isCollected ? l10n.collect : l10n.appSyncDisabled}/${syncEnabled ? l10n.sync : l10n.appSyncDisabled}',
-                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
           ),
@@ -1226,7 +1327,11 @@ class _NotificationTile extends StatelessWidget {
                 onToggleSync: onToggleSync,
               ),
               PopupMenuButton<String>(
-                icon: Icon(Icons.more_vert, size: 18, color: Colors.grey[600]),
+                icon: Icon(
+                  Icons.more_vert,
+                  size: 18,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
                 onSelected: (v) {
                   switch (v) {
                     case 'copy':
@@ -1329,7 +1434,11 @@ class _AppGroupHeader extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+          border: Border(
+            bottom: BorderSide(
+              color: Theme.of(context).colorScheme.outlineVariant,
+            ),
+          ),
         ),
         child: Row(
           children: [
@@ -1343,7 +1452,7 @@ class _AppGroupHeader extends StatelessWidget {
                     Icon(
                       isExpanded ? Icons.expand_more : Icons.chevron_right,
                       size: 22,
-                      color: Colors.grey[600],
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                     const SizedBox(width: 4),
                     CircleAvatar(
@@ -1380,7 +1489,9 @@ class _AppGroupHeader extends StatelessWidget {
                             packageName,
                             style: TextStyle(
                               fontSize: 11,
-                              color: Colors.grey[500],
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -1390,8 +1501,8 @@ class _AppGroupHeader extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 11,
                               color: isCollected && syncEnabled
-                                  ? Colors.green[700]
-                                  : Colors.orange[700],
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(context).colorScheme.tertiary,
                             ),
                           ),
                         ],
@@ -1406,7 +1517,10 @@ class _AppGroupHeader extends StatelessWidget {
                 alignment: Alignment.centerRight,
                 child: Text(
                   _formatTime(latestPostTime),
-                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ),
@@ -1434,7 +1548,11 @@ class _AppGroupHeader extends StatelessWidget {
               ),
             ),
             PopupMenuButton<String>(
-              icon: Icon(Icons.more_vert, size: 18, color: Colors.grey[600]),
+              icon: Icon(
+                Icons.more_vert,
+                size: 18,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
               onSelected: (v) {
                 switch (v) {
                   case 'toggle_collect':
@@ -1500,26 +1618,33 @@ class _CompactTogglePair extends StatelessWidget {
     required this.onToggleSync,
   });
 
-  Widget _buildSwitch(String label, bool value, ValueChanged<bool>? onChanged) {
+  Widget _buildSwitch(
+    BuildContext context,
+    String label,
+    bool value,
+    ValueChanged<bool>? onChanged,
+  ) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           label,
           style: TextStyle(
-            fontSize: 9,
+            fontSize: 11,
             height: 1.0,
-            color: onChanged == null ? Colors.grey[400] : Colors.grey[600],
+            color: onChanged == null
+                ? Theme.of(context).colorScheme.outline
+                : Theme.of(context).colorScheme.onSurfaceVariant,
           ),
         ),
         SizedBox(
-          width: 45,
-          height: 24,
-          child: FittedBox(
+          width: 52,
+          height: 48,
+          child: Center(
             child: Switch(
               value: value,
               onChanged: onChanged,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              materialTapTargetSize: MaterialTapTargetSize.padded,
             ),
           ),
         ),
@@ -1532,9 +1657,14 @@ class _CompactTogglePair extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _buildSwitch(collectLabel, isCollected, onToggleCollected),
+        _buildSwitch(context, collectLabel, isCollected, onToggleCollected),
         const SizedBox(width: 4),
-        _buildSwitch(syncLabel, syncEnabled, isCollected ? onToggleSync : null),
+        _buildSwitch(
+          context,
+          syncLabel,
+          syncEnabled,
+          isCollected ? onToggleSync : null,
+        ),
       ],
     );
   }

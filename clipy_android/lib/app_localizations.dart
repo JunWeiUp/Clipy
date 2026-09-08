@@ -63,7 +63,7 @@ class AppStrings {
 
   final AppLanguage language;
 
-  String get appTitle => 'ClipyClone';
+  String get appTitle => 'Clipy';
   String get languageLabel => _t('语言', 'Language');
   String get history => _t('历史记录', 'History');
   String get preferences => _t('偏好设置', 'Preferences');
@@ -115,6 +115,10 @@ class AppStrings {
   String get clearHistory => _t('清空历史记录', 'Clear History');
   String get appLogs => _t('应用日志', 'App Logs');
   String get clearLogs => _t('清空日志', 'Clear Logs');
+  String get clearLogsConfirm => _t(
+    '删除本机全部运行日志？此操作无法撤销。',
+    'Delete all runtime logs on this device? This cannot be undone.',
+  );
   String get logsCopied => _t('日志已复制到剪贴板', 'Logs copied to clipboard');
   String get copyAll => _t('复制全部', 'Copy All');
   String get noLogs => _t('暂无日志。', 'No logs recorded yet.');
@@ -166,6 +170,10 @@ class AppStrings {
   String get syncPairingSecretUpdated =>
       _t('配对密钥已更新，同步已重启', 'Pairing secret updated and sync restarted');
   String get authorizedDevices => _t('授权设备', 'Authorized Devices');
+  String get syncTargetsSummary => _t(
+    '选择每台设备接收的内容，也可以只发送一次文本或文件。',
+    'Choose what each device receives, or send a text or file just once.',
+  );
   String get syncTargetsHint => _t(
     '分别勾选要向哪些设备同步剪贴板 / 通知。只需本机授权即可发送，对方无需勾选也能接收。设备列表「发送文本 / 发送文件」连本机授权也不需要。',
     'Choose which devices receive clipboard and/or notifications. Authorization is one-sided: authorize on this device to send; the peer can receive without authorizing you. Device-list Send Text / Send File needs no authorization at all.',
@@ -302,8 +310,8 @@ class AppStrings {
   String get homeWidgetSection => _t('桌面小部件', 'Home-Screen Widget');
   String get timerWidgetTitle => _t('计时部件', 'Timer Widget');
   String get timerWidgetDesc => _t(
-    '1–40 分钟桌面倒计时：部件上 +/− 每按 ±1 分钟，点击时间数字可拖拽设定',
-    'A 1–40 min home-screen countdown: +/- steps by 1 minute; tap the readout to set it by dragging',
+    '最长 23:59:59 的桌面倒计时。点击读数打开时、分、秒滚轮，随时开始或暂停。',
+    'A home-screen countdown up to 23:59:59. Tap the readout to set hours, minutes and seconds, then start or pause.',
   );
   String get addToHomeScreen => _t('添加到桌面', 'Add to Home Screen');
   String get timerWidgetPinRequested =>
@@ -313,6 +321,112 @@ class AppStrings {
     'Could not pin automatically: long-press an empty area of the home screen → Widgets → Clipy Android',
   );
   String get timerWidgetAdded => _t('已添加到桌面', 'Added to home screen');
+
+  // Mobile design and interaction.
+  String get devices => _t('设备', 'Devices');
+  String get notifications => _t('通知', 'Notifications');
+  String get historyTagline =>
+      _t('复制过的，随时找回来。', 'Everything you copied. Within reach.');
+  String get devicesTagline =>
+      _t('让内容，在设备之间流动。', 'Your devices. Working together.');
+  String get settingsTagline =>
+      _t('按你的习惯，使用 Clipy。', 'Make Clipy feel like yours.');
+  String get searchHistory => _t('搜索内容或来源应用', 'Search content or source app');
+  String get allItems => _t('全部', 'All');
+  String get textItems => _t('文本', 'Text');
+  String get linkItems => _t('链接', 'Links');
+  String get fileItems => _t('文件', 'Files');
+  String get imageItems => _t('图片', 'Images');
+  String get today => _t('今天', 'Today');
+  String get yesterday => _t('昨天', 'Yesterday');
+  String get older => _t('更早', 'Earlier');
+  String get nothingFound => _t('没有匹配的内容', 'No matches yet');
+  String get changeSearchHint =>
+      _t('换个关键词，或试试其他类型。', 'Try another keyword or a different filter.');
+  String get historyEmptyHint => _t(
+    '在 Clipy 打开时复制文字，或从已连接的设备同步内容，历史会出现在这里。',
+    'Copy text while Clipy is open, or sync it from a connected device. Your history appears here.',
+  );
+  String get loadFailed => _t('暂时无法加载', 'Could not load content');
+  String get retryHint =>
+      _t('请重试。已有内容会保留。', 'Try again. Your saved content is still there.');
+  String get retry => _t('重试', 'Try again');
+  String get clearSearch => _t('清除搜索', 'Clear search');
+  String get clearHistoryConfirm => _t(
+    '这会删除本机的全部剪贴板历史，无法撤销。',
+    'This permanently deletes all clipboard history on this device.',
+  );
+  String get historyCleared => _t('历史记录已清空', 'History cleared');
+  String get operationFailed =>
+      _t('操作未完成，请重试', 'Could not complete the action. Try again.');
+  String get tapToCopy => _t('点击复制 · 长按查看', 'Tap to copy · Hold to preview');
+  String get preview => _t('查看内容', 'Preview');
+  String get localNetwork => _t('局域网连接', 'Local connection');
+  String get syncReady => _t('同步已开启', 'Sync is on');
+  String get syncPaused => _t('同步已关闭', 'Sync is off');
+  String get connectionHint => _t(
+    '连接同一 Wi-Fi，设置相同配对密钥，再选择共享的设备。',
+    'Join the same Wi-Fi, use a matching pairing secret, then choose a device to share with.',
+  );
+  String get connectionSettings => _t('连接设置', 'Connection settings');
+  String get advancedConnection => _t('高级连接设置', 'Advanced connection');
+  String get deviceIdentity => _t('本机信息', 'This device');
+  String get appearance => _t('外观', 'Appearance');
+  String get systemTheme => _t('跟随系统', 'System');
+  String get lightTheme => _t('浅色', 'Light');
+  String get darkTheme => _t('深色', 'Dark');
+  String get personalize => _t('个性化', 'Personalize');
+  String get toolsAndSupport => _t('工具与支持', 'Tools & support');
+  String get aboutClipy => _t(
+    '连接 Mac 与 Android 的剪贴板工具。',
+    'A clipboard companion for Mac and Android.',
+  );
+  String get invalidPort =>
+      _t('请输入 1–65535 之间的端口', 'Enter a port between 1 and 65535');
+  String get portUpdated => _t('同步端口已更新', 'Sync port updated');
+  String get nameRequired => _t('请输入设备名称', 'Enter a device name');
+  String get addDevice => _t('添加设备', 'Add device');
+  String get add => _t('添加', 'Add');
+  String get ipAddress => _t('IP 地址', 'IP address');
+  String get invalidIP => _t('请输入合法 IPv4 地址', 'Enter a valid IPv4 address');
+  String get manualDevices => _t('手动连接', 'Connect manually');
+  String get manualDevicesHint => _t(
+    '找不到设备？输入对端 IP 地址，连接其他子网中的设备。',
+    'Device missing? Enter its IP address to connect across subnets.',
+  );
+  String get filesEmptyHint => _t(
+    '从 Mac 发送文件后，在这里查看并打开所在文件夹。',
+    'Send a file from your Mac, then find it here and open its folder.',
+  );
+  String get deleteFileConfirm => _t(
+    '这会删除已接收的文件及本机记录，无法撤销。',
+    'This permanently deletes the received file and its record from this device.',
+  );
+  String get fileDeleteFailed => _t(
+    '文件未能删除，记录已保留。请在文件管理器中检查权限。',
+    'The file could not be deleted. Its record was kept. Check access in your file manager.',
+  );
+  String get notificationEmptyHint => _t(
+    '允许通知访问并选择应用后，在这里查看收到的通知。',
+    'Allow notification access and choose your apps to see their notifications here.',
+  );
+  String get notificationIntro => _t(
+    '重要消息，在 Mac 上也能看到。',
+    'Keep your phone notifications within reach on Mac.',
+  );
+  String get removeDeviceConfirm => _t(
+    '停止向这台设备自动同步剪贴板和通知？',
+    'Stop automatically sharing clipboard and notifications with this device?',
+  );
+  String get settingsSaved => _t('设置已保存', 'Settings saved');
+  String get showSecret => _t('显示密钥', 'Show secret');
+  String get hideSecret => _t('隐藏密钥', 'Hide secret');
+  String get moreActions => _t('更多操作', 'More actions');
+  String get filesHint => _t('接收的文件，一处整理。', 'Your received files, together.');
+  String packageSelection(int collected, int synced) => _t(
+    '收集 ${collected == 0 ? "全部" : collected} · 同步 ${synced == 0 ? "全部" : synced}',
+    'Collect ${collected == 0 ? "all" : collected} · Sync ${synced == 0 ? "all" : synced}',
+  );
 
   String _t(String zh, String en) => language == AppLanguage.zh ? zh : en;
 }

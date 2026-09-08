@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:clipy_android/log_manager.dart';
 import 'package:clipy_android/app_localizations.dart';
+import '../../ui/app_components.dart';
 
 class LogPage extends StatefulWidget {
   const LogPage({super.key});
@@ -18,6 +19,8 @@ class _LogPageState extends State<LogPage> {
   final List<String> _logs = [];
   bool _loading = false;
   bool _hasMore = true;
+  bool _failed = false;
+  bool _pendingRefresh = false;
 
   @override
   void initState() {
@@ -36,8 +39,6 @@ class _LogPageState extends State<LogPage> {
 
   void _onLogsChanged() {
     if (!mounted) return;
-    _logs.clear();
-    _hasMore = true;
     _loadMore(reset: true);
   }
 
@@ -50,20 +51,37 @@ class _LogPageState extends State<LogPage> {
   }
 
   Future<void> _loadMore({bool reset = false}) async {
-    if (_loading) return;
-    _loading = true;
-    final offset = reset ? 0 : _logs.length;
-    final page = await LogManager.instance.fetchPage(
-      offset: offset,
-      limit: _pageSize,
-    );
-    if (!mounted) return;
+    if (_loading) {
+      _pendingRefresh |= reset;
+      return;
+    }
     setState(() {
-      if (reset) _logs.clear();
-      _logs.addAll(page.map((r) => r.formatted));
-      _hasMore = page.length == _pageSize;
-      _loading = false;
+      _loading = true;
+      _failed = false;
     });
+    try {
+      final page = await LogManager.instance.fetchPage(
+        offset: reset ? 0 : _logs.length,
+        limit: _pageSize,
+      );
+      if (mounted) {
+        setState(() {
+          if (reset) _logs.clear();
+          _logs.addAll(page.map((r) => r.formatted));
+          _hasMore = page.length == _pageSize;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+        if (_pendingRefresh) {
+          _pendingRefresh = false;
+          unawaited(_loadMore(reset: true));
+        }
+      }
+    }
   }
 
   @override
@@ -76,7 +94,19 @@ class _LogPageState extends State<LogPage> {
           IconButton(
             icon: const Icon(Icons.delete_sweep),
             onPressed: () async {
-              await LogManager.instance.clear();
+              final confirmed = await confirmRemoval(
+                context,
+                title: l10n.clearLogs,
+                message: l10n.clearLogsConfirm,
+              );
+              if (!confirmed || !context.mounted) return;
+              try {
+                await LogManager.instance.clear();
+              } catch (_) {
+                if (context.mounted) {
+                  showClipyMessage(context, l10n.operationFailed);
+                }
+              }
             },
             tooltip: l10n.clearLogs,
           ),
@@ -109,13 +139,31 @@ class _LogPageState extends State<LogPage> {
         ],
       ),
       body: _logs.isEmpty && !_loading
-          ? Center(child: Text(l10n.noLogs))
+          ? ClipyEmptyState(
+              icon: Icons.article_outlined,
+              title: _failed ? l10n.loadFailed : l10n.noLogs,
+              message: _failed ? l10n.retryHint : l10n.appRuntimeLogs,
+              action: _failed
+                  ? FilledButton(
+                      onPressed: () => _loadMore(reset: true),
+                      child: Text(l10n.retry),
+                    )
+                  : null,
+            )
           : ListView.builder(
               controller: _scrollController,
               reverse: true,
-              itemCount: _logs.length + (_hasMore ? 1 : 0),
+              itemCount: _logs.length + (_hasMore || _failed ? 1 : 0),
               itemBuilder: (context, index) {
                 if (index >= _logs.length) {
+                  if (_failed) {
+                    return Center(
+                      child: TextButton(
+                        onPressed: () => _loadMore(reset: true),
+                        child: Text(l10n.retry),
+                      ),
+                    );
+                  }
                   return const Padding(
                     padding: EdgeInsets.all(16),
                     child: Center(child: CircularProgressIndicator()),
@@ -124,8 +172,8 @@ class _LogPageState extends State<LogPage> {
                 final log = _logs[index];
                 return Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 12.0,
-                    vertical: 4.0,
+                    horizontal: 20.0,
+                    vertical: 8.0,
                   ),
                   child: Text(
                     log,

@@ -54,8 +54,15 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   Future<List<HistoryEntry>> fetchPage({
     required int offset,
     required int limit,
+    String query = '',
+    String filter = 'all',
   }) {
-    return ClipboardRepository.instance.fetchPage(offset: offset, limit: limit);
+    return ClipboardRepository.instance.fetchPage(
+      offset: offset,
+      limit: limit,
+      query: query,
+      filter: filter,
+    );
   }
 
   Future<int> count() => ClipboardRepository.instance.count();
@@ -280,9 +287,9 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     notifyListeners();
   }
 
-  void copyToClipboard(HistoryItem item) {
+  Future<void> copyToClipboard(HistoryItem item) async {
     if (item.type == 'text') {
-      Clipboard.setData(ClipboardData(text: item.value as String));
+      await Clipboard.setData(ClipboardData(text: item.value as String));
       _lastText = item.value as String;
     }
   }
