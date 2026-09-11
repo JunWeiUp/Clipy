@@ -97,7 +97,7 @@ jobs:
           cd dist
           shasum -a 256 ./*.apk ./*.zip > SHA256SUMS.txt
       - name: Create draft for licensing and signing review
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Clipy ${{ steps.version.outputs.tag }}
