@@ -181,6 +181,7 @@ class MenuController: NSObject {
             AppMenuStyle.applyShortcut(PreferencesManager.shared.wordLookupShortcut, to: word)
         }
         menu.addItem(word)
+        menu.addItem(actionItem(L10n.t(.wordBook), symbol: "books.vertical", action: #selector(openWordBook)))
 
         let capture = AppMenuStyle.menu()
         capture.addItem(actionItem(L10n.t(.screenshotRegion), symbol: "viewfinder", action: #selector(startScreenshotRegion)))
@@ -733,6 +734,10 @@ class MenuController: NSObject {
     @objc private func openSearch() {
         NSApp.activate(ignoringOtherApps: true)
         SearchWindow.shared.showWindow()
+    }
+
+    @objc private func openWordBook() {
+        WordBookWindow.shared.showWindow()
     }
 
     @objc private func openWordLookup() {

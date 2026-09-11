@@ -1,20 +1,20 @@
 import Foundation
 
-struct WordEntry: Equatable {
-    struct Meaning: Equatable {
+struct WordEntry: Codable, Equatable {
+    struct Meaning: Codable, Equatable {
         let partOfSpeech: String
         let definition: String
     }
-    struct Phrase: Equatable {
+    struct Phrase: Codable, Equatable {
         let text: String
         let translation: String
     }
-    struct Example: Equatable {
+    struct Example: Codable, Equatable {
         let text: String
         let translation: String
         let source: String
     }
-    struct Inflection: Equatable {
+    struct Inflection: Codable, Equatable {
         let name: String
         let value: String
     }
@@ -55,7 +55,7 @@ enum WordQuery {
             .replacingOccurrences(of: "’", with: "'")
             .split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
         guard value.count <= 80,
-              value.range(of: "^[A-Za-z]+(?:[ '.-][A-Za-z]+)*$", options: .regularExpression) != nil else {
+              value.range(of: "^[A-Za-z\\p{Han}]+(?:[ '.·-][A-Za-z\\p{Han}]+)*$", options: .regularExpression) != nil else {
             throw WordLookupError.invalidQuery
         }
         return value
@@ -65,6 +65,45 @@ enum WordQuery {
 /// The provider's web dictionary response is isolated here because it is not
 /// a versioned public API. Missing optional sections must not hide definitions.
 enum YoudaoWordParser {
+    static func candidates(_ data: Data) throws -> [WordSuggestion] {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw WordLookupError.invalidResponse
+        }
+        var results: [WordSuggestion] = []
+        for word in objects((root["ce"] as? [String: Any])?["word"]) {
+            for row in objects(word["trs"]) {
+                for translation in objects(row["tr"]) {
+                    guard let line = translation["l"] as? [String: Any] else { continue }
+                    // Chinese-to-English entries mix strings and link objects.
+                    // Only the link's text is a lookup term, never its app URL.
+                    for item in line["i"] as? [Any] ?? [] {
+                        let text = (item as? [String: Any])?["#text"] as? String ?? item as? String ?? ""
+                        if let term = try? WordQuery.normalize(text) {
+                            results.append(.init(word: term, detail: line["#tran"] as? String ?? ""))
+                        }
+                    }
+                }
+            }
+        }
+        for typo in objects((root["typos"] as? [String: Any])?["typo"]) {
+            if let word = typo["word"] as? String, let term = try? WordQuery.normalize(word) {
+                results.append(.init(word: term, detail: typo["trans"] as? String ?? ""))
+            }
+        }
+        return WordSuggestion.unique(results)
+    }
+
+    static func suggestions(_ data: Data) throws -> [WordSuggestion] {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = root["result"] as? [String: Any], result["code"] as? Int == 200,
+              let payload = root["data"] as? [String: Any] else { throw WordLookupError.invalidResponse }
+        return WordSuggestion.unique(objects(payload["entries"]).compactMap { item in
+            guard let word = item["entry"] as? String,
+                  let term = try? WordQuery.normalize(word) else { return nil }
+            return .init(word: term, detail: item["explain"] as? String ?? "")
+        })
+    }
+
     static func parse(_ data: Data, query: String) throws -> WordEntry {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw WordLookupError.invalidResponse

@@ -480,7 +480,7 @@ extension OCRResultController: NSWindowDelegate {
     }
 }
 
-private class KeyablePanel: NSPanel {
+private class KeyablePanel: EscapeClosingPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 

@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-final class HostingWindow<Content: View>: NSWindow, NSWindowDelegate {
+final class HostingWindow<Content: View>: EscapeClosingWindow, NSWindowDelegate {
     init(
         title: String,
         size: CGSize,

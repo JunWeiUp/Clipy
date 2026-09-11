@@ -4,7 +4,7 @@ import CoreImage
 
 /// Editor window that intercepts Cmd+Q to close itself instead of quitting the app.
 /// Uses performClose so windowShouldClose is called (triggers unsaved changes warning).
-private class EditorWindow: NSWindow {
+private class EditorWindow: EscapeClosingWindow {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.contains(.command) && event.keyCode == 12 {  // Q
             performClose(nil)

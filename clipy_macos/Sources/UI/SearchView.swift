@@ -834,18 +834,11 @@ private struct SearchKeyHandler: NSViewRepresentable {
                 case 36:
                     viewModel.selectCurrent(action: .pasteAndClose)
                     return nil
-                case 53:
-                    SearchWindow.shared.closeWindow()
-                    return nil
                 default:
                     return event
                 }
             }
 
-            if event.keyCode == 53 {
-                SearchWindow.shared.closeWindow()
-                return nil
-            }
             return event
         }
 
