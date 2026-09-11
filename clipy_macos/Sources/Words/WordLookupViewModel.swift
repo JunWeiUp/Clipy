@@ -6,12 +6,14 @@ import Combine
 final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate, NSSpeechSynthesizerDelegate {
     @Published var query = ""
     @Published private(set) var entry: WordEntry?
+    @Published private(set) var suggestions: [WordSuggestion] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorKey: L10nKey?
     @Published private(set) var isSpeaking = false
     @Published private(set) var audioStatus: L10nKey?
     @Published var focusRequest = UUID()
 
+    let wordBook: WordBookStore
     private let service: WordLookingUp
     private var lookupTask: Task<Void, Never>?
     private var audioTask: Task<Void, Never>?
@@ -20,7 +22,25 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
     private var player: AVAudioPlayer?
     private var synthesizer: NSSpeechSynthesizer?
 
-    init(service: WordLookingUp = WordLookupService()) { self.service = service }
+    init(service: WordLookingUp = WordLookupService(), wordBook: WordBookStore = .shared) {
+        self.service = service
+        self.wordBook = wordBook
+    }
+
+    func showSaved(_ entry: WordEntry) {
+        clearLookup()
+        query = entry.word
+        self.entry = entry
+    }
+
+    func selectSuggestion(_ suggestion: WordSuggestion) {
+        if let saved = wordBook.words.first(where: { $0.id == suggestion.id }) {
+            showSaved(saved.entry)
+        } else {
+            query = suggestion.word
+            search()
+        }
+    }
 
     func prepareForPresentation(clipboardText: String?) {
         if let word = WordQuery.clipboardWord(clipboardText), word != query {
@@ -38,19 +58,27 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
         let token = UUID()
         generation = token
         entry = nil
+        suggestions = []
         errorKey = nil
         isLoading = false
         let term: String
         do { term = try WordQuery.normalize(query) }
         catch { errorKey = .wordInvalidQuery; return }
         query = term
+        let local = WordSearchMatcher.ranked(wordBook.words, query: term).prefix(10).map {
+            WordSuggestion(word: $0.entry.word, detail: $0.entry.meanings.map(\.definition).joined(separator: "；"))
+        }
+        suggestions = local
         isLoading = true
         let service = self.service
         lookupTask = Task { @MainActor [weak self] in
             do {
-                let result = try await service.lookup(term)
+                let result = try await service.search(term)
                 guard !Task.isCancelled, let self, self.generation == token else { return }
-                self.entry = result
+                self.entry = result.entry
+                self.suggestions = Array(WordSuggestion.unique(local + result.suggestions)
+                    .filter { $0.id != result.entry?.word.lowercased() }.prefix(20))
+                if let entry = result.entry { self.wordBook.record(entry) }
                 self.isLoading = false
                 self.lookupTask = nil
             } catch {
@@ -135,6 +163,7 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
         lookupTask = nil
         stopSpeaking()
         entry = nil
+        suggestions = []
         isLoading = false
         errorKey = nil
     }

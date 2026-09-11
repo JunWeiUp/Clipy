@@ -1,6 +1,6 @@
 import AppKit
 
-class PinFloatingPanel: NSPanel {
+class PinFloatingPanel: EscapeClosingPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
@@ -329,6 +329,10 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
         DetachedEditorWindowController.open(image: editorImage, fromCapture: false)
     }
 
+
+    override func cancelOperation(_ sender: Any?) {
+        closePanel()
+    }
 
     @objc private func closePanel() {
         orderOut(nil)

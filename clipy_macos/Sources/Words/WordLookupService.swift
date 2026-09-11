@@ -2,7 +2,14 @@ import Foundation
 
 protocol WordLookingUp {
     func lookup(_ query: String) async throws -> WordEntry
+    func search(_ query: String) async throws -> WordSearchResult
     func americanAudio(_ word: String) async throws -> Data
+}
+
+extension WordLookingUp {
+    func search(_ query: String) async throws -> WordSearchResult {
+        WordSearchResult(entry: try await lookup(query), suggestions: [])
+    }
 }
 
 final class WordLookupService: WordLookingUp {
@@ -21,15 +28,48 @@ final class WordLookupService: WordLookingUp {
 
     func lookup(_ query: String) async throws -> WordEntry {
         let query = try WordQuery.normalize(query)
-        var components = URLComponents(string: "https://dict.youdao.com/jsonapi")!
-        components.queryItems = [
-            URLQueryItem(name: "q", value: query),
-            URLQueryItem(name: "dicts", value: #"{"count":30,"dicts":[["ec","phrs","blng_sents_part"]]}"#)
-        ]
-        let data = try await fetch(components.url!, limit: 1024 * 1024)
+        let data = try await dictionaryData(query)
         do { return try YoudaoWordParser.parse(data, query: query) }
         catch let error as WordLookupError { throw error }
         catch { throw WordLookupError.invalidResponse }
+    }
+
+    func search(_ query: String) async throws -> WordSearchResult {
+        let query = try WordQuery.normalize(query)
+        async let related = relatedWords(query)
+        var entry: WordEntry?
+        var candidates: [WordSuggestion] = []
+        var failure: Error = WordLookupError.notFound
+        do {
+            let data = try await dictionaryData(query)
+            candidates = try YoudaoWordParser.candidates(data)
+            do { entry = try YoudaoWordParser.parse(data, query: query) }
+            catch { failure = error }
+        } catch { failure = error }
+        candidates = WordSuggestion.unique(candidates + (await related))
+            .filter { $0.id != entry?.word.lowercased() && $0.id != query.lowercased() }
+        try Task.checkCancellation()
+        guard entry != nil || !candidates.isEmpty else { throw failure }
+        return WordSearchResult(entry: entry, suggestions: Array(candidates.prefix(20)))
+    }
+
+    private func relatedWords(_ query: String) async -> [WordSuggestion] {
+        var components = URLComponents(string: "https://dict.youdao.com/suggest")!
+        components.queryItems = [URLQueryItem(name: "q", value: query),
+                                 URLQueryItem(name: "num", value: "10"),
+                                 URLQueryItem(name: "doctype", value: "json")]
+        do {
+            return try YoudaoWordParser.suggestions(await fetch(components.url!, limit: 256 * 1024))
+        } catch { return [] } // Suggestions must not hide a valid dictionary entry.
+    }
+
+    private func dictionaryData(_ query: String) async throws -> Data {
+        var components = URLComponents(string: "https://dict.youdao.com/jsonapi")!
+        components.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "dicts", value: #"{"count":30,"dicts":[["ec","ce","phrs","blng_sents_part","typos"]]}"#)
+        ]
+        return try await fetch(components.url!, limit: 1024 * 1024)
     }
 
     func americanAudio(_ word: String) async throws -> Data {

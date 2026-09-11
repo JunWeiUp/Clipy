@@ -55,7 +55,7 @@ final class VideoEditorWindowController: NSObject, NSWindowDelegate {
         let winX = screen.frame.midX - winW / 2
         let winY = screen.frame.midY - winH / 2
 
-        let win = NSWindow(
+        let win = EscapeClosingWindow(
             contentRect: NSRect(x: winX, y: winY, width: winW, height: winH),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false

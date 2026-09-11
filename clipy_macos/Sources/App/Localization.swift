@@ -21,8 +21,26 @@ extension Notification.Name {
 }
 
 enum L10nKey: String {
+    case wordHideChinese
+    case wordShowChinese
+    case wordChineseVisible
+    case wordChineseHidden
+    case wordBook
+    case wordFamiliar
+    case wordUnfamiliar
+    case wordBookStatus
+    case wordBookFilter
+    case wordBookCheckHelp
+    case wordBookEmpty
+    case wordBookSelect
+    case wordBookHint
+    case wordBookLookups
+    case wordBookLastLookup
+    case wordBookReadError
+    case wordBookWriteError
     case wordLookup
     case wordPlaceholder
+    case wordCandidates
     case wordSearch
     case wordLoading
     case wordInvalidQuery
@@ -394,11 +412,29 @@ struct L10n {
             .designOutput: "输出与预览",
             .designDrawing: "滚动与标注",
             .designEffects: "美化与特效",
+            .wordHideChinese: "隐藏中文释义",
+            .wordShowChinese: "显示中文释义",
+            .wordChineseVisible: "中文释义已显示",
+            .wordChineseHidden: "中文释义已隐藏",
+            .wordBook: "单词表",
+            .wordFamiliar: "熟悉",
+            .wordUnfamiliar: "不熟悉",
+            .wordBookStatus: "熟悉程度",
+            .wordBookFilter: "中英文模糊搜索",
+            .wordBookCheckHelp: "勾选表示熟悉，取消勾选移回不熟悉。",
+            .wordBookEmpty: "此列表暂无匹配的单词。",
+            .wordBookSelect: "选择一个单词开始复习",
+            .wordBookHint: "查询成功后自动加入「不熟悉」。已保存的释义可离线查看，播放词典发音需要联网。",
+            .wordBookLookups: "查询次数",
+            .wordBookLastLookup: "最近查询",
+            .wordBookReadError: "无法读取单词表，已保留原文件。请检查文件权限或备份后重新打开应用。",
+            .wordBookWriteError: "单词表保存失败，本次改动未保存。请检查磁盘空间和权限后重试。",
             .wordLookup: "单词查询",
-            .wordPlaceholder: "输入英文单词或短语，如 take",
+            .wordPlaceholder: "输入中文或英文，如 学习、study、stud",
+            .wordCandidates: "匹配词条 · 点击查看详情",
             .wordSearch: "查询",
             .wordLoading: "正在查词…",
-            .wordInvalidQuery: "请输入 80 个字符以内的英文单词或短语",
+            .wordInvalidQuery: "请输入 80 个字符以内的中文、英文单词或短语",
             .wordNotFound: "未找到这个单词",
             .wordNetworkError: "暂时无法连接词典或读取结果",
             .wordTryAgain: "检查拼写或网络后，按回车重新查询。",
@@ -411,8 +447,8 @@ struct L10n {
             .wordLookupPhrase: "查询这个短语",
             .wordSource: "来源：有道词典 · 查看完整词条",
             .wordWelcome: "从一个单词开始",
-            .wordWelcomeDetail: "输入单词，按回车查看词义、美式音标、短语和例句。",
-            .wordPrivacy: "打开时自动填入剪贴板中的英文单词 · 按回车后联网查询 · 数据来自有道词典",
+            .wordWelcomeDetail: "输入中文、英文或部分文字，按回车查找匹配词条；点击候选词查看释义、发音和例句。",
+            .wordPrivacy: "剪贴板单词自动预填 · 回车后联网查询有道词典 · 成功结果保存到本机单词表",
             .wordAmerican: "美",
             .wordNoIPA: "词典暂未提供美式音标",
             .wordPlayAudio: "美式发音",
@@ -749,11 +785,29 @@ struct L10n {
             .designOutput: "Output & Preview",
             .designDrawing: "Scroll & Annotate",
             .designEffects: "Image Effects",
+            .wordHideChinese: "Hide Chinese meanings",
+            .wordShowChinese: "Show Chinese meanings",
+            .wordChineseVisible: "Chinese meanings are shown",
+            .wordChineseHidden: "Chinese meanings are hidden",
+            .wordBook: "Vocabulary",
+            .wordFamiliar: "Familiar",
+            .wordUnfamiliar: "Unfamiliar",
+            .wordBookStatus: "Familiarity",
+            .wordBookFilter: "Fuzzy search in Chinese or English",
+            .wordBookCheckHelp: "Check to mark familiar; uncheck to move back.",
+            .wordBookEmpty: "No matching words in this list.",
+            .wordBookSelect: "Select a word to review",
+            .wordBookHint: "Successful lookups are saved as unfamiliar. Saved definitions work offline; dictionary audio requires a connection.",
+            .wordBookLookups: "Lookups",
+            .wordBookLastLookup: "Last lookup",
+            .wordBookReadError: "Cannot read vocabulary. The original file was preserved. Check permissions or restore a backup, then reopen the app.",
+            .wordBookWriteError: "Vocabulary could not be saved. Check disk space and permissions, then retry.",
             .wordLookup: "Word Lookup",
-            .wordPlaceholder: "Enter an English word or phrase, e.g. take",
+            .wordPlaceholder: "Chinese or English, e.g. 学习, study, stud",
+            .wordCandidates: "Matching words · Select for details",
             .wordSearch: "Look up",
             .wordLoading: "Looking up…",
-            .wordInvalidQuery: "Enter an English word or phrase within 80 characters",
+            .wordInvalidQuery: "Enter Chinese or English words or phrases within 80 characters",
             .wordNotFound: "No entry found",
             .wordNetworkError: "The dictionary is unavailable or returned an unreadable response",
             .wordTryAgain: "Check your spelling or connection, then press Return to retry.",
@@ -766,8 +820,8 @@ struct L10n {
             .wordLookupPhrase: "Look up this phrase",
             .wordSource: "Source: Youdao Dictionary · View full entry",
             .wordWelcome: "Start with a word",
-            .wordWelcomeDetail: "Enter a word and press Return for meanings, American IPA, phrases and examples.",
-            .wordPrivacy: "Prefills a single English word from your clipboard on opening. Press Return to query Youdao online.",
+            .wordWelcomeDetail: "Enter Chinese, English or part of a word and press Return. Select a match for meanings, pronunciation and examples.",
+            .wordPrivacy: "Prefills a clipboard word · Return queries Youdao online · Successful results are saved to local vocabulary",
             .wordAmerican: "US",
             .wordNoIPA: "American IPA is not available for this entry",
             .wordPlayAudio: "American pronunciation",

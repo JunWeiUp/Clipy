@@ -5,7 +5,7 @@ final class WordLookupWindow {
     private let session = WindowSession<WordLookupView>()
     private var viewModel: WordLookupViewModel?
 
-    func showWindow() {
+    func showWindow(query: String? = nil) {
         let items = NSPasteboard.general.pasteboardItems ?? []
         let clipboardText = items.count == 1 && !items[0].types.contains(.fileURL)
             ? items[0].string(forType: .string) : nil
@@ -24,7 +24,12 @@ final class WordLookupWindow {
         }, update: { [weak self] window in
             window.title = L10n.t(.wordLookup)
             // update runs for both first creation and cached-window reopening.
-            self?.viewModel?.prepareForPresentation(clipboardText: clipboardText)
+            if let query, let model = self?.viewModel {
+                model.query = query
+                model.search()
+            } else {
+                self?.viewModel?.prepareForPresentation(clipboardText: clipboardText)
+            }
         })
     }
 }
