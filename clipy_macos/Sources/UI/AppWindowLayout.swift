@@ -1,5 +1,9 @@
 import SwiftUI
 
+extension Notification.Name {
+  static let appSettingsNavigate = Notification.Name("appSettingsNavigate")
+}
+
 enum AppColor {
   static var windowChrome: Color { Color(nsColor: .windowBackgroundColor) }
   static var windowBackground: Color { Color(nsColor: .textBackgroundColor) }
@@ -168,6 +172,16 @@ struct AppSettingsLayout<Content: View>: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppColor.groupedBackground)
       }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .appSettingsNavigate)) { notification in
+      guard let id = notification.object as? String, pages.contains(where: { $0.id == id }) else { return }
+      selection = id
+      pendingJump = id
+      jumpReset?.cancel()
+      navigator.scroll(to: id)
+      let reset = DispatchWorkItem { pendingJump = nil }
+      jumpReset = reset
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: reset)
     }
     .onDisappear {
       jumpReset?.cancel()

@@ -1,12 +1,16 @@
 import Foundation
 import Darwin
+import AppKit
 
 private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
     guard condition() else { fatalError(message) }
 }
 
 func runCoreRegressionTests() {
+    runFolderTransferRegressionTests()
+    runHistoryCopyRegressionTests()
     runWordLookupRegressionTests()
+    runSmartSwitchRegressionTests()
     func entry(_ text: String, _ date: Double = 1) -> HistoryEntry {
         HistoryEntry(item: .text(text), date: Date(timeIntervalSince1970: date), sourceApp: nil, contentHash: nil)
     }
@@ -136,4 +140,41 @@ func runCoreRegressionTests() {
     check(orderedClosed.wait(timeout: .now() + 2) == .success, "ordered cancel hung")
     Darwin.close(ordered[1])
     print("Socket regressions passed (bounded FIFO, peer isolation, timeout, cancellation).")
+}
+
+private func runHistoryCopyRegressionTests() {
+    let pasteboard = NSPasteboard.withUniqueName()
+    let manager = ClipboardManager(testPasteboard: pasteboard)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer {
+        pasteboard.releaseGlobally()
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    let texts = [
+        String(repeating: "a", count: 199),
+        String(repeating: "b", count: 200),
+        String(repeating: "c", count: 200) + "尾",
+        String(repeating: "中文 English 👩🏽‍💻\n第二行\t保持空白\r\n", count: 500) + "完整原文末尾 END\n"
+    ]
+    for (index, original) in texts.enumerated() {
+        let url = directory.appendingPathComponent("\(index).txt")
+        try! Data(original.utf8).write(to: url)
+        let stored = HistoryEntry(
+            item: .text(String(original.prefix(HistoryMediaStore.textPreviewLength))),
+            date: Date(), sourceApp: nil, contentHash: nil, textPath: url.path
+        )
+        manager.copyToPasteboard(stored, simulatePaste: false)
+        check(pasteboard.string(forType: .string) == original,
+              "history copy truncated or altered the original text (fixture \(index))")
+    }
+
+    let inline = "inline snippet\n内联原文"
+    manager.copyToPasteboard(.text(inline), simulatePaste: false)
+    check(pasteboard.string(forType: .string) == inline, "inline text copy changed")
+    let legacy = HistoryEntry(item: .text(inline), date: Date(), sourceApp: nil, contentHash: nil)
+    manager.copyToPasteboard(legacy, simulatePaste: false)
+    check(pasteboard.string(forType: .string) == inline, "legacy text without a file was lost")
+    print("History copy regressions passed (200-character boundary, full Unicode text, inline/legacy text).")
 }

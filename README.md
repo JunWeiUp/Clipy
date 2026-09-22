@@ -9,7 +9,7 @@
 
 **[Download for macOS ↗](https://github.com/JunWeiUp/Clipy/releases/latest)** &nbsp;&nbsp; · &nbsp;&nbsp; **[Download for Android ↗](https://github.com/JunWeiUp/Clipy/releases/latest)**
 
-<sub>Latest release: v1.0.18 · macOS 13+ / Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds & installation</a></sub>
+<sub>Latest published release linked above · macOS 13+ / Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds & installation</a></sub>
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=1262f3)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
@@ -90,7 +90,7 @@ A fresh four-tab layout for **History · Devices · Notifications · Settings**.
   <a href="res/screenshots/android-settings-dark-en.png"><img src="res/screenshots/android-settings-dark-en.png" alt="Android settings in dark appearance" width="30%" /></a>
 </p>
 
-<sub>Android previews show this working source revision; the redesign is not included in the v1.0.18 download above. Captures use fictional data in an isolated emulator. Mac showcase images use decorative styling and link to their original captures. The header is a concept illustration. [Image sources & production notes](res/screenshots/README.md)</sub>
+<sub>Android previews show the four-tab layout introduced in v1.0.19. Captures use fictional data in an isolated emulator. Mac showcase images use decorative styling and link to their original captures. The header is a concept illustration. [Image sources & production notes](res/screenshots/README.md)</sub>
 
 <details>
 <summary><b>One more detail: preferences that stay out of your way</b></summary>
@@ -114,9 +114,9 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.19** · Default local build **10080** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.20** · Default local build **10104** · [Build metadata](clipy_android/pubspec.yaml)
 
-The latest published release is [v1.0.18](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.18), build **10078**. The Android redesign is included in the v1.0.19 source and pending Release build. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
+Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version above may be ahead of published packages while a release is being prepared. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
 </details>
 
@@ -155,11 +155,27 @@ The latest published release is [v1.0.18](https://github.com/JunWeiUp/Clipy/rele
 - **Regex** support, plus filters by **type, source app, and date**.
 - Ranked results, multi-select, copy/paste, and pin straight from results.
 
+### 🗣️ Smart app switch (macOS)
+
+- Press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>A</kbd> or choose **Smart App Switch** from the menu bar. The focused input selects Doubao if it is enabled; start Doubao voice input yourself, or type, then press Return. Return first confirms any active input-method composition. Esc cancels composition first; otherwise it closes the window and pastes the current text back into the originating app. Empty input or the window’s close button only dismisses it. If the original app is unavailable, the text remains on the clipboard.
+- In **Preferences → Smart Switch**, add applications and give them names, aliases and descriptions, such as “browser / research” or “my code editor.” A clear match activates the running app or launches it; ambiguous results offer an Up/Down and Return selection. Missing apps can be located again. The shortcut can be changed, disabled or cleared.
+- **App launch comes first:** in Smart mode, explicit commands such as “open ZCode” match enabled app names and aliases locally before any model request. Unique matches launch immediately; ambiguous aliases show candidates. Compound requests for a new ZCode conversation keep their new-chat action.
+- **All six buttons stay visible:** Smart, Open app, New ZCode chat, Open Codex, Search web and Translate. New ZCode chat creates a projectless conversation and carries the full current input into its draft; empty input opens a blank chat. It never sends automatically. Open Codex activates or starts the installed desktop app without model setup.
+- **Wheel cycling:** all actions appear in two rows, with no pages or overflow menu. Scroll over the buttons to select in either direction with wraparound, then press Return to execute. Clicking a button executes it when its required input is available. Text/result areas keep normal scrolling. Preferences lets you reorder the buttons and choose a search engine and translation language. Google is the default search engine.
+- **Translation results:** review, copy, reuse as input, or paste back. When a result is visible, Esc pastes that result into the original app. Model setup is needed for semantic routing and translation; exact app matches, Open Codex and New ZCode chat also work without it.
+- Configure a Chat Completions-compatible **Base URL** (including its version path, such as `/v1`, without `/chat/completions`), **model** and **API key**. Test the connection, then save. The app list and API settings start empty; clear all three API fields and save to remove the service configuration.
+- Model-based actions send only the current input, allowed action IDs and enabled application names, aliases, descriptions and selection IDs to your chosen service. Translation sends the text you choose to translate. Paths and clipboard history are not uploaded. Keys stay in macOS Keychain; Clipy does not record audio or execute model-generated commands. Editing text, switching actions or closing cancels pending results.
+- **Automatic voice entry (opt-in):** enable it in Preferences → Smart Switch and select the same hold-to-talk key as Doubao (Right Command by default; Right Option and Fn are also available). Each hold reads focus again: detected text inputs retain normal dictation; other controls or unavailable focus open a compact input window before the voice trigger is forwarded. Dictate, release, then press Return. Dismissing the window returns focus to the original app, so the next hold works without an extra click. The decision uses the current control’s text-input capabilities, with no application exclusion list. Custom editors that do not expose input information may also open the popup. Secure input, short taps and shortcuts pass through. This requires Accessibility and Input Monitoring permission; restart ClipyClone after granting them. It does not intercept Doubao’s hands-free mode or voice buttons, and does not infer speech completion from a pause in text. In ZCode, focused text inputs always keep dictation; unresolved focus also keeps dictation until a non-text control is confirmed.
+
+- The input uses a nonactivating panel: it accepts typing and dictation while the original application stays frontmost, avoiding an intermediate Clipy app-preset switch in peripheral tools. The panel releases keyboard focus before an app action; Escape still pastes back to the original application.
+- Once a voice hold has requested the input window, an early release, peripheral preset change or input-readiness failure stops only voice forwarding. The window remains available for another hold or typing; Escape, close and successful actions still dismiss it normally.
+
 ### 📖 Word lookup (macOS)
 - Open from the clipboard menu or press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>D</kbd>; change or disable the shortcut in Preferences.
 - Search in Chinese, English or with partial text. Chinese queries list English translations; bilingual suggestions and English spelling corrections open complete entries on selection. English entries include Chinese definitions, parts of speech, American IPA, word forms, phrases and bilingual examples. Click a phrase to look it up.
+- Translate English phrases and full sentences into Chinese, or Chinese sentences into English, including punctuation and numbers (up to 500 characters). Unlisted phrases such as `Fine-grained personal` show a separate machine translation with copy and English read-aloud actions. Paste text into the input, then click **Look up** or press <kbd>⌘</kbd> + <kbd>Return</kbd>. Sentence translations are not added to Vocabulary.
 - Play American pronunciation; if dictionary audio fails, use an installed system American English voice. Missing IPA, phrases or examples are shown explicitly.
-- On opening, a single English word in the clipboard is automatically filled into the focused input; press Return to look it up. Sentences, URLs, files and multiple words are ignored. Queries require internet access and are sent to Youdao Dictionary only after submission. Successful results are automatically saved to a local vocabulary book. Closing the window cancels requests and audio and releases results.
+- On opening, a single English word in the clipboard is automatically filled into the focused input; press Return to look it up. Sentences, URLs, files and multiple words are ignored. Queries require internet access and are sent to Youdao Dictionary only after submission. Complete dictionary entries are automatically saved to a local vocabulary book. Closing the window cancels requests and audio and releases results.
 - Open **Vocabulary** from the menu or lookup window to review **Unfamiliar / Familiar** lists. Check a word to mark it familiar, or uncheck to move it back. Fuzzy search in Chinese or English supports partial text, skipped letters/characters, mixed keywords and English typo tolerance across headwords, meanings, inflections, phrases and examples; review saved IPA, definitions, word forms, phrases and examples offline, and play pronunciation online (with system voice fallback). Repeat lookups update the entry and lookup count while preserving familiarity. The vocabulary book stays on this Mac and is not synced. Previous versions did not retain lookups, so earlier queries cannot be recovered.
 - Show or hide Chinese meanings in Vocabulary, including list summaries, definitions, phrase translations and example translations. The choice persists across window reopening and app restarts. The separate lookup window continues to show complete definitions.
 - Uses Youdao's web dictionary endpoints without an API key; these are not a versioned public API and may change or become unavailable. Each result links to its source.
@@ -168,6 +184,7 @@ The latest published release is [v1.0.18](https://github.com/JunWeiUp/Clipy/rele
 - **AES-GCM 256-bit** encrypted transport between macOS and Android.
 - Devices discover each other via **/24 subnet scan** and **manual IP:port** (works across 2.4G/5G subnets) — no cloud, no account.
 - Reliable **clipboard history** delivery with ack + offline queue.
+- **Mac-to-Mac folder transfer:** choose **Send File or Folder…** for a device. Updated Macs restore the folder in `~/Downloads/Clipy/`, preserving nested/empty folders and hidden files; name collisions create a new folder. Both Macs need this folder-transfer update for automatic restoration; older Macs and Android receive a regular ZIP instead. Each folder, including archive overhead, is limited to **512 MiB / 10,000 entries**; symbolic links and special files are rejected.
 - Resilient: a bounded **offline-peer queue** re-delivers to devices that briefly drop off Wi-Fi.
 - **Loop prevention** via content hashes, so copies never bounce between devices forever.
 
@@ -182,7 +199,7 @@ The latest published release is [v1.0.18](https://github.com/JunWeiUp/Clipy/rele
 - Preferences and screenshot settings scroll continuously across categories; the sidebar follows the visible section and supports click-to-jump. See the [macOS design standard](docs/MACOS_DESIGN.md) for UI development guidance.
 
 ### ⌨️ Global hotkeys & 🌍 i18n
-- Hotkeys for search, word lookup, screenshots, and every snippet.
+- Hotkeys for search, word lookup, smart app switching, screenshots, and every snippet.
 - Chinese / English UI; native macOS and Flutter Android. The iOS target is experimental and not built or device-tested in CI; Android-native features are not available there by default.
 
 <details>
@@ -254,9 +271,9 @@ iOS remains experimental and is not validated by this project's CI.
 
 Both root build scripts default to `version: X.Y.Z+N` in [`clipy_android/pubspec.yaml`](clipy_android/pubspec.yaml): `X.Y.Z` is the application version and `N` is the build number. `APP_VERSION` and `BUILD_NUMBER` can explicitly override them for a build. When changing versions, update **both README files** in the same change and keep build numbers increasing; installing over a newer CI build may require a higher `BUILD_NUMBER`.
 
-The published v1.0.18 packages use build **10078** (source build 10060 + Release run 18). To replace that Android APK with a local build, retain the same signing key and explicitly set a higher `BUILD_NUMBER`; the default local build number is not the published package's build number.
+Release builds add the Release workflow run number to the source build number. To replace a published Android APK with a local build, retain the same signing key and set `BUILD_NUMBER` above the installed build; the default local build number may be lower than a CI package with the same app version.
 
-Run `bash scripts/check.sh all` from the root for local quality checks. On macOS, also run `bash scripts/test_macos_core.sh` for search, word lookup and socket regressions; it uses a temporary test executable without installing or launching the app.
+Run `bash scripts/check.sh all` from the root for local quality checks. On macOS, also run `bash scripts/test_macos_core.sh` for search, word lookup, smart app switching and socket regressions; it uses a temporary test executable without installing or launching the app. Smart Switch tests use mock API responses and do not require an API key or activate real applications.
 
 ## 🏗️ Architecture
 

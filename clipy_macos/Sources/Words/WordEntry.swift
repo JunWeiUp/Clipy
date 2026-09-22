@@ -49,17 +49,31 @@ enum WordQuery {
         return word
     }
 
-    /// Accept words and short phrases, never an arbitrary clipboard payload.
+    /// Explicitly submitted text may contain sentences, numbers and punctuation.
+    /// Clipboard prefill and remote dictionary candidates retain stricter limits.
+    static let maximumLength = 500
+
     static func normalize(_ input: String) throws -> String {
         let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "’", with: "'")
             .split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-        guard value.count <= 80,
-              value.range(of: "^[A-Za-z\\p{Han}]+(?:[ '.·-][A-Za-z\\p{Han}]+)*$", options: .regularExpression) != nil else {
+        guard !value.isEmpty, value.count <= maximumLength,
+              value.unicodeScalars.contains(where: { CharacterSet.letters.contains($0) }),
+              value.range(of: "[A-Za-z\\p{Han}]", options: .regularExpression) != nil,
+              value.range(of: "^[A-Za-z][A-Za-z0-9+.-]*://", options: .regularExpression) == nil,
+              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
             throw WordLookupError.invalidQuery
         }
         return value
     }
+
+    static func dictionaryTerm(_ input: String) -> String? {
+        guard let value = try? normalize(input), value.count <= 80,
+              value.unicodeScalars.allSatisfy({ CharacterSet.letters.contains($0) || " '.·-".unicodeScalars.contains($0) }),
+              value.range(of: "^[A-Za-z\\p{Han}]+(?:[ '.·-][A-Za-z\\p{Han}]+)*$", options: .regularExpression) != nil else { return nil }
+        return value
+    }
+
 }
 
 /// The provider's web dictionary response is isolated here because it is not
@@ -76,17 +90,19 @@ enum YoudaoWordParser {
                     guard let line = translation["l"] as? [String: Any] else { continue }
                     // Chinese-to-English entries mix strings and link objects.
                     // Only the link's text is a lookup term, never its app URL.
-                    for item in line["i"] as? [Any] ?? [] {
-                        let text = (item as? [String: Any])?["#text"] as? String ?? item as? String ?? ""
-                        if let term = try? WordQuery.normalize(text) {
-                            results.append(.init(word: term, detail: line["#tran"] as? String ?? ""))
-                        }
+                    // A single translation can span several links ("I", " ",
+                    // "love", " ", "you"). Preserve the complete English phrase.
+                    let text = (line["i"] as? [Any] ?? []).map { item in
+                        (item as? [String: Any])?["#text"] as? String ?? item as? String ?? ""
+                    }.joined()
+                    if let term = WordQuery.dictionaryTerm(text) {
+                        results.append(.init(word: term, detail: line["#tran"] as? String ?? ""))
                     }
                 }
             }
         }
         for typo in objects((root["typos"] as? [String: Any])?["typo"]) {
-            if let word = typo["word"] as? String, let term = try? WordQuery.normalize(word) {
+            if let word = typo["word"] as? String, let term = WordQuery.dictionaryTerm(word) {
                 results.append(.init(word: term, detail: typo["trans"] as? String ?? ""))
             }
         }
@@ -99,7 +115,7 @@ enum YoudaoWordParser {
               let payload = root["data"] as? [String: Any] else { throw WordLookupError.invalidResponse }
         return WordSuggestion.unique(objects(payload["entries"]).compactMap { item in
             guard let word = item["entry"] as? String,
-                  let term = try? WordQuery.normalize(word) else { return nil }
+                  let term = WordQuery.dictionaryTerm(word) else { return nil }
             return .init(word: term, detail: item["explain"] as? String ?? "")
         })
     }

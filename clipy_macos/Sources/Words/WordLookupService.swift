@@ -38,6 +38,7 @@ final class WordLookupService: WordLookingUp {
         let query = try WordQuery.normalize(query)
         async let related = relatedWords(query)
         var entry: WordEntry?
+        var translation: WordTranslation?
         var candidates: [WordSuggestion] = []
         var failure: Error = WordLookupError.notFound
         do {
@@ -45,15 +46,17 @@ final class WordLookupService: WordLookingUp {
             candidates = try YoudaoWordParser.candidates(data)
             do { entry = try YoudaoWordParser.parse(data, query: query) }
             catch { failure = error }
+            if entry == nil { translation = try WordTranslation.parse(data, query: query) }
         } catch { failure = error }
         candidates = WordSuggestion.unique(candidates + (await related))
             .filter { $0.id != entry?.word.lowercased() && $0.id != query.lowercased() }
         try Task.checkCancellation()
-        guard entry != nil || !candidates.isEmpty else { throw failure }
-        return WordSearchResult(entry: entry, suggestions: Array(candidates.prefix(20)))
+        guard entry != nil || translation != nil || !candidates.isEmpty else { throw failure }
+        return WordSearchResult(entry: entry, suggestions: Array(candidates.prefix(20)), translation: translation)
     }
 
     private func relatedWords(_ query: String) async -> [WordSuggestion] {
+        guard WordQuery.dictionaryTerm(query) != nil else { return [] }
         var components = URLComponents(string: "https://dict.youdao.com/suggest")!
         components.queryItems = [URLQueryItem(name: "q", value: query),
                                  URLQueryItem(name: "num", value: "10"),
@@ -64,10 +67,10 @@ final class WordLookupService: WordLookingUp {
     }
 
     private func dictionaryData(_ query: String) async throws -> Data {
-        var components = URLComponents(string: "https://dict.youdao.com/jsonapi")!
+        var components = URLComponents(string: "https://dict.youdao.com/jsonapi_s")!
         components.queryItems = [
             URLQueryItem(name: "q", value: query),
-            URLQueryItem(name: "dicts", value: #"{"count":30,"dicts":[["ec","ce","phrs","blng_sents_part","typos"]]}"#)
+            URLQueryItem(name: "dicts", value: #"{"count":30,"dicts":[["ec","ce","phrs","blng_sents_part","typos","fanyi"]]}"#)
         ]
         return try await fetch(components.url!, limit: 1024 * 1024)
     }

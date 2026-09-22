@@ -177,6 +177,10 @@ final class PasswordGeneratorWindow {
             },
             update: { window in
                 window.title = L10n.t(.generatePassword)
+                // Keep passwords visible while the user switches to the destination app.
+                window.level = .floating
+                window.hidesOnDeactivate = false
+                window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             }
         )
     }

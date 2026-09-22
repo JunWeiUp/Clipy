@@ -4,15 +4,15 @@
 
 ## Downloads
 
-These links point to **v1.0.18, published September 8, 2026**, currently marked Latest. They are versioned downloads, not automatic pointers to future releases. See [all releases](https://github.com/JunWeiUp/Clipy/releases) for newer builds and their notes.
+Open the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest) and choose the asset matching your device. This link follows new public releases and excludes drafts; the release notes give the exact version and build number.
 
-| Device | Download |
+| Device | Asset to download from the release page |
 | --- | --- |
-| Mac with Apple Silicon, macOS 13+ | [macOS ZIP](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-macOS-v1.0.18.zip) |
-| Android, arm64 | [64-bit APK](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-Android-arm64-v8a-v1.0.18.apk) |
-| Android, armeabi-v7a | [32-bit APK](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/ClipyClone-Android-armeabi-v7a-v1.0.18.apk) |
+| Mac with Apple Silicon, macOS 13+ | `ClipyClone-macOS-v<version>.zip` (not the symbols ZIP) |
+| Android, arm64 | `ClipyClone-Android-arm64-v8a-v<version>.apk` |
+| Android, armeabi-v7a | `ClipyClone-Android-armeabi-v7a-v<version>.apk` |
 
-The release also provides [SHA-256 checksums](https://github.com/JunWeiUp/Clipy/releases/download/v1.0.18/SHA256SUMS.txt) for the APK and ZIP files. Published packages use build **10078**; local v1.0.19 source defaults to **10080**. If replacing a release APK with a local build, use the same signing key and a higher build number; do not uninstall without backing up app data.
+The same release provides `SHA256SUMS.txt` for the APK and ZIP files. Current local source is **v1.0.20**, build **10104**; CI adds the workflow run number. If replacing a release APK with a local build, use the same signing key and a build number higher than the installed package; do not uninstall without backing up app data.
 
 The macOS ZIP contains an **arm64** application; it is not an Intel or universal build. There is no published iOS installer in this release. The iOS source target is experimental. For development builds, read [Development](DEVELOPMENT.md).
 
@@ -28,21 +28,21 @@ The project's current build workflow does not notarize the app. Verify the downl
 
 ## Sync version notes
 
-The published v1.0.18 and current `main` source provide pairing settings that the older v1.0.15 release did not:
+Published versions from v1.0.18 onward and current `main` source provide pairing settings that the older v1.0.15 release did not:
 
 | Build | Pairing behavior |
 | --- | --- |
 | Legacy v1.0.15 | Uses a public compatibility key; no private pairing-secret setting in its UI. It does not provide confidentiality against someone who knows that key. |
-| Published v1.0.18 / current source | Exposes a private pairing-secret setting. Set the same strong, non-empty secret on both devices; an empty value falls back to compatibility mode. |
+| Published v1.0.18+ / current source | Exposes a private pairing-secret setting. Set the same strong, non-empty secret on both devices; an empty value falls back to compatibility mode. |
 
-The intended environment is a trusted local network. If you still use v1.0.15, use only non-sensitive sample text; do not use that release to synchronize secrets. A private secret in v1.0.18 does not add authenticated device identity or remove all protocol limitations. Read [Security](../SECURITY.md) before enabling sync.
+The intended environment is a trusted local network. If you still use v1.0.15, use only non-sensitive sample text; do not use that release to synchronize secrets. A private secret in v1.0.18+ does not add authenticated device identity or remove all protocol limitations. Read [Security](../SECURITY.md) before enabling sync.
 
 The existing [third-party license review](../THIRD_PARTY_NOTICES.md) remains open. Published release status does not mean that review has been completed.
 
 ## Connect Mac and Android
 
 1. Put both devices on a trusted local network and keep both apps open for the first test. Prefer the same app version on both ends.
-2. In v1.0.18, save the same strong, private **Pairing secret** in Settings on both devices **before** enabling LAN sync. v1.0.15 has no such setting; apply the limitations above. Avoid mixing private-secret mode with an older build that cannot use that secret.
+2. In v1.0.18 or newer, save the same strong, private **Pairing secret** in Settings on both devices **before** enabling LAN sync. v1.0.15 has no such setting; apply the limitations above. Avoid mixing private-secret mode with an older build that cannot use that secret.
 3. Enable LAN sync. In each device's device list, enable clipboard sharing to the intended other device. These outgoing sharing switches are directional; configure both ends for two-way automatic sharing. Notification sharing is a separate option.
 4. Copy non-sensitive test text on the Mac and check the Android history. To test the other direction, keep the Android app in the foreground, use its clipboard/import controls as needed, and check Mac history. Android background clipboard capture depends on OS restrictions and the permissions available on your device.
 
@@ -52,7 +52,7 @@ Check that both apps have sync enabled, their listener ports match (default **55
 
 ### Devices appear, but text does not arrive
 
-Check the outgoing clipboard-sharing switch on the **sending** device. In v1.0.18, check that pairing secrets match. Then retry with both apps visible and non-sensitive sample text. A missing Android notification permission affects notification mirroring and should be investigated separately from clipboard sharing.
+Check the outgoing clipboard-sharing switch on the **sending** device. In v1.0.18 or newer, check that pairing secrets match. Then retry with both apps visible and non-sensitive sample text. A missing Android notification permission affects notification mirroring and should be investigated separately from clipboard sharing.
 
 ### How do I change language?
 
