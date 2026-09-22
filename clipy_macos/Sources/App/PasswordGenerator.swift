@@ -2,7 +2,7 @@ import Foundation
 
 /// 随机密码生成选项
 struct PasswordOptions: Equatable {
-    var length: Int = 20
+    var length: Int = 8
     var useLowercase = true
     var useUppercase = true
     var useDigits = true

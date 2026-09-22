@@ -7,7 +7,7 @@ import CryptoKit
 class ClipboardManager {
     static let shared = ClipboardManager()
 
-    private let pasteboard = NSPasteboard.general
+    private let pasteboard: NSPasteboard
     private var changeCount: Int
     private var timer: Timer?
     private var pollingObserverTokens: [NSObjectProtocol] = []
@@ -108,6 +108,7 @@ class ClipboardManager {
     var onHistoryChanged: (() -> Void)?
 
     private init() {
+        self.pasteboard = .general
         self.changeCount = pasteboard.changeCount
 
         // Setup storage
@@ -1035,14 +1036,28 @@ class ClipboardManager {
         paste()
     }
 
-    func copyToPasteboard(_ item: HistoryItem, simulatePaste: Bool = true) {
-        writeToPasteboard(item)
+    // Persisted text items contain only a preview; keep the original file
+    // reference when copying a history entry from the menu.
+    func copyToPasteboard(_ entry: HistoryEntry, simulatePaste: Bool = true) {
+        copyToPasteboard(entry.item, textPath: entry.textPath, simulatePaste: simulatePaste)
+    }
+
+    func copyToPasteboard(_ item: HistoryItem, textPath: String? = nil, simulatePaste: Bool = true) {
+        writeToPasteboard(item, textPath: textPath)
         if case .files = item { return }
         guard simulatePaste, itemSupportsAutoPaste(item) else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             self.simulatePasteIfTrusted()
         }
     }
+
+    #if CLIPY_CORE_TESTS
+    init(testPasteboard: NSPasteboard) {
+        self.pasteboard = testPasteboard
+        self.changeCount = testPasteboard.changeCount
+        self.fileHistoryURL = FileManager.default.temporaryDirectory.appendingPathComponent("unused-history.json")
+    }
+    #endif
 
     private func itemSupportsAutoPaste(_ item: HistoryItem) -> Bool {
         switch item {

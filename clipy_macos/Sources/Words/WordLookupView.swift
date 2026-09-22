@@ -26,7 +26,9 @@ struct WordLookupView: View {
           HStack(spacing: 10) {
             HStack {
               Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-              TextField(L10n.t(.wordPlaceholder), text: $viewModel.query)
+              TextField(L10n.t(.wordPlaceholder), text: $viewModel.query, axis: .vertical)
+                .lineLimit(1...4)
+                .font(.system(size: 20))
                 .textFieldStyle(.plain)
                 .focused($queryFocused)
                 .onSubmit { viewModel.search() }
@@ -36,6 +38,8 @@ struct WordLookupView: View {
             Button(L10n.t(.wordSearch)) { viewModel.search() }
               .buttonStyle(.borderedProminent)
               .controlSize(.large)
+              .font(.system(size: 16))
+              .keyboardShortcut(.return, modifiers: .command)
               .disabled(viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
               .accessibilityIdentifier("wordSearch")
           }
@@ -45,7 +49,7 @@ struct WordLookupView: View {
       VStack(spacing: 0) {
         if !viewModel.suggestions.isEmpty {
           candidateList
-            .frame(maxHeight: viewModel.entry == nil ? .infinity : 240)
+            .frame(maxHeight: viewModel.entry == nil && viewModel.translation == nil ? .infinity : 180)
           Divider()
         }
         if viewModel.isLoading {
@@ -60,6 +64,9 @@ struct WordLookupView: View {
           }
         } else if let entry = viewModel.entry {
           WordEntryDetailView(viewModel: viewModel, entry: entry)
+        } else if let translation = viewModel.translation {
+          WordTranslationView(viewModel: viewModel, translation: translation)
+            .id(translation.original)
         } else if viewModel.suggestions.isEmpty {
           placeholder(
             symbol: "character.book.closed", title: L10n.t(.wordWelcome),
@@ -69,7 +76,7 @@ struct WordLookupView: View {
           Text(L10n.t(error)).foregroundStyle(.red).padding(AppSpacing.sm)
         }
         Divider()
-        Text(L10n.t(.wordPrivacy)).font(.caption).foregroundStyle(.secondary)
+        Text(L10n.t(.wordPrivacy)).font(.system(size: 14)).foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, alignment: .leading).padding(AppSpacing.sm)
           .background(AppColor.groupedBackground)
       }
@@ -119,8 +126,8 @@ struct WordLookupView: View {
     VStack(spacing: 14) {
       Spacer()
       Image(systemName: symbol).font(.system(size: 40, weight: .light)).foregroundStyle(.secondary)
-      Text(title).font(.title3.weight(.medium))
-      Text(detail).foregroundStyle(.secondary).multilineTextAlignment(.center)
+      Text(title).font(.system(size: 24, weight: .medium))
+      Text(detail).font(.system(size: 18)).lineSpacing(6).foregroundStyle(.secondary).multilineTextAlignment(.center)
       Spacer()
     }
     .padding(28)

@@ -21,6 +21,58 @@ extension Notification.Name {
 }
 
 enum L10nKey: String {
+    case smartVoiceTitle
+    case smartVoiceEnabled
+    case smartVoiceTrigger
+    case smartVoiceRightCommand
+    case smartVoiceRightOption
+    case smartVoiceHint
+    case smartVoiceInputMonitoring
+    case smartVoiceRecheck
+    case smartVoiceDisabled
+    case smartVoiceNeedsSetup
+    case smartVoiceNeedsPermission
+    case smartVoiceActive
+    case smartVoiceUnavailable
+    case smartVoiceInterrupted
+    case smartSwitchTitle
+    case smartSwitchSettingsTitle
+    case smartSwitchInputLabel
+    case smartSwitchInputHint
+    case smartSwitchExecute
+    case smartSwitchWorking
+    case smartSwitchSetupHint
+    case smartSwitchShortcut
+    case smartSwitchShortcutConflict
+    case smartSwitchDoubaoUnavailable
+    case smartSwitchAPI
+    case smartSwitchModel
+    case smartSwitchAPIHint
+    case smartSwitchSaveAPI
+    case smartSwitchTest
+    case smartSwitchTestSuccess
+    case smartSwitchSaved
+    case smartSwitchPrivacy
+    case smartSwitchApplications
+    case smartSwitchAddApplication
+    case smartSwitchLocate
+    case smartSwitchAppName
+    case smartSwitchAliases
+    case smartSwitchDescription
+    case smartSwitchNoTargets
+    case smartSwitchNoMatch
+    case smartSwitchAmbiguous
+    case smartSwitchConfigurationError
+    case smartSwitchInputError
+    case smartSwitchResponseError
+    case smartSwitchInvalidApplication
+    case smartSwitchApplicationMissing
+    case smartSwitchActivationFailed
+    case smartSwitchKeychainError
+    case smartSwitchAuthenticationError
+    case smartSwitchHTTPError
+    case smartSwitchTimeout
+    case smartSwitchNetworkError
     case wordHideChinese
     case wordShowChinese
     case wordChineseVisible
@@ -39,6 +91,12 @@ enum L10nKey: String {
     case wordBookReadError
     case wordBookWriteError
     case wordLookup
+    case wordOriginal
+    case wordEnglishTranslation
+    case wordChineseTranslation
+    case wordMachineTranslation
+    case wordCopyTranslation
+    case wordReadEnglish
     case wordPlaceholder
     case wordCandidates
     case wordSearch
@@ -125,6 +183,7 @@ enum L10nKey: String {
     case chooseFileToSend
     case send
     case sendFailed
+    case folderSendPreparationFailed
     case snippetFolders
     case snippetLibrary
     case snippetSearch
@@ -405,6 +464,58 @@ struct L10n {
 
     private static let table: [AppLanguage: [L10nKey: String]] = [
         .zh: [
+            .smartVoiceTitle: "语音自动入口",
+            .smartVoiceEnabled: "未识别到文字输入框时，接入智能切换",
+            .smartVoiceTrigger: "豆包的长按语音键",
+            .smartVoiceRightCommand: "右侧 Command（⌘）",
+            .smartVoiceRightOption: "右侧 Option（⌥）",
+            .smartVoiceHint: "与豆包「长按模式」使用同一按键。长按时重新检查当前焦点：识别到文字输入框就保持普通语音，否则呼出小窗口，文字落入后按回车。ZCode 中输入框或焦点不明确时保留普通语音；其他应用读不到焦点时会弹出，少数自绘输入框可能误弹。短按和组合键照常；不接管免按模式或语音按钮。",
+            .smartVoiceInputMonitoring: "打开输入监控设置",
+            .smartVoiceRecheck: "重新检查",
+            .smartVoiceDisabled: "自动入口已关闭，原有智能切换快捷键仍可使用。",
+            .smartVoiceNeedsSetup: "请先保存 API 配置，并添加和启用至少一个应用。",
+            .smartVoiceNeedsPermission: "请在系统设置中为 ClipyClone 开启「辅助功能」和「输入监控」，然后重新启动应用。仅识别触发手势和焦点类型，不记录按键内容或前台文字。",
+            .smartVoiceActive: "自动入口已就绪：沿用豆包长按语音键，无需另按智能切换快捷键。",
+            .smartVoiceUnavailable: "无法建立按键监听。请检查权限并重新启动 ClipyClone；普通语音输入保持可用。",
+            .smartVoiceInterrupted: "本次语音准备已中断，窗口已保留。请再次长按语音键，或直接输入。",
+            .smartSwitchTitle: "智能切换应用",
+            .smartSwitchSettingsTitle: "智能切换",
+            .smartSwitchInputLabel: "输入文字或应用指令",
+            .smartSwitchInputHint: "直接说“打开软件名”优先切换；回车执行所选功能，Esc 粘贴回原应用。",
+            .smartSwitchExecute: "切换",
+            .smartSwitchWorking: "正在处理…",
+            .smartSwitchSetupHint: "呼出后自动切到豆包，语音落字后按回车。明确的打开应用指令优先本地匹配；其他功能可点击按钮，或用滚轮循环选择。",
+            .smartSwitchShortcut: "启用智能切换快捷键",
+            .smartSwitchShortcutConflict: "快捷键注册失败，可能已被占用。请换一个组合；仍可使用菜单栏入口。",
+            .smartSwitchDoubaoUnavailable: "豆包输入法不可用，请在系统设置中启用；现在仍可打字输入。",
+            .smartSwitchAPI: "大模型 API",
+            .smartSwitchModel: "模型名称",
+            .smartSwitchAPIHint: "使用兼容 Chat Completions 的接口。Base URL 包含版本路径（如 /v1），不要包含 /chat/completions。清空三项后保存可移除配置。",
+            .smartSwitchSaveAPI: "保存 API 配置",
+            .smartSwitchTest: "测试连接",
+            .smartSwitchTestSuccess: "连接成功，模型已返回有效应用选择。测试不会打开应用；请保存配置后使用。",
+            .smartSwitchSaved: "API 配置已保存。",
+            .smartSwitchPrivacy: "本地应用匹配、打开 Codex 和 ZCode 新对话不调用模型。模型判断仅发送本次输入、可用动作和已配置应用的信息，不发送路径或历史库；翻译发送你选择处理的文字。API Key 保存在钥匙串。",
+            .smartSwitchApplications: "应用与别名（自动保存）",
+            .smartSwitchAddApplication: "添加应用…",
+            .smartSwitchLocate: "重新选择…",
+            .smartSwitchAppName: "应用名称",
+            .smartSwitchAliases: "别名（例如：浏览器、查资料）",
+            .smartSwitchDescription: "用途描述（例如：日常写代码使用的编辑器）",
+            .smartSwitchNoTargets: "请在「偏好设置 → 智能切换」添加并启用至少一个应用。",
+            .smartSwitchNoMatch: "没有找到对应应用或动作。可换一种说法、选择功能按钮，或在设置中补充应用别名。",
+            .smartSwitchAmbiguous: "有多个可能的应用，请用上下方向键选择并回车，或点击目标应用。",
+            .smartSwitchConfigurationError: "请检查并保存 Base URL、模型名称和 API Key。地址须为 HTTPS（本机服务可用 HTTP），包含版本路径但不含 /chat/completions。",
+            .smartSwitchInputError: "请输入需要处理的文字（最多 8000 个字符），或选择可直接执行的功能。",
+            .smartSwitchResponseError: "模型返回了无效的应用选择。请重试，或检查接口与模型是否支持此格式。",
+            .smartSwitchInvalidApplication: "请选择有效的 macOS .app 应用。",
+            .smartSwitchApplicationMissing: "找不到该应用，请在设置中重新选择应用位置。",
+            .smartSwitchActivationFailed: "无法将应用切到前台，请重试或检查应用是否能正常启动。",
+            .smartSwitchKeychainError: "无法访问 API Key 钥匙串项目（%d）。请检查钥匙串访问权限后重新打开设置。",
+            .smartSwitchAuthenticationError: "API 鉴权失败。请检查密钥、地址及模型访问权限。",
+            .smartSwitchHTTPError: "服务返回 HTTP %d。请检查配置或稍后重试。",
+            .smartSwitchTimeout: "请求超时（15 秒），请检查网络或换用响应更快的模型。",
+            .smartSwitchNetworkError: "无法连接模型服务，请检查网络和 API 地址后重试。",
             .menuRecentHistory: "最近复制",
             .designDeviceName: "设备名称",
             .designGeneral: "通用",
@@ -430,12 +541,18 @@ struct L10n {
             .wordBookReadError: "无法读取单词表，已保留原文件。请检查文件权限或备份后重新打开应用。",
             .wordBookWriteError: "单词表保存失败，本次改动未保存。请检查磁盘空间和权限后重试。",
             .wordLookup: "单词查询",
-            .wordPlaceholder: "输入中文或英文，如 学习、study、stud",
+            .wordOriginal: "原文",
+            .wordEnglishTranslation: "英文翻译",
+            .wordChineseTranslation: "中文翻译",
+            .wordMachineTranslation: "有道机器翻译 · 译文供参考，可结合上下文调整",
+            .wordCopyTranslation: "复制译文",
+            .wordReadEnglish: "朗读英文",
+            .wordPlaceholder: "输入中文或英文单词、短语、句子",
             .wordCandidates: "匹配词条 · 点击查看详情",
             .wordSearch: "查询",
-            .wordLoading: "正在查词…",
-            .wordInvalidQuery: "请输入 80 个字符以内的中文、英文单词或短语",
-            .wordNotFound: "未找到这个单词",
+            .wordLoading: "正在查询与翻译…",
+            .wordInvalidQuery: "请输入 500 个字符以内的中文或英文，可包含数字和标点",
+            .wordNotFound: "未找到词条或翻译",
             .wordNetworkError: "暂时无法连接词典或读取结果",
             .wordTryAgain: "检查拼写或网络后，按回车重新查询。",
             .wordMeanings: "词性与释义",
@@ -446,9 +563,9 @@ struct L10n {
             .wordNoExamples: "词典暂未提供例句。",
             .wordLookupPhrase: "查询这个短语",
             .wordSource: "来源：有道词典 · 查看完整词条",
-            .wordWelcome: "从一个单词开始",
-            .wordWelcomeDetail: "输入中文、英文或部分文字，按回车查找匹配词条；点击候选词查看释义、发音和例句。",
-            .wordPrivacy: "剪贴板单词自动预填 · 回车后联网查询有道词典 · 成功结果保存到本机单词表",
+            .wordWelcome: "查单词，也能翻译句子",
+            .wordWelcomeDetail: "输入单词、短语或完整句子后点击查询。支持中文译英文、英文译中文，以及模糊查词。⌘ 回车也可提交。",
+            .wordPrivacy: "剪贴板单词自动预填 · 提交后将输入发送至有道 · 词条保存到单词表，句子翻译不保存",
             .wordAmerican: "美",
             .wordNoIPA: "词典暂未提供美式音标",
             .wordPlayAudio: "美式发音",
@@ -496,7 +613,7 @@ struct L10n {
             .staleAuthorizedDevicesWarning: "已授权但未在线：%@。请在下方列表勾选当前显示的设备名称（如 Android-redmi）。",
             .syncLocalNameHint: "本机名称：%@，设备 ID：%@…。勾选剪贴板/通知后向该设备推送，对方无需勾选即可接收。",
             .authorized: "已授权",
-            .sendFile: "发送文件...",
+            .sendFile: "发送文件或文件夹...",
             .sendText: "发送文本...",
             .chooseTextToSend: "发送文本到 %@",
             .sendTextHint: "文本将发送到对方设备并写入剪贴板。",
@@ -506,11 +623,12 @@ struct L10n {
             .clearHistoryConfirm: "将删除全部历史记录，此操作不可撤销。",
             .showLogs: "显示日志...",
             .quit: "退出",
-            .chooseFileToSend: "选择要发送到 %@ 的文件",
+            .chooseFileToSend: "选择要发送到 %@ 的文件或文件夹",
             .fileReceivedTitle: "已接收文件",
             .fileReceivedBody: "来自 %@：%@（已存入“下载/Clipy”）",
             .send: "发送",
             .sendFailed: "发送失败。目标设备可能离线或网络连接异常。",
+            .folderSendPreparationFailed: "无法准备发送内容。请检查读取权限；文件夹含打包开销不能超过 512 MiB、10,000 个项目，且不能包含符号链接或特殊文件。",
             .snippetFolders: "文件夹",
             .snippetLibrary: "片段库",
             .snippetSearch: "搜索此文件夹",
@@ -778,6 +896,58 @@ struct L10n {
             .passwordStrengthVeryStrong: "极强",
         ],
         .en: [
+            .smartVoiceTitle: "Automatic voice entry",
+            .smartVoiceEnabled: "Open Smart Switch unless a text input is detected",
+            .smartVoiceTrigger: "Doubao hold-to-talk key",
+            .smartVoiceRightCommand: "Right Command (⌘)",
+            .smartVoiceRightOption: "Right Option (⌥)",
+            .smartVoiceHint: "Match Doubao’s hold-to-talk key. Each hold checks focus again: detected text inputs keep normal dictation; confirmed non-text focus opens the window. Unavailable ZCode focus keeps dictation; unavailable focus in other apps opens the window. Press Return after dictation. Some custom text controls may also open it if they do not expose input information. Short taps and shortcuts pass through; hands-free mode and voice buttons are not intercepted.",
+            .smartVoiceInputMonitoring: "Open Input Monitoring settings",
+            .smartVoiceRecheck: "Check again",
+            .smartVoiceDisabled: "Automatic entry is off. The regular Smart Switch shortcut remains available.",
+            .smartVoiceNeedsSetup: "Save API settings and add at least one enabled application first.",
+            .smartVoiceNeedsPermission: "Allow ClipyClone in Accessibility and Input Monitoring, then restart it. Only trigger gestures and focus types are inspected; keystrokes and foreground text are not recorded.",
+            .smartVoiceActive: "Automatic entry is ready. Use Doubao’s hold-to-talk key; no extra Smart Switch shortcut is needed.",
+            .smartVoiceUnavailable: "Could not start key monitoring. Check permissions and restart ClipyClone. Normal voice input remains available.",
+            .smartVoiceInterrupted: "Voice preparation was interrupted. The window stays open; hold the voice key again or type.",
+            .smartSwitchTitle: "Smart App Switch",
+            .smartSwitchSettingsTitle: "Smart Switch",
+            .smartSwitchInputLabel: "Enter text or an application command",
+            .smartSwitchInputHint: "Explicit app launches come first. Return executes the selected action; Esc pastes back.",
+            .smartSwitchExecute: "Switch",
+            .smartSwitchWorking: "Working…",
+            .smartSwitchSetupHint: "The input window selects Doubao; dictate and press Return. Explicit app-launch commands match locally first. Click action buttons or scroll over them to cycle.",
+            .smartSwitchShortcut: "Enable Smart Switch shortcut",
+            .smartSwitchShortcutConflict: "The shortcut could not be registered. Choose another combination, or use the menu bar.",
+            .smartSwitchDoubaoUnavailable: "Doubao is unavailable. Enable it in System Settings, or continue typing.",
+            .smartSwitchAPI: "Model API",
+            .smartSwitchModel: "Model name",
+            .smartSwitchAPIHint: "Use a Chat Completions-compatible service. Include the version path (such as /v1) in Base URL, without /chat/completions. Clear all three fields and save to remove the configuration.",
+            .smartSwitchSaveAPI: "Save API configuration",
+            .smartSwitchTest: "Test connection",
+            .smartSwitchTestSuccess: "Connected and received a valid app selection. No app was opened. Save the configuration to use it.",
+            .smartSwitchSaved: "API configuration saved.",
+            .smartSwitchPrivacy: "Local app matching, Open Codex and New ZCode chat do not use the model. Intent requests send current input, allowed actions and configured app information, not paths or history. Translation sends the selected text. Keys stay in Keychain.",
+            .smartSwitchApplications: "Applications & aliases (saved automatically)",
+            .smartSwitchAddApplication: "Add applications…",
+            .smartSwitchLocate: "Locate…",
+            .smartSwitchAppName: "App name",
+            .smartSwitchAliases: "Aliases (for example: browser, research)",
+            .smartSwitchDescription: "Description (for example: my everyday code editor)",
+            .smartSwitchNoTargets: "Add and enable an application in Preferences → Smart Switch.",
+            .smartSwitchNoMatch: "No matching app or action. Try another request, select an action button, or add app aliases in settings.",
+            .smartSwitchAmbiguous: "Several apps match. Select with Up/Down and Return, or click an app.",
+            .smartSwitchConfigurationError: "Check and save Base URL, model and API key. Use HTTPS (HTTP is allowed for localhost), including the version path but without /chat/completions.",
+            .smartSwitchInputError: "Enter text to process (up to 8000 characters), or select an action that runs without text.",
+            .smartSwitchResponseError: "The model returned an invalid app selection. Retry, or check the service and model compatibility.",
+            .smartSwitchInvalidApplication: "Select a valid macOS .app application.",
+            .smartSwitchApplicationMissing: "App not found. Locate it again in settings.",
+            .smartSwitchActivationFailed: "Could not activate the app. Retry or check that the app can launch normally.",
+            .smartSwitchKeychainError: "Could not access the API key in Keychain (%d). Check Keychain permissions and reopen settings.",
+            .smartSwitchAuthenticationError: "API authentication failed. Check the key, endpoint and model access.",
+            .smartSwitchHTTPError: "The service returned HTTP %d. Check the configuration or retry later.",
+            .smartSwitchTimeout: "Request timed out (15 seconds). Check the network or use a faster model.",
+            .smartSwitchNetworkError: "Could not connect to the model service. Check the network and API URL, then retry.",
             .menuRecentHistory: "Recently Copied",
             .designDeviceName: "Device Name",
             .designGeneral: "General",
@@ -803,12 +973,18 @@ struct L10n {
             .wordBookReadError: "Cannot read vocabulary. The original file was preserved. Check permissions or restore a backup, then reopen the app.",
             .wordBookWriteError: "Vocabulary could not be saved. Check disk space and permissions, then retry.",
             .wordLookup: "Word Lookup",
-            .wordPlaceholder: "Chinese or English, e.g. 学习, study, stud",
+            .wordOriginal: "Original",
+            .wordEnglishTranslation: "English translation",
+            .wordChineseTranslation: "Chinese translation",
+            .wordMachineTranslation: "Youdao machine translation · Wording may need adjustment for context",
+            .wordCopyTranslation: "Copy translation",
+            .wordReadEnglish: "Read English",
+            .wordPlaceholder: "Chinese or English words, phrases or sentences",
             .wordCandidates: "Matching words · Select for details",
             .wordSearch: "Look up",
-            .wordLoading: "Looking up…",
-            .wordInvalidQuery: "Enter Chinese or English words or phrases within 80 characters",
-            .wordNotFound: "No entry found",
+            .wordLoading: "Looking up and translating…",
+            .wordInvalidQuery: "Enter up to 500 Chinese or English characters, including numbers and punctuation",
+            .wordNotFound: "No entry or translation found",
             .wordNetworkError: "The dictionary is unavailable or returned an unreadable response",
             .wordTryAgain: "Check your spelling or connection, then press Return to retry.",
             .wordMeanings: "Parts of speech & meanings",
@@ -819,9 +995,9 @@ struct L10n {
             .wordNoExamples: "No examples provided by the dictionary.",
             .wordLookupPhrase: "Look up this phrase",
             .wordSource: "Source: Youdao Dictionary · View full entry",
-            .wordWelcome: "Start with a word",
-            .wordWelcomeDetail: "Enter Chinese, English or part of a word and press Return. Select a match for meanings, pronunciation and examples.",
-            .wordPrivacy: "Prefills a clipboard word · Return queries Youdao online · Successful results are saved to local vocabulary",
+            .wordWelcome: "Look up words and translate sentences",
+            .wordWelcomeDetail: "Enter a word, phrase or sentence, then click Look up or press ⌘ Return. Translate between Chinese and English, or find words with fuzzy search.",
+            .wordPrivacy: "Prefills a clipboard word · Submission sends input to Youdao · Dictionary entries are saved; sentence translations are not",
             .wordAmerican: "US",
             .wordNoIPA: "American IPA is not available for this entry",
             .wordPlayAudio: "American pronunciation",
@@ -869,7 +1045,7 @@ struct L10n {
             .staleAuthorizedDevicesWarning: "Authorized but offline: %@. Select the name shown in the list below (e.g. Android-redmi).",
             .syncLocalNameHint: "This device: %@ (ID: %@…). Check clipboard/notifications to push; they can receive without checking you.",
             .authorized: "Authorized",
-            .sendFile: "Send File...",
+            .sendFile: "Send File or Folder...",
             .sendText: "Send Text...",
             .chooseTextToSend: "Send text to %@",
             .sendTextHint: "The text will be delivered to the other device and copied to its clipboard.",
@@ -879,11 +1055,12 @@ struct L10n {
             .clearHistoryConfirm: "All history will be deleted. This cannot be undone.",
             .showLogs: "Show Logs...",
             .quit: "Quit",
-            .chooseFileToSend: "Choose a file to send to %@",
+            .chooseFileToSend: "Choose a file or folder to send to %@",
             .fileReceivedTitle: "File Received",
             .fileReceivedBody: "From %@: %@ (saved to Downloads/Clipy)",
             .send: "Send",
             .sendFailed: "Send failed. The target device may be offline or the network connection may be unstable.",
+            .folderSendPreparationFailed: "Could not prepare the transfer. Check read permissions. Folders including archive overhead must fit within 512 MiB and 10,000 entries, without symbolic links or special files.",
             .snippetFolders: "Folders",
             .snippetLibrary: "Snippet Library",
             .snippetSearch: "Search this folder",

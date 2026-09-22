@@ -54,6 +54,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
         menuController = MenuController()
+        SmartSwitchVoiceRouter.shared.start()
         MemoryFootprintReclaimer.registerIdleHandlers()
         LaunchAtLoginManager.syncWithPreference()
         SyncManager.shared.start()

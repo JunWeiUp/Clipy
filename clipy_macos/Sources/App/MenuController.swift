@@ -183,6 +183,13 @@ class MenuController: NSObject {
         menu.addItem(word)
         menu.addItem(actionItem(L10n.t(.wordBook), symbol: "books.vertical", action: #selector(openWordBook)))
 
+        let smartSwitch = actionItem(L10n.t(.smartSwitchTitle), symbol: "arrow.triangle.swap", action: #selector(openSmartSwitch))
+        let switchConfig = SmartSwitchStore.shared.configuration
+        if switchConfig.shortcutEnabled {
+            AppMenuStyle.applyShortcut(switchConfig.shortcut, to: smartSwitch)
+        }
+        menu.addItem(smartSwitch)
+
         let capture = AppMenuStyle.menu()
         capture.addItem(actionItem(L10n.t(.screenshotRegion), symbol: "viewfinder", action: #selector(startScreenshotRegion)))
         capture.addItem(actionItem(L10n.t(.screenshotWindow), symbol: "macwindow", action: #selector(startScreenshotWindow)))
@@ -573,7 +580,7 @@ class MenuController: NSObject {
         if let summary = sender.representedObject as? HistorySummary {
             let entry = clipboardManager.resolveEntry(summary)
             clipboardManager.moveHistoryEntryToFront(entry)
-            clipboardManager.copyToPasteboard(entry.item)
+            clipboardManager.copyToPasteboard(entry)
         } else if let reference = sender.representedObject as? SnippetMenuReference,
                   let snippet = snippetManager.snippet(id: reference.snippetId) {
             clipboardManager.copyToPasteboard(.text(snippet.content))
@@ -612,7 +619,7 @@ class MenuController: NSObject {
     @objc private func pasteHTMLFormattedClicked(_ sender: NSMenuItem) {
         guard let entry = historyEntry(from: sender) else { return }
         clipboardManager.moveHistoryEntryToFront(entry)
-        clipboardManager.copyToPasteboard(entry.item)
+        clipboardManager.copyToPasteboard(entry)
     }
 
     private func historyEntry(from sender: NSMenuItem) -> HistoryEntry? {
@@ -669,7 +676,7 @@ class MenuController: NSObject {
 
         let openPanel = NSOpenPanel()
         openPanel.canChooseFiles = true
-        openPanel.canChooseDirectories = false
+        openPanel.canChooseDirectories = true
         openPanel.allowsMultipleSelection = false
         openPanel.message = L10n.format(.chooseFileToSend, deviceName)
         openPanel.prompt = L10n.t(.send)
@@ -678,18 +685,18 @@ class MenuController: NSObject {
         let response = openPanel.runModal()
         if response == .OK, let url = openPanel.url {
             appLog("Selected file: \(url.lastPathComponent), sending...")
-            SyncManager.shared.sendFileToPeer(at: url, peerId: peerId) { success in
+            SyncManager.shared.sendFileToPeer(at: url, peerId: peerId) { success, error in
                 if !success {
-                    Self.showSendFailedAlert()
+                    Self.showSendFailedAlert(detail: error.map { _ in L10n.t(.folderSendPreparationFailed) })
                 }
             }
         }
     }
 
-    private static func showSendFailedAlert() {
+    private static func showSendFailedAlert(detail: String? = nil) {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = L10n.t(.sendFailed)
+        alert.messageText = detail ?? L10n.t(.sendFailed)
         alert.alertStyle = .warning
         alert.addButton(withTitle: L10n.t(.ok))
         alert.runModal()
@@ -744,6 +751,10 @@ class MenuController: NSObject {
         WordLookupWindow.shared.showWindow()
     }
 
+    @objc private func openSmartSwitch() {
+        DispatchQueue.main.async { SmartSwitchWindow.shared.show() }
+    }
+
     @objc private func openPasswordGenerator() {
         NSApp.activate(ignoringOtherApps: true)
         PasswordGeneratorWindow.show()
@@ -753,6 +764,7 @@ class MenuController: NSObject {
         SearchGlobalHotKeyManager.register()
         WordGlobalHotKeyManager.register()
         ScreenshotGlobalHotKeyManager.register()
+        SmartSwitchGlobalHotKeyManager.register()
     }
 
     @objc private func startScreenshotRegion() {

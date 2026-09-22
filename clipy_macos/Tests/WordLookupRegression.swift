@@ -13,6 +13,14 @@ private let suggestionFixture = Data(#"""
 {"result":{"code":200},"data":{"entries":[{"entry":"学习","explain":"study; learn"},{"entry":"学习方法","explain":"learning method"},{"entry":"STUDY","explain":"学习"},{"entry":"https://invalid.example","explain":"invalid term"}]}}
 """#.utf8)
 
+private let englishTranslationFixture = Data(#"""
+{"input":"Fine-grained personal","meta":{},"fanyi":{"input":"Fine-grained personal","type":"en2zh-CHS","tran":"细粒度的个人"}}
+"""#.utf8)
+private let chineseSentence = "我今天想去图书馆学习英语。"
+private let chineseTranslationFixture = Data(#"""
+{"input":"我今天想去图书馆学习英语。","meta":{},"fanyi":{"input":"我今天想去图书馆学习英语。","type":"zh-CHS2en","tran":"I want to go to the library to study English today."}}
+"""#.utf8)
+
 private func wordCheck(_ value: @autoclosure () -> Bool, _ message: String) {
     precondition(value(), message)
 }
@@ -28,21 +36,28 @@ private func wordWait(_ condition: () -> Bool) {
 private final class ControlledWordService: WordLookingUp {
     var pending: [String: CheckedContinuation<WordEntry, Error>] = [:]
     var pendingAudio: CheckedContinuation<Data, Error>?
+    var audioText: String?
     func lookup(_ query: String) async throws -> WordEntry {
         try await withCheckedThrowingContinuation { pending[query] = $0 }
     }
     func americanAudio(_ word: String) async throws -> Data {
-        try await withCheckedThrowingContinuation { pendingAudio = $0 }
+        audioText = word
+        return try await withCheckedThrowingContinuation { pendingAudio = $0 }
     }
 }
 
 private final class ControlledWordSearchService: WordLookingUp {
     var pending: [String: CheckedContinuation<WordSearchResult, Error>] = [:]
+    var pendingAudio: CheckedContinuation<Data, Error>?
+    var audioText: String?
     func search(_ query: String) async throws -> WordSearchResult {
         try await withCheckedThrowingContinuation { pending[query] = $0 }
     }
     func lookup(_ query: String) async throws -> WordEntry { throw WordLookupError.notFound }
-    func americanAudio(_ word: String) async throws -> Data { throw WordLookupError.unavailable }
+    func americanAudio(_ word: String) async throws -> Data {
+        audioText = word
+        return try await withCheckedThrowingContinuation { pendingAudio = $0 }
+    }
 }
 
 private final class WordHTTPStub: URLProtocol {
@@ -83,14 +98,46 @@ func runWordLookupRegressionTests() {
     for value in [nil, "", "take off", "hello\nworld", "hello.", "https://example.com", "你好", "word123", String(repeating: "a", count: 81)] as [String?] {
         wordCheck(WordQuery.clipboardWord(value) == nil, "Non-word clipboard content was prefilled")
     }
-    for query in ["", "https://example.com", "hello&token=secret", String(repeating: "a", count: 81)] {
+    for query in ["", "。", "https://example.com", "12345", "hello\u{0000}world", String(repeating: "a", count: 501)] {
         wordCheck((try? WordQuery.normalize(query)) == nil, "Invalid query accepted")
     }
     wordCheck((try? WordQuery.normalize(" 学习 方法 ")) == "学习 方法", "Chinese input rejected")
     wordCheck((try? WordQuery.normalize("学习 study")) == "学习 study", "Mixed-language input rejected")
+    for text in ["Fine-grained personal", "Can you help me?", "请在 3:30 提醒我，带上文件！", "A&B costs $20 = 140元.", String(repeating: "a", count: 500)] {
+        wordCheck((try? WordQuery.normalize(text)) == text, "Sentence or punctuation rejected")
+    }
+    wordCheck((try? WordQuery.normalize("Hello!\n你好。")) == "Hello! 你好。", "Multiline sentence normalization failed")
+    wordCheck(WordQuery.dictionaryTerm("hello&token=secret") == nil, "Unsafe dictionary candidate accepted")
+    wordCheck(WordQuery.dictionaryTerm(chineseSentence) == nil, "Chinese punctuation was mistaken for a dictionary term")
+    let englishTranslation = try! WordTranslation.parse(englishTranslationFixture, query: "Fine-grained personal")!
+    let chineseTranslation = try! WordTranslation.parse(chineseTranslationFixture, query: chineseSentence)!
+    wordCheck(englishTranslation.text == "细粒度的个人" && englishTranslation.englishText == "Fine-grained personal", "English phrase translation lost")
+    wordCheck(chineseTranslation.direction == .chineseToEnglish && chineseTranslation.englishText == chineseTranslation.text, "Chinese sentence used wrong read-aloud language")
+    wordCheck((try! WordTranslation.parse(wordFixture, query: "take")) == nil, "Dictionary entry treated as machine translation")
+    for payload: [String: String] in [
+        ["input": "wrong input", "type": "zh-CHS2en", "tran": "Hello"],
+        ["input": chineseSentence, "type": "zh-CHS2en", "tran": "  "],
+        ["input": chineseSentence, "type": "unknown", "tran": "Hello"],
+        ["input": chineseSentence, "type": "zh-CHS2en", "tran": "we are pirates, these data are stolen from youdao"],
+        ["input": chineseSentence, "type": "zh-CHS2en", "tran": String(repeating: "a", count: 10_001)]
+    ] {
+        let data = try! JSONSerialization.data(withJSONObject: ["fanyi": payload])
+        do {
+            _ = try WordTranslation.parse(data, query: chineseSentence)
+            preconditionFailure("Invalid or corrupted translation accepted")
+        } catch { wordCheck(error as? WordLookupError == .invalidResponse, "Malformed translation error lost") }
+    }
+    let pirates = try! JSONSerialization.data(withJSONObject: ["fanyi": ["input": "我们是海盗。", "type": "zh-CHS2en", "tran": "We are pirates."]])
+    wordCheck((try! WordTranslation.parse(pirates, query: "我们是海盗。"))?.text == "We are pirates.",
+              "Corruption detection rejected a legitimate sentence")
     let translations = try! YoudaoWordParser.candidates(chineseWordFixture)
     wordCheck(translations.map(\.word) == ["study", "learn"] && translations[0].detail == "学习；研究",
               "Chinese translation links were lost or parsed as URLs")
+    let linkedSentenceFixture = Data(#"""
+    {"ce":{"word":[{"trs":[{"tr":[{"l":{"i":["",{"#text":"I"}," ",{"#text":"love"}," ",{"#text":"you"}],"#tran":"我爱你"}}]}]}]}}
+    """#.utf8)
+    wordCheck((try! YoudaoWordParser.candidates(linkedSentenceFixture)).map(\.word) == ["I love you"],
+              "Dictionary sentence translation was split into disconnected words")
     let remoteSuggestions = try! YoudaoWordParser.suggestions(suggestionFixture)
     wordCheck(remoteSuggestions.count == 3 && remoteSuggestions[1].word == "学习方法", "Bilingual suggestions lost or invalid term accepted")
     let typoFixture = Data(#"{"typos":{"typo":[{"word":"receive","trans":"收到"}]}}"#.utf8)
@@ -142,6 +189,33 @@ func runWordLookupRegressionTests() {
     }
     wordWait { searchFinished }
     wordCheck(degradedResult?.entry == entry, "Suggestion failure hid a valid dictionary entry")
+    func translatedSearch(_ query: String) -> WordSearchResult? {
+        var result: WordSearchResult?
+        var done = false
+        Task { @MainActor in
+            result = try? await service.search(query)
+            done = true
+        }
+        wordWait { done }
+        return result
+    }
+    WordHTTPStub.body = englishTranslationFixture
+    let phraseResult = translatedSearch("Fine-grained personal")
+    wordCheck(phraseResult?.translation == englishTranslation && phraseResult?.entry == nil, "Missing dictionary phrase did not translate")
+    WordHTTPStub.body = chineseTranslationFixture
+    let sentenceResult = translatedSearch(chineseSentence)
+    wordCheck(sentenceResult?.translation == chineseTranslation && sentenceResult?.entry == nil, "Chinese sentence did not translate")
+    let sentenceURL = WordHTTPStub.lastURL!
+    let translationItems = URLComponents(url: sentenceURL, resolvingAgainstBaseURL: false)!.queryItems!
+    wordCheck(sentenceURL.path == "/jsonapi_s" && translationItems.first(where: { $0.name == "q" })?.value == chineseSentence,
+              "Sentence not sent to translation-capable endpoint")
+    let literalQuery = "A&B costs $20 = 140元. #1?"
+    WordHTTPStub.body = try! JSONSerialization.data(withJSONObject: ["input": literalQuery, "meta": [:], "fanyi": ["input": literalQuery, "type": "en2zh-CHS", "tran": "测试译文"]])
+    wordCheck(translatedSearch(literalQuery)?.translation?.original == literalQuery, "Query punctuation was lost")
+    let literalItems = URLComponents(url: WordHTTPStub.lastURL!, resolvingAgainstBaseURL: false)!.queryItems!
+    wordCheck(literalItems.first(where: { $0.name == "q" })?.value == literalQuery && literalItems.count == 2,
+              "Punctuation injected URL parameters")
+    WordHTTPStub.body = wordFixture
     WordHTTPStub.suggestionBody = nil
     WordHTTPStub.status = 429
     wordCheck(requestError() == .unavailable, "HTTP failure ignored")
@@ -290,6 +364,44 @@ func runWordLookupRegressionTests() {
     RunLoop.main.run(until: Date().addingTimeInterval(0.05))
     wordCheck(candidateModel.entry == nil && candidateModel.suggestions.isEmpty && candidateBook.words.isEmpty,
               "Closed lookup repopulated candidates or saved a cancelled selection")
+    candidateModel.query = chineseSentence
+    candidateModel.search()
+    wordWait { controlledSearch.pending[chineseSentence] != nil }
+    controlledSearch.pending.removeValue(forKey: chineseSentence)!.resume(returning: WordSearchResult(entry: nil, suggestions: [], translation: chineseTranslation))
+    wordWait { !candidateModel.isLoading }
+    wordCheck(candidateModel.translation == chineseTranslation && candidateModel.entry == nil && candidateBook.words.isEmpty,
+              "Translation was hidden or entered vocabulary")
+    candidateModel.pronounce()
+    wordWait { controlledSearch.pendingAudio != nil }
+    wordCheck(controlledSearch.audioText == chineseTranslation.text, "Chinese sentence read aloud instead of English translation")
+    candidateModel.stopSpeaking()
+    controlledSearch.pendingAudio!.resume(throwing: WordLookupError.unavailable)
+    controlledSearch.pendingAudio = nil
+    RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    wordCheck(!candidateModel.isSpeaking && candidateModel.audioStatus == nil, "Cancelled translation audio resumed")
+    candidateModel.query = "next sentence?"
+    candidateModel.search()
+    wordCheck(candidateModel.translation == nil, "Previous translation remained during new lookup")
+    wordWait { controlledSearch.pending["next sentence?"] != nil }
+    candidateModel.prepareForClose()
+    controlledSearch.pending.removeValue(forKey: "next sentence?")!.resume(returning: WordSearchResult(entry: nil, suggestions: [], translation: englishTranslation))
+    RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    wordCheck(candidateModel.translation == nil && candidateBook.words.isEmpty, "Closed window restored translation")
+    candidateModel.query = "old translation"
+    candidateModel.search()
+    wordWait { controlledSearch.pending["old translation"] != nil }
+    candidateModel.query = chineseSentence
+    candidateModel.search()
+    wordWait { controlledSearch.pending[chineseSentence] != nil }
+    controlledSearch.pending.removeValue(forKey: chineseSentence)!.resume(returning: WordSearchResult(entry: nil, suggestions: [], translation: chineseTranslation))
+    wordWait { !candidateModel.isLoading }
+    controlledSearch.pending.removeValue(forKey: "old translation")!.resume(returning: WordSearchResult(entry: nil, suggestions: [], translation: englishTranslation))
+    RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    wordCheck(candidateModel.translation == chineseTranslation, "Stale translation replaced newer result")
+    candidateModel.showSaved(entry)
+    wordCheck(candidateModel.translation == nil && candidateModel.entry == entry, "Saved word retained old translation")
+    candidateModel.prepareForClose()
+    print("Sentence translation regressions passed (bilingual phrases, punctuation, bounds, provider corruption, HTTP, transient results and cancellation).")
     print("Bilingual fuzzy search regressions passed (Chinese translation links, suggestions, spelling, offline matching and cancellation).")
     print("Word book regressions passed (persistence, familiarity, deduplication, complete details, write failures and offline review).")
     print("Word lookup regressions passed (US IPA, meanings, phrases, examples, input, HTTP errors, bounded responses, stale results and close cancellation).")

@@ -14,6 +14,46 @@ struct WordSuggestion: Equatable, Identifiable {
 struct WordSearchResult {
     let entry: WordEntry?
     let suggestions: [WordSuggestion]
+    var translation: WordTranslation? = nil
+}
+
+/// Machine translation is transient and never treated as a dictionary entry.
+struct WordTranslation: Equatable {
+    enum Direction: String {
+        case englishToChinese = "en2zh-CHS"
+        case chineseToEnglish = "zh-CHS2en"
+    }
+    let original: String
+    let text: String
+    let direction: Direction
+    var englishText: String { direction == .chineseToEnglish ? text : original }
+
+    var sourceURL: URL {
+        var components = URLComponents(string: "https://dict.youdao.com/result")!
+        components.queryItems = [URLQueryItem(name: "word", value: original), URLQueryItem(name: "lang", value: "en")]
+        return components.url!
+    }
+
+    static func parse(_ data: Data, query: String) throws -> WordTranslation? {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw WordLookupError.invalidResponse
+        }
+        guard let value = root["fanyi"] else { return nil }
+        guard let payload = value as? [String: Any],
+              let original = payload["input"] as? String,
+              (try? WordQuery.normalize(original)) == query,
+              let rawText = payload["tran"] as? String,
+              let type = payload["type"] as? String,
+              let direction = Direction(rawValue: type) else { throw WordLookupError.invalidResponse }
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The unversioned endpoint occasionally returns corrupted, watermarked
+        // output. Reject it rather than showing a damaged sentence as a translation.
+        guard !text.isEmpty, text.count <= 10_000,
+              !text.localizedCaseInsensitiveContains("these data are stolen from youdao") else {
+            throw WordLookupError.invalidResponse
+        }
+        return .init(original: query, text: text, direction: direction)
+    }
 }
 
 /// Shared offline matching for lookup candidates and both vocabulary lists.

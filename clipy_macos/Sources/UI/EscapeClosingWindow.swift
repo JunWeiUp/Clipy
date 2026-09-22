@@ -1,5 +1,9 @@
 import AppKit
 
+protocol WindowEscapeHandling: AnyObject {
+    var onEscape: (() -> Void)? { get set }
+}
+
 /// Handle Escape at the window boundary so text fields and SwiftUI editors do
 /// not swallow it. Sheets and active input sessions keep their own cancellation.
 enum WindowEscapeKeyHandler {
@@ -14,12 +18,18 @@ enum WindowEscapeKeyHandler {
         }
 
         // Holding Escape must not repeatedly dismiss windows or close prompts.
-        if !event.isARepeat { window.cancelOperation(nil) }
+        if !event.isARepeat {
+            if let onEscape = (window as? WindowEscapeHandling)?.onEscape { onEscape() }
+            else { window.cancelOperation(nil) }
+        }
         return true
     }
 }
 
-class EscapeClosingWindow: NSWindow {
+class EscapeClosingWindow: NSWindow, WindowEscapeHandling {
+    /// Optional action for a plain Escape after IME/sheet handling has declined it.
+    var onEscape: (() -> Void)?
+
     override func sendEvent(_ event: NSEvent) {
         if WindowEscapeKeyHandler.handle(event, in: self) { return }
         super.sendEvent(event)
@@ -31,7 +41,9 @@ class EscapeClosingWindow: NSWindow {
     }
 }
 
-class EscapeClosingPanel: NSPanel {
+class EscapeClosingPanel: NSPanel, WindowEscapeHandling {
+    var onEscape: (() -> Void)?
+
     override func sendEvent(_ event: NSEvent) {
         if WindowEscapeKeyHandler.handle(event, in: self) { return }
         super.sendEvent(event)

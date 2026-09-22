@@ -35,7 +35,7 @@ Do **not** change framing/crypto without bumping `v` and updating both ends plus
 | `notif.ack` | receiver → sender | Notification delivery ack |
 | `notif.config` | — | Reserved; receivers ignore |
 | `ping` / `pong` | both | Keepalive |
-| `file.meta` | sender → receiver | Chunked file transfer header. Encrypted payload = JSON `{fileId, name, size, chunkSize, chunks, sha256}`; envelope `hash` = file sha256 |
+| `file.meta` | sender → receiver | Chunked file transfer header. Encrypted payload = JSON `{fileId, name, size, chunkSize, chunks, sha256, folderFormat?, folderName?}`; envelope `hash` = file sha256 |
 | `file.chunk` | sender → receiver | Encrypted payload = `u32 BE chunk index ‖ raw bytes`; envelope `msgId` = fileId (deterministic, for routing). chunkSize is sender-chosen (1 MiB recommended; receivers accept any size that keeps the frame < 2 MiB) |
 | `file.ack` | receiver → sender | Encrypted payload = JSON `{fileId, ok, error?}`. `ok=false` errors: `tooLarge / ioError / hashMismatch` |
 
@@ -81,12 +81,15 @@ Internet-facing authenticated transport.
 
 ### File transfer
 
-1. Interactive one-shot over the live session: sender waits/dials `direct` for a session (≤8s), streams the file in 512 KiB chunks (`file.meta` first, then `file.chunk`s), and waits for `file.ack`. **Nothing is enqueued into `pending_sync`** — a dropped session fails the transfer; the user retries.
+1. Interactive one-shot over the live session: sender waits/dials `direct` for a session (≤8s), streams the file in 1 MiB chunks (`file.meta` first, then `file.chunk`s), and waits for `file.ack`. **Nothing is enqueued into `pending_sync`** — a dropped session fails the transfer; the user retries.
 2. Each attempt uses a fresh `fileId`; chunks carry `msgId = fileId` so concurrent transfers from one peer stay routed.
 3. Receiver: append-only `.part` file next to the final destination (same volume → atomic rename), idle timeout **120s** (no chunk) discards state, size cap **512 MiB** (rejected via `file.ack tooLarge`), full-file sha256 verified before promote; sender aborts mid-stream when a reject ack lands.
 4. Delivery: Android saves into public `Download/Clipy/` (writability-probed; fallback app-private `<appStorage>/Clipy/`) + `file_transfers` row (20-row trim also deletes managed files); macOS moves into `~/Downloads/Clipy/`, inserts a `.files` history entry (no clipboard write), posts a system notification.
-5. macOS chunk writes are pipelined through `syncQueue.async` (bounded: 8 frames in flight), guarded by a retired-fd set; session sockets carry 4 MiB `SO_SNDBUF`/`SO_RCVBUF` and the read loop drains until EAGAIN.
+5. macOS chunk writes are pipelined through `syncQueue.async` (bounded: 2 frames in flight), retaining the session writer identity; session sockets carry 4 MiB `SO_SNDBUF`/`SO_RCVBUF` and the read loop drains until EAGAIN. Receive finalization has its own serial queue, so simultaneous bidirectional sends can receive and ACK while their send queues wait.
 6. Throughput notes: pure-Dart AES-GCM measured ~2 MB/s (desktop) / <1 MB/s (phone) — Android routes file-chunk crypto through the native `sync_crypto` MethodChannel (javax.crypto, ARMv8 crypto extensions) with a pure-Dart fallback; Mac uses CryptoKit. Both senders pipeline encrypt + network I/O (Android: bounded 4 MiB in-flight instead of per-chunk flush). Wire cost is base64 (+33%); text/history frames are unaffected.
+7. **macOS folders:** the sender makes a private streaming ZIP snapshot, sets `name = folderName + ".zip"`, `folderFormat = "zip-store-v1"` and `folderName` to the sanitized root name. Ordinary files omit both optional fields. This keeps protocol v2 compatible: older receivers (including Android) save a normal ZIP; updated Macs restore only explicitly marked folders. Unknown formats or incomplete folder metadata are rejected. A `.zip` extension alone never triggers extraction.
+8. **Folder archive contract:** classic single-disk ZIP, stored entries (method 0), UTF-8 names (flag `0x800`), Unix creator/version `0x0314`, version-needed 20, no extra fields, comments or data descriptors. Root directory first, then parent-before-child entries; central directory follows in the same order. Only regular files/directories, up to 10,000 entries including the root and 512 MiB including ZIP overhead. Paths are relative to the root, at most 4096 UTF-8 bytes and 128 components; reject empty/`.`/`..` components, backslashes, colons and NUL. Source links/special files are rejected, not followed or silently omitted. File content, hidden entries, empty directories and executable permission bits are preserved; ACLs, extended attributes, resource forks and timestamps are not copied.
+9. **Folder publication:** verify the transfer SHA-256 first, validate central/local ZIP headers and contiguous bounded data ranges, then stream into a new private staging directory with exclusive file creation. Verify each CRC; reject links, path traversal, duplicate/aliased destinations, unsupported compression and truncation. Move the complete root into the receive directory only on success (`name (2)` for collisions), then ACK and publish history/notification with the final folder path. Failure removes staging and the archive; sender removes its snapshot after either success or failure. macOS `.part` paths use locally generated UUIDs, and chunks must have sequential indexes and the declared size.
 
 ### History
 
@@ -129,6 +132,35 @@ Entry: `ClipyApplication` → `PlatformChannels.registerAll` when sync is enable
 - `ClipyApplication.onCreate` warms the FlutterEngine only when `flutter.syncEnabled` is true (same gate as BootReceiver).
 - FGS type is **`specialUse`** (Android 14+): Android 15 enforces a **6h/24h quota** on `dataSync`, which used to force-stop the always-on :5566 listener every few hours. API 29-33 falls back to `dataSync`.
 - **WorkManager watchdog** (`SyncGuardWorker`, 15 min periodic) re-asserts the FGS after the system kills it (Doze / MIUI) — it survives process death, unlike `START_STICKY` whose delivery Doze often drops. It runs as a **foreground worker** (`specialUse`/`dataSync` `ForegroundInfo`) so launching the FGS is legal under the Android 12+ background-FGS-start restriction. Armed by `ClipyApplication.onCreate` / `startForegroundSyncService` / `BootReceiver`; cancelled by `stopForegroundSyncService`. `onTaskRemoved` also re-asserts the FGS on swipe. Redmi/MIUI still requires the user to grant 自启动 + 省电无限制.
+
+### Notification visible, but receiving only resumes after opening the app
+
+On HyperOS, a foreground-service notification can remain visible while the OEM
+freezer suspends the entire process. Check this before changing reconnect timers
+or rebuilding either app:
+
+1. Find the PID with `adb shell pidof com.clipyclone.clipy_android`. In
+   `adb shell dumpsys greezer`, check whether that PID appears in **Frozen
+   processes**. This is an OEM service; availability depends on the device.
+   Android's `dumpsys activity processes` may still report `isFrozen=false`
+   because the OEM freezer is separate.
+2. Check `adb shell dumpsys power` for `Clipy:SyncWakeLock` marked **DISABLED**.
+   The service may still report `isForeground=true`. TCP can connect to the
+   listening socket, but the suspended app cannot return its `hello` frame;
+   macOS then logs `handshake(readTimeout)`.
+3. In the phone's Clipy app information, enable **自启动** and set **省电策略 →
+   无限制**. **智能限制后台运行（推荐）** can freeze this LAN listener even with
+   the persistent notification present. After changing the policy, open Clipy
+   once to thaw an already-frozen process, then return to the home screen.
+4. Verify sending from macOS while Clipy stays in the background, and repeat
+   after leaving the phone locked. Confirm the PID stays out of the freezer
+   list. A native heartbeat and WorkManager cannot run while the whole process
+   is frozen; restarting the service alone is not evidence of recovery.
+
+For diagnosis, `adb forward tcp:15566 tcp:5566` allows comparing the initial
+protocol response over USB and LAN. If both accept TCP but neither returns
+`hello`, inspect the process before blaming Wi-Fi. Remove the temporary forward
+after testing with `adb forward --remove tcp:15566`.
 
 ## Remaining asymmetry
 

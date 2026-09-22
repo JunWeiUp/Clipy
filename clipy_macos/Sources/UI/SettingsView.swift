@@ -61,6 +61,7 @@ struct SettingsView: View {
       .init(id: "general", title: L10n.t(.designGeneral), symbol: "slider.horizontal.3"),
       .init(id: "history", title: L10n.t(.history), symbol: "clock"),
       .init(id: "shortcuts", title: L10n.t(.shortcut), symbol: "keyboard"),
+      .init(id: "smartSwitch", title: L10n.t(.smartSwitchSettingsTitle), symbol: "arrow.triangle.swap"),
       .init(id: "sync", title: L10n.t(.lanDevices), symbol: "network"),
       .init(id: "permissions", title: L10n.t(.designPermissions), symbol: "hand.raised"),
     ]
@@ -223,6 +224,9 @@ struct SettingsView: View {
             Text(L10n.t(.wordShortcutConflict)).font(AppFont.caption).foregroundStyle(.orange)
           }
         }
+      }
+      if pageID == "smartSwitch" {
+        SmartSwitchSettingsView()
       }
       if pageID == "sync" {
         Section {

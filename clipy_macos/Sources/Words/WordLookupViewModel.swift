@@ -5,6 +5,7 @@ import Combine
 /// UI-owned, like SearchViewModel. All mutations and completions run on main.
 final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate, NSSpeechSynthesizerDelegate {
     @Published var query = ""
+    @Published private(set) var translation: WordTranslation?
     @Published private(set) var entry: WordEntry?
     @Published private(set) var suggestions: [WordSuggestion] = []
     @Published private(set) var isLoading = false
@@ -58,6 +59,7 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
         let token = UUID()
         generation = token
         entry = nil
+        translation = nil
         suggestions = []
         errorKey = nil
         isLoading = false
@@ -76,6 +78,7 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
                 let result = try await service.search(term)
                 guard !Task.isCancelled, let self, self.generation == token else { return }
                 self.entry = result.entry
+                self.translation = result.translation
                 self.suggestions = Array(WordSuggestion.unique(local + result.suggestions)
                     .filter { $0.id != result.entry?.word.lowercased() }.prefix(20))
                 if let entry = result.entry { self.wordBook.record(entry) }
@@ -92,7 +95,7 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
 
     func pronounce() {
         if isSpeaking { stopSpeaking(); return }
-        guard let entry else { return }
+        guard let text = entry?.word ?? translation?.englishText else { return }
         stopSpeaking()
         isSpeaking = true
         audioStatus = .wordAudioLoading
@@ -100,7 +103,7 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
         let service = self.service
         audioTask = Task { @MainActor [weak self] in
             do {
-                let data = try await service.americanAudio(entry.word)
+                let data = try await service.americanAudio(text)
                 guard !Task.isCancelled, let self, self.audioGeneration == token else { return }
                 let player = try AVAudioPlayer(data: data)
                 player.delegate = self
@@ -111,7 +114,7 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
             } catch {
                 guard !Task.isCancelled, let self, self.audioGeneration == token else { return }
                 self.audioTask = nil
-                self.speakWithSystemVoice(entry.word)
+                self.speakWithSystemVoice(text)
             }
         }
     }
@@ -163,6 +166,7 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
         lookupTask = nil
         stopSpeaking()
         entry = nil
+        translation = nil
         suggestions = []
         isLoading = false
         errorKey = nil

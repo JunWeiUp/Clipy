@@ -28,16 +28,28 @@ extension SyncManager {
         let chunkSize: Int
         let chunks: Int
         let sha256: String
+        let folderFormat: String?
+        let folderName: String?
     }
 
     // MARK: - Sending
 
-    func sendFileToPeer(at url: URL, peerId targetId: String, completion: ((Bool) -> Void)? = nil) {
-        guard PreferencesManager.shared.isSyncEnabled else { completion?(false); return }
+    func sendFileToPeer(at url: URL, peerId targetId: String, completion: ((Bool, Error?) -> Void)? = nil) {
+        guard PreferencesManager.shared.isSyncEnabled else { completion?(false, nil); return }
         fileTransferQueue.async { [weak self] in
-            guard let self else { completion?(false); return }
-            let ok = self.sendFileToPeerSync(at: url, peerId: targetId)
-            if let completion { DispatchQueue.main.async { completion(ok) } }
+            guard let self else { DispatchQueue.main.async { completion?(false, nil) }; return }
+            var prepared: FolderTransferArchive.Prepared?
+            defer { prepared?.remove() }
+            do {
+                if try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true {
+                    prepared = try FolderTransferArchive.prepare(url, maxBytes: Self.fileMaxBytes)
+                }
+                let ok = self.sendFileToPeerSync(at: prepared?.url ?? url, peerId: targetId, folderName: prepared?.folderName)
+                DispatchQueue.main.async { completion?(ok, nil) }
+            } catch {
+                appLog("Folder preparation failed: \(error)", level: .warning)
+                DispatchQueue.main.async { completion?(false, error) }
+            }
         }
     }
 
@@ -48,7 +60,7 @@ extension SyncManager {
 
     /// Runs on `fileTransferQueue`; at most two chunks await asynchronous writes.
     /// Retaining the writer identity prevents writes into a replaced session.
-    private func sendFileToPeerSync(at url: URL, peerId targetId: String) -> Bool {
+    private func sendFileToPeerSync(at url: URL, peerId targetId: String, folderName: String? = nil) -> Bool {
         let values: URLResourceValues
         do {
             values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
@@ -69,7 +81,7 @@ extension SyncManager {
         }
 
         let fileId = UUID().uuidString
-        let fileName = url.lastPathComponent
+        let fileName = folderName.map { $0 + ".zip" } ?? url.lastPathComponent
         let chunkSize = Self.fileChunkSize
         let chunkCount = length == 0 ? 0 : (length + chunkSize - 1) / chunkSize
 
@@ -96,10 +108,15 @@ extension SyncManager {
             return false
         }
 
-        guard let metaPayload = encodeFileTransferJSON([
+        var metadata: [String: Any] = [
             "fileId": fileId, "name": fileName, "size": length,
             "chunkSize": chunkSize, "chunks": chunkCount, "sha256": sha256Hex,
-        ]) else { return fail("meta encode failed") }
+        ]
+        if let folderName {
+            metadata["folderFormat"] = FolderTransferArchive.format
+            metadata["folderName"] = folderName
+        }
+        guard let metaPayload = encodeFileTransferJSON(metadata) else { return fail("meta encode failed") }
         let metaEnvelope = SyncEnvelope.make(
             type: SyncType.fileMeta, peerId: peerId, name: displayName,
             hash: sha256Hex, payload: metaPayload
@@ -262,26 +279,36 @@ extension SyncManager {
             appLog("file.meta undecodable from \(peerId.prefix(8))", level: .warning)
             return
         }
-        if meta.size > Self.fileMaxBytes || meta.chunkSize <= 0 || meta.sha256.isEmpty {
+        if meta.size < 0 || meta.size > Self.fileMaxBytes || meta.chunkSize <= 0
+            || meta.chunkSize > Self.fileMaxBytes || meta.sha256.isEmpty {
             appLog("file.meta rejected (invalid) from \(peerId.prefix(8))", level: .warning)
             sendFileAck(to: peerId, fileId: meta.fileId, ok: false, error: "tooLarge")
+            return
+        }
+        guard meta.chunks == (meta.size == 0 ? 0 : (meta.size + meta.chunkSize - 1) / meta.chunkSize),
+              (meta.folderFormat == nil && meta.folderName == nil)
+                || (meta.folderFormat == FolderTransferArchive.format && meta.folderName?.isEmpty == false)
+        else {
+            sendFileAck(to: peerId, fileId: meta.fileId, ok: false, error: "invalidMetadata")
             return
         }
 
         // A duplicate meta for the same fileId restarts the transfer.
         discardIncomingFile(fileId: meta.fileId)
-        let partURL = Self.fileReceiveDirectory().appendingPathComponent(".incoming-\(meta.fileId).part")
+        // Never interpolate the remote fileId into a local filesystem path.
+        let partURL = incomingFileDirectory().appendingPathComponent(".incoming-\(UUID().uuidString).part")
         FileManager.default.createFile(atPath: partURL.path, contents: nil)
         var state = IncomingFileState(
             peerId: peerId,
             senderName: env.name ?? String(peerId.prefix(8)),
             fileId: meta.fileId,
-            fileName: Self.sanitizeFileName(meta.name),
+            fileName: Self.sanitizeFileName(meta.folderName ?? meta.name),
             fileSize: meta.size,
             chunkSize: meta.chunkSize,
             chunkCount: meta.chunks,
             sha256: meta.sha256,
-            partURL: partURL
+            partURL: partURL,
+            folderName: meta.folderName
         )
         // One persistent append handle instead of open/write/close per chunk.
         do {
@@ -310,6 +337,12 @@ extension SyncManager {
         let index = Int(plain.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) })
         guard index < state.chunkCount else { return }
         let data = plain.dropFirst(4)
+        guard index == state.received.count,
+              data.count == min(state.chunkSize, state.fileSize - index * state.chunkSize) else {
+            discardIncomingFile(fileId: state.fileId)
+            sendFileAck(to: peerId, fileId: state.fileId, ok: false, error: "invalidChunk")
+            return
+        }
         do {
             guard let handle = state.handle else { return }
             // Sequential appends: the handle already sits at EOF (seekToEnd at
@@ -331,14 +364,14 @@ extension SyncManager {
     }
 
     /// Pull the finished state out of the map (closing the part-file handle)
-    /// and hand the heavy verification tail to fileTransferQueue.
+    /// and hand the heavy verification tail to the separate receive queue.
     private func completeChunkedFile(fileId: String) {
         guard var state = incomingFiles.removeValue(forKey: fileId) else { return }
         state.idleWork?.cancel()
         let handle = state.handle
         state.handle = nil
         if let handle { try? handle.close() }
-        fileTransferQueue.async { [weak self] in
+        fileReceiveQueue.async { [weak self] in
             self?.completeIncomingFile(state)
         }
     }
@@ -354,7 +387,7 @@ extension SyncManager {
     }
 
     /// Heavy tail of the receive path: hash verification, move into
-    /// ~/Downloads/Clipy, history insert, ack. Runs on fileTransferQueue with
+    /// ~/Downloads/Clipy, history insert, ack. Runs on fileReceiveQueue with
     /// an isolated copy of the state (already removed from the live map).
     private func completeIncomingFile(_ state: IncomingFileState) {
         let sha256Hex = hashFile(at: state.partURL)
@@ -364,10 +397,17 @@ extension SyncManager {
             sendFileAckOnQueue(to: state.peerId, fileId: state.fileId, ok: false, error: "hashMismatch")
             return
         }
-        let directory = Self.fileReceiveDirectory()
-        let destination = Self.dedupeDestination(in: directory, fileName: state.fileName)
+        let directory = incomingFileDirectory()
+        let destination: URL
         do {
-            try FileManager.default.moveItem(at: state.partURL, to: destination)
+            if let folderName = state.folderName {
+                destination = try FolderTransferArchive.unpack(state.partURL, folderName: folderName,
+                                                               in: directory, maxBytes: Self.fileMaxBytes)
+                try? FileManager.default.removeItem(at: state.partURL)
+            } else {
+                destination = Self.dedupeDestination(in: directory, fileName: state.fileName)
+                try FileManager.default.moveItem(at: state.partURL, to: destination)
+            }
         } catch {
             appLog("file receive move failed: \(error)", level: .error)
             try? FileManager.default.removeItem(at: state.partURL)
@@ -375,11 +415,13 @@ extension SyncManager {
             return
         }
         let senderName = state.senderName
-        let fileName = state.fileName
+        #if !CLIPY_CORE_TESTS
+        let fileName = destination.lastPathComponent
         DispatchQueue.main.async {
             ClipboardManager.shared.handleRemoteFileSync(url: destination, senderName: senderName)
             TransferNotifier.shared.notifyFileReceived(name: fileName, sender: senderName, destination: destination)
         }
+        #endif
         sendFileAckOnQueue(to: state.peerId, fileId: state.fileId, ok: true)
         appLog("Received file \(state.fileName) (\(state.fileSize) bytes) from \(senderName)")
     }
@@ -433,6 +475,13 @@ extension SyncManager {
 
     // MARK: - Paths
 
+    private func incomingFileDirectory() -> URL {
+        #if CLIPY_CORE_TESTS
+        if let directory = fileReceiveDirectoryForTesting { return directory }
+        #endif
+        return Self.fileReceiveDirectory()
+    }
+
     /// Parts live next to the destination so the final move stays on one
     /// volume (atomic rename).
     static func fileReceiveDirectory() -> URL {
@@ -453,16 +502,20 @@ extension SyncManager {
         return cleaned.isEmpty ? "file" : cleaned
     }
 
-    static func dedupeDestination(in directory: URL, fileName: String) -> URL {
+    static func dedupeDestination(in directory: URL, fileName: String, isDirectory: Bool = false) -> URL {
+        func exists(_ url: URL) -> Bool {
+            FileManager.default.fileExists(atPath: url.path)
+                || (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
+        }
         var candidate = directory.appendingPathComponent(fileName)
-        guard FileManager.default.fileExists(atPath: candidate.path) else { return candidate }
-        let stem = (fileName as NSString).deletingPathExtension
-        let ext = (fileName as NSString).pathExtension
+        guard exists(candidate) else { return candidate }
+        let stem = isDirectory ? fileName : (fileName as NSString).deletingPathExtension
+        let ext = isDirectory ? "" : (fileName as NSString).pathExtension
         var n = 2
         while true {
             let name = ext.isEmpty ? "\(stem) (\(n))" : "\(stem) (\(n)).\(ext)"
             candidate = directory.appendingPathComponent(name)
-            if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+            if !exists(candidate) { return candidate }
             n += 1
         }
     }

@@ -5,16 +5,21 @@ private enum WindowSessionTiming {
     static let teardownDelay: TimeInterval = 5 * 60
 }
 
+protocol WindowSessionPresenting: AnyObject {
+    var onWillClose: (() -> Void)? { get set }
+    func show()
+}
+
 final class WindowSession<Content: View> {
-    private var window: HostingWindow<Content>?
+    private var window: (NSWindow & WindowSessionPresenting)?
     private var teardownWorkItem: DispatchWorkItem?
     private var onTeardown: (() -> Void)?
 
     func present(
-        create: () -> HostingWindow<Content>,
+        create: () -> (NSWindow & WindowSessionPresenting),
         onPrepareForClose: @escaping () -> Void,
         onTeardown: @escaping () -> Void = {},
-        update: ((HostingWindow<Content>) -> Void)? = nil,
+        update: ((NSWindow) -> Void)? = nil,
         onShow: (() -> Void)? = nil
     ) {
         cancelTeardown()
@@ -50,6 +55,13 @@ final class WindowSession<Content: View> {
     func close() {
         window?.close()
     }
+
+    func revealExistingWindow() { window?.show() }
+
+    var keyWindow: NSWindow? { window?.isKeyWindow == true ? window : nil }
+
+    /// Release keyboard focus while keeping the draft available if handoff fails.
+    func hideForHandoff() { window?.orderOut(nil) }
 
     private func scheduleTeardown() {
         teardownWorkItem?.cancel()

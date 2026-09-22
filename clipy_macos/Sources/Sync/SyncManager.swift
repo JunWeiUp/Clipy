@@ -124,6 +124,7 @@ final class SyncManager: NSObject {
         let chunkCount: Int
         let sha256: String
         let partURL: URL
+        let folderName: String?
         /// Persistent append handle opened at file.meta; closed by
         /// completeChunkedFile / discardIncomingFile.
         var handle: FileHandle?
@@ -133,6 +134,12 @@ final class SyncManager: NSObject {
     var incomingFiles: [String: IncomingFileState] = [:]
     var fileAckWaiters: [String: (Bool) -> Void] = [:]
     let fileTransferQueue = DispatchQueue(label: "com.clipy.sync.filetransfer")
+    // A send waits for the remote ACK. Receiving must remain independent so
+    // two Macs sending at the same time can still finish each other's files.
+    let fileReceiveQueue = DispatchQueue(label: "com.clipy.sync.filereceive")
+    #if CLIPY_CORE_TESTS
+    var fileReceiveDirectoryForTesting: URL?
+    #endif
 
     // MARK: - Lifecycle
 
