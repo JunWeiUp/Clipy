@@ -3,6 +3,27 @@ import SwiftUI
 
 /// Receives text input without changing the foreground application. Peripheral
 /// tools can keep that application's preset while the user dictates into Clipy.
+/// NSMenu sessions save and restore the key window around tracking. A
+/// nonactivating panel that can still become key during that window drags
+/// the panel into the session's key negotiation while the app activation
+/// transition is still settling, and the menu cancels itself within
+/// milliseconds of opening. Refusing key only while any menu is tracking
+/// keeps the panel clear of that negotiation; outside menu sessions the
+/// panel keeps its normal input behavior.
+private enum SmartSwitchMenuTrackingGuard {
+    static var depth = 0
+    static let observers: [NSObjectProtocol] = {
+        let center = NotificationCenter.default
+        let begin = center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { _ in
+            depth += 1
+        }
+        let end = center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { _ in
+            depth = max(0, depth - 1)
+        }
+        return [begin, end]
+    }()
+}
+
 final class SmartSwitchInputPanel<Content: View>: EscapeClosingPanel, NSWindowDelegate, WindowSessionPresenting {
     var onWillClose: (() -> Void)?
 
@@ -38,9 +59,12 @@ final class SmartSwitchInputPanel<Content: View>: EscapeClosingPanel, NSWindowDe
         contentViewController = controller
         setFrame(intendedFrame, display: false)
         delegate = self
+        // Install the NSMenu tracking observers eagerly; the static property
+        // above is otherwise lazily initialized on first canBecomeKey read.
+        _ = SmartSwitchMenuTrackingGuard.observers
     }
 
-    override var canBecomeKey: Bool { true }
+    override var canBecomeKey: Bool { SmartSwitchMenuTrackingGuard.depth == 0 }
     override var canBecomeMain: Bool { false }
 
     func show() {

@@ -60,9 +60,8 @@ struct SmartSwitchVoiceModifierState {
 enum SmartSwitchFocusKind: Equatable {
     case textInput, nonText, unknown
 
-    // Prefer opening the switcher unless the focused element is a text input.
-    // Unknown remains a distinct diagnostic result, not proof of editability.
-    var shouldOpenSwitch: Bool { self != .textInput }
+    // Missing evidence must never take over an existing input session.
+    var shouldOpenSwitch: Bool { self == .nonText }
 }
 
 struct SmartSwitchFocusFacts {
@@ -74,21 +73,32 @@ struct SmartSwitchFocusFacts {
     var editable: Bool?
     var readSucceeded = false
 
+    private static let nonTextRoles: Set<String> = [
+        "AXButton", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton",
+        "AXMenuItem", "AXMenu", "AXMenuBar", "AXMenuBarItem", "AXStaticText",
+        "AXImage", "AXLink", "AXHeading", "AXDisclosureTriangle", "AXScrollBar",
+        "AXSlider", "AXIncrementor", "AXTab", "AXSplitter", "AXDockItem"
+    ]
+
     var kind: SmartSwitchFocusKind {
         guard readSucceeded else { return .unknown }
         // Chromium exposes AXSelectedTextRange on read-only links, paragraphs
         // and document bodies. Selection alone does not make a text input.
         if subrole == "AXSecureTextField" || role == "AXSecureTextField" { return .textInput }
-        if selectedTextIsWritable || editable == true || (valueIsWritable && hasTextSelection) { return .textInput }
         guard let role else { return .unknown }
+        if Self.nonTextRoles.contains(role) {
+            // Some frameworks expose text attributes on every control. Conflicts
+            // are unknown, and writable numeric values are not text capabilities.
+            return selectedTextIsWritable || editable == true ? .unknown : .nonText
+        }
+        if selectedTextIsWritable || editable == true || (valueIsWritable && hasTextSelection) { return .textInput }
         if ["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].contains(role) {
             // Missing AXEditable is common on native inputs and terminals;
             // distinguish it from an explicit read-only text control.
             return editable == false ? .nonText : .textInput
         }
-        // A writable AXValue alone also describes sliders, checkboxes and tabs.
-        // No application exclusions or non-text role allowlist are needed.
-        return .nonText
+        // Containers, canvases, tables and unfamiliar roles may host an editor.
+        return .unknown
     }
 }
 
@@ -96,7 +106,7 @@ struct SmartSwitchFocusFacts {
 /// Only the initial modifier-down is buffered. Ordinary shortcuts are flushed
 /// in order before their next physical event, without synthesizing their text.
 struct SmartSwitchVoiceGesture {
-    enum Phase: Equatable { case idle, waiting, preparing, forwarding, cancelledUntilRelease }
+    enum Phase: Equatable { case idle, waiting, passthrough, preparing, forwarding, cancelledUntilRelease }
     enum Event { case down(eligible: Bool), up, other, interaction, cancel, preserveDictation, hold(eligible: Bool), ready(success: Bool), reset }
     enum Action: Equatable { case bufferDown, scheduleHold, replayDown, discardDown, showPanel, keepPanel, cancelPanel }
     struct Decision {
@@ -107,19 +117,28 @@ struct SmartSwitchVoiceGesture {
 
     mutating func handle(_ event: Event) -> Decision {
         switch (phase, event) {
+        case (.idle, .down(false)):
+            phase = .passthrough
+            return Decision()
         case (.waiting, .down), (.preparing, .down), (.cancelledUntilRelease, .down):
             return Decision(swallow: true)
         case (.idle, .down(true)):
             phase = .waiting
             return Decision(swallow: true, actions: [.bufferDown, .scheduleHold])
-        case (.waiting, .up), (.waiting, .other), (.waiting, .preserveDictation):
+        case (.waiting, .up):
             phase = .idle
             return Decision(actions: [.replayDown])
+        case (.waiting, .other), (.waiting, .preserveDictation):
+            phase = .passthrough
+            return Decision(actions: [.replayDown])
+        case (.passthrough, .up):
+            phase = .idle
+            return Decision()
         case (.waiting, .hold(true)):
             phase = .preparing
             return Decision(actions: [.showPanel])
         case (.waiting, .hold(false)):
-            phase = .idle
+            phase = .passthrough
             return Decision(actions: [.replayDown])
         case (.preparing, .ready(true)):
             phase = .forwarding

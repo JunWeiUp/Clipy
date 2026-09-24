@@ -66,8 +66,8 @@ final class SmartSwitchWindow {
                 }
             }
             model.onPaste = { [weak self] text in self?.escapePasteText = text; self?.session.close() }
-            let window = SmartSwitchInputPanel(title: L10n.t(.smartSwitchTitle), size: CGSize(width: 720, height: 500),
-                                 minSize: CGSize(width: 620, height: 440), frameAutosaveName: "SmartSwitchWindow") {
+            let window = SmartSwitchInputPanel(title: L10n.t(.smartSwitchTitle), size: CGSize(width: 720, height: 520),
+                                 minSize: CGSize(width: 620, height: 520), frameAutosaveName: "SmartSwitchWindow") {
                 SmartSwitchView(model: model, onFocus: { [weak self] in self?.selectInputSource() })
             }
             window.onEscape = { [weak self, weak window, weak model] in
@@ -94,7 +94,7 @@ final class SmartSwitchWindow {
         }, update: { [weak self] window in
             window.title = L10n.t(.smartSwitchTitle)
             self?.model?.present()
-            window.setContentSize(NSSize(width: 720, height: 500))
+            window.setContentSize(NSSize(width: 720, height: 520))
         })
     }
 
@@ -140,65 +140,96 @@ private struct SmartSwitchView: View {
             }
         } content: {
             VStack(alignment: .leading, spacing: AppSpacing.md) {
-                SmartSwitchActionStrip(model: model)
-                SmartSwitchTextInput(text: $model.query, focusGeneration: model.focusGeneration,
-                                     hasCandidates: !model.candidates.isEmpty, onFocus: onFocus,
-                                     onSubmit: model.submit, onMove: model.moveSelection)
-                    .frame(height: 76)
-                    .modifier(AppInputSurface())
-                HStack {
-                    Text(L10n.t(.smartSwitchInputHint)).font(AppFont.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    if model.isBusy { ProgressView().controlSize(.small) }
-                    Button(model.selectedAction == .automatic ? L10n.t(.smartSwitchExecute) : model.selectedAction.title) { model.submit() }
-                        .disabled(!model.canSubmit)
-                }
-                if let warning = model.inputSourceWarning {
-                    Text(warning).font(AppFont.caption).foregroundStyle(.orange)
-                }
-                if let message = model.message {
-                    Text(message).font(AppFont.body).foregroundStyle(.secondary).textSelection(.enabled)
-                }
-                if model.isBusy {
-                    Text(L10n.t(.smartSwitchWorking)).font(AppFont.caption).foregroundStyle(.secondary)
-                }
                 if let output = model.output {
-                    ScrollView { Text(output).font(AppFont.body).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                        .frame(minHeight: 70, maxHeight: 180)
-                    HStack {
-                        Button(SmartActionL10n.t("复制结果", "Copy result")) { ClipboardManager.shared.writeToPasteboard(.text(output)) }
-                        Button(SmartActionL10n.t("继续处理", "Use as input")) { model.useOutputAsInput() }
-                        Spacer()
-                        Button(SmartActionL10n.t("粘贴回原应用", "Paste back")) { model.pasteBack() }
-                    }
+                    outputSection(output)
                 }
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: AppSpacing.xs) {
-                            ForEach(model.candidates) { target in
-                                Button { model.choose(target.id) } label: {
-                                    HStack {
-                                        Image(nsImage: NSWorkspace.shared.icon(forFile: target.applicationPath))
-                                            .resizable().frame(width: 24, height: 24)
-                                        Text(target.name)
-                                        Spacer()
-                                        if model.selectedID == target.id { Image(systemName: "return") }
-                                    }
-                                    .padding(AppSpacing.sm)
-                                    .background(model.selectedID == target.id ? AppColor.accent.opacity(0.15) : Color.clear)
-                                    .cornerRadius(AppCornerRadius.small)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain).disabled(model.isBusy).id(target.id)
-                            }
-                        }
-                    }
-                    .onChange(of: model.selectedID) { id in
-                        if let id { proxy.scrollTo(id) }
-                    }
+                inputSection
+                    .fixedSize(horizontal: false, vertical: true)
+                if !model.candidates.isEmpty {
+                    candidateList
                 }
             }
             .padding(AppSpacing.md)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func outputSection(_ output: String) -> some View {
+        VStack(alignment: .leading, spacing: AppSpacing.xs) {
+            ScrollView(.vertical) {
+                Text(output)
+                    .font(AppFont.body)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(AppSpacing.sm)
+            }
+            .frame(minHeight: 70, maxHeight: .infinity)
+            .background(AppColor.controlBackground, in: RoundedRectangle(cornerRadius: AppCornerRadius.medium))
+            .overlay(RoundedRectangle(cornerRadius: AppCornerRadius.medium)
+                .strokeBorder(AppColor.separator.opacity(0.45), lineWidth: 0.5))
+            .accessibilityLabel(SmartActionL10n.t("模型输出", "Model output"))
+            HStack {
+                Button(SmartActionL10n.t("复制结果", "Copy result")) { ClipboardManager.shared.writeToPasteboard(.text(output)) }
+                Button(SmartActionL10n.t("继续处理", "Use as input")) { model.useOutputAsInput() }
+                Spacer()
+                Button(SmartActionL10n.t("粘贴回原应用", "Paste back")) { model.pasteBack() }
+            }
+        }
+    }
+
+    private var inputSection: some View {
+        VStack(alignment: .leading, spacing: AppSpacing.xs) {
+            SmartSwitchActionStrip(model: model)
+            SmartSwitchTextInput(text: $model.query, focusGeneration: model.focusGeneration,
+                                 hasCandidates: !model.candidates.isEmpty, onFocus: onFocus,
+                                 onSubmit: model.submit, onMove: model.moveSelection)
+                .frame(height: 76)
+                .modifier(AppInputSurface())
+            HStack {
+                Text(L10n.t(.smartSwitchInputHint)).font(AppFont.caption).foregroundStyle(.secondary)
+                Spacer()
+                if model.isBusy { ProgressView().controlSize(.small) }
+                Button(model.selectedAction == .automatic ? L10n.t(.smartSwitchExecute) : model.selectedAction.title) { model.submit() }
+                    .disabled(!model.canSubmit)
+            }
+            if let warning = model.inputSourceWarning {
+                Text(warning).font(AppFont.caption).foregroundStyle(.orange)
+            }
+            if let message = model.message {
+                Text(message).font(AppFont.body).foregroundStyle(.secondary).textSelection(.enabled)
+            }
+            if model.isBusy {
+                Text(L10n.t(.smartSwitchWorking)).font(AppFont.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var candidateList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: AppSpacing.xs) {
+                    ForEach(model.candidates) { target in
+                        Button { model.choose(target.id) } label: {
+                            HStack {
+                                Image(nsImage: NSWorkspace.shared.icon(forFile: target.applicationPath))
+                                    .resizable().frame(width: 24, height: 24)
+                                Text(target.name)
+                                Spacer()
+                                if model.selectedID == target.id { Image(systemName: "return") }
+                            }
+                            .padding(AppSpacing.sm)
+                            .background(model.selectedID == target.id ? AppColor.accent.opacity(0.15) : Color.clear)
+                            .cornerRadius(AppCornerRadius.small)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(model.isBusy).id(target.id)
+                    }
+                }
+            }
+            .onChange(of: model.selectedID) { id in
+                if let id { proxy.scrollTo(id) }
+            }
         }
     }
 }
