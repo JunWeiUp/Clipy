@@ -229,6 +229,9 @@ class AppStrings {
       _t('同步以下应用的通知', 'Sync notifications from these apps');
   String get syncThisApp => _t('同步此应用', 'Sync this app');
   String get stopSyncingThisApp => _t('停止同步此应用', 'Stop syncing this app');
+  String get collectThisApp => _t('收集此应用', 'Collect this app');
+  String get stopCollectingThisApp => _t('停止收集此应用', 'Stop collecting this app');
+  String get appCollectDisabled => _t('未收集', 'Not collecting');
   String get appSyncEnabled => _t('已开启同步', 'Sync enabled');
   String get appSyncDisabled => _t('未同步', 'Not syncing');
   String get noAppsAvailable => _t('暂无可用应用', 'No apps available');
