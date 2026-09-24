@@ -12,7 +12,7 @@ Open the [latest published release](https://github.com/JunWeiUp/Clipy/releases/l
 | Android, arm64 | `ClipyClone-Android-arm64-v8a-v<version>.apk` |
 | Android, armeabi-v7a | `ClipyClone-Android-armeabi-v7a-v<version>.apk` |
 
-The same release provides `SHA256SUMS.txt` for the APK and ZIP files. Current local source is **v1.0.20**, build **10104**; CI adds the workflow run number. If replacing a release APK with a local build, use the same signing key and a build number higher than the installed package; do not uninstall without backing up app data.
+The same release provides `SHA256SUMS.txt` for the APK and ZIP files. Current local source is **v1.0.20**, build **10106**; CI adds the workflow run number. If replacing a release APK with a local build, use the same signing key and a build number higher than the installed package; do not uninstall without backing up app data.
 
 The macOS ZIP contains an **arm64** application; it is not an Intel or universal build. There is no published iOS installer in this release. The iOS source target is experimental. For development builds, read [Development](DEVELOPMENT.md).
 
