@@ -9,8 +9,9 @@ final class SmartSwitchFocusMonitor {
         let kind: SmartSwitchFocusKind
         let detail: String
         var retryAfterWarmup = false
+        var target: SmartSwitchFocusTarget?
     }
-    typealias Reader = (pid_t, String) -> Inspection
+    typealias Reader = (pid_t, String, TimeInterval) -> Inspection
     struct Snapshot {
         let pid: pid_t
         let kind: SmartSwitchFocusKind
@@ -18,15 +19,19 @@ final class SmartSwitchFocusMonitor {
         let detail: String
         var bundleID = ""
 
-        var shouldOpenSwitch: Bool {
-            // An unresolved Electron editor may still own a live composition.
-            // In ZCode require positive non-text evidence before taking over.
-            kind.shouldOpenSwitch && !(bundleID == "dev.zcode.app" && kind == .unknown)
+        var target: SmartSwitchFocusTarget?
+        var shouldOpenSwitch: Bool { kind.shouldOpenSwitch }
+
+        func matchesTarget(_ other: Snapshot) -> Bool {
+            guard pid == other.pid, let target, let otherTarget = other.target else { return false }
+            return target.matches(otherTarget)
         }
     }
     private(set) var snapshot: Snapshot?
     private let queue = DispatchQueue(label: "Clipy.smart-switch-focus", qos: .userInitiated)
     private let reader: Reader
+    private let requestTimeout: TimeInterval
+    private let readSlots = DispatchSemaphore(value: 2)
     private var activationObserver: NSObjectProtocol?
     private var observer: AXObserver?
     private var reliableObserver = false
@@ -35,8 +40,9 @@ final class SmartSwitchFocusMonitor {
     private var isRunning = false
     private var reportedFocus: (pid: pid_t, kind: SmartSwitchFocusKind)?
 
-    init(reader: @escaping Reader = SmartSwitchFocusMonitor.read) {
+    init(requestTimeout: TimeInterval = 0.15, reader: @escaping Reader = SmartSwitchFocusMonitor.read) {
         self.reader = reader
+        self.requestTimeout = requestTimeout
     }
 
     func start() {
@@ -127,40 +133,39 @@ final class SmartSwitchFocusMonitor {
     }
 
     func inspect(pid: pid_t, bundleID: String, completion: @escaping (Snapshot) -> Void) {
-        inspect(pid: pid, bundleID: bundleID, retries: 2, completion: completion)
-    }
-
-    private func inspect(pid: pid_t, bundleID: String, retries: Int, completion: @escaping (Snapshot) -> Void) {
-        queue.async { [self] in
-            let inspection = reader(pid, bundleID)
-            if inspection.retryAfterWarmup, retries > 0 {
-                // Electron builds its AX tree asynchronously. Retry only this
-                // event's read, with a strict bound; never poll while idle.
-                queue.asyncAfter(deadline: .now() + 0.1) { [self] in
-                    inspect(pid: pid, bundleID: bundleID, retries: retries - 1, completion: completion)
-                }
-                return
+        let deadline = ProcessInfo.processInfo.systemUptime + requestTimeout
+        let request = SmartSwitchFocusRequest(deadline: deadline)
+        func deliver(_ result: Inspection) {
+            DispatchQueue.main.async {
+                guard request.finish() else { return }
+                let result = request.expired ? Inspection(kind: .unknown, detail: "deadline") : result
+                completion(Snapshot(pid: pid, kind: result.kind, observedAt: ProcessInfo.processInfo.systemUptime,
+                                    detail: result.detail, bundleID: bundleID, target: result.target))
             }
-            let result = Snapshot(pid: pid, kind: inspection.kind, observedAt: ProcessInfo.processInfo.systemUptime,
-                                  detail: inspection.detail, bundleID: bundleID)
-            DispatchQueue.main.async { completion(result) }
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + requestTimeout) {
+            deliver(Inspection(kind: .unknown, detail: "deadline"))
+        }
+        guard readSlots.wait(timeout: .now()) == .success else {
+            deliver(Inspection(kind: .unknown, detail: "probeBusy")); return
+        }
+        func attempt(_ retries: Int) {
+            queue.async { [self] in
+                guard request.isActive else { readSlots.signal(); return }
+                let result = reader(pid, bundleID, deadline)
+                if result.retryAfterWarmup, retries > 0, request.isActive {
+                    queue.asyncAfter(deadline: .now() + 0.035) { attempt(retries - 1) }
+                } else {
+                    readSlots.signal()
+                    deliver(result)
+                }
+            }
+        }
+        attempt(2)
     }
 
-    static func read(pid: pid_t, bundleID: String) -> Inspection {
-        guard AXIsProcessTrusted() else { return Inspection(kind: .unknown, detail: "accessibilityDenied") }
-        let application = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(application, 0.06)
-        // Detect Electron support by its capability, not by an application list.
-        // https://www.electronjs.org/docs/latest/tutorial/accessibility#macos
-        var enabled: CFTypeRef?
-        let manualStatus = AXUIElementCopyAttributeValue(application, "AXManualAccessibility" as CFString, &enabled)
-        let supportsManualAX = manualStatus == .success && (enabled as? Bool) != nil
-        return inspectFocusedAfterEnablingManualAX(enabled: supportsManualAX ? enabled as? Bool : nil, enable: {
-            AXUIElementSetAttributeValue(application, "AXManualAccessibility" as CFString, kCFBooleanTrue) == .success
-        }, readFocused: {
-            readFocusedElement(application: application, pid: pid, bundleID: bundleID, supportsManualAX: supportsManualAX)
-        })
+    static func read(pid: pid_t, bundleID: String, deadline: TimeInterval) -> Inspection {
+        SmartSwitchFocusProbe(deadline: deadline).read(pid: pid, bundleID: bundleID)
     }
 
     /// Some Electron builds keep reporting AXManualAccessibility=false even when
@@ -173,54 +178,25 @@ final class SmartSwitchFocusMonitor {
         return result
     }
 
-    private static func readFocusedElement(application: AXUIElement, pid: pid_t, bundleID: String,
-                                           supportsManualAX: Bool) -> Inspection {
-        var focused: CFTypeRef?
-        var focusedStatus = AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute as CFString, &focused)
-        // The system-wide focus can point to the real Electron text control when
-        // the app-level attribute is still a container. Never inspect another app.
-        let system = AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(system, 0.06)
-        var systemFocused: CFTypeRef?
-        if AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &systemFocused) == .success,
-           let systemFocused, CFGetTypeID(systemFocused) == AXUIElementGetTypeID() {
-            let element = unsafeBitCast(systemFocused, to: AXUIElement.self)
-            var owner: pid_t = 0
-            if AXUIElementGetPid(element, &owner) == .success, owner == pid {
-                focused = systemFocused
-                focusedStatus = .success
-            }
-        }
-        if focusedStatus == .noValue, bundleID == "com.apple.finder" {
-            var window: CFTypeRef?
-            // Finder with neither a focused element nor a window is the desktop.
-            if AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &window) == .noValue {
-                return Inspection(kind: .nonText, detail: "finderDesktop")
-            }
-        }
-        guard focusedStatus == .success,
-              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else {
-            return Inspection(kind: .unknown, detail: "focusedStatus=\(focusedStatus.rawValue)",
-                              retryAfterWarmup: focusedStatus == .cannotComplete || (supportsManualAX && focusedStatus == .noValue))
-        }
-        let element = unsafeBitCast(focused, to: AXUIElement.self)
-        AXUIElementSetMessagingTimeout(element, 0.06)
-        func attribute(_ name: String) -> CFTypeRef? {
-            var value: CFTypeRef?
-            return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
-        }
-        guard let role = attribute(kAXRoleAttribute) as? String else { return Inspection(kind: .unknown, detail: "missingRole") }
-        var writable = DarwinBoolean(false)
-        let writableStatus = AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &writable)
-        var selectedWritable = DarwinBoolean(false)
-        let selectedWritableStatus = AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &selectedWritable)
-        let selectedRange = attribute(kAXSelectedTextRangeAttribute)
-        let facts = SmartSwitchFocusFacts(role: role, subrole: attribute(kAXSubroleAttribute) as? String,
-            hasTextSelection: selectedRange != nil,
-            selectedTextIsWritable: selectedWritableStatus == .success && selectedWritable.boolValue,
-            valueIsWritable: writableStatus == .success && writable.boolValue,
-            editable: attribute("AXEditable") as? Bool,
-            readSucceeded: true)
-        return Inspection(kind: facts.kind, detail: "role=\(role) selection=\(facts.hasTextSelection) selectedWritable=\(facts.selectedTextIsWritable) valueWritable=\(facts.valueIsWritable) editable=\(facts.editable.map(String.init) ?? "unknown")")
+}
+
+private final class SmartSwitchFocusRequest {
+    let deadline: TimeInterval
+    private let lock = NSLock()
+    private var completed = false
+
+    init(deadline: TimeInterval) { self.deadline = deadline }
+    var expired: Bool { ProcessInfo.processInfo.systemUptime >= deadline }
+    var isActive: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !completed && !expired
+    }
+    func finish() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !completed else { return false }
+        completed = true
+        return true
     }
 }

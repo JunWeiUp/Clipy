@@ -465,11 +465,11 @@ struct L10n {
     private static let table: [AppLanguage: [L10nKey: String]] = [
         .zh: [
             .smartVoiceTitle: "语音自动入口",
-            .smartVoiceEnabled: "未识别到文字输入框时，接入智能切换",
+            .smartVoiceEnabled: "确认非输入控件时，接入智能切换",
             .smartVoiceTrigger: "豆包的长按语音键",
             .smartVoiceRightCommand: "右侧 Command（⌘）",
             .smartVoiceRightOption: "右侧 Option（⌥）",
-            .smartVoiceHint: "与豆包「长按模式」使用同一按键。长按时重新检查当前焦点：识别到文字输入框就保持普通语音，否则呼出小窗口，文字落入后按回车。ZCode 中输入框或焦点不明确时保留普通语音；其他应用读不到焦点时会弹出，少数自绘输入框可能误弹。短按和组合键照常；不接管免按模式或语音按钮。",
+            .smartVoiceHint: "与豆包「长按模式」使用同一按键。所有应用统一判断：输入框或焦点不明确时保留普通语音；确认非输入控件并复核同一目标后才呼出窗口，文字落入后按回车。部分自绘界面无法确认，可用智能切换快捷键手动呼出。短按和组合键照常；不接管免按模式或语音按钮。",
             .smartVoiceInputMonitoring: "打开输入监控设置",
             .smartVoiceRecheck: "重新检查",
             .smartVoiceDisabled: "自动入口已关闭，原有智能切换快捷键仍可使用。",
@@ -897,11 +897,11 @@ struct L10n {
         ],
         .en: [
             .smartVoiceTitle: "Automatic voice entry",
-            .smartVoiceEnabled: "Open Smart Switch unless a text input is detected",
+            .smartVoiceEnabled: "Open Smart Switch only for confirmed non-text focus",
             .smartVoiceTrigger: "Doubao hold-to-talk key",
             .smartVoiceRightCommand: "Right Command (⌘)",
             .smartVoiceRightOption: "Right Option (⌥)",
-            .smartVoiceHint: "Match Doubao’s hold-to-talk key. Each hold checks focus again: detected text inputs keep normal dictation; confirmed non-text focus opens the window. Unavailable ZCode focus keeps dictation; unavailable focus in other apps opens the window. Press Return after dictation. Some custom text controls may also open it if they do not expose input information. Short taps and shortcuts pass through; hands-free mode and voice buttons are not intercepted.",
+            .smartVoiceHint: "Match Doubao’s hold-to-talk key. All apps keep normal dictation for text inputs or unresolved focus. Only confirmed non-text focus on the same rechecked target opens the window; press Return after dictation. Custom interfaces with incomplete focus information may need the regular Smart Switch shortcut. Short taps and shortcuts pass through; hands-free mode and voice buttons are not intercepted.",
             .smartVoiceInputMonitoring: "Open Input Monitoring settings",
             .smartVoiceRecheck: "Check again",
             .smartVoiceDisabled: "Automatic entry is off. The regular Smart Switch shortcut remains available.",

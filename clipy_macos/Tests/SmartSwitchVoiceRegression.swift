@@ -26,7 +26,7 @@ private final class VoiceFocusReaderFixture {
     let results: [SmartSwitchFocusMonitor.Inspection]
     init(_ results: [SmartSwitchFocusMonitor.Inspection]) { self.results = results }
     var callCount: Int { lock.lock(); defer { lock.unlock() }; return reads }
-    func read(_ pid: pid_t, _ bundleID: String) -> SmartSwitchFocusMonitor.Inspection {
+    func read(_ pid: pid_t, _ bundleID: String, _ deadline: TimeInterval) -> SmartSwitchFocusMonitor.Inspection {
         lock.lock()
         defer { lock.unlock() }
         let result = results[min(reads, results.count - 1)]
@@ -53,14 +53,14 @@ func runSmartSwitchFocusWarmupTests() async {
     let stillWarming = SmartSwitchFocusMonitor.inspectFocusedAfterEnablingManualAX(enabled: false, enable: { true },
         readFocused: { .init(kind: .unknown, detail: "noFocus") })
     precondition(stillWarming.retryAfterWarmup, "Unready Electron focus did not receive a bounded retry")
-    func inspect(_ fixture: VoiceFocusReaderFixture) async -> SmartSwitchFocusMonitor.Snapshot {
+    func inspect(_ fixture: VoiceFocusReaderFixture, bundleID: String = "dev.zcode.app") async -> SmartSwitchFocusMonitor.Snapshot {
         let monitor = SmartSwitchFocusMonitor(reader: fixture.read)
         return await withCheckedContinuation { continuation in
-            monitor.inspect(pid: 123, bundleID: "dev.zcode.app") { continuation.resume(returning: $0) }
+            monitor.inspect(pid: 123, bundleID: bundleID) { continuation.resume(returning: $0) }
         }
     }
     let warming = SmartSwitchFocusMonitor.Inspection(kind: .unknown, detail: "electronAXWarmingUp", retryAfterWarmup: true)
-    let page = VoiceFocusReaderFixture([warming, .init(kind: .nonText, detail: "role=AXWebArea")])
+    let page = VoiceFocusReaderFixture([warming, .init(kind: .nonText, detail: "role=AXButton")])
     let pageResult = await inspect(page)
     precondition(pageResult.kind == .nonText && page.callCount == 2, "Electron warmup cached an unknown focus instead of reading the ready page")
     let editor = VoiceFocusReaderFixture([warming, .init(kind: .textInput, detail: "role=AXTextArea")])
@@ -72,14 +72,52 @@ func runSmartSwitchFocusWarmupTests() async {
     precondition(!unavailableResult.shouldOpenSwitch, "Unresolved ZCode input stole dictation by opening a popup")
     let otherUnknown = SmartSwitchFocusMonitor.Snapshot(pid: 123, kind: .unknown, observedAt: 0,
         detail: "noFocus", bundleID: "test.other")
-    precondition(otherUnknown.shouldOpenSwitch, "ZCode input protection changed the fallback in unrelated apps")
-    let group = VoiceFocusReaderFixture([.init(kind: .nonText, detail: "role=AXGroup")])
+    precondition(!otherUnknown.shouldOpenSwitch, "An unfamiliar app lost unknown-focus protection")
+    // Doubao and Codex can temporarily return noValue from AXFocusedUIElement
+    // despite a live editor. Preserve the buffered voice key in that state too.
+    for bundleID in ["com.bot.pc.doubao", "com.work.pc.doubao", "com.openai.codex", "dev.zcode.app", "dev.zed.Zed", "test.unseen.editor"] {
+        let editor = VoiceFocusReaderFixture([.init(kind: .unknown, detail: "focusedStatus=-25212"),
+                                             .init(kind: .textInput, detail: "role=AXTextArea"),
+                                             .init(kind: .nonText, detail: "role=AXButton")])
+        let editorMonitor = SmartSwitchFocusMonitor(reader: editor.read)
+        for expected in [SmartSwitchFocusKind.unknown, .textInput, .nonText] {
+            let result = await withCheckedContinuation { continuation in
+                editorMonitor.inspect(pid: 789, bundleID: bundleID) { continuation.resume(returning: $0) }
+            }
+            precondition(result.kind == expected && result.shouldOpenSwitch == (expected == .nonText),
+                         "Editor protection stole dictation or kept stale focus after leaving the input: \(bundleID)")
+            var gesture = SmartSwitchVoiceGesture()
+            _ = gesture.handle(.down(eligible: true))
+            if !result.shouldOpenSwitch {
+                precondition(gesture.handle(.preserveDictation).actions == [.replayDown],
+                             "Editor protection swallowed the original voice trigger: \(bundleID)")
+                precondition(gesture.handle(.hold(eligible: true)).actions.isEmpty,
+                             "A late hold reopened the switcher after preserving dictation: \(bundleID)")
+            } else {
+                precondition(gesture.handle(.hold(eligible: result.shouldOpenSwitch)).actions == [.showPanel],
+                             "Confirmed non-text focus no longer opens the switcher: \(bundleID)")
+            }
+        }
+        let warmingEditor = VoiceFocusReaderFixture([warming, .init(kind: .textInput, detail: "role=AXTextArea source=windowFocused")])
+        let readyEditor = await inspect(warmingEditor, bundleID: bundleID)
+        precondition(!readyEditor.shouldOpenSwitch && warmingEditor.callCount == 2,
+                     "Editor focus recovery failed to preserve input during warmup: \(bundleID)")
+        let missing = VoiceFocusReaderFixture([.init(kind: .unknown, detail: "focusedStatus=-25212", retryAfterWarmup: true)])
+        let unresolved = await inspect(missing, bundleID: bundleID)
+        precondition(unresolved.kind == .unknown && !unresolved.shouldOpenSwitch && missing.callCount == 3,
+                     "Exhausted focus retries opened a popup or invented text focus: \(bundleID)")
+    }
+    runFocusedDescendantTests()
+    runUniversalFocusTests()
+    runFocusTargetTests()
+    await runFocusDeadlineTests()
+    let group = VoiceFocusReaderFixture([.init(kind: .unknown, detail: "role=AXGroup")])
     let groupResult = await inspect(group)
-    precondition(groupResult.shouldOpenSwitch && group.callCount == 1, "A non-editable ZCode container caused polling or blocked routing")
+    precondition(!groupResult.shouldOpenSwitch && group.callCount == 1, "An opaque container stole dictation")
     // The same app can stop being editable without a focus-change notification.
     // Each inspection must use the new reader result, not a cached input verdict.
     let changing = VoiceFocusReaderFixture([.init(kind: .textInput, detail: "role=AXTextArea"),
-                                           .init(kind: .nonText, detail: "role=AXSplitGroup")])
+                                           .init(kind: .nonText, detail: "role=AXButton")])
     let monitor = SmartSwitchFocusMonitor(reader: changing.read)
     func fresh() async -> SmartSwitchFocusMonitor.Snapshot {
         await withCheckedContinuation { continuation in
@@ -90,7 +128,135 @@ func runSmartSwitchFocusWarmupTests() async {
     let container = await fresh()
     precondition(!input.shouldOpenSwitch && container.shouldOpenSwitch && changing.callCount == 2,
                  "An old text-input verdict blocked the next fresh focus check")
-    print("Smart Switch focus regressions passed (Electron flag/read ordering, ZCode input protection, fresh reads, bounded retry).")
+    print("Smart Switch focus regressions passed (universal input protection, Electron warmup, bounded/cyclic trees, target identity, deadlines, queue bounds, late results).")
+}
+
+private func runUniversalFocusTests() {
+    let cases: [(SmartSwitchFocusFacts, SmartSwitchFocusKind)] = [
+        (.init(role: "AXWindow", readSucceeded: true), .unknown),
+        (.init(role: "AXWindow", readSucceeded: false), .unknown),
+        (.init(role: nil, readSucceeded: true), .unknown),
+        (.init(role: "AXTextArea", readSucceeded: true), .textInput),
+        (.init(role: "AXWindow", hasTextSelection: true, valueIsWritable: true, readSucceeded: true), .textInput),
+        (.init(role: "AXButton", readSucceeded: true), .nonText),
+        (.init(role: "AXMenuItem", readSucceeded: true), .nonText),
+        (.init(role: "AXSlider", hasTextSelection: true, valueIsWritable: true, readSucceeded: true), .nonText),
+        (.init(role: "AXButton", selectedTextIsWritable: true, readSucceeded: true), .unknown),
+        (.init(role: "AXLink", editable: true, readSucceeded: true), .unknown),
+        (.init(role: "AXApplication", readSucceeded: true), .unknown),
+        (.init(role: "AXTable", readSucceeded: true), .unknown),
+        (.init(role: "AXCell", readSucceeded: true), .unknown)
+    ]
+    for bundleID in ["dev.zed.Zed", "com.openai.codex", "test.unseen.editor"] {
+        for (facts, expected) in cases {
+            precondition(facts.kind == expected, "Text capability classification changed")
+            let snapshot = SmartSwitchFocusMonitor.Snapshot(pid: 456, kind: facts.kind, observedAt: 0,
+                detail: "fixture", bundleID: bundleID)
+            precondition(snapshot.shouldOpenSwitch == (expected == .nonText), "App identity changed routing")
+            var gesture = SmartSwitchVoiceGesture()
+            _ = gesture.handle(.down(eligible: true))
+            precondition(gesture.handle(.hold(eligible: snapshot.shouldOpenSwitch)).actions ==
+                         (expected == .nonText ? [.showPanel] : [.replayDown]), "Input protection lost a voice trigger")
+        }
+    }
+}
+
+private func runFocusTargetTests() {
+    // AX references are opaque fixtures only; no IPC is performed on these PIDs.
+    let first = AXUIElementCreateApplication(123), second = AXUIElementCreateApplication(456)
+    let same = AXUIElementCreateApplication(123)
+    let target = SmartSwitchFocusTarget(element: first, window: second)
+    precondition(target.matches(.init(element: same, window: second)), "Stable target was rejected")
+    precondition(!target.matches(.init(element: second, window: second)), "Changed control was accepted")
+    precondition(!target.matches(.init(element: same, window: first)), "Changed window was accepted")
+    precondition(!target.matches(.init(element: same)), "Lost window identity was accepted")
+    precondition(!SmartSwitchFocusTarget().matches(.init()), "Missing elements became equal evidence")
+    precondition(SmartSwitchFocusTarget(desktop: true).matches(.init(desktop: true)), "Desktop identity changed")
+    let before = SmartSwitchFocusMonitor.Snapshot(pid: 123, kind: .nonText, observedAt: 0, detail: "fixture", target: target)
+    let after = SmartSwitchFocusMonitor.Snapshot(pid: 456, kind: .nonText, observedAt: 1, detail: "fixture", target: target)
+    precondition(!before.matchesTarget(after), "Target comparison ignored the originating PID")
+}
+
+@MainActor
+private func runFocusDeadlineTests() async {
+    func waitForSignal(_ semaphore: DispatchSemaphore) async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                precondition(semaphore.wait(timeout: .now() + 2) == .success, "Slow-reader fixture did not progress")
+                continuation.resume()
+            }
+        }
+    }
+    let gate = DispatchSemaphore(value: 0)
+    let started = DispatchSemaphore(value: 0)
+    let finished = DispatchSemaphore(value: 0)
+    let fixture = VoiceFocusReaderFixture([.init(kind: .nonText, detail: "lateButton", retryAfterWarmup: true)])
+    let monitor = SmartSwitchFocusMonitor(requestTimeout: 0.05, reader: { pid, bundle, deadline in
+        started.signal()
+        _ = gate.wait(timeout: .now() + 2)
+        defer { finished.signal() }
+        return fixture.read(pid, bundle, deadline)
+    })
+    var received: [SmartSwitchFocusMonitor.Snapshot] = []
+    var gesture = SmartSwitchVoiceGesture()
+    _ = gesture.handle(.down(eligible: true))
+    monitor.inspect(pid: 123, bundleID: "test.slow") { snapshot in
+        received.append(snapshot)
+        if !snapshot.shouldOpenSwitch { _ = gesture.handle(.preserveDictation) }
+    }
+    await waitForSignal(started)
+    // A blocked AX call must not retain the modifier until the worker returns.
+    monitor.inspect(pid: 123, bundleID: "test.queued") { received.append($0) }
+    monitor.inspect(pid: 123, bundleID: "test.busy") { received.append($0) }
+    try? await Task.sleep(nanoseconds: 150_000_000)
+    precondition(received.count == 3 && received.allSatisfy { !$0.shouldOpenSwitch },
+                 "A stalled reader blocked the main-thread deadline or queue bound")
+    precondition(received.contains { $0.detail == "probeBusy" } && received.contains { $0.detail == "deadline" },
+                 "Timeout/queue exhaustion did not provide a diagnostic reason")
+    precondition(gesture.phase == .passthrough, "Timeout did not commit ordinary dictation")
+    gate.signal()
+    await waitForSignal(finished)
+    try? await Task.sleep(nanoseconds: 100_000_000)
+    precondition(received.count == 3 && fixture.callCount == 1, "Late result completed twice or retried an expired request")
+    precondition(gesture.handle(.down(eligible: true)).actions.isEmpty &&
+                 gesture.handle(.hold(eligible: true)).actions.isEmpty, "Late non-text evidence rearmed the held key")
+    _ = gesture.handle(.up)
+    precondition(gesture.handle(.down(eligible: true)).actions == [.bufferDown, .scheduleHold],
+                 "A fresh press remained blocked after the timed-out gesture")
+}
+
+private func runFocusedDescendantTests() {
+    let tree: [Int: (focused: Bool, children: [Int])] = [
+        0: (true, [1, 2]), 1: (false, []), 2: (false, [3]), 3: (true, [])
+    ]
+    let focused = SmartSwitchFocusTraversal.collect(from: 0, hasTime: { true }, same: ==, read: { tree[$0] })
+    precondition(focused.nodes == [3] && focused.complete, "Window/unfocused input masked the actual descendant")
+    let unfocused = SmartSwitchFocusTraversal.collect(from: 0, hasTime: { true }, same: ==, read: { node in
+        tree[node].map { (false, $0.children) }
+    })
+    precondition(unfocused.nodes.isEmpty && unfocused.complete, "Visible controls invented descendant focus")
+    let ambiguous = SmartSwitchFocusTraversal.collect(from: 0, hasTime: { true }, same: ==, read: { node in
+        tree[node].map { (node == 1 || node == 3, $0.children) }
+    })
+    precondition(ambiguous.nodes == [1, 3], "First focused element concealed conflicting focus")
+    let unavailable = SmartSwitchFocusTraversal.collect(from: 0, hasTime: { true }, same: ==, read: { _ in nil })
+    precondition(unavailable.nodes.isEmpty && !unavailable.complete, "Unavailable AX tree became reliable evidence")
+    var reads = 0
+    let cyclic = SmartSwitchFocusTraversal.collect(from: 0, limit: 4, hasTime: { true }, same: ==, read: { node in
+        reads += 1
+        return (false, [node])
+    })
+    precondition(cyclic.nodes.isEmpty && reads == 1, "AX cycle was read more than once")
+    let bounded = SmartSwitchFocusTraversal.collect(from: 0, limit: 2, hasTime: { true }, same: ==, read: { tree[$0] })
+    precondition(!bounded.complete, "Truncated AX tree was considered complete")
+    let shallow = SmartSwitchFocusTraversal.collect(from: 0, maxDepth: 1, hasTime: { true }, same: ==, read: { tree[$0] })
+    precondition(!shallow.complete && shallow.nodes.isEmpty, "Tree depth budget was ignored")
+    reads = 0
+    let timedOut = SmartSwitchFocusTraversal.collect(from: 0, hasTime: { reads < 2 }, same: ==, read: { node in
+        reads += 1
+        return tree[node]
+    })
+    precondition(!timedOut.complete && reads == 2, "Window fallback ignored its time budget")
 }
 
 @MainActor
@@ -347,11 +513,11 @@ func runSmartSwitchVoicePolicyTests() {
            "Secure text control intercepted")
     expect(SmartSwitchFocusFacts(role: "AXGroup", hasTextSelection: true, selectedTextIsWritable: true, readSucceeded: true).kind == .textInput,
            "Custom editable text intercepted")
-    expect(SmartSwitchFocusFacts(role: "AXGroup", hasTextSelection: true, readSucceeded: true).kind == .nonText,
+    expect(SmartSwitchFocusFacts(role: "AXGroup", hasTextSelection: true, readSucceeded: true).kind == .unknown,
            "Read-only selection in an opaque group incorrectly proved editability")
     // Real Edge reproduction: AXLink has a selected text range, but AXValue is
     // not writable. The old classifier incorrectly treated it as a text input.
-    for role in ["AXLink", "AXStaticText", "AXHeading", "AXWebArea"] {
+    for role in ["AXLink", "AXStaticText", "AXHeading"] {
         expect(SmartSwitchFocusFacts(role: role, hasTextSelection: true, readSucceeded: true).kind == .nonText,
                "Read-only Chromium content prevented automatic voice entry")
     }
@@ -359,12 +525,12 @@ func runSmartSwitchVoicePolicyTests() {
                                 readSucceeded: true).kind == .textInput, "Editable web content intercepted")
     expect(SmartSwitchFocusFacts(role: "AXGroup", editable: true, readSucceeded: true).kind == .textInput,
            "Web contenteditable intercepted")
-    expect(SmartSwitchFocusFacts(role: "AXGroup", readSucceeded: true).kind.shouldOpenSwitch, "Non-editable group still blocked routing")
+    expect(!SmartSwitchFocusFacts(role: "AXGroup", readSucceeded: true).kind.shouldOpenSwitch, "Opaque group stole dictation")
     expect(SmartSwitchFocusFacts(role: "AXWindow", readSucceeded: false).kind == .unknown, "AX failure assumed no focus")
     expect(SmartSwitchFocusFacts(role: nil, readSucceeded: true).kind == .unknown, "Missing AX role assumed no focus")
-    expect(SmartSwitchFocusFacts(role: "AXOutline", readSucceeded: true).kind == .nonText,
-           "Finder selection was not eligible")
-    for role in ["AXWebArea", "AXButton", "AXStaticText", "AXLink"] {
+    expect(SmartSwitchFocusFacts(role: "AXOutline", readSucceeded: true).kind == .unknown,
+           "A container was mistaken for a non-text control")
+    for role in ["AXButton", "AXStaticText", "AXLink"] {
         expect(SmartSwitchFocusFacts(role: role, hasTextSelection: true, readSucceeded: true).kind == .nonText,
                "ZCode's non-editable page was blocked by the editor exclusion")
     }
@@ -376,8 +542,8 @@ func runSmartSwitchVoicePolicyTests() {
     expect(SmartSwitchFocusFacts(role: "AXWebArea", editable: true, readSucceeded: true).kind == .textInput,
            "Editable ZCode web content was treated as an empty page")
     for role in ["AXWindow", "AXScrollArea", "AXGroup", "AXSplitGroup", "AXSharedScreen", "CustomCanvas"] {
-        expect(SmartSwitchFocusFacts(role: role, hasTextSelection: true, readSucceeded: true).kind.shouldOpenSwitch,
-               "A container or unfamiliar non-input role still required an allowlist")
+        expect(!SmartSwitchFocusFacts(role: role, hasTextSelection: true, readSucceeded: true).kind.shouldOpenSwitch,
+               "An unfamiliar container stole dictation")
     }
     for role in ["AXSlider", "AXCheckBox", "AXTab", "AXPopUpButton"] {
         expect(SmartSwitchFocusFacts(role: role, valueIsWritable: true, readSucceeded: true).kind == .nonText,
@@ -387,14 +553,16 @@ func runSmartSwitchVoicePolicyTests() {
                                 readSucceeded: true).kind == .textInput, "Custom text-capable control lost input protection")
     expect(SmartSwitchFocusFacts(role: "AXTextArea", editable: false, readSucceeded: true).kind == .nonText,
            "Explicitly read-only text area blocked the popup")
-    expect(SmartSwitchFocusKind.unknown.shouldOpenSwitch && !SmartSwitchFocusKind.textInput.shouldOpenSwitch,
+    expect(!SmartSwitchFocusKind.unknown.shouldOpenSwitch && !SmartSwitchFocusKind.textInput.shouldOpenSwitch,
            "Input-only passthrough policy regressed")
-    expect(SmartSwitchFocusFacts(role: "AXWebArea", readSucceeded: true).kind == .nonText,
-           "Browser body without a text selection was not eligible")
+    expect(SmartSwitchFocusFacts(role: "AXWebArea", readSucceeded: true).kind == .unknown,
+           "An opaque browser body stole dictation")
 
     var tap = SmartSwitchVoiceGesture()
     let unchanged = tap.handle(.down(eligible: false))
-    expect(!unchanged.swallow && unchanged.actions.isEmpty && tap.phase == .idle, "A blocked gesture changed the trigger")
+    expect(!unchanged.swallow && unchanged.actions.isEmpty && tap.phase == .passthrough, "A blocked gesture changed the trigger")
+    expect(tap.handle(.down(eligible: true)).actions.isEmpty, "A repeated down rearmed a passed-through gesture")
+    _ = tap.handle(.up)
     let begin = tap.handle(.down(eligible: true))
     expect(begin.swallow && begin.actions == [.bufferDown, .scheduleHold], "Long press was not armed")
     expect(tap.handle(.down(eligible: true)).swallow, "Repeated modifier-down leaked before readiness")
@@ -403,7 +571,7 @@ func runSmartSwitchVoicePolicyTests() {
 
     _ = tap.handle(.down(eligible: true))
     let inputDetected = tap.handle(.preserveDictation)
-    expect(inputDetected.actions == [.replayDown] && tap.phase == .idle, "Fresh input evidence did not immediately restore dictation")
+    expect(inputDetected.actions == [.replayDown] && tap.phase == .passthrough, "Fresh input evidence did not immediately restore dictation")
     expect(tap.handle(.hold(eligible: true)).actions.isEmpty, "An input-field gesture later opened the popup")
     expect(!tap.handle(.up).swallow, "Input-field dictation lost its matching release")
 
@@ -412,18 +580,20 @@ func runSmartSwitchVoicePolicyTests() {
     expect(tap.handle(.preserveDictation).actions.isEmpty, "Late focus inspection replayed a completed gesture")
 
     _ = tap.handle(.down(eligible: true))
-    expect(tap.handle(.hold(eligible: SmartSwitchFocusKind.unknown.shouldOpenSwitch)).actions == [.showPanel],
-           "Unknown focus still suppressed a completed long press")
+    expect(tap.handle(.hold(eligible: SmartSwitchFocusKind.unknown.shouldOpenSwitch)).actions == [.replayDown],
+           "Unknown focus stole a completed long press")
     _ = tap.handle(.up)
 
     _ = tap.handle(.down(eligible: true))
     let shortcut = tap.handle(.other)
     expect(!shortcut.swallow && shortcut.actions == [.replayDown], "Command+C or a mouse click was consumed")
     expect(tap.handle(.hold(eligible: true)).actions.isEmpty, "Cancelled hold still opened a window")
+    _ = tap.handle(.up)
 
     _ = tap.handle(.down(eligible: true))
     let focusChanged = tap.handle(.hold(eligible: false))
-    expect(focusChanged.actions == [.replayDown] && tap.phase == .idle, "Focus changed but routing continued")
+    expect(focusChanged.actions == [.replayDown] && tap.phase == .passthrough, "Focus changed but routing continued")
+    _ = tap.handle(.up)
 
     _ = tap.handle(.down(eligible: true))
     expect(tap.handle(.hold(eligible: true)).actions == [.showPanel], "Hold did not request a focused input")

@@ -18,6 +18,7 @@ final class SmartSwitchVoiceRouter: ObservableObject {
     private var attempt = UUID()
     private var originalPID: pid_t = 0
     private var holdWork: DispatchWorkItem?
+    private var initialFocus: SmartSwitchFocusMonitor.Snapshot?
     private var preparationTimeout: DispatchWorkItem?
     private var trigger: SmartSwitchVoiceKey = .rightCommand
     private var modifierState = SmartSwitchVoiceModifierState(key: .rightCommand)
@@ -93,6 +94,7 @@ final class SmartSwitchVoiceRouter: ObservableObject {
         holdWork?.cancel()
         preparationTimeout?.cancel()
         modifierState.reset()
+        initialFocus = nil
         attempt = UUID()
     }
 
@@ -147,6 +149,7 @@ final class SmartSwitchVoiceRouter: ObservableObject {
             switch action {
             case .bufferDown:
                 bufferedDown = event?.copy()
+                initialFocus = nil
                 attempt = UUID()
             case .scheduleHold:
                 let ticket = attempt
@@ -200,11 +203,14 @@ final class SmartSwitchVoiceRouter: ObservableObject {
 
     private func inspectInitialFocus(ticket: UUID) {
         // Even a cached text input may have lost focus without an AX notification.
-        // Fresh positive input evidence releases the modifier immediately, without
-        // waiting out the hold threshold in normal dictation fields.
+        // Text input or uncertain evidence releases the modifier immediately, without
+        // waiting out the hold threshold in normal or unresolved input fields.
         focus.recheck { [weak self] snapshot in
-            guard let self, self.attempt == ticket, self.gesture.phase == .waiting,
-                  snapshot.pid == self.originalPID, !snapshot.shouldOpenSwitch else { return }
+            guard let self, self.attempt == ticket, self.gesture.phase == .waiting else { return }
+            if snapshot.pid == self.originalPID, snapshot.shouldOpenSwitch {
+                self.initialFocus = snapshot
+                return
+            }
             appLog("SmartVoice preserving dictation focus=\(snapshot.kind) \(snapshot.detail)", level: .debug)
             let decision = self.gesture.handle(.preserveDictation)
             self.perform(decision.actions, event: nil, proxy: nil)
@@ -215,7 +221,8 @@ final class SmartSwitchVoiceRouter: ObservableObject {
         guard attempt == ticket, gesture.phase == .waiting else { return }
         focus.recheck { [weak self] snapshot in
             guard let self, self.attempt == ticket, self.gesture.phase == .waiting else { return }
-            let eligible = snapshot.shouldOpenSwitch && snapshot.pid == self.originalPID &&
+            let eligible = snapshot.shouldOpenSwitch && self.initialFocus?.matchesTarget(snapshot) == true &&
+                snapshot.pid == self.originalPID &&
                 NSWorkspace.shared.frontmostApplication?.processIdentifier == self.originalPID &&
                 AccessibilityManager.isTrusted && !IsSecureEventInputEnabled() && self.modifierState.isHeld
             appLog("SmartVoice hold eligible=\(eligible) focus=\(snapshot.kind) \(snapshot.detail)", level: .debug)
