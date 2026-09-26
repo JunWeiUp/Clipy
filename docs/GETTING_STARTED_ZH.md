@@ -12,7 +12,7 @@
 | Android，arm64 | `ClipyClone-Android-arm64-v8a-v<version>.apk` |
 | Android，armeabi-v7a | `ClipyClone-Android-armeabi-v7a-v<version>.apk` |
 
-同一发布页附有 APK 和 ZIP 的 `SHA256SUMS.txt` 校验文件。当前本地源码为 **v1.0.21**，默认构建号 **10117**；CI 会再加上工作流运行序号。如需用本地构建覆盖正式 APK，应使用相同签名密钥和高于已安装包的构建号，不要在未备份数据时卸载应用。
+同一发布页附有 APK 和 ZIP 的 `SHA256SUMS.txt` 校验文件。当前本地源码为 **v1.0.22**，默认构建号 **10118**；CI 会再加上工作流运行序号。如需用本地构建覆盖正式 APK，应使用相同签名密钥和高于已安装包的构建号，不要在未备份数据时卸载应用。
 
 macOS ZIP 中是 **arm64** 应用，不是 Intel 或通用架构版本。本次发布没有 iOS 安装包，iOS 源码目标仍为实验性。开发版构建方法见[开发指南](DEVELOPMENT.md)。
 

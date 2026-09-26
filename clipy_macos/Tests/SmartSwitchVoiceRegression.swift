@@ -235,9 +235,14 @@ private func runFocusedDescendantTests() {
         tree[node].map { (false, $0.children) }
     })
     precondition(unfocused.nodes.isEmpty && unfocused.complete, "Visible controls invented descendant focus")
-    let ambiguous = SmartSwitchFocusTraversal.collect(from: 0, hasTime: { true }, same: ==, read: { node in
-        tree[node].map { (node == 1 || node == 3, $0.children) }
-    })
+    let readAmbiguous: (Int) -> (focused: Bool, children: [Int])? = { node in
+        guard let entry = tree[node] else { return nil }
+        let isFocused = node == 1 || node == 3
+        return (focused: isFocused, children: entry.children)
+    }
+    let ambiguous = SmartSwitchFocusTraversal.collect(
+        from: 0, hasTime: { true }, same: ==, read: readAmbiguous
+    )
     precondition(ambiguous.nodes == [1, 3], "First focused element concealed conflicting focus")
     let unavailable = SmartSwitchFocusTraversal.collect(from: 0, hasTime: { true }, same: ==, read: { _ in nil })
     precondition(unavailable.nodes.isEmpty && !unavailable.complete, "Unavailable AX tree became reliable evidence")
