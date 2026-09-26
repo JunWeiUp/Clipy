@@ -136,6 +136,9 @@ extension SyncSessionMethods on SyncManager {
         if (resolved != null && authorizedPeerIds.contains(resolved)) {
           noteAuthorizedDialFailure();
         }
+        if (resolved != null) {
+          diagnostics.noteError(resolved, 'connect($label)', host: host);
+        }
       }
       return;
     }
@@ -150,6 +153,10 @@ extension SyncSessionMethods on SyncManager {
                 'Dial $reason $host:$peerPort failed: handshake($f)',
                 level: 'warning',
               );
+              // pairingMismatch is already recorded with the peer's name.
+              if (resolved != null && f != 'pairingMismatch') {
+                diagnostics.noteError(resolved, 'handshake($f)', host: host);
+              }
             },
     );
   }
@@ -212,6 +219,7 @@ extension SyncSessionMethods on SyncManager {
             'Socket error from ${id.substring(0, id.length.clamp(0, 8))}: $e',
             level: 'warning',
           );
+          diagnostics.noteError(id, 'socketError');
           unawaited(
             _closeSession(id, scheduleReconnect: true, keepaliveDriven: true),
           );
@@ -380,6 +388,7 @@ extension SyncSessionMethods on SyncManager {
     if (clipboardSyncPeerIds.contains(env.peerId)) {
       unawaited(_requestHistoryFromPeer(env.peerId));
     }
+    diagnostics.noteSessionUp(env.peerId, name: name, host: host);
     appLog(
       'Session up with $name (${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}) @ $host:$peerPort',
     );
@@ -481,6 +490,7 @@ extension SyncSessionMethods on SyncManager {
         Uint8List.fromList(bytes.sublist(offset, offset + 4)),
       ).getUint32(0, Endian.big);
       if (length <= 0 || length > syncMaxFrameLength) {
+        diagnostics.noteError(peerId, 'badFrameLength($length)');
         unawaited(
           _closeSession(peerId, scheduleReconnect: true, keepaliveDriven: true),
         );
@@ -520,6 +530,7 @@ extension SyncSessionMethods on SyncManager {
     // Persist any buffered fetch catch-up before the socket is gone (ACKs may
     // fail; store still runs).
     await _flushHistoryFetchCatchUp(peerId);
+    diagnostics.noteSessionDown(peerId);
     appLog(
       'Session closed with ${peerId.substring(0, peerId.length.clamp(0, 8))}',
     );

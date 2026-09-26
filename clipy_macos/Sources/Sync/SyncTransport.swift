@@ -111,14 +111,23 @@ extension SyncManager {
                 appLog("Dial \(reason) \(host):\(port) failed: connect(\(failure?.label ?? "unknown"))", level: .warning)
                 // A dead authorized endpoint is the auto-rediscover signal;
                 // scan/direct dials have no stable peer identity to count against.
-                if let resolvedPeerId { noteAuthorizedDialFailure(peerId: resolvedPeerId) }
+                if let resolvedPeerId {
+                    noteAuthorizedDialFailure(peerId: resolvedPeerId)
+                    diagnostics.noteError(peerId: resolvedPeerId, host: host, "connect(\(failure?.label ?? "unknown"))")
+                }
             }
             return
         }
         if reason == "scan" { stats?.recordConnectOk() }
         performHandshake(fd: fd, host: host, port: port, inbound: false) { handshakeFailure in
             if reason == "scan" { stats?.recordHandshakeFailure(handshakeFailure) }
-            else { appLog("Dial \(reason) \(host):\(port) failed: handshake(\(handshakeFailure.label))", level: .warning) }
+            else {
+                appLog("Dial \(reason) \(host):\(port) failed: handshake(\(handshakeFailure.label))", level: .warning)
+                // pairingMismatch already recorded with the peer's reported name.
+                if let resolvedPeerId, handshakeFailure != .pairingMismatch {
+                    self.diagnostics.noteError(peerId: resolvedPeerId, host: host, "handshake(\(handshakeFailure.label))")
+                }
+            }
         }
     }
 
@@ -193,6 +202,7 @@ extension SyncManager {
             self.recordPeer(peerId: peerId, name: name, host: host, port: port)
             self.persistEndpoint(peerId: peerId, name: name, host: host, port: port)
             self.flushPending(for: peerId)
+            self.diagnostics.noteSessionUp(peerId: peerId, name: name, host: host)
             appLog("Session up with \(name) (\(peerId.prefix(8))) @ \(host):\(port)")
         }
     }
@@ -228,7 +238,9 @@ extension SyncManager {
                 appLog("recv EOF from \(peerId.prefix(8))")
                 closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true)
             } else if errno != EAGAIN {
-                appLog("recv error errno=\(errno) from \(peerId.prefix(8))")
+                let err = errno
+                appLog("recv error errno=\(err) from \(peerId.prefix(8))")
+                diagnostics.noteError(peerId: peerId, "recvError(\(err))")
                 closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true)
             }
             return
@@ -240,7 +252,10 @@ extension SyncManager {
         while true {
             guard session.buffer.count >= 4 else { sessions[peerId] = session; return }
             let length = session.buffer.withUnsafeBytes { Int(UInt32(bigEndian: $0.loadUnaligned(as: UInt32.self))) }
-            guard length > 0, length <= Self.maxFrameLength else { closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true); return }
+            guard length > 0, length <= Self.maxFrameLength else {
+                diagnostics.noteError(peerId: peerId, "badFrameLength(\(length))")
+                closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true); return
+            }
             guard session.buffer.count >= 4 + length else { sessions[peerId] = session; return }
             let frame = session.buffer.subdata(in: 4..<(4 + length))
             if session.buffer.count == 4 + length { session.buffer = Data() } else { session.buffer.removeSubrange(0..<(4 + length)) }
@@ -268,6 +283,7 @@ extension SyncManager {
         inFlightHashes.removeValue(forKey: peerId)
         // Mid-transfer file chunks will never arrive on this socket again.
         discardIncomingFiles(from: peerId)
+        diagnostics.noteSessionDown(peerId: peerId)
         appLog("Session closed with \(peerId.prefix(8))")
         guard scheduleReconnect, !(keepaliveDriven && !session.isClient) else { return }
         self.scheduleReconnect(peerId: peerId)

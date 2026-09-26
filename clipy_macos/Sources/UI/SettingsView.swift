@@ -449,6 +449,7 @@ struct SettingsView: View {
             }
           }
         }
+        SyncDiagnosticsSection()
       }
       if pageID == "permissions" {
         ScreenshotSettingsView(pageID: "permissions")

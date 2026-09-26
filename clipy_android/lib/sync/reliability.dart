@@ -88,6 +88,7 @@ extension SyncReliabilityMethods on SyncManager {
       try {
         session.socket.add(data);
         await session.socket.flush();
+        diagnostics.noteSent(peerId);
         if (_isQueueable(type) && hash != null && hash.isNotEmpty) {
           _inFlightHashes.putIfAbsent(peerId, () => <String>{}).add(hash);
         }
@@ -206,6 +207,7 @@ extension SyncReliabilityMethods on SyncManager {
         }
         try {
           session.socket.add(frame.data);
+          diagnostics.noteSent(peerId);
           if (_isQueueable(frame.type)) {
             _inFlightHashes
                 .putIfAbsent(peerId, () => <String>{})
@@ -252,6 +254,7 @@ extension SyncReliabilityMethods on SyncManager {
         if (data == null) continue;
         try {
           session.socket.add(data);
+          diagnostics.noteSent(peerId);
           _inFlightHashes.putIfAbsent(peerId, () => <String>{}).add(entry.hash);
           await PendingSyncRepository.instance.enqueue(
             peerId: peerId,
@@ -298,6 +301,7 @@ extension SyncReliabilityMethods on SyncManager {
       if (data == null) continue;
       try {
         session.socket.add(data);
+        diagnostics.noteSent(peerId);
         _inFlightHashes.putIfAbsent(peerId, () => <String>{}).add(hash);
         await PendingSyncRepository.instance.enqueue(
           peerId: peerId,
@@ -325,6 +329,7 @@ extension SyncReliabilityMethods on SyncManager {
       );
     }
     _inFlightHashes[from]?.remove(hash);
+    diagnostics.noteAck(from);
     unawaited(PendingSyncRepository.instance.remove(peerId: from, hash: hash));
     unawaited(PendingTextSyncRepository.instance.removeByHash(hash));
   }

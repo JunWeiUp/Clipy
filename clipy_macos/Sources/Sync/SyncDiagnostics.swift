@@ -60,6 +60,38 @@ final class SyncDiagnostics {
 }
 
 extension SyncManager {
+    struct DiagnosticsRow: Identifiable {
+        var id: String { record.peerId }
+        var record: SyncDiagnostics.PeerRecord
+        var displayName: String
+        var isOnline: Bool
+        var isAuthorized: Bool
+        var pendingCount: Int
+    }
+
+    /// One row per peer that is authorized, online, has queued frames, or has
+    /// recorded activity. Online first, then by name.
+    func diagnosticsRows() -> [DiagnosticsRow] {
+        var records = diagnostics.snapshot()
+        let online = syncQueue.sync { Set(sessions.keys) }
+        let pending = PendingSyncRepository.shared.pendingCounts()
+        let authorized = Set(PreferencesManager.shared.authorizedPeerIds)
+        for id in online.union(pending.keys).union(authorized) where records[id] == nil {
+            records[id] = SyncDiagnostics.PeerRecord(peerId: id)
+        }
+        return records.values.map { record in
+            DiagnosticsRow(
+                record: record,
+                displayName: record.name ?? resolvedPeerLabel(peerId: record.peerId),
+                isOnline: online.contains(record.peerId),
+                isAuthorized: authorized.contains(record.peerId),
+                pendingCount: pending[record.peerId] ?? 0)
+        }.sorted {
+            if $0.isOnline != $1.isOnline { return $0.isOnline }
+            return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+    }
+
     func notePairingMismatch(peerId: String, name: String?, host: String) {
         diagnostics.noteError(peerId: peerId, name: name, host: host, "pairingMismatch")
     }

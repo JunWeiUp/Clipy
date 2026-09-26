@@ -342,6 +342,19 @@ enum L10nKey: String {
     case syncPairingGenerate
     case syncPairingApply
     case syncPairingQRHint
+    case syncDiagnosticsTitle
+    case syncDiagnosticsHint
+    case syncDiagnosticsEmpty
+    case syncDiagnosticsReset
+    case syncDiagnosticsPending
+    case syncDiagnosticsLastSent
+    case syncDiagnosticsLastAck
+    case syncDiagnosticsLastReceived
+    case syncDiagnosticsSessionUp
+    case syncDiagnosticsSessionDown
+    case syncDiagnosticsLastError
+    case syncDiagnosticsNever
+    case syncDiagnosticsNotAuthorized
     case syncOfflineAuthorizedDevices
     case deviceOnline
     case deviceOffline
@@ -813,6 +826,19 @@ struct L10n {
             .syncPairingGenerate: "生成配对码",
             .syncPairingApply: "应用",
             .syncPairingQRHint: "用安卓系统相机扫描此二维码，即可在 Clipy 中导入配对密钥并连接本机。二维码包含密钥，请勿分享截图。",
+            .syncDiagnosticsTitle: "同步诊断",
+            .syncDiagnosticsHint: "每台设备的连接状态、待发送队列、最近 ACK 与错误原因，每 2 秒刷新。记录仅保存在内存中，重启后清空。",
+            .syncDiagnosticsEmpty: "暂无设备记录。",
+            .syncDiagnosticsReset: "清空记录",
+            .syncDiagnosticsPending: "待发送 %d",
+            .syncDiagnosticsLastSent: "最近发送",
+            .syncDiagnosticsLastAck: "最近 ACK",
+            .syncDiagnosticsLastReceived: "最近接收",
+            .syncDiagnosticsSessionUp: "连接于",
+            .syncDiagnosticsSessionDown: "断开于",
+            .syncDiagnosticsLastError: "最近错误",
+            .syncDiagnosticsNever: "—",
+            .syncDiagnosticsNotAuthorized: "未授权",
             .syncOfflineAuthorizedDevices: "离线已授权设备（可删除）",
             .deviceOnline: "在线",
             .deviceOffline: "离线",
@@ -1271,6 +1297,19 @@ struct L10n {
             .syncPairingGenerate: "Generate Code",
             .syncPairingApply: "Apply",
             .syncPairingQRHint: "Scan this QR code with the Android system camera to import the pairing secret into Clipy and connect to this Mac. It contains the secret — don't share screenshots of it.",
+            .syncDiagnosticsTitle: "Sync Diagnostics",
+            .syncDiagnosticsHint: "Connection state, pending queue, last ACK and last error for each device. Refreshes every 2 seconds; kept in memory only and cleared on restart.",
+            .syncDiagnosticsEmpty: "No devices recorded yet.",
+            .syncDiagnosticsReset: "Clear Records",
+            .syncDiagnosticsPending: "%d pending",
+            .syncDiagnosticsLastSent: "Last sent",
+            .syncDiagnosticsLastAck: "Last ACK",
+            .syncDiagnosticsLastReceived: "Last received",
+            .syncDiagnosticsSessionUp: "Connected",
+            .syncDiagnosticsSessionDown: "Disconnected",
+            .syncDiagnosticsLastError: "Last error",
+            .syncDiagnosticsNever: "—",
+            .syncDiagnosticsNotAuthorized: "Not authorized",
             .syncOfflineAuthorizedDevices: "Authorized devices that are offline (removable)",
             .deviceOnline: "Online",
             .deviceOffline: "Offline",

@@ -113,6 +113,17 @@ class PendingSyncRepository {
     return rows.isNotEmpty;
   }
 
+  /// Queued frame count per peer, for the sync diagnostics page.
+  Future<Map<String, int>> pendingCounts() async {
+    final rows = await (await _db).rawQuery(
+      'SELECT peer_id, COUNT(*) AS c FROM $_table GROUP BY peer_id',
+    );
+    return {
+      for (final row in rows)
+        if (row['peer_id'] is String) row['peer_id'] as String: row['c'] as int,
+    };
+  }
+
   Future<void> remove({required String peerId, required String hash}) async {
     await (await _db).delete(
       _table,

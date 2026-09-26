@@ -273,6 +273,9 @@ class SyncManager with WidgetsBindingObserver {
   DateTime? _lastSyncTickDiscovery;
   static const _syncTickDiscoveryMinGap = Duration(minutes: 5);
 
+  /// Peers with a live session right now (diagnostics page).
+  Set<String> get connectedPeerIds => _sessions.keys.toSet();
+
   List<String> get authorizedPeerIds =>
       {...clipboardSyncPeerIds, ...notificationSyncPeerIds}.toList()..sort();
 
@@ -692,7 +695,13 @@ class SyncManager with WidgetsBindingObserver {
     required String host,
   }) {
     final env = syncDecodeEnvelope(data);
-    if (env == null || env.v != SyncEnvelope.version) return;
+    if (env == null || env.v != SyncEnvelope.version) {
+      diagnostics.noteError(from, 'badEnvelope');
+      return;
+    }
+    if (env.type != SyncType.ping && env.type != SyncType.pong) {
+      diagnostics.noteReceived(from);
+    }
 
     switch (env.type) {
       case SyncType.ping:
@@ -721,14 +730,8 @@ class SyncManager with WidgetsBindingObserver {
       case SyncType.historyDirect:
         final payload = env.payload;
         if (payload == null) return;
-        final text = _decrypt(payload);
-        if (text == null) {
-          appLog(
-            'history decrypt failed from ${from.substring(0, from.length.clamp(0, 8))}',
-            level: 'warning',
-          );
-          return;
-        }
+        final text = _decryptFrom(payload, from, env.type);
+        if (text == null) return;
         final hash = env.hash ?? '';
         if (_bufferHistoryFetchCatchUp(from, text, hash)) {
           break;
@@ -751,14 +754,14 @@ class SyncManager with WidgetsBindingObserver {
       case SyncType.notifPost:
         final payload = env.payload;
         if (payload == null) return;
-        final text = _decrypt(payload);
+        final text = _decryptFrom(payload, from, env.type);
         if (text == null) return;
         NotificationManager.instance.handleRemoteNotification(text, env.peerId);
         break;
       case SyncType.notifDismiss:
         final payload = env.payload;
         if (payload == null) return;
-        final text = _decrypt(payload);
+        final text = _decryptFrom(payload, from, env.type);
         if (text == null) return;
         NotificationManager.instance.handleRemoteDismiss(text);
         break;
@@ -1084,6 +1087,20 @@ class SyncManager with WidgetsBindingObserver {
 
   String? _encrypt(String text) => _crypto.encryptText(text);
   String? _decrypt(String text) => _crypto.decryptText(text);
+
+  /// Business-payload decrypt: after a verified handshake a failure means
+  /// corrupted data or a peer that changed secrets mid-session.
+  String? _decryptFrom(String payload, String from, String type) {
+    final text = _decrypt(payload);
+    if (text == null) {
+      appLog(
+        '$type decrypt failed from ${from.substring(0, from.length.clamp(0, 8))}',
+        level: 'warning',
+      );
+      diagnostics.noteError(from, 'decryptFailed');
+    }
+    return text;
+  }
 
   Future<void> updatePairingSecret(String secret) async {
     final next = secret.trim();
