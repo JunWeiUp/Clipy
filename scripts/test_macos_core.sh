@@ -10,9 +10,10 @@ cp "${REPO_ROOT}/clipy_macos/Tests/SmartSwitchRegression.swift" "${TEST_DIR}/Sma
 cp "${REPO_ROOT}/clipy_macos/Tests/SmartSwitchVoiceRegression.swift" "${TEST_DIR}/SmartSwitchVoiceRegression.swift"
 cp "${REPO_ROOT}/clipy_macos/Tests/SmartSwitchActionRegression.swift" "${TEST_DIR}/SmartSwitchActionRegression.swift"
 cp "${REPO_ROOT}/clipy_macos/Tests/FolderTransferRegression.swift" "${TEST_DIR}/FolderTransferRegression.swift"
+cp "${REPO_ROOT}/clipy_macos/Tests/SyncTransportRegression.swift" "${TEST_DIR}/SyncTransportRegression.swift"
 SOURCES=()
 while IFS= read -r -d '' source; do SOURCES+=("${source}"); done < <(find "${TEST_DIR}/Sources" -name '*.swift' -print0)
-swiftc "${SOURCES[@]}" "${TEST_DIR}/CoreRegression.swift" "${TEST_DIR}/WordLookupRegression.swift" "${TEST_DIR}/SmartSwitchRegression.swift" "${TEST_DIR}/SmartSwitchVoiceRegression.swift" "${TEST_DIR}/SmartSwitchActionRegression.swift" "${TEST_DIR}/FolderTransferRegression.swift" \
+swiftc "${SOURCES[@]}" "${TEST_DIR}/CoreRegression.swift" "${TEST_DIR}/WordLookupRegression.swift" "${TEST_DIR}/SmartSwitchRegression.swift" "${TEST_DIR}/SmartSwitchVoiceRegression.swift" "${TEST_DIR}/SmartSwitchActionRegression.swift" "${TEST_DIR}/FolderTransferRegression.swift" "${TEST_DIR}/SyncTransportRegression.swift" \
   -swift-version 5 -target "$(uname -m)-apple-macos13.0" -D OFFLINE -D CLIPY_CORE_TESTS \
   -lcompression -o "${TEST_DIR}/core-tests"
 "${TEST_DIR}/core-tests"
