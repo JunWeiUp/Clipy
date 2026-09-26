@@ -19,6 +19,13 @@ final class SearchViewModel: ObservableObject {
     @Published var results: [HistorySearchResult] = []
     @Published var selectedIDs = Set<HistoryEntry.ID>()
     @Published var statusText = ""
+    /// Message for the transient undo banner shown after a delete.
+    @Published var undoMessage: String?
+    private var lastDeletedEntries: [HistoryEntry] = []
+    private var undoExpiryWorkItem: DispatchWorkItem?
+    /// Kept well below ClipboardManager's 30s media-prune delay so restored
+    /// entries still find their image/text files on disk.
+    private static let undoWindow: TimeInterval = 8
 
     private var debounceWorkItem: DispatchWorkItem?
     private var historyChangeWorkItem: DispatchWorkItem?
@@ -122,6 +129,7 @@ final class SearchViewModel: ObservableObject {
         results = []
         selectedIDs = []
         statusText = ""
+        dismissUndo()
         // Reset to one page; onAppear/reactivate also re-seed this before fetch.
         browseLimit = PreferencesManager.shared.historyLoadCount
         availableSourceApps = []
@@ -289,8 +297,35 @@ final class SearchViewModel: ObservableObject {
 
     func deleteSelected() {
         let entries = results.filter { selectedIDs.contains($0.id) }.map(\.entry)
-        ClipboardManager.shared.removeHistoryEntries(entries)
+        guard !entries.isEmpty else { return }
+        let removed = ClipboardManager.shared.removeHistoryEntries(entries)
         performSearch(immediate: true)
+        guard !removed.isEmpty else { return }
+        lastDeletedEntries = removed
+        undoMessage = L10n.format(.historyDeletedCount, removed.count)
+        undoExpiryWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.dismissUndo() }
+        undoExpiryWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.undoWindow, execute: work)
+    }
+
+    /// Restores the most recent delete. Returns false when nothing is pending.
+    @discardableResult
+    func undoDelete() -> Bool {
+        guard !lastDeletedEntries.isEmpty else { return false }
+        let entries = lastDeletedEntries
+        dismissUndo()
+        ClipboardManager.shared.restoreHistoryEntries(entries)
+        performSearch(immediate: true)
+        selectedIDs = Set(entries.map(\.id))
+        return true
+    }
+
+    func dismissUndo() {
+        undoExpiryWorkItem?.cancel()
+        undoExpiryWorkItem = nil
+        lastDeletedEntries = []
+        undoMessage = nil
     }
 
     /// 清空全部历史记录（破坏性操作，弹窗确认）。返回是否已执行清理。
@@ -365,7 +400,10 @@ struct SearchView: View {
     var body: some View {
         let _ = languageObserver.revision
 
-        AppListWindowLayout(statusText: viewModel.statusText) {
+        AppListWindowLayout(
+            statusText: viewModel.statusText,
+            statusHint: L10n.t(.historyShortcutHint)
+        ) {
             AppWindowHeader {
                 VStack(alignment: .leading, spacing: AppSpacing.xs) {
                     HStack(spacing: AppSpacing.sm) {
@@ -442,6 +480,14 @@ struct SearchView: View {
 
                 HistoryPreviewView(entry: selectedEntry)
             }
+            .overlay(alignment: .bottom) {
+                if let message = viewModel.undoMessage {
+                    undoBanner(message)
+                        .padding(.bottom, AppSpacing.md)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.18), value: viewModel.undoMessage)
         }
         .frame(
             minWidth: AppWindowSize.searchMin.width,
@@ -459,6 +505,24 @@ struct SearchView: View {
             viewModel.onDisappear()
         }
         .background(SearchKeyHandler(viewModel: viewModel))
+    }
+
+    private func undoBanner(_ message: String) -> some View {
+        HStack(spacing: AppSpacing.sm) {
+            Text(message)
+                .font(AppFont.secondary)
+            Button(L10n.t(.undo)) { viewModel.undoDelete() }
+                .buttonStyle(.borderless)
+                .foregroundStyle(AppColor.accent)
+            Text("⌘Z")
+                .font(AppFont.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, AppSpacing.md)
+        .padding(.vertical, AppSpacing.sm)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(AppColor.separator.opacity(0.45), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
     }
 
     private var selectedEntry: HistoryEntry? {
@@ -490,11 +554,12 @@ struct SearchView: View {
             }
             .width(min: 220, ideal: 340, max: .infinity)
             TableColumn(L10n.t(.source)) { result in
-                Text(result.entry.sourceApp ?? "—")
-                    .font(AppFont.secondary)
-                    .foregroundStyle(.secondary)
+                HistorySourceAppLabel(
+                    name: result.entry.sourceApp,
+                    bundleID: result.entry.sourceBundleId
+                )
             }
-            .width(min: 64, ideal: 80, max: 110)
+            .width(min: 72, ideal: 96, max: 130)
             TableColumn(L10n.t(.time)) { result in
                 Text(RelativeTimeFormatter.string(from: result.entry.date))
                     .font(AppFont.secondary)
@@ -795,6 +860,9 @@ private struct SearchKeyHandler: NSViewRepresentable {
             let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
 
             if !editingText {
+                if cmd, !option, key == "z", viewModel.undoDelete() {
+                    return nil
+                }
                 if cmd, !option, key == "c" {
                     viewModel.selectCurrent(action: .copyOnly)
                     return nil
@@ -910,5 +978,55 @@ private struct LazyHistoryThumbnailView: View {
                 self.thumbnail = image
             }
         }
+    }
+}
+
+/// Source column cell: app icon (resolved from the bundle ID) + name.
+private struct HistorySourceAppLabel: View {
+    let name: String?
+    let bundleID: String?
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let icon = AppIconCache.icon(for: bundleID) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 16, height: 16)
+            }
+            Text(name ?? "—")
+                .font(AppFont.secondary)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .help(name ?? "")
+    }
+}
+
+/// Small bounded cache of app icons keyed by bundle ID; misses are cached too
+/// so uninstalled apps do not hit Launch Services on every row render.
+enum AppIconCache {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        return cache
+    }()
+    private static var misses = Set<String>()
+
+    static func icon(for bundleID: String?) -> NSImage? {
+        guard let bundleID, !bundleID.isEmpty, !misses.contains(bundleID) else { return nil }
+        if let cached = cache.object(forKey: bundleID as NSString) { return cached }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            misses.insert(bundleID)
+            return nil
+        }
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        icon.size = NSSize(width: 16, height: 16)
+        cache.setObject(icon, forKey: bundleID as NSString)
+        return icon
+    }
+
+    static func removeAll() {
+        cache.removeAllObjects()
+        misses.removeAll()
     }
 }

@@ -35,6 +35,7 @@ struct AppWindowHeader<Content: View>: View {
 /// 列表类窗口的统一布局：顶栏 → 分隔线 → 内容 → 分隔线 → 状态栏
 struct AppListWindowLayout<Toolbar: View, Content: View>: View {
   var statusText: String?
+  var statusHint: String? = nil
   @ViewBuilder let toolbar: () -> Toolbar
   @ViewBuilder let content: () -> Content
 
@@ -46,7 +47,7 @@ struct AppListWindowLayout<Toolbar: View, Content: View>: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       if let statusText {
         Divider()
-        StatusBarView(text: statusText)
+        StatusBarView(text: statusText, hint: statusHint)
       }
     }
     .background(AppColor.windowBackground)

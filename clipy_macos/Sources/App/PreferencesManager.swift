@@ -8,6 +8,7 @@ class PreferencesManager {
     private let historyLimitKey = "historyLimit"
     private let historyLoadCountKey = "historyLoadCount"
     private let excludedAppsKey = "excludedApps"
+    private let historyRetentionDaysKey = "historyRetentionDays"
     private let syncEnabledKey = "syncEnabled"
     private let syncPortKey = "syncPort"
     /// New key on purpose: the old `syncSecret` slot could hold a per-install
@@ -92,6 +93,12 @@ class PreferencesManager {
         set { defaults.set(newValue, forKey: historyLoadCountKey) }
     }
     
+    /// Days to keep unpinned history; 0 keeps it forever.
+    var historyRetentionDays: Int {
+        get { defaults.integer(forKey: historyRetentionDaysKey) }
+        set { defaults.set(max(0, newValue), forKey: historyRetentionDaysKey) }
+    }
+
     var excludedApps: [String] {
         get { defaults.stringArray(forKey: excludedAppsKey) ?? ["com.agilebits.onepassword7", "com.apple.keychainaccess"] }
         set { defaults.set(newValue, forKey: excludedAppsKey) }

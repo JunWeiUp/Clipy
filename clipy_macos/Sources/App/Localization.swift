@@ -451,6 +451,29 @@ enum L10nKey: String {
     case passwordStrengthFair
     case passwordStrengthStrong
     case passwordStrengthVeryStrong
+    case menuTools
+    case settingsAbout
+    case settingsVersion
+    case openLogFolder
+    case diagnosticsHint
+    case historyRetention
+    case historyRetentionForever
+    case historyRetentionDays
+    case historyLimitCaption
+    case deviceNameAutoSaveHint
+    case historyDeletedCount
+    case historyShortcutHint
+    case historyCharacterCount
+    case historyFileCount
+    case excludedApps
+    case excludedAppsPasswordsApp
+    case excludedAppsKeychainAccess
+    case excludedAppsChooseApp
+    case excludedAppsRunning
+    case excludedAppsAddPasswordManagers
+    case excludedAppsAdd
+    case excludedAppsEmpty
+    case excludedAppsHint
 }
 
 struct L10n {
@@ -894,6 +917,29 @@ struct L10n {
             .passwordStrengthFair: "中",
             .passwordStrengthStrong: "强",
             .passwordStrengthVeryStrong: "极强",
+            .menuTools: "工具",
+            .settingsAbout: "关于与诊断",
+            .settingsVersion: "版本",
+            .openLogFolder: "打开日志文件夹",
+            .diagnosticsHint: "日志保存在本机 ~/Library/Logs/ClipyClone，保留 7 天；反馈问题时可附上当天日志。",
+            .historyRetention: "保留时长",
+            .historyRetentionForever: "永久",
+            .historyRetentionDays: "%d 天",
+            .historyLimitCaption: "当前已保存 %d 条。超出数量上限或保留时长的未置顶记录会自动删除，置顶记录始终保留。",
+            .deviceNameAutoSaveHint: "局域网内其他设备看到的名称，回车或离开输入框时自动保存。设备 ID：%@…",
+            .historyDeletedCount: "已删除 %d 条",
+            .historyShortcutHint: "↩ 粘贴 · ⌥⌘V 纯文本 · ⌘P 置顶 · ⌫ 删除 · ⌘Z 撤销",
+            .historyCharacterCount: "%d 个字符",
+            .historyFileCount: "%d 个文件",
+            .excludedApps: "不记录以下应用的复制内容",
+            .excludedAppsPasswordsApp: "密码",
+            .excludedAppsKeychainAccess: "钥匙串访问",
+            .excludedAppsChooseApp: "从应用程序中选择…",
+            .excludedAppsRunning: "正在运行的应用",
+            .excludedAppsAddPasswordManagers: "添加常用密码管理器",
+            .excludedAppsAdd: "添加应用",
+            .excludedAppsEmpty: "暂无排除的应用",
+            .excludedAppsHint: "在这些应用中复制的内容不会写入历史，也不会同步到其他设备。",
         ],
         .en: [
             .smartVoiceTitle: "Automatic voice entry",
@@ -1326,6 +1372,29 @@ struct L10n {
             .passwordStrengthFair: "Fair",
             .passwordStrengthStrong: "Strong",
             .passwordStrengthVeryStrong: "Very Strong",
+            .menuTools: "Tools",
+            .settingsAbout: "About & Diagnostics",
+            .settingsVersion: "Version",
+            .openLogFolder: "Open Log Folder",
+            .diagnosticsHint: "Logs are stored locally in ~/Library/Logs/ClipyClone for 7 days. Attach today's log when reporting an issue.",
+            .historyRetention: "Keep History For",
+            .historyRetentionForever: "Forever",
+            .historyRetentionDays: "%d days",
+            .historyLimitCaption: "%d items saved. Unpinned items beyond the limit or retention period are removed automatically; pinned items are always kept.",
+            .deviceNameAutoSaveHint: "Name shown to other devices on your network. Saved when you press Return or leave the field. Device ID: %@…",
+            .historyDeletedCount: "Deleted %d items",
+            .historyShortcutHint: "↩ Paste · ⌥⌘V Plain Text · ⌘P Pin · ⌫ Delete · ⌘Z Undo",
+            .historyCharacterCount: "%d characters",
+            .historyFileCount: "%d files",
+            .excludedApps: "Don't record copies from these apps",
+            .excludedAppsPasswordsApp: "Passwords",
+            .excludedAppsKeychainAccess: "Keychain Access",
+            .excludedAppsChooseApp: "Choose from Applications…",
+            .excludedAppsRunning: "Running Apps",
+            .excludedAppsAddPasswordManagers: "Add Common Password Managers",
+            .excludedAppsAdd: "Add App",
+            .excludedAppsEmpty: "No excluded apps",
+            .excludedAppsHint: "Content copied in these apps is not saved to history or synced to other devices.",
         ]
     ]
 }

@@ -27,6 +27,28 @@ struct HistoryPreviewView: View {
         }
     }
 
+    /// Secondary header fact: host for a single URL, otherwise character
+    /// count for text and item count for files.
+    private func headerDetail(for entry: HistoryEntry) -> String? {
+        switch entry.item {
+        case .text:
+            guard let text = entry.resolvedText else { return nil }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.contains(where: \.isWhitespace),
+               let url = URL(string: trimmed),
+               let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+               let host = url.host
+            {
+                return host
+            }
+            return L10n.format(.historyCharacterCount, text.count)
+        case .files(let urls):
+            return L10n.format(.historyFileCount, urls.count)
+        default:
+            return nil
+        }
+    }
+
     private func previewHeader(for entry: HistoryEntry) -> some View {
         VStack(alignment: .leading, spacing: AppSpacing.xs) {
             HStack(spacing: AppSpacing.xs) {
@@ -46,7 +68,9 @@ struct HistoryPreviewView: View {
                     Text(source).lineLimit(1)
                 }
                 Spacer()
-                Text("\(L10n.t(.pasteCount)): \(entry.useCount)")
+                if let detail = headerDetail(for: entry) {
+                    Text(detail).lineLimit(1)
+                }
             }
             .font(AppFont.caption)
             .foregroundStyle(.secondary)
