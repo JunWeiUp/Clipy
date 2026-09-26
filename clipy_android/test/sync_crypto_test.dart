@@ -6,9 +6,28 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:clipy_android/sync/crypto.dart';
 
 void main() {
-  final crypto = SyncCrypto()..pairingSecret = '';
+  final crypto = SyncCrypto()..pairingSecret = 'test-pairing-secret';
 
-  // Legacy empty-secret key matches SHA256(legacySharedSecret).
+  test('refuses to encrypt or decrypt while unpaired', () async {
+    final unpaired = SyncCrypto();
+    expect(unpaired.isPaired, isFalse);
+    expect(unpaired.key(), isNull);
+    expect(unpaired.encryptText('x'), isNull);
+    expect(unpaired.decryptText(crypto.encryptText('x')!), isNull);
+    expect(await unpaired.encryptBytes([1, 2, 3]), isNull);
+    expect(unpaired.pairingProof('peer'), isNull);
+  });
+
+  test('pairing proof verifies only for the same secret and peer', () {
+    final proof = crypto.pairingProof('peer-a')!;
+    expect(crypto.verifyPairingProof(proof, 'peer-a'), isTrue);
+    expect(crypto.verifyPairingProof(proof, 'peer-b'), isFalse);
+    final other = SyncCrypto()..pairingSecret = 'other-pairing-secret';
+    expect(other.verifyPairingProof(proof, 'peer-a'), isFalse);
+    // Pre-proof builds send no payload in hello; accepted for compatibility.
+    expect(other.verifyPairingProof(null, 'peer-a'), isTrue);
+  });
+
   test('round-trips a payload', () {
     const plaintext = '{"type":"history","value":"hello 世界"}';
     final enc = crypto.encryptText(plaintext);

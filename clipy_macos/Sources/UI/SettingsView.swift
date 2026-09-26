@@ -34,6 +34,7 @@ struct SettingsView: View {
   @State private var manualPeerPort = "5566"
   @State private var isReencryptingHistory = false
   @State private var syncPairingSecret: String = PreferencesManager.shared.syncPairingSecret
+  @State private var savedPairingSecret: String = PreferencesManager.shared.syncPairingSecret
 
   init() {
     let prefs = PreferencesManager.shared
@@ -266,18 +267,41 @@ struct SettingsView: View {
               }
             }
 
-          SecureField(L10n.t(.syncPairingSecret), text: $syncPairingSecret)
-            .onSubmit { PreferencesManager.shared.syncPairingSecret = syncPairingSecret }
-            .onChange(of: syncPairingSecret) { newValue in
-              PreferencesManager.shared.syncPairingSecret = newValue
+          TextField(L10n.t(.syncPairingSecret), text: $syncPairingSecret)
+            .font(.system(.body, design: .monospaced))
+            .onSubmit { applyPairingSecret() }
+          HStack {
+            Button(L10n.t(.syncPairingGenerate)) {
+              syncPairingSecret = SyncPairing.generateCode()
+              applyPairingSecret()
             }
+            Button(L10n.t(.syncPairingApply)) { applyPairingSecret() }
+              .disabled(
+                syncPairingSecret.trimmingCharacters(in: .whitespacesAndNewlines) == savedPairingSecret)
+            Button(L10n.t(.copy)) {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString(savedPairingSecret, forType: .string)
+            }
+            .disabled(savedPairingSecret.isEmpty)
+          }
           Text(L10n.t(.syncPairingSecretHint))
             .font(AppFont.caption)
             .foregroundStyle(.secondary)
-          if syncPairingSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            Text(L10n.t(.syncPairingSecretDefaultWarning))
+          if savedPairingSecret.isEmpty {
+            Text(L10n.t(.syncPairingRequiredWarning))
               .font(AppFont.caption)
               .foregroundStyle(.orange)
+          } else if let qr = pairingQRImage {
+            HStack(alignment: .top, spacing: AppSpacing.md) {
+              Image(nsImage: qr)
+                .interpolation(.none)
+                .resizable()
+                .frame(width: 132, height: 132)
+                .accessibilityLabel(L10n.t(.syncPairingQRHint))
+              Text(L10n.t(.syncPairingQRHint))
+                .font(AppFont.caption)
+                .foregroundStyle(.secondary)
+            }
           }
 
           Text(L10n.t(.authorizedDevices))
@@ -575,6 +599,22 @@ struct SettingsView: View {
       guard let value = Int(part), (0...255).contains(value) else { return false }
     }
     return true
+  }
+
+  private func applyPairingSecret() {
+    let trimmed = syncPairingSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+    syncPairingSecret = trimmed
+    SyncManager.shared.applyPairingSecret(trimmed)
+    savedPairingSecret = trimmed
+  }
+
+  private var pairingQRImage: NSImage? {
+    let url = SyncPairing.pairingURL(
+      secret: savedPairingSecret,
+      host: SyncManager.shared.enumerateLocalIPv4s().first,
+      port: SyncManager.shared.syncPort,
+      name: PreferencesManager.shared.deviceName)
+    return url.flatMap { SyncPairing.qrImage(for: $0.absoluteString, dimension: 264) }
   }
 
   private func saveDeviceName() {

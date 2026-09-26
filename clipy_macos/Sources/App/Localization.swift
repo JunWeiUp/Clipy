@@ -338,7 +338,10 @@ enum L10nKey: String {
     case historyImageOCRIndexingDescription
     case syncPairingSecret
     case syncPairingSecretHint
-    case syncPairingSecretDefaultWarning
+    case syncPairingRequiredWarning
+    case syncPairingGenerate
+    case syncPairingApply
+    case syncPairingQRHint
     case syncOfflineAuthorizedDevices
     case deviceOnline
     case deviceOffline
@@ -805,8 +808,11 @@ struct L10n {
             .historyImageOCRIndexingDescription: "自动识别截图与图片中的文字，让历史搜索能搜到图片内容。首次识别会加载系统 Vision 模型并常驻约 100MB 内存；关闭可显著降低常驻内存，已索引的条目不受影响。",
             .historyEncryptionInProgress: "正在重新加密历史文件…",
             .syncPairingSecret: "配对密钥：",
-            .syncPairingSecretHint: "在同一组设备上填写完全相同的密钥。留空则使用内置默认密钥，同网段任何一份本应用都能解密同步内容。",
-            .syncPairingSecretDefaultWarning: "当前使用内置默认密钥，建议设置自定义配对密钥。",
+            .syncPairingSecretHint: "同一组设备必须使用完全相同的配对密钥。点「生成配对码」生成随机密钥，再在其他设备上输入或扫码。",
+            .syncPairingRequiredWarning: "尚未配对：局域网同步与通知同步已暂停。请生成或输入配对密钥。",
+            .syncPairingGenerate: "生成配对码",
+            .syncPairingApply: "应用",
+            .syncPairingQRHint: "用安卓系统相机扫描此二维码，即可在 Clipy 中导入配对密钥并连接本机。二维码包含密钥，请勿分享截图。",
             .syncOfflineAuthorizedDevices: "离线已授权设备（可删除）",
             .deviceOnline: "在线",
             .deviceOffline: "离线",
@@ -1260,8 +1266,11 @@ struct L10n {
             .historyImageOCRIndexingDescription: "Recognize text in captured images so history search can find it. The first recognition loads the system Vision models (~100MB resident) that cannot be released; disabling it lowers the standing footprint. Already-indexed entries are unaffected.",
             .historyEncryptionInProgress: "Re-encrypting history files…",
             .syncPairingSecret: "Pairing secret:",
-            .syncPairingSecretHint: "Enter the exact same secret on every device in this sync group. Leave it empty to use the built-in default key, which any copy of this app on your network can decrypt.",
-            .syncPairingSecretDefaultWarning: "Using the built-in default key. Set a custom pairing secret for real protection.",
+            .syncPairingSecretHint: "Every device in a sync group must use the exact same pairing secret. Click Generate Code for a random one, then type or scan it on your other devices.",
+            .syncPairingRequiredWarning: "Not paired: LAN and notification sync are paused. Generate or enter a pairing secret.",
+            .syncPairingGenerate: "Generate Code",
+            .syncPairingApply: "Apply",
+            .syncPairingQRHint: "Scan this QR code with the Android system camera to import the pairing secret into Clipy and connect to this Mac. It contains the secret — don't share screenshots of it.",
             .syncOfflineAuthorizedDevices: "Authorized devices that are offline (removable)",
             .deviceOnline: "Online",
             .deviceOffline: "Offline",

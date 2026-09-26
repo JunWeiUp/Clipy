@@ -205,7 +205,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 <details>
 <summary><b>🔐 A note on security</b></summary>
 
-Use sync only on trusted networks and configure a strong private pairing secret. An empty secret uses a public compatibility key and does **not** protect traffic from someone who knows the source. The authorized-devices list is not cryptographic identity verification; one-shot text/file transfers have different authorization rules. See [SECURITY.md](SECURITY.md) for the full limitations.
+Use sync only on trusted networks and configure a strong private pairing secret. Sync stays paused until a pairing secret is set; generate one on the Mac and scan its QR code with the Android camera, or type it on each device. There is no built-in fallback key. The authorized-devices list is not cryptographic identity verification; one-shot text/file transfers have different authorization rules. See [SECURITY.md](SECURITY.md) for the full limitations.
 </details>
 
 </details>

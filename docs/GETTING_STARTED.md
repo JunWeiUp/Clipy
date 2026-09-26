@@ -33,7 +33,8 @@ Published versions from v1.0.18 onward and current `main` source provide pairing
 | Build | Pairing behavior |
 | --- | --- |
 | Legacy v1.0.15 | Uses a public compatibility key; no private pairing-secret setting in its UI. It does not provide confidentiality against someone who knows that key. |
-| Published v1.0.18+ / current source | Exposes a private pairing-secret setting. Set the same strong, non-empty secret on both devices; an empty value falls back to compatibility mode. |
+| Published v1.0.18–v1.0.20 | Exposes a private pairing-secret setting. An empty value falls back to the public compatibility key. |
+| Current source | Pairing is required: sync stays paused until a secret is set, with no fallback key. Generate a code on the Mac and scan its QR code on Android (confirm the import), or type the same code on each device. A wrong secret is reported at handshake. |
 
 The intended environment is a trusted local network. If you still use v1.0.15, use only non-sensitive sample text; do not use that release to synchronize secrets. A private secret in v1.0.18+ does not add authenticated device identity or remove all protocol limitations. Read [Security](../SECURITY.md) before enabling sync.
 

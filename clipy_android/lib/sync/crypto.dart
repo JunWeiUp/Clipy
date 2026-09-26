@@ -8,7 +8,9 @@ import 'package:encrypt/encrypt.dart' as enc;
 /// AES-GCM + HKDF helpers shared with macOS SyncCrypto.
 /// See docs/PROTOCOL.md.
 class SyncCrypto {
-  static const String legacySharedSecret = 'ClipySyncSecret2026';
+  /// hello/welcome `payload` = encrypt(prefix + sender peerId); see
+  /// [pairingProof].
+  static const String pairingProofPrefix = 'clipy.pair.v1:';
   static const String keyDerivationSalt = 'clipy.sync.v2.hkdf';
   static const String keyDerivationInfo = 'aes-256-gcm';
 
@@ -49,31 +51,45 @@ class SyncCrypto {
     return Uint8List.fromList(out.sublist(0, length));
   }
 
-  enc.Key key() {
+  bool get isPaired => _pairingSecret.isNotEmpty;
+
+  /// Transport key: the pairing secret stretched with HKDF. `null` while
+  /// unpaired — there is deliberately no shipped fallback key, so an unpaired
+  /// device can neither encrypt, decrypt nor complete a handshake.
+  enc.Key? key() {
     final secret = _pairingSecret;
+    if (secret.isEmpty) return null;
     if (_cachedKeySecret == secret && _cachedKey != null) return _cachedKey!;
-    final Uint8List bytes;
-    if (secret.isEmpty) {
-      bytes = Uint8List.fromList(
-        sha256.convert(utf8.encode(legacySharedSecret)).bytes,
-      );
-    } else {
-      bytes = hkdfSha256(
+    final derived = enc.Key(
+      hkdfSha256(
         ikm: utf8.encode(secret),
         salt: utf8.encode(keyDerivationSalt),
         info: utf8.encode(keyDerivationInfo),
         length: 32,
-      );
-    }
-    final derived = enc.Key(bytes);
+      ),
+    );
     _cachedKeySecret = secret;
     _cachedKey = derived;
     return derived;
   }
 
+  /// Handshake proof: our peerId sealed with the pairing key. A peer holding
+  /// a different secret cannot open it, so the mismatch fails the handshake
+  /// instead of every later frame silently failing to decrypt.
+  String? pairingProof(String selfPeerId) =>
+      encryptText('$pairingProofPrefix$selfPeerId');
+
+  /// A missing proof comes from a pre-proof build; it is accepted for
+  /// compatibility (it still cannot decrypt anything without our secret).
+  bool verifyPairingProof(String? proof, String remotePeerId) {
+    if (proof == null) return true;
+    return decryptText(proof) == '$pairingProofPrefix$remotePeerId';
+  }
+
   String? encryptText(String text) {
     try {
       final k = key();
+      if (k == null) return null;
       final rng = Random.secure();
       final iv = enc.IV(
         Uint8List.fromList(List<int>.generate(12, (_) => rng.nextInt(256))),
@@ -90,6 +106,7 @@ class SyncCrypto {
   String? decryptText(String base64String) {
     try {
       final k = key();
+      if (k == null) return null;
       final data = base64Decode(base64String);
       if (data.length <= 28) return null;
       final iv = enc.IV(data.sublist(0, 12));
@@ -109,8 +126,10 @@ class SyncCrypto {
   /// pointycastle tops out at tens of MB/s and is the transfer bottleneck).
   /// Any failure (desktop, tests, native error) falls back to pure Dart.
   Future<String?> encryptBytes(List<int> bytes) async {
+    final k = key();
+    if (k == null) return null;
     final nonce = _randomNonce();
-    final keyBytes = key().bytes;
+    final keyBytes = k.bytes;
     final native = await (SyncCrypto.nativeAesGcm?.call(
       'seal',
       keyBytes,
@@ -122,7 +141,6 @@ class SyncCrypto {
       return base64Encode(native);
     }
     try {
-      final k = key();
       final encrypter = enc.Encrypter(enc.AES(k, mode: enc.AESMode.gcm));
       final encrypted = encrypter.encryptBytes(bytes, iv: enc.IV(nonce));
       final combined = Uint8List.fromList([...nonce, ...encrypted.bytes]);
@@ -134,19 +152,20 @@ class SyncCrypto {
 
   Future<Uint8List?> decryptToBytes(String base64String) async {
     try {
+      final k = key();
+      if (k == null) return null;
       final data = base64Decode(base64String);
       if (data.length <= 28) return null;
       final nonce = data.sublist(0, 12);
       final sealed = data.sublist(12);
       final native = await (SyncCrypto.nativeAesGcm?.call(
         'open',
-        key().bytes,
+        k.bytes,
         nonce,
         null,
         sealed,
       ));
       if (native != null) return native;
-      final k = key();
       final encrypter = enc.Encrypter(enc.AES(k, mode: enc.AESMode.gcm));
       return Uint8List.fromList(
         encrypter.decryptBytes(enc.Encrypted(sealed), iv: enc.IV(nonce)),

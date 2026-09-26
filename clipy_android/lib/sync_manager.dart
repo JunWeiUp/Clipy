@@ -20,6 +20,7 @@ import 'log_manager.dart';
 import 'notification_manager.dart';
 import 'storage_paths.dart';
 import 'sync/crypto.dart';
+import 'sync/diagnostics.dart';
 import 'sync/protocol.dart';
 
 export 'sync/protocol.dart' show SyncEnvelope, SyncType;
@@ -250,6 +251,7 @@ class SyncManager with WidgetsBindingObserver {
   String peerId = '';
   String displayName = 'Android';
   final SyncCrypto _crypto = SyncCrypto();
+  final SyncDiagnostics diagnostics = SyncDiagnostics();
   String get pairingSecret => _crypto.pairingSecret;
   set pairingSecret(String v) => _crypto.pairingSecret = v;
 
@@ -502,8 +504,17 @@ class SyncManager with WidgetsBindingObserver {
     return next;
   }
 
+  bool get isPaired => _crypto.isPaired;
+
   Future<void> start() async {
     appLog('SyncManager v2 starting...');
+    if (!isPaired) {
+      appLog(
+        'Sync not started: no pairing secret set (pair devices on the Devices page)',
+        level: 'warning',
+      );
+      return;
+    }
     unawaited(PendingSyncRepository.instance.cleanOld());
     unawaited(PendingTextSyncRepository.instance.cleanOld());
     unawaited(NotificationRepository.instance.cleanOldPendingSync());
@@ -526,6 +537,7 @@ class SyncManager with WidgetsBindingObserver {
   /// `syncTick` Result is still pending, risking a deadlocked tick loop.
   /// `start()` is still used for user/init paths where FGS may not be up yet.
   Future<void> _rebindServer() async {
+    if (!isPaired) return;
     appLog('Rebinding ServerSocket (no platform re-entry)...');
     final ok = await _startServer();
     if (!ok) {
@@ -1060,8 +1072,10 @@ class SyncManager with WidgetsBindingObserver {
     await prefs.setString(_pairingSecretKey, nextSecret);
     displayName = nextName;
     port = listeningPort;
+    final secretChanged = pairingSecret != nextSecret;
     pairingSecret = nextSecret;
     _crypto.clearKeyCache();
+    if (secretChanged) diagnostics.reset();
     if (isEnabled) {
       await stop();
       await start();
@@ -1076,6 +1090,7 @@ class SyncManager with WidgetsBindingObserver {
     if (next == pairingSecret) return;
     pairingSecret = next;
     _crypto.clearKeyCache();
+    diagnostics.reset();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_pairingSecretKey, next);
     if (isEnabled) {
