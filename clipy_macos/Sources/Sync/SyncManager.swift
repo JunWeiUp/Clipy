@@ -335,7 +335,11 @@ final class SyncManager: NSObject {
     // MARK: - Business dispatch
 
     func handleFrame(_ data: Data, from remotePeerId: String, host: String) {
-        guard let env = decodeEnvelope(data), env.v == SyncEnvelope.version else { return }
+        guard let env = decodeEnvelope(data), env.v == SyncEnvelope.version else {
+            diagnostics.noteError(peerId: remotePeerId, "badEnvelope")
+            return
+        }
+        if env.type != SyncType.ping && env.type != SyncType.pong { diagnostics.noteReceived(peerId: remotePeerId) }
         switch env.type {
         case SyncType.ping:
             let pong = SyncEnvelope.make(type: SyncType.pong, peerId: peerId)
@@ -347,7 +351,7 @@ final class SyncManager: NSObject {
         case SyncType.history, SyncType.historyDirect:
             // Inbound accept is unilateral: sender's allow-list gates who they push to;
             // receiver does not require reciprocal authorization (same as notifications).
-            guard let payload = env.payload, let text = decrypt(payload) else { return }
+            guard let text = decryptPayload(env, from: remotePeerId) else { return }
             DispatchQueue.main.async { [weak self] in
                 ClipboardManager.shared.handleRemoteSync(content: text, hash: env.hash ?? "")
                 self?.syncQueue.async { self?.replyAck(to: remotePeerId, hash: env.hash) }
@@ -360,10 +364,10 @@ final class SyncManager: NSObject {
             }
             respondToHistoryFetch(from: remotePeerId)
         case SyncType.notifPost:
-            guard let payload = env.payload, let text = decrypt(payload) else { return }
+            guard let text = decryptPayload(env, from: remotePeerId) else { return }
             DispatchQueue.main.async { NotificationManager.shared.handleRemoteNotification(text, from: env.peerId) }
         case SyncType.notifDismiss:
-            guard let payload = env.payload, let text = decrypt(payload) else { return }
+            guard let text = decryptPayload(env, from: remotePeerId) else { return }
             DispatchQueue.main.async { NotificationManager.shared.handleRemoteDismiss(text) }
         case SyncType.notifClear:
             DispatchQueue.main.async { NotificationManager.shared.handleRemoteClearAll() }
@@ -378,6 +382,18 @@ final class SyncManager: NSObject {
             if let name = env.name, let port = env.port { recordPeer(peerId: env.peerId, name: name, host: host, port: UInt16(port)) }
         default: break
         }
+    }
+
+    /// Decrypts a business payload; a failure here with a verified handshake
+    /// means corrupted data or a peer that changed secrets mid-session.
+    func decryptPayload(_ env: SyncEnvelope, from remotePeerId: String) -> String? {
+        guard let payload = env.payload else { return nil }
+        guard let text = decrypt(payload) else {
+            appLog("Decrypt failed for \(env.type) from \(remotePeerId.prefix(8))", level: .warning)
+            diagnostics.noteError(peerId: remotePeerId, "decryptFailed")
+            return nil
+        }
+        return text
     }
 
     func respondToHistoryFetch(from remotePeerId: String) {

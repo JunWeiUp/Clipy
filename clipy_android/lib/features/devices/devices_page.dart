@@ -7,6 +7,7 @@ import '../../sync_manager.dart';
 import '../../sync/pairing.dart';
 import '../../ui/app_components.dart';
 import 'device_widgets.dart';
+import 'sync_diagnostics_page.dart';
 
 class DevicesPage extends StatefulWidget {
   const DevicesPage({super.key});
@@ -119,10 +120,7 @@ class _DevicesPageState extends State<DevicesPage> {
             children: [
               if (!manager.isPaired)
                 ListTile(
-                  leading: Icon(
-                    Icons.link_off_rounded,
-                    color: colors.error,
-                  ),
+                  leading: Icon(Icons.link_off_rounded, color: colors.error),
                   title: Text(
                     l10n.syncPairingRequired,
                     style: TextStyle(color: colors.error),
@@ -155,6 +153,18 @@ class _DevicesPageState extends State<DevicesPage> {
                 subtitle: Text(manager.displayName),
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: _busy ? null : _editConnection,
+              ),
+              ListTile(
+                leading: const ClipyIcon(Icons.monitor_heart_outlined),
+                title: Text(l10n.syncDiagnosticsTitle),
+                subtitle: Text(l10n.syncDiagnosticsSubtitle),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => const SyncDiagnosticsPage(),
+                  ),
+                ),
               ),
               FutureBuilder<List<String>>(
                 future: _addresses,

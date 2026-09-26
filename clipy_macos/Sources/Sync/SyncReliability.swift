@@ -63,6 +63,7 @@ extension SyncManager {
                 if accepted, reliable, self.isQueueableSyncType(env.type), let hash = env.hash {
                     self.inFlightHashes[targetId, default: []].insert(hash)
                 }
+                if accepted { self.diagnostics.noteSent(peerId: targetId) }
                 return
             }
             let delivered = self.deliver(data: data, type: env.type, peerId: targetId, hash: env.hash, reliable: reliable, dialReason: dialReason)
@@ -71,7 +72,10 @@ extension SyncManager {
     }
 
     @discardableResult func deliver(data: Data, type: String, peerId: String, hash: String?, reliable: Bool, dialReason: String = "deliver") -> Bool {
-        if let session = sessions[peerId], sendSessionFrame(session.fd, data) { return true }
+        if let session = sessions[peerId], sendSessionFrame(session.fd, data) {
+            diagnostics.noteSent(peerId: peerId)
+            return true
+        }
         if reliable { enqueuePending(data: data, type: type, peerId: peerId, hash: hash) }
         let reason = (type == SyncType.historyDirect) ? "direct" : dialReason
         if let peer = peerSnapshot(peerId) {
@@ -109,6 +113,7 @@ extension SyncManager {
             let needsAck = isQueueableSyncType(frame.type)
             if needsAck, inFlightHashes[peerId]?.contains(frame.hash) ?? false { continue }
             if sendSessionFrame(session.fd, frame.data) {
+                diagnostics.noteSent(peerId: peerId)
                 if needsAck { if inFlightHashes[peerId] == nil { inFlightHashes[peerId] = [] }; inFlightHashes[peerId]?.insert(frame.hash) }
                 else { PendingSyncRepository.shared.remove(peerId: peerId, hash: frame.hash) }
             } else { break } // FIFO full: the drain callback retries from disk.
@@ -134,6 +139,7 @@ extension SyncManager {
             appLog("ACK from \(remotePeerId.prefix(8)) cleared pending for hash \(hash.prefix(8))")
         }
         inFlightHashes[remotePeerId]?.remove(hash)
+        diagnostics.noteAck(peerId: remotePeerId)
     }
 
     func replyAck(to peerId: String, hash: String?) {

@@ -121,6 +121,22 @@ final class PendingSyncRepository {
         }
     }
 
+    /// Queued frame count per peer, for the sync diagnostics page.
+    func pendingCounts() -> [String: Int] {
+        queue.sync {
+            guard let db else { return [:] }
+            let sql = "SELECT peer_id, COUNT(*) FROM pending_sync GROUP BY peer_id"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
+            defer { sqlite3_finalize(stmt) }
+            var counts: [String: Int] = [:]
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let peer = optionalString(stmt, 0) { counts[peer] = Int(sqlite3_column_int(stmt, 1)) }
+            }
+            return counts
+        }
+    }
+
     // MARK: - Delete
 
     /// Remove a frame by (peerId, hash) once the peer ACKs it.

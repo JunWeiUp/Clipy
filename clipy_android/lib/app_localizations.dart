@@ -177,9 +177,33 @@ class AppStrings {
     '将使用「$device」提供的配对密钥替换本机密钥，并把它加入手动设备。只有在你刚扫描了自己设备上的二维码时才继续。',
     'This replaces this device\'s pairing secret with the one from "$device" and adds it as a manual device. Only continue if you just scanned the QR code on your own device.',
   );
-  String get syncPairingLinkApplied =>
-      _t('已导入配对密钥', 'Pairing secret imported');
+  String get syncPairingLinkApplied => _t('已导入配对密钥', 'Pairing secret imported');
   String get syncPairingImport => _t('导入', 'Import');
+  String get syncDiagnosticsTitle => _t('同步诊断', 'Sync Diagnostics');
+  String get syncDiagnosticsSubtitle => _t(
+    '连接状态、待发送队列、最近 ACK 与错误',
+    'Connection, pending queue, last ACK and errors',
+  );
+  String get syncDiagnosticsHint => _t(
+    '记录仅保存在内存中，App 进程重启后清空。',
+    'Kept in memory only; cleared when the app process restarts.',
+  );
+  String get syncDiagnosticsEmpty => _t('暂无设备记录', 'No devices recorded yet');
+  String get syncDiagnosticsReset => _t('清空记录', 'Clear records');
+  String syncDiagnosticsPending(int count) =>
+      _t('待发送 $count', '$count pending');
+  String get syncDiagnosticsLastSent => _t('最近发送', 'Last sent');
+  String get syncDiagnosticsLastAck => _t('最近 ACK', 'Last ACK');
+  String get syncDiagnosticsLastReceived => _t('最近接收', 'Last received');
+  String get syncDiagnosticsSessionUp => _t('连接于', 'Connected');
+  String get syncDiagnosticsSessionDown => _t('断开于', 'Disconnected');
+  String get syncDiagnosticsLastError => _t('最近错误', 'Last error');
+  String get syncDiagnosticsNotAuthorized => _t('未授权', 'Not authorized');
+  String get syncDiagnosticsOnline => _t('在线', 'Online');
+  String get syncDiagnosticsOffline => _t('离线', 'Offline');
+  String syncDiagnosticsSecondsAgo(int n) => _t('$n 秒前', '${n}s ago');
+  String syncDiagnosticsMinutesAgo(int n) => _t('$n 分钟前', '${n}m ago');
+  String syncDiagnosticsHoursAgo(int n) => _t('$n 小时前', '${n}h ago');
   String get syncPairingSecretUpdated =>
       _t('配对密钥已更新，同步已重启', 'Pairing secret updated and sync restarted');
   String get authorizedDevices => _t('授权设备', 'Authorized Devices');
