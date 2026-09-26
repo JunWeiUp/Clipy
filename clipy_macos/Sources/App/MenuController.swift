@@ -176,20 +176,6 @@ class MenuController: NSObject {
             AppMenuStyle.applyShortcut(PreferencesManager.shared.searchHistoryShortcut, to: search)
         }
         menu.addItem(search)
-        let word = actionItem(L10n.t(.wordLookup), symbol: "character.book.closed", action: #selector(openWordLookup))
-        if PreferencesManager.shared.isWordShortcutEnabled {
-            AppMenuStyle.applyShortcut(PreferencesManager.shared.wordLookupShortcut, to: word)
-        }
-        menu.addItem(word)
-        menu.addItem(actionItem(L10n.t(.wordBook), symbol: "books.vertical", action: #selector(openWordBook)))
-
-        let smartSwitch = actionItem(L10n.t(.smartSwitchTitle), symbol: "arrow.triangle.swap", action: #selector(openSmartSwitch))
-        let switchConfig = SmartSwitchStore.shared.configuration
-        if switchConfig.shortcutEnabled {
-            AppMenuStyle.applyShortcut(switchConfig.shortcut, to: smartSwitch)
-        }
-        menu.addItem(smartSwitch)
-
         let capture = AppMenuStyle.menu()
         capture.addItem(actionItem(L10n.t(.screenshotRegion), symbol: "viewfinder", action: #selector(startScreenshotRegion)))
         capture.addItem(actionItem(L10n.t(.screenshotWindow), symbol: "macwindow", action: #selector(startScreenshotWindow)))
@@ -197,6 +183,27 @@ class MenuController: NSObject {
         capture.addItem(.separator())
         capture.addItem(actionItem(L10n.t(.screenshotPreferences), symbol: "slider.horizontal.3", action: #selector(openScreenshotPreferences)))
         menu.addItem(submenuItem(L10n.t(.screenshot), symbol: "camera", submenu: capture))
+
+        // Less frequent tools live in one submenu so history stays near the top.
+        let tools = AppMenuStyle.menu()
+        let word = actionItem(L10n.t(.wordLookup), symbol: "character.book.closed", action: #selector(openWordLookup))
+        if PreferencesManager.shared.isWordShortcutEnabled {
+            AppMenuStyle.applyShortcut(PreferencesManager.shared.wordLookupShortcut, to: word)
+        }
+        tools.addItem(word)
+        tools.addItem(actionItem(L10n.t(.wordBook), symbol: "books.vertical", action: #selector(openWordBook)))
+        let smartSwitch = actionItem(L10n.t(.smartSwitchTitle), symbol: "arrow.triangle.swap", action: #selector(openSmartSwitch))
+        let switchConfig = SmartSwitchStore.shared.configuration
+        if switchConfig.shortcutEnabled {
+            AppMenuStyle.applyShortcut(switchConfig.shortcut, to: smartSwitch)
+        }
+        tools.addItem(smartSwitch)
+        tools.addItem(.separator())
+        let count = NotificationManager.shared.notificationCount
+        tools.addItem(actionItem(L10n.t(.notificationSync) + (count > 0 ? " · \(count)" : ""),
+                                 symbol: "bell", action: #selector(openNotifications), key: "N"))
+        tools.addItem(actionItem(L10n.t(.generatePassword), symbol: "key.horizontal", action: #selector(openPasswordGenerator), key: "P"))
+        menu.addItem(submenuItem(L10n.t(.menuTools), symbol: "wrench.and.screwdriver", submenu: tools))
         menu.addItem(.separator())
 
         menu.addItem(AppMenuStyle.header(L10n.t(.menuRecentHistory)))
@@ -252,14 +259,8 @@ class MenuController: NSObject {
         }
         menu.addItem(submenuItem(L10n.t(.lanDevices), symbol: "network", submenu: devices))
 
-        let count = NotificationManager.shared.notificationCount
-        let notifications = actionItem(L10n.t(.notificationSync) + (count > 0 ? " · \(count)" : ""),
-                                       symbol: "bell", action: #selector(openNotifications), key: "N")
-        menu.addItem(notifications)
-        menu.addItem(actionItem(L10n.t(.generatePassword), symbol: "key.horizontal", action: #selector(openPasswordGenerator), key: "P"))
         menu.addItem(.separator())
         menu.addItem(actionItem(L10n.t(.preferences), symbol: "gearshape", action: #selector(openPreferences), key: ","))
-        menu.addItem(actionItem(L10n.t(.showLogs), symbol: "list.bullet.rectangle", action: #selector(openLogs), key: "L"))
         menu.addItem(.separator())
         let quit = actionItem(L10n.t(.quit), symbol: "power", action: #selector(NSApplication.terminate(_:)), key: "q")
         quit.target = NSApp
@@ -726,7 +727,7 @@ class MenuController: NSObject {
 
     @objc private func openScreenshotPreferences() {
         NSApp.activate(ignoringOtherApps: true)
-        ScreenshotSettingsWindow.shared.makeKeyAndOrderFront(nil)
+        SettingsWindow.shared.show(page: ScreenshotSettingsView.pagePrefix + "capture")
     }
     
     @objc private func openSnippetEditor() {
@@ -734,10 +735,6 @@ class MenuController: NSObject {
         SnippetEditorWindow.shared.makeKeyAndOrderFront(nil)
     }
     
-    @objc private func openLogs() {
-        LogWindow.show()
-    }
-
     @objc private func openSearch() {
         NSApp.activate(ignoringOtherApps: true)
         SearchWindow.shared.showWindow()

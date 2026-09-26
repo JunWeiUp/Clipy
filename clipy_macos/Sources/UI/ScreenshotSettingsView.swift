@@ -1,9 +1,11 @@
 import AVFoundation
 import SwiftUI
 
+/// Screenshot preference sections, embedded page-by-page into the main
+/// `SettingsView` document (one instance per page ID).
 struct ScreenshotSettingsView: View {
   @EnvironmentObject private var languageObserver: AppLanguageObserver
-  @State private var selectedSettingsPage = "capture"
+  let pageID: String
   @State private var screenshotShortcutEnabled: Bool
   @State private var screenshotShortcut: ShortcutCombo?
   @State private var screenshotDefaultMode: ScreenshotCaptureMode
@@ -69,7 +71,8 @@ struct ScreenshotSettingsView: View {
   @State private var effectsSaturation: Double
   @State private var effectsSharpness: Double
 
-  init() {
+  init(pageID: String) {
+    self.pageID = pageID
     let prefs = PreferencesManager.shared
     _screenshotShortcutEnabled = State(initialValue: prefs.isScreenshotShortcutEnabled)
     _screenshotShortcut = State(initialValue: prefs.screenshotShortcut)
@@ -135,21 +138,25 @@ struct ScreenshotSettingsView: View {
     _effectsSharpness = State(initialValue: prefs.effectsSharpness)
   }
 
-  private var settingsPages: [AppSettingsPage] {
+  /// Prefix used for screenshot page IDs inside the main settings document.
+  static let pagePrefix = "screenshot."
+
+  /// Screenshot pages shown in the main settings sidebar. Permissions are
+  /// rendered by the shared "permissions" page instead.
+  static var settingsPages: [AppSettingsPage] {
     [
-      .init(id: "capture", title: L10n.t(.screenshot), symbol: "viewfinder"),
-      .init(id: "recording", title: L("Recording"), symbol: "record.circle"),
-      .init(id: "output", title: L10n.t(.designOutput), symbol: "square.and.arrow.down"),
-      .init(id: "scroll", title: L10n.t(.designDrawing), symbol: "pencil.tip.crop.circle"),
-      .init(id: "effects", title: L10n.t(.designEffects), symbol: "slider.horizontal.3"),
-      .init(id: "permissions", title: L10n.t(.designPermissions), symbol: "hand.raised"),
+      .init(id: pagePrefix + "capture", title: L10n.t(.screenshot), symbol: "viewfinder"),
+      .init(id: pagePrefix + "recording", title: L("Recording"), symbol: "record.circle"),
+      .init(id: pagePrefix + "output", title: L10n.t(.designOutput), symbol: "square.and.arrow.down"),
+      .init(id: pagePrefix + "scroll", title: L10n.t(.designDrawing), symbol: "pencil.tip.crop.circle"),
+      .init(id: pagePrefix + "effects", title: L10n.t(.designEffects), symbol: "wand.and.stars"),
     ]
   }
 
   var body: some View {
     let _ = languageObserver.revision
 
-    AppSettingsLayout(selection: $selectedSettingsPage, pages: settingsPages) { pageID in
+    Group {
 
       if pageID == "permissions" {
         // MARK: - 权限
@@ -193,8 +200,6 @@ struct ScreenshotSettingsView: View {
             },
             onOpenSettings: { PermissionDeepLink.openCameraSettings() }
           )
-        } header: {
-          Text(L("Permissions"))
         } footer: {
           Text(L10n.t(.screenCapturePermissionHint))
             .font(AppFont.caption)
@@ -635,8 +640,6 @@ struct ScreenshotSettingsView: View {
       }
 
     }
-    .frame(minWidth: AppWindowSize.settingsMin.width)
-    .frame(minHeight: AppWindowSize.settingsMin.height, alignment: .top)
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification))
     { _ in
       refreshPermissionStatuses()

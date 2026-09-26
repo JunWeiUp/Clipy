@@ -263,6 +263,27 @@ final class HistoryRepository {
         }
     }
 
+    /// Deletes unpinned rows copied before `cutoff`. Returns the number removed.
+    @discardableResult
+    func trimOlderThan(_ cutoff: Date) -> Int {
+        queue.sync {
+            guard let db else { return 0 }
+            let sql = "DELETE FROM history_entries WHERE is_pinned = 0 AND date < ?"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                sqliteLogFailure(db, "history retention prepare")
+                return 0
+            }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_double(stmt, 1, cutoff.timeIntervalSince1970)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                sqliteLogFailure(db, "history retention")
+                return 0
+            }
+            return Int(sqlite3_changes(db))
+        }
+    }
+
     func findMatching(item: HistoryItem, contentHash: String?) -> HistoryEntry? {
         queue.sync { findMatchingLocked(item: item, contentHash: contentHash) }
     }

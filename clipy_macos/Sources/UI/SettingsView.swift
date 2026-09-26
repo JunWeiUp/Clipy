@@ -6,11 +6,12 @@ struct SettingsView: View {
   @State private var selectedLanguage: AppLanguage
   @State private var launchAtLogin: Bool
   @State private var deviceName: String
+  @FocusState private var deviceNameFocused: Bool
   @State private var historyLimit: Int
   @State private var historyLimitText: String
   @FocusState private var historyLimitFocused: Bool
   @State private var currentHistoryCount: Int
-  @State private var excludedApps: String
+  @State private var historyRetentionDays: Int
   @State private var historyEncryptionEnabled: Bool
   @State private var historyImageOCRIndexing: Bool
   @State private var searchGlobalShortcutEnabled: Bool
@@ -31,7 +32,6 @@ struct SettingsView: View {
   @State private var showAddManualPeer = false
   @State private var manualPeerHost = ""
   @State private var manualPeerPort = "5566"
-  @State private var accessibilityGranted: Bool
   @State private var isReencryptingHistory = false
   @State private var syncPairingSecret: String = PreferencesManager.shared.syncPairingSecret
 
@@ -44,7 +44,7 @@ struct SettingsView: View {
     _historyLimit = State(initialValue: limit)
     _historyLimitText = State(initialValue: "\(limit)")
     _currentHistoryCount = State(initialValue: ClipboardManager.shared.totalHistoryCount)
-    _excludedApps = State(initialValue: prefs.excludedApps.joined(separator: ", "))
+    _historyRetentionDays = State(initialValue: prefs.historyRetentionDays)
     _historyEncryptionEnabled = State(initialValue: prefs.isHistoryEncryptionEnabled)
     _historyImageOCRIndexing = State(initialValue: prefs.isHistoryImageOCRIndexingEnabled)
     _searchGlobalShortcutEnabled = State(initialValue: prefs.isSearchGlobalShortcutEnabled)
@@ -53,7 +53,6 @@ struct SettingsView: View {
     _wordLookupShortcut = State(initialValue: prefs.wordLookupShortcut)
     _syncEnabled = State(initialValue: prefs.isSyncEnabled)
     _syncPort = State(initialValue: "\(prefs.syncPort)")
-    _accessibilityGranted = State(initialValue: AccessibilityManager.isTrusted)
   }
 
   private var settingsPages: [AppSettingsPage] {
@@ -61,11 +60,20 @@ struct SettingsView: View {
       .init(id: "general", title: L10n.t(.designGeneral), symbol: "slider.horizontal.3"),
       .init(id: "history", title: L10n.t(.history), symbol: "clock"),
       .init(id: "shortcuts", title: L10n.t(.shortcut), symbol: "keyboard"),
-      .init(id: "smartSwitch", title: L10n.t(.smartSwitchSettingsTitle), symbol: "arrow.triangle.swap"),
-      .init(id: "sync", title: L10n.t(.lanDevices), symbol: "network"),
-      .init(id: "permissions", title: L10n.t(.designPermissions), symbol: "hand.raised"),
     ]
+      + ScreenshotSettingsView.settingsPages
+      + [
+        .init(
+          id: "smartSwitch", title: L10n.t(.smartSwitchSettingsTitle),
+          symbol: "arrow.triangle.swap"),
+        .init(id: "sync", title: L10n.t(.lanDevices), symbol: "network"),
+        .init(id: "permissions", title: L10n.t(.designPermissions), symbol: "hand.raised"),
+        .init(id: "about", title: L10n.t(.settingsAbout), symbol: "info.circle"),
+      ]
   }
+
+  /// Retention choices in days; 0 keeps history forever.
+  private static let retentionOptions = [0, 7, 30, 90, 365]
 
   var body: some View {
     let _ = languageObserver.revision
@@ -96,31 +104,19 @@ struct SettingsView: View {
               }
             }
         }
-        Section(L10n.t(.designDeviceName)) {
-          HStack {
-            TextField(L10n.t(.enterDeviceName), text: $deviceName)
-            Button(L10n.t(.save)) {
-              saveDeviceName()
-            }
-            .buttonStyle(.bordered)
-          }
-          Text(L10n.t(.deviceNameForSync))
-            .font(AppFont.caption)
-            .foregroundStyle(.secondary)
-        }
       }
       if pageID == "history" {
         Section {
           HStack {
             Text(L10n.t(.historyLimit))
             TextField("", text: $historyLimitText)
-              .frame(width: 64)
+              .frame(width: 72)
               .multilineTextAlignment(.trailing)
               .focused($historyLimitFocused)
               .onSubmit {
                 commitHistoryLimitText()
               }
-            Stepper("", value: $historyLimit, in: 1...1000)
+            Stepper("", value: $historyLimit, in: Self.historyLimitRange, step: 100)
               .labelsHidden()
           }
           .onChange(of: historyLimit) { newValue in
@@ -135,22 +131,27 @@ struct SettingsView: View {
               commitHistoryLimitText()
             }
           }
-          Text(L10n.t(.changesNextCopy))
-            .font(AppFont.caption)
-            .foregroundStyle(.secondary)
-          Text(L10n.format(.historyCurrentCount, currentHistoryCount))
-            .font(AppFont.caption)
-            .foregroundStyle(.secondary)
-
-          TextField(L10n.t(.excludedBundleIds), text: $excludedApps)
-            .onChange(of: excludedApps) { newValue in
-              let apps =
-                newValue
-                .components(separatedBy: ",")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
-              PreferencesManager.shared.excludedApps = apps
+          Picker(L10n.t(.historyRetention), selection: $historyRetentionDays) {
+            ForEach(Self.retentionOptions, id: \.self) { days in
+              Text(
+                days == 0
+                  ? L10n.t(.historyRetentionForever) : L10n.format(.historyRetentionDays, days)
+              )
+              .tag(days)
             }
+          }
+          .onChange(of: historyRetentionDays) { newValue in
+            PreferencesManager.shared.historyRetentionDays = newValue
+            ClipboardManager.shared.applyHistoryLimit()
+          }
+          Text(L10n.format(.historyLimitCaption, currentHistoryCount))
+            .font(AppFont.caption)
+            .foregroundStyle(.secondary)
+        }
+        Section {
+          ExcludedAppsEditor()
+        }
+        Section {
 
           Toggle(L10n.t(.encryptHistoryAtRest), isOn: $historyEncryptionEnabled)
             .disabled(isReencryptingHistory)
@@ -225,10 +226,28 @@ struct SettingsView: View {
           }
         }
       }
+      if pageID.hasPrefix(ScreenshotSettingsView.pagePrefix) {
+        ScreenshotSettingsView(
+          pageID: String(pageID.dropFirst(ScreenshotSettingsView.pagePrefix.count)))
+      }
       if pageID == "smartSwitch" {
         SmartSwitchSettingsView()
       }
       if pageID == "sync" {
+        Section {
+          TextField(L10n.t(.designDeviceName), text: $deviceName)
+            .focused($deviceNameFocused)
+            .onSubmit { saveDeviceName() }
+            .onChange(of: deviceNameFocused) { focused in
+              if !focused { saveDeviceName() }
+            }
+          Text(
+            L10n.format(
+              .deviceNameAutoSaveHint, String(PreferencesManager.shared.syncPeerId.prefix(8)))
+          )
+          .font(AppFont.caption)
+          .foregroundStyle(.secondary)
+        }
         Section {
           Toggle(L10n.t(.enableLanSync), isOn: $syncEnabled)
             .onChange(of: syncEnabled) { newValue in
@@ -267,11 +286,6 @@ struct SettingsView: View {
           Text(L10n.t(.syncTargetsHint))
             .font(AppFont.caption)
             .foregroundStyle(.secondary)
-
-          Text(
-            L10n.format(
-              .syncLocalNameHint, PreferencesManager.shared.deviceName,
-              String(PreferencesManager.shared.syncPeerId.prefix(8))))
 
           Button {
             guard !isRefreshingDevices else { return }
@@ -413,19 +427,20 @@ struct SettingsView: View {
         }
       }
       if pageID == "permissions" {
-        Section(L10n.t(.accessibilityPermission)) {
-          Text(
-            accessibilityGranted
-              ? L10n.t(.accessibilityGranted) : L10n.t(.accessibilityNotGranted)
-          )
-          .font(AppFont.caption)
-          .foregroundStyle(accessibilityGranted ? .green : .orange)
-
-          Button(L10n.t(.openSystemSettings)) {
-            AccessibilityManager.requestSystemPrompt()
-            AccessibilityManager.openSettings()
+        ScreenshotSettingsView(pageID: "permissions")
+      }
+      if pageID == "about" {
+        Section {
+          LabeledContent(L10n.t(.settingsVersion), value: Self.versionString)
+          HStack {
+            Button(L10n.t(.showLogs)) { LogWindow.show() }
+            Button(L10n.t(.openLogFolder)) {
+              NSWorkspace.shared.open(LogManager.logDirectory)
+            }
           }
-          .buttonStyle(.bordered)
+          Text(L10n.t(.diagnosticsHint))
+            .font(AppFont.caption)
+            .foregroundStyle(.secondary)
         }
       }
 
@@ -488,7 +503,6 @@ struct SettingsView: View {
     }
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification))
     { _ in
-      accessibilityGranted = AccessibilityManager.isTrusted
       launchAtLogin = LaunchAtLoginManager.isEnabled
       currentHistoryCount = ClipboardManager.shared.totalHistoryCount
     }
@@ -497,7 +511,14 @@ struct SettingsView: View {
     }
   }
 
-  private static let historyLimitRange = 1...1000
+  private static let historyLimitRange = 1...100_000
+
+  private static var versionString: String {
+    let info = Bundle.main.infoDictionary
+    let version = info?["CFBundleShortVersionString"] as? String ?? "—"
+    let build = info?["CFBundleVersion"] as? String ?? "—"
+    return "\(version) (\(build))"
+  }
 
   private struct AuthDeviceRow: Identifiable {
     var id: String { peerId }
@@ -562,12 +583,10 @@ struct SettingsView: View {
       deviceName = PreferencesManager.shared.deviceName
       return
     }
+    deviceName = newName
+    guard newName != PreferencesManager.shared.deviceName else { return }
     PreferencesManager.shared.deviceName = newName
     SyncManager.shared.restartService()
-    AlertPresenter.showInfo(
-      title: L10n.t(.success),
-      message: L10n.format(.deviceNameUpdated, newName)
-    )
   }
 }
 

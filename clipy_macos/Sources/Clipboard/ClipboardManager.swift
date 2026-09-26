@@ -132,6 +132,7 @@ class ClipboardManager {
             guard let self else { return }
             HistoryRepository.shared.clearTextSearchIndexes()
             self.backfillSearchIndexesIfNeeded()
+            self.applyHistoryLimit()
             self.schedulePruneUnreferencedMediaFiles()
         }
 
@@ -668,6 +669,9 @@ class ClipboardManager {
 
         _ = repository.insertOrReplace(entry)
         repository.trimToLimit(maxHistoryItems)
+        if trimExpiredHistory() > 0 {
+            DispatchQueue.main.async { [weak self] in self?.schedulePruneUnreferencedMediaFiles() }
+        }
         return PreparedHistoryInsert(entry: entry, hash: hash)
     }
 
@@ -771,19 +775,37 @@ class ClipboardManager {
         notifyHistoryChanged()
     }
 
-    func removeHistoryEntries(_ entries: [HistoryEntry]) {
-        guard !entries.isEmpty else { return }
-        var removed = false
+    /// Deletes entries and returns the stored rows that were removed, so the
+    /// caller can offer undo via `restoreHistoryEntries(_:)`.
+    @discardableResult
+    func removeHistoryEntries(_ entries: [HistoryEntry]) -> [HistoryEntry] {
+        guard !entries.isEmpty else { return [] }
+        var removed: [HistoryEntry] = []
         for entry in entries {
             let hash = entry.contentHash ?? contentHash(for: entry.item)
+            let stored = repository.findMatching(item: entry.item, contentHash: hash)
             if repository.delete(contentHash: hash, item: entry.item) {
-                removed = true
+                removed.append(stored ?? entry)
             }
         }
-        guard removed else { return }
+        guard !removed.isEmpty else { return [] }
         reloadLoadedSummaries()
         updateRecentContentHashes()
         schedulePruneUnreferencedMediaFiles()
+        notifyHistoryChanged()
+        return removed
+    }
+
+    /// Re-inserts rows returned by `removeHistoryEntries(_:)`. Their text/media
+    /// files survive until the delayed prune (30s), which only drops files no
+    /// row references, so restoring within that window keeps content intact.
+    func restoreHistoryEntries(_ entries: [HistoryEntry]) {
+        guard !entries.isEmpty else { return }
+        for entry in entries {
+            _ = repository.insertOrReplace(entry)
+        }
+        reloadLoadedSummaries()
+        updateRecentContentHashes()
         notifyHistoryChanged()
     }
 
@@ -814,9 +836,18 @@ class ClipboardManager {
         notifyHistoryChanged()
     }
 
+    /// Applies the time-based retention preference (0 = keep forever).
+    @discardableResult
+    private func trimExpiredHistory() -> Int {
+        let days = PreferencesManager.shared.historyRetentionDays
+        guard days > 0 else { return 0 }
+        return repository.trimOlderThan(Date().addingTimeInterval(-Double(days) * 86_400))
+    }
+
     func applyHistoryLimit() {
         let previousTotal = totalHistoryCount
         repository.trimToLimit(maxHistoryItems)
+        trimExpiredHistory()
         reloadLoadedSummaries()
         guard totalHistoryCount != previousTotal else { return }
         updateRecentContentHashes()

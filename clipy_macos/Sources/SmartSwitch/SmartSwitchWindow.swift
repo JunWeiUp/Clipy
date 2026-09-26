@@ -116,11 +116,7 @@ final class SmartSwitchWindow {
     func showSettings() {
         focusSession.handOff()
         session.close()
-        SettingsWindow.shared.show()
-        // Wait for newly-created settings anchors to be attached before scrolling.
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .appSettingsNavigate, object: "smartSwitch")
-        }
+        SettingsWindow.shared.show(page: "smartSwitch")
     }
 
 }

@@ -11,6 +11,15 @@ final class SettingsWindow {
         show()
     }
 
+    /// Opens preferences and scrolls the settings document to `page`.
+    func show(page: String) {
+        show()
+        // Wait for newly-created settings anchors to be attached before scrolling.
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .appSettingsNavigate, object: page)
+        }
+    }
+
     func show() {
         session.present(
             create: {

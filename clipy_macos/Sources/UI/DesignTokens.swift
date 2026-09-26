@@ -105,7 +105,6 @@ enum ScreenshotChrome {
 enum AppWindowSize {
     static let settings = CGSize(width: 760, height: 620)
     static let settingsMin = CGSize(width: 660, height: 480)
-    static let screenshotSettings = CGSize(width: 800, height: 680)
     static let list = CGSize(width: 720, height: 500)
     static let search = CGSize(width: 1080, height: 720)
     static let editor = CGSize(width: 1120, height: 720)
