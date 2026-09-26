@@ -118,8 +118,8 @@ class PreferencesManager {
     }
 
     /// Pairing secret shared by every device in one sync group. Empty means the
-    /// shipped fallback key is in use, which any copy of the app can derive —
-    /// set the same non-empty value on each device to get real confidentiality.
+    /// device is unpaired and sync stays off — there is no shipped fallback key.
+    /// Change it through `SyncManager.applyPairingSecret` so sessions restart.
     var syncPairingSecret: String {
         get {
             if defaults.object(forKey: legacySyncSecretKey) != nil {
@@ -138,7 +138,6 @@ class PreferencesManager {
         }
     }
 
-    var isUsingDefaultSyncSecret: Bool { syncPairingSecret.isEmpty }
 
     var syncPeerId: String {
         get {

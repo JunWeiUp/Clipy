@@ -21,9 +21,17 @@ independent security audit.
   Do not port-forward the sync listener or expose it on public Wi-Fi/VPNs.
 - Payloads use AES-256-GCM. A non-empty user pairing secret is derived with HKDF;
   configure the same strong, private secret on every participating device.
-- **An empty pairing secret uses a public, hard-coded compatibility key.** Anyone
-  who knows the source can derive it. That mode does not provide confidentiality
-  against an attacker with access to the traffic.
+- **Pairing is mandatory in current source.** There is no built-in fallback key:
+  with an empty secret the device cannot encrypt or handshake and sync stays
+  paused. Older releases (v1.0.15, and v1.0.18–v1.0.20 with an empty secret) used
+  a public compatibility key that provides no confidentiality; such peers can no
+  longer talk to current builds until both sides set the same private secret.
+- The Mac's "Generate" button creates a 100-bit random pairing code and shows it
+  as a `clipy://pair` QR code. Treat the QR code like a password. Android asks for
+  confirmation before importing a pairing link, because any app can open one.
+- hello/welcome carry a pairing proof (the sender's peer ID sealed with the key),
+  so a wrong secret fails at handshake. It proves knowledge of the shared group
+  secret only, not per-device identity.
 - Device IDs and the authorized-devices list are not cryptographic proof of
   identity. The current protocol has no authenticated key exchange; all devices
   sharing a secret belong to the same trust group, not isolated per-device pairs.

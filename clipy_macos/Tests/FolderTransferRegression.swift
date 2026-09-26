@@ -112,7 +112,7 @@ private func tryData(_ url: URL) -> Data? { try? Data(contentsOf: url) }
 private func runFolderWireRegression(source: URL, archive: URL, sandbox: URL, expected: Data) throws {
     let defaults = UserDefaults.standard
     let previousArguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
-    var arguments = previousArguments; arguments["syncEnabled"] = true
+    var arguments = previousArguments; arguments["syncEnabled"] = true; arguments["syncPairingSecret"] = "folder-wire-test-secret"
     defaults.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
     defer { defaults.setVolatileDomain(previousArguments, forName: UserDefaults.argumentDomain) }
     let fm = FileManager.default

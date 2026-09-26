@@ -172,9 +172,9 @@ cd clipy_android
 dart run tool/e2e_file_send.dart <host> <existing-test-file>
 ```
 
-Set `CLIPY_PAIRING_SECRET` securely in the environment when needed and
-`CLIPY_SYNC_PORT` for non-default ports. The default empty-secret compatibility
-mode has the limitations described in [SECURITY.md](../SECURITY.md).
+Set `CLIPY_PAIRING_SECRET` to the receiver's pairing secret (the probe uses a
+test-only default otherwise, which a real device will reject at handshake) and
+`CLIPY_SYNC_PORT` for non-default ports. See [SECURITY.md](../SECURITY.md).
 
 ## Release checklist
 

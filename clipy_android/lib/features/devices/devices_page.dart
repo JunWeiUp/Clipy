@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../app_localizations.dart';
 import '../../notification_manager.dart';
 import '../../sync_manager.dart';
+import '../../sync/pairing.dart';
 import '../../ui/app_components.dart';
 import 'device_widgets.dart';
 
@@ -25,8 +26,13 @@ class _DevicesPageState extends State<DevicesPage> {
 
   Future<void> _toggle(bool enabled) async {
     if (_busy) return;
-    setState(() => _busy = true);
     final manager = SyncManager.instance;
+    if (enabled && !manager.isPaired) {
+      showClipyMessage(context, context.l10n.syncPairingRequired);
+      await _editConnection();
+      if (!manager.isPaired) return;
+    }
+    setState(() => _busy = true);
     final previous = manager.isEnabled;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -111,6 +117,18 @@ class _DevicesPageState extends State<DevicesPage> {
           title: l10n.localNetwork,
           child: Column(
             children: [
+              if (!manager.isPaired)
+                ListTile(
+                  leading: Icon(
+                    Icons.link_off_rounded,
+                    color: colors.error,
+                  ),
+                  title: Text(
+                    l10n.syncPairingRequired,
+                    style: TextStyle(color: colors.error),
+                  ),
+                  onTap: _busy ? null : _editConnection,
+                ),
               SwitchListTile(
                 secondary: _busy
                     ? const SizedBox(
@@ -272,7 +290,19 @@ class _ConnectionEditorState extends State<ConnectionEditor> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _saving
+                        ? null
+                        : () => setState(() {
+                            _secret.text = SyncPairing.generateCode();
+                            _obscure = false;
+                          }),
+                    icon: const Icon(Icons.key_rounded),
+                    label: Text(l10n.syncPairingGenerate),
+                  ),
+                ),
                 Text(
                   l10n.syncPairingSecretHint,
                   style: Theme.of(context).textTheme.bodySmall,

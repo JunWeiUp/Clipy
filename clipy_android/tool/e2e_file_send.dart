@@ -57,7 +57,7 @@ Future<bool> sendFileProbe(String host, int port, File file) async {
   final peerId = const Uuid().v4();
   final fileId = const Uuid().v4();
   final crypto = SyncCrypto()
-    ..pairingSecret = Platform.environment['CLIPY_PAIRING_SECRET'] ?? '';
+    ..pairingSecret = Platform.environment['CLIPY_PAIRING_SECRET'] ?? 'e2e-pairing-secret';
   final handshake = Completer<SyncEnvelope?>();
   final ack = Completer<Map<String, dynamic>>();
   final buffer = BytesBuilder(copy: false);
@@ -121,6 +121,7 @@ Future<bool> sendFileProbe(String host, int port, File file) async {
         peerId: peerId,
         name: 'Clipy-E2E',
         port: port,
+        payload: crypto.pairingProof(peerId),
       ),
     );
     await socket.flush();

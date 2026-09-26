@@ -33,10 +33,14 @@ class MainActivity: FlutterActivity() {
     private val SYNC_CHANNEL_ID = "clipy_sync_foreground"
     private var clipboardChangeListener: ClipboardChangeListener? = null
     private var notificationsMethodChannel: MethodChannel? = null
+    private var pairingChannel: MethodChannel? = null
 
     companion object {
         private const val REBIND_THROTTLE_MS = 30_000L
         @Volatile private var lastRebindTimeMs: Long = 0
+        private const val PAIRING_CHANNEL = "com.clipyclone.clipy_android/pairing"
+        /** Latest `clipy://pair` link, held until Dart takes it (cold start safe). */
+        @Volatile private var pendingPairingLink: String? = null
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -116,7 +120,35 @@ class MainActivity: FlutterActivity() {
             }
         }
 
+        // clipy://pair links (QR from the Mac). Dart pulls the link and always
+        // asks the user before applying it.
+        capturePairingLink(intent)
+        pairingChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PAIRING_CHANNEL).also {
+            it.setMethodCallHandler { call, result ->
+                if (call.method == "takePendingLink") {
+                    result.success(pendingPairingLink)
+                    pendingPairingLink = null
+                } else {
+                    result.notImplemented()
+                }
+            }
+        }
+
         maybeNudgeUiAttach(flutterEngine)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (capturePairingLink(intent)) pairingChannel?.invokeMethod("linkAvailable", null)
+    }
+
+    private fun capturePairingLink(intent: Intent?): Boolean {
+        val data = intent?.data ?: return false
+        if (data.scheme != "clipy" || data.host != "pair") return false
+        pendingPairingLink = data.toString()
+        intent.data = null // don't re-import on configuration-change recreation
+        return true
     }
 
     /**

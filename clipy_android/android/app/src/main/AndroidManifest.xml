@@ -50,6 +50,13 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- clipy://pair?code=… from the Mac's pairing QR code -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="clipy" android:host="pair"/>
+            </intent-filter>
         </activity>
         <meta-data
             android:name="flutterEmbedding"

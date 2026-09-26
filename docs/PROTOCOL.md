@@ -43,20 +43,27 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
 
 ## Crypto
 
-Security boundaries, including public empty-secret compatibility keys and the
+Security boundaries, including the retired empty-secret compatibility key and the
 difference between device allow-lists and authenticated identity, are documented
 in [SECURITY.md](../SECURITY.md). This is a trusted-LAN protocol, not an
 Internet-facing authenticated transport.
 
 - Payload ciphertext: **AES-GCM-256**, wire form `base64(nonce12 ‖ ciphertext ‖ tag)`.
-- Empty user pairing secret → legacy key `SHA256("ClipySyncSecret2026")` (compat only).
-- Non-empty pairing secret → **HKDF-SHA256**:
+- **No fallback key.** An empty pairing secret means unpaired: encrypt/decrypt return nil, sync `start()` refuses to run and handshakes fail with `notPaired`. (The earlier empty-secret key `SHA256("ClipySyncSecret2026")` is retired.)
+- Pairing secret → **HKDF-SHA256**:
   - salt: `clipy.sync.v2.hkdf`
   - info: `aes-256-gcm`
   - length: 32
 - Parity tests: `clipy_android/test/hkdf_parity_test.dart`, `sync_crypto_test.dart`.
 - Framing regression tests: `clipy_android/test/sync_protocol_test.dart`.
 - Loopback file-probe tests: `clipy_android/test/e2e_file_send_test.dart` (no real peers).
+
+## Pairing
+
+- Pairing code: 20 Crockford base32 symbols (`0-9A-Z` minus `I L O U`, 100 bits, CSPRNG), shown as `XXXX-XXXX-XXXX-XXXX-XXXX`. Any non-empty string is still a valid secret; the code is only the generated default.
+- Link / QR: `clipy://pair?code=<secret>&port=<listenPort>[&host=<ipv4>][&name=<deviceName>]`. The Mac renders it with `CIQRCodeGenerator`; Android registers the scheme, **always asks for confirmation**, then saves the secret and adds `host:port` to `manualSyncPeers`.
+- **Handshake proof:** hello and welcome carry `payload = encrypt("clipy.pair.v1:" + senderPeerId)`. The receiver decrypts and compares with the envelope `peerId`; a mismatch closes the socket with `pairingMismatch` and records it in sync diagnostics. A missing proof (older builds) is accepted — such a peer still cannot decrypt anything unless it shares the secret.
+- Changing the secret clears diagnostics and restarts the service so every session re-handshakes with the new key.
 
 ## Discovery
 

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../clipboard_manager.dart';
 import '../../sync_manager.dart';
+import '../../sync/pairing.dart';
 import '../../notification_sync_page.dart';
 import '../../app_localizations.dart';
 import '../../ui/clipboard_history_list.dart';
@@ -29,12 +30,21 @@ class _HomePageState extends State<HomePage>
   );
   StreamSubscription? _fileSubscription;
   StreamSubscription? _progressSubscription;
+  StreamSubscription? _pairingSubscription;
+  int _devicesGeneration = 0;
+  bool _pairingPromptOpen = false;
   final Map<String, FileProgress> _activeTransfers = {};
   bool _clearing = false;
 
   @override
   void initState() {
     super.initState();
+    _pairingSubscription = PairingLinkChannel.instance.links.listen(
+      _confirmPairingLink,
+    );
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => PairingLinkChannel.instance.attach(),
+    );
     _progressSubscription = SyncManager.instance.onFileProgress.listen((
       progress,
     ) {
@@ -65,8 +75,46 @@ class _HomePageState extends State<HomePage>
   void dispose() {
     _fileSubscription?.cancel();
     _progressSubscription?.cancel();
+    _pairingSubscription?.cancel();
     _transition.dispose();
     super.dispose();
+  }
+
+  /// Deep links can come from any app, so a pairing link is only applied
+  /// after the user confirms it.
+  Future<void> _confirmPairingLink(PairingLink link) async {
+    if (!mounted || _pairingPromptOpen) return;
+    _pairingPromptOpen = true;
+    final l10n = context.l10n;
+    final device = link.name.isNotEmpty ? link.name : (link.host ?? '?');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.syncPairingLinkTitle),
+        content: Text(l10n.syncPairingLinkMessage(device)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(l10n.syncPairingImport),
+          ),
+        ],
+      ),
+    );
+    _pairingPromptOpen = false;
+    if (confirmed != true || !mounted) return;
+    try {
+      await SyncPairing.apply(link);
+      if (!mounted) return;
+      setState(() => _devicesGeneration++);
+      _select(1);
+      showClipyMessage(context, context.l10n.syncPairingLinkApplied);
+    } catch (_) {
+      if (mounted) showClipyMessage(context, context.l10n.operationFailed);
+    }
   }
 
   void _select(int index) {
@@ -214,7 +262,7 @@ class _HomePageState extends State<HomePage>
     ];
     final pages = <Widget Function()>[
       _history,
-      () => const DevicesPage(),
+      () => DevicesPage(key: ValueKey(_devicesGeneration)),
       () => const NotificationSyncPage(embedded: true),
       _settings,
     ];

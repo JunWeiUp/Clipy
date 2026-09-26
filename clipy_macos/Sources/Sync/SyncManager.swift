@@ -20,7 +20,7 @@ final class SyncManager: NSObject {
 
     static let maxFrameLength = 2 * 1024 * 1024
     static let maxHandshakeFrameLength = 64 * 1024
-    static let legacySharedSecret = "ClipySyncSecret2026"
+    static let pairingProofPrefix = "clipy.pair.v1:"
     static let keyDerivationSalt = Data("clipy.sync.v2.hkdf".utf8)
     static let keyDerivationInfo = Data("aes-256-gcm".utf8)
     static let defaultPort: UInt16 = 5566
@@ -46,6 +46,8 @@ final class SyncManager: NSObject {
     var syncPort: UInt16 {
         UInt16(clamping: PreferencesManager.shared.syncPort == 0 ? Int(Self.defaultPort) : PreferencesManager.shared.syncPort)
     }
+
+    let diagnostics = SyncDiagnostics()
 
     let keyLock = NSLock()
     var cachedKeySecret: String?
@@ -146,6 +148,10 @@ final class SyncManager: NSObject {
     func start() {
         appLog("SyncManager v2 starting...")
         guard PreferencesManager.shared.isSyncEnabled || NotificationManager.shared.notificationSyncEnabled else { return }
+        guard isPaired else {
+            appLog("Sync not started: no pairing secret set (pair devices in Settings → Sync)", level: .warning)
+            return
+        }
         syncQueue.async { [weak self] in
             guard let self else { return }
             PendingSyncRepository.shared.cleanOld(ttl: Self.pendingQueueTTL)

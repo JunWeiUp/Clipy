@@ -164,9 +164,22 @@ class AppStrings {
       _t('设备名称已更新，同步已重启', 'Device name updated and sync restarted');
   String get syncPairingSecret => _t('同步配对密钥', 'Sync Pairing Secret');
   String get syncPairingSecretHint => _t(
-    '所有设备必须填写完全相同的密钥；留空则使用内置默认密钥（局域网内不安全）。',
-    'All devices must use the exact same secret. Leave empty to fall back to the built-in default (not safe on a shared LAN).',
+    '同一组设备必须使用完全相同的配对密钥。可点「生成配对码」，或用相机扫描 Mac 偏好设置里的二维码导入。',
+    'Every device in a group must use the exact same secret. Tap Generate, or scan the QR code in the Mac preferences with your camera.',
   );
+  String get syncPairingRequired => _t(
+    '尚未配对：同步已暂停。请在「连接设置」中输入或生成配对密钥。',
+    'Not paired: sync is paused. Enter or generate a pairing secret in Connection Settings.',
+  );
+  String get syncPairingGenerate => _t('生成配对码', 'Generate Code');
+  String get syncPairingLinkTitle => _t('导入配对密钥？', 'Import pairing secret?');
+  String syncPairingLinkMessage(String device) => _t(
+    '将使用「$device」提供的配对密钥替换本机密钥，并把它加入手动设备。只有在你刚扫描了自己设备上的二维码时才继续。',
+    'This replaces this device\'s pairing secret with the one from "$device" and adds it as a manual device. Only continue if you just scanned the QR code on your own device.',
+  );
+  String get syncPairingLinkApplied =>
+      _t('已导入配对密钥', 'Pairing secret imported');
+  String get syncPairingImport => _t('导入', 'Import');
   String get syncPairingSecretUpdated =>
       _t('配对密钥已更新，同步已重启', 'Pairing secret updated and sync restarted');
   String get authorizedDevices => _t('授权设备', 'Authorized Devices');
