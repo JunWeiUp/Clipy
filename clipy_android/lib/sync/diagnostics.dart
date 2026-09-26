@@ -29,15 +29,18 @@ class SyncDiagnostics extends ChangeNotifier {
     notifyListeners();
   }
 
-  void noteSessionUp(String peerId, {required String name, required String host}) =>
-      _update(peerId, (r) {
-        r
-          ..name = name
-          ..host = host
-          ..sessionUpAt = DateTime.now()
-          ..lastError = null
-          ..lastErrorAt = null;
-      });
+  void noteSessionUp(
+    String peerId, {
+    required String name,
+    required String host,
+  }) => _update(peerId, (r) {
+    r
+      ..name = name
+      ..host = host
+      ..sessionUpAt = DateTime.now()
+      ..lastError = null
+      ..lastErrorAt = null;
+  });
 
   void noteSessionDown(String peerId) =>
       _update(peerId, (r) => r.sessionDownAt = DateTime.now());
