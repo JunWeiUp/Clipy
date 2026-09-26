@@ -114,7 +114,7 @@
 <details>
 <summary><b>版本、下载与源码构建</b></summary>
 
-当前源码版本：**1.0.20** · 默认本地构建号 **10106** · [构建版本配置](clipy_android/pubspec.yaml)
+当前源码版本：**1.0.21** · 默认本地构建号 **10117** · [构建版本配置](clipy_android/pubspec.yaml)
 
 安装包请前往[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，具体应用版本和构建号以发布说明为准。Android 改版已在 v1.0.19 发布；准备新版期间，上方源码版本可能领先于公开安装包。Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
 
