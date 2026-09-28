@@ -9,6 +9,21 @@ extension HistoryEntry: Identifiable {
 }
 
 final class SearchViewModel: ObservableObject {
+    private var hasAppeared = false
+    private var pendingPanelQuery: String?
+
+    func acceptPanelQuery(_ text: String) {
+        pendingPanelQuery = text
+        if hasAppeared { applyPanelQuery(); performSearch(immediate: true) }
+    }
+
+    private func applyPanelQuery() {
+        guard let text = pendingPanelQuery else { return }
+        pendingPanelQuery = nil
+        query = text; typeFilter = .all; sourceAppFilter = ""; dateFilter = .all
+        useRegex = false; contentCategory = nil
+    }
+
     @Published var query = ""
     @Published var typeFilter: HistoryTypeFilter = .all
     @Published var sourceAppFilter = ""
@@ -70,6 +85,8 @@ final class SearchViewModel: ObservableObject {
         sourceAppFilter = snapshot.sourceAppFilter
         dateFilter = snapshot.dateFilter
         useRegex = snapshot.useRegex
+        hasAppeared = true
+        applyPanelQuery()
         performSearch(immediate: true)
         registerHistoryChangeObserver()
     }

@@ -59,6 +59,12 @@ class PreferencesManager {
         return shortName.isEmpty ? "Mac" : shortName
     }()
 
+    /// Local-only opt-in; never synchronized to other devices.
+    var menuBarOverflowEnabled: Bool {
+        get { defaults.bool(forKey: "menuBarOverflowEnabled") }
+        set { defaults.set(newValue, forKey: "menuBarOverflowEnabled") }
+    }
+
     var deviceName: String {
         get { defaults.string(forKey: deviceNameKey) ?? Self.fallbackDeviceName }
         set { defaults.set(newValue, forKey: deviceNameKey) }

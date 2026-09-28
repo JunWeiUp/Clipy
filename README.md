@@ -49,11 +49,11 @@ Keep reusable replies and code in your Mac snippet library. Add a hotkey. Save y
 
 ## A closer look
 
-### A little menu. A lot within reach.
+### Search from the menu bar.
 
-Search, word lookup, screenshots and recent copies, right in your Mac menu bar. Native Swift / AppKit, with no Dock window to keep open.
+The compact Mac panel puts search at the top, hidden menu bar icons below it, then today's Token usage and recent copies. Open snippets, tools and connected devices without keeping a Dock window open.
 
-<a href="res/screenshots/macos-menu-en.png"><img src="res/screenshots/macos-menu-showcase.webp" alt="Clipy menu bar: search, recent copies, snippets and everyday tools" width="1120" /></a>
+<p align="center"><a href="res/screenshots/macos-panel-en.png"><img src="res/screenshots/macos-panel-en.png" alt="Current Mac menu bar panel with top search, hidden icons, today's Token usage and clipboard history" width="560" /></a></p>
 
 <table>
 <tr>
@@ -78,6 +78,12 @@ Folders on the left, snippets in the middle, your writing on the right. Find, ed
 </tr>
 </table>
 
+### See daily Agent usage.
+
+Open the native Token Usage window from today's summary to inspect daily and model totals. Costs are estimates based on model prices, with unknown models kept visible as unpriced.
+
+<p align="center"><a href="res/screenshots/macos-token-usage-en.png"><img src="res/screenshots/macos-token-usage-en.png" alt="Mac Token Usage window showing the 30-day view, Agent status and daily estimated costs" width="860" /></a></p>
+
 **Capture an idea, too.** On Mac, take a screenshot, annotate it, extract text with OCR or pin it to your screen. Scrolling capture, screen recording and word lookup are also included. [Explore the tools ↓](#feature-reference)
 
 ## At home on Android
@@ -90,7 +96,7 @@ A fresh four-tab layout for **History · Devices · Notifications · Settings**.
   <a href="res/screenshots/android-settings-dark-en.png"><img src="res/screenshots/android-settings-dark-en.png" alt="Android settings in dark appearance" width="30%" /></a>
 </p>
 
-<sub>Android previews show the four-tab layout introduced in v1.0.19. Captures use fictional data in an isolated emulator. Mac showcase images use decorative styling and link to their original captures. The header is a concept illustration. [Image sources & production notes](res/screenshots/README.md)</sub>
+<sub>Mac panel and Token Usage images are native source-build snapshots with fictional data; the history, snippets and preferences showcases use decorative styling and link to original captures. Android previews use an isolated emulator. The header is a concept illustration. [Image sources & production notes](res/screenshots/README.md)</sub>
 
 <details>
 <summary><b>One more detail: preferences that stay out of your way</b></summary>
@@ -180,6 +186,11 @@ Download installers from the [latest published release](https://github.com/JunWe
 - Show or hide Chinese meanings in Vocabulary, including list summaries, definitions, phrase translations and example translations. The choice persists across window reopening and app restarts. The separate lookup window continues to show complete definitions.
 - Uses Youdao's web dictionary endpoints without an API key; these are not a versioned public API and may change or become unavailable. Each result links to its source.
 
+### 💰 Daily Token usage (macOS source builds)
+- Clicking the menu-bar icon shows today's token count and estimated cost directly below the hidden-icons strip. Click the summary to open **Token Usage** for daily and model details, 1/7/30-day ranges and an agent filter; the classic right-click menu also has an entry.
+- Reads existing local usage metadata from Codex, Claude Code, Gemini CLI and ZCode when the panel or window opens, then incrementally on later opens or manual refresh. The first scan imports available history. Clipy stores usage fields and hashed file cursors locally; it does not install hooks, keep a background polling timer, save prompts/responses or raw source paths, or sync usage to Android. Cursor is not included in this first version.
+- USD amounts use bundled model prices and are **estimates, not subscription bills or actual charges**. Unknown models retain their token counts and appear as unpriced rather than $0. **Update model prices** is an explicit action that downloads [LiteLLM's pricing data](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json); normal viewing works offline.
+
 ### 🔄 Encrypted LAN sync
 - **AES-GCM 256-bit** encrypted transport between macOS and Android.
 - Devices discover each other via **/24 subnet scan** and **manual IP:port** (works across 2.4G/5G subnets) — no cloud, no account.
@@ -193,9 +204,10 @@ Download installers from the [latest published release](https://github.com/JunWe
 - **Two-way** dismiss and clear-all; per-app **allow-list** filter.
 
 ### macOS interface
+- **Hidden menu bar icons (source builds):** opt in under Preferences → General or the panel’s settings. On a single built-in display, overflowing items appear in a visible row below the panel search field with their original icon when capture succeeds, or an application icon and name otherwise. Clicking requests the original menu through Accessibility; some apps do not support this. Icons are never moved. Accessibility is required; Screen Recording is optional for original previews (macOS 14+). Dynamic status images are not guaranteed. External displays pause the feature.
 - Native title bars, readable light/dark content surfaces, consistent SF Symbols, spacing and controls.
 - Press <kbd>Esc</kbd> to close the focused window, including settings, search, word lookup, vocabulary, snippet and image/video editors, OCR results and pinned images. Existing save prompts still apply; input-method composition, shortcut recording and modal dialogs handle cancellation first.
-- Compact menu with quick tools and six recent clipboard entries; older history, snippets and devices are grouped in submenus.
+- **Control panel (source builds):** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, today's Token usage estimate directly below them, Clipboard / Snippets / Tools tabs, and device/notification pages. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-click the menu-bar icon for the classic native menu. The gallery above shows the current source build; published packages may differ.
 - Preferences and screenshot settings scroll continuously across categories; the sidebar follows the visible section and supports click-to-jump. See the [macOS design standard](docs/MACOS_DESIGN.md) for UI development guidance.
 
 ### ⌨️ Global hotkeys & 🌍 i18n
@@ -273,12 +285,13 @@ Both root build scripts default to `version: X.Y.Z+N` in [`clipy_android/pubspec
 
 Release builds add the Release workflow run number to the source build number. To replace a published Android APK with a local build, retain the same signing key and set `BUILD_NUMBER` above the installed build; the default local build number may be lower than a CI package with the same app version.
 
-Run `bash scripts/check.sh all` from the root for local quality checks. On macOS, also run `bash scripts/test_macos_core.sh` for search, word lookup, smart app switching and socket regressions; it uses a temporary test executable without installing or launching the app. Smart Switch tests use mock API responses and do not require an API key or activate real applications.
+Run `bash scripts/check.sh all` from the root for local quality checks. On macOS, also run `bash scripts/test_macos_core.sh` for search, word lookup, smart app switching and socket regressions; it uses a temporary test executable without installing or launching the app. Smart Switch tests use mock API responses and do not require an API key or activate real applications. Optional `CLIPY_MENU_BAR_LIVE_TESTS=1 bash scripts/test_macos_core.sh` also creates temporary overflowing status items and verifies original menu/popover activation on a single built-in display with existing Accessibility permission; it does not install the app or move existing icons.
 
 ## 🏗️ Architecture
 
 **macOS app** — Swift + AppKit, native menu-bar app (`LSUIElement`, no Dock icon):
 - `MenuController` — status-bar menu: history, snippets, devices, and actions.
+- `Sources/MenuBarOverflow/` — opt-in hidden status-item discovery, icon previews and direct Accessibility actions; local-only, without reordering.
 - `ClipboardManager` — pasteboard polling, history persistence, dedup, sync dispatch.
 - `SnippetManager` — folders, snippets, hotkeys, import/export.
 - `SyncManager` — subnet/manual discovery, length-prefixed TCP sync (protocol v2), AES-GCM encryption, reliable history + notification delivery.
@@ -324,7 +337,7 @@ assets/                   # Logo & app icons
 
 ## 🤝 Contributing
 
-Issues and pull requests are welcome in English or Chinese. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [architecture map](docs/ARCHITECTURE.md). To contribute code:
+Issues and pull requests are welcome in English or Chinese. See [CONTRIBUTING.md](CONTRIBUTING.md), the [architecture map](docs/ARCHITECTURE.md) and the [change guide](docs/AI_CHANGE_GUIDE.md). To contribute code:
 
 1. Fork the repo and create a feature branch.
 2. Run `bash scripts/check.sh all` and build the affected native platform.

@@ -49,11 +49,11 @@
 
 ## 从菜单栏开始
 
-### 小小菜单，装下日常顺手的操作。
+### 从菜单栏直接搜索。
 
-搜索、查词、截图和最近复制，都在 Mac 菜单栏里。原生 Swift / AppKit，无需让一个窗口一直占着 Dock。
+Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今日 Token 用量和最近复制。片段、工具与已连接设备也随手可达，无需让窗口常驻 Dock。
 
-<a href="res/screenshots/macos-menu-en.png"><img src="res/screenshots/macos-menu-showcase.webp" alt="Clipy 菜单栏：搜索、最近复制、片段与常用工具" width="1120" /></a>
+<p align="center"><a href="res/screenshots/macos-panel-zh.png"><img src="res/screenshots/macos-panel-zh.png" alt="当前 Mac 菜单栏悬浮窗：顶部搜索、隐藏图标、今日 Token 用量与剪贴板历史" width="560" /></a></p>
 
 <table>
 <tr>
@@ -78,6 +78,12 @@
 </tr>
 </table>
 
+### 每天的 Agent 用量，一眼看清。
+
+点击今日摘要打开原生「Token 费用」窗口，按天和模型查看用量。费用按模型标价估算，未知模型会保留 Token 数并标明未定价。
+
+<p align="center"><a href="res/screenshots/macos-token-usage-zh.png"><img src="res/screenshots/macos-token-usage-zh.png" alt="Mac Token 费用窗口：近 30 天、Agent 状态与每日估算费用" width="860" /></a></p>
+
 **看到的灵感，也能留下。** 在 Mac 上截图、标注、OCR 提取文字，或直接贴到屏幕上。还有滚动长截图、录屏和单词查询。[看看这些工具 ↓](#完整功能说明)
 
 ## 在 Android 上，也很顺手
@@ -90,7 +96,7 @@
   <a href="res/screenshots/android-settings-dark-en.png"><img src="res/screenshots/android-settings-dark-en.png" alt="Android 深色外观下的设置页面" width="30%" /></a>
 </p>
 
-<sub>Android 展示 v1.0.19 起提供的四入口布局；截图来自使用虚构数据的独立模拟器。Mac 美化展示图可点击查看原始捕获，顶部为概念插画。[图片来源与制作说明](res/screenshots/README.md)</sub>
+<sub>Mac 悬浮窗与 Token 费用图片为使用虚构数据生成的源码构建原生截图；历史、片段和设置展示图经过装饰处理，点击可看原始捕获。Android 截图来自独立模拟器，顶部为概念插画。[图片来源与制作说明](res/screenshots/README.md)</sub>
 
 <details>
 <summary><b>再看一个细节：顺着浏览习惯的偏好设置</b></summary>
@@ -180,6 +186,11 @@
 - 单词表支持一键显示／隐藏中文释义，同时切换列表摘要、详情释义、短语翻译和例句翻译；会记住上次选择，关闭窗口或重启应用后仍然生效。独立查词窗口继续显示完整释义。
 - 使用无需 API Key 的有道网页词典接口，非有版本保障的公开 API，接口可能变化或暂时不可用；结果附词典来源链接。
 
+### 💰 每日 Token 用量（macOS 源码构建）
+- 点击菜单栏图标后，悬浮面板在隐藏菜单栏图标下方直接显示今日 Token 数与估算费用；点击摘要可打开「Token 费用」窗口，按天、模型、近 1／7／30 天和 Agent 查看明细。右键经典菜单也提供入口。
+- 打开浮层或统计窗口时读取 Codex、Claude Code、Gemini CLI 与 ZCode 已有的本地用量元数据，首次导入现有历史，之后增量刷新；也可手动刷新。本机只保存用量字段和文件路径哈希游标，不安装 hook、不常驻轮询、不保存提示词、回复或原始来源路径，也不将用量同步到 Android。首版暂不包含 Cursor。
+- 美元金额按内置模型标价**估算，不是订阅账单或实际扣费**。未知模型保留 Token 数并标为未定价，不显示成 0 美元。「更新模型价格」仅在用户点击时下载 [LiteLLM 价格数据](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)；平时可离线查看。
+
 ### 🔄 加密局域网同步
 - macOS 与 Android 之间全程 **AES-GCM 256 位**加密传输。
 - 设备通过 **/24 子网扫描** 与 **手动 IP:端口** 互相发现（可跨 2.4G/5G 子网）—— 无需云端、无需账号。
@@ -193,9 +204,10 @@
 - **双向** dismiss 与一键清除；支持按 App **白名单**过滤。
 
 ### macOS 界面
+- **隐藏的菜单栏图标（源码构建）：** 在偏好设置 → 通用或浮层设置中开启。单个内置屏幕上，被挤掉的项目直接显示在搜索框下方的图标栏中，优先显示原图，截取失败时显示应用图标和名称。点击通过辅助功能请求打开原菜单，部分应用可能不支持；不移动图标。需要辅助功能权限；屏幕录制权限仅用于原图预览（macOS 14+），并非必需。不保证动态图标内容复现；连接外屏时暂停。
 - 原生标题栏、清晰的浅色/深色内容背景，以及统一的 SF Symbols、间距与控件样式。
 - 按 <kbd>Esc</kbd> 关闭当前聚焦的窗口，包括设置、搜索、查词、单词表、片段及图片／视频编辑器、OCR 结果和贴图；保留原有保存提示，输入法组词、快捷键录入和模态对话框优先处理取消操作。
-- 紧凑菜单栏提供常用工具和最近六条复制内容；较早历史、片段与设备收纳到子菜单。
+- **轻量控制面板（源码构建）：** 左键点击菜单栏图标，打开原生浮层，顶部一行包含搜索、置顶和设置，下面是直出的隐藏图标、今日 Token 用量估算、「剪贴板 / 片段 / 工具」标签，以及设备和通知页面。搜索异步覆盖历史、片段与工具，首页展示最近六条复制内容；点击历史行会复制并粘贴支持的文本类型，行内「复制」按钮只复制并保持浮层打开。可固定面板，点击外部不关闭；右键菜单栏图标仍可打开经典原生菜单。上方展示的是当前源码构建，公开安装包可能不同。
 - 偏好设置与截图设置可连续滚动浏览各类选项，侧边分类随滚动高亮，也支持点击跳转。界面开发规范见 [macOS 设计标准](docs/MACOS_DESIGN.md)。
 
 ### ⌨️ 全局快捷键 与 🌍 国际化
@@ -275,10 +287,13 @@ Release 构建号为源码构建号加 Release 工作流运行序号。如需用
 
 在仓库根目录运行 `bash scripts/check.sh all` 可执行质量检查。macOS 上还需运行 `bash scripts/test_macos_core.sh`，验证搜索、单词查询、智能切换应用与 socket 回归用例；它使用临时测试程序，不安装或启动应用。智能切换测试使用模拟 API 响应，无需密钥，也不会激活真实应用。
 
+可选运行 `CLIPY_MENU_BAR_LIVE_TESTS=1 bash scripts/test_macos_core.sh`，在单个内置屏幕、已有辅助功能权限的环境中创建临时溢出图标，验证原生菜单和弹窗能否打开；不会安装应用或移动现有图标。
+
 ## 🏗️ 架构
 
 **macOS 应用** —— Swift + AppKit，原生菜单栏应用（`LSUIElement`，不占 Dock）：
 - `MenuController` —— 状态栏菜单：历史、片段、设备与各项操作。
+- `Sources/MenuBarOverflow/` —— 可选的隐藏菜单栏项目发现、图标预览和辅助功能操作；仅本机使用，不调整图标顺序。
 - `ClipboardManager` —— 剪贴板轮询、历史持久化、去重、同步分发。
 - `SnippetManager` —— 文件夹、片段、快捷键、导入导出。
 - `SyncManager` —— 子网/手动发现、带长度前缀的 TCP 同步（协议 v2）、AES-GCM 加密、可靠历史与通知投递。
@@ -324,7 +339,7 @@ assets/                   # Logo 与应用图标
 
 ## 🤝 贡献
 
-欢迎用中文或英文提交 Issue 和 Pull Request！先阅读[贡献规范](CONTRIBUTING.md)与[架构地图](docs/ARCHITECTURE.md)。贡献代码：
+欢迎用中文或英文提交 Issue 和 Pull Request！先阅读[贡献规范](CONTRIBUTING.md)、[架构地图](docs/ARCHITECTURE.md)与[修改指引](docs/AI_CHANGE_GUIDE.md)。贡献代码：
 
 1. Fork 仓库并创建功能分支。
 2. 运行 `bash scripts/check.sh all`，并构建受影响的原生平台。

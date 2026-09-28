@@ -84,6 +84,9 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "${ICONSET}" -o "${STAGED_APP}/Contents/Resources/AppIcon.icns"
 cp "${REPO_ROOT}/LICENSE" "${REPO_ROOT}/THIRD_PARTY_NOTICES.md" "${STAGED_APP}/Contents/Resources/"
+cp "${MACOS_PROJECT_DIR}/Resources/token-prices-seed.json" \
+   "${MACOS_PROJECT_DIR}/Resources/token-prices-overrides.json" \
+   "${STAGED_APP}/Contents/Resources/"
 
 if [ "${GENERATE_DSYM}" = 1 ]; then
   dsymutil "${STAGED_APP}/Contents/MacOS/${APP_NAME}" -o "${BUILD_DIR}/${APP_BUNDLE}.dSYM"

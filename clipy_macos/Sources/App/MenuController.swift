@@ -11,6 +11,18 @@ class MenuController: NSObject {
     }
 
     private var statusItem: NSStatusItem!
+    private var legacyMenu: NSMenu!
+    private var controlPanelStorage: MenuBarPanelController?
+    private var controlPanel: MenuBarPanelController {
+        if let controlPanelStorage { return controlPanelStorage }
+        let panel = MenuBarPanelController()
+        panel.onAction = { [weak self] action in self?.performPanelAction(action) }
+        panel.onVisibilityChanged = { [weak self] visible in
+            self?.statusItem.button?.state = visible ? .on : .off
+        }
+        controlPanelStorage = panel
+        return panel
+    }
     private let clipboardManager = ClipboardManager.shared
     private let snippetManager = SnippetManager.shared
     private lazy var notificationWindow = NotificationWindow()
@@ -22,7 +34,7 @@ class MenuController: NSObject {
     private var isMenuOpen = false
     /// Read-only exposure for the idle memory monitor — it must skip a
     /// reclaim while the menu is being tracked without touching menu state.
-    var isMenuBarMenuOpen: Bool { isMenuOpen }
+    var isMenuBarMenuOpen: Bool { isMenuOpen || controlPanelStorage?.isVisible == true }
     /// The live instance (MenuController is created by AppDelegate, not a
     /// singleton). The idle memory monitor reads the menu-open flag through
     /// it, from the main thread only.
@@ -38,6 +50,7 @@ class MenuController: NSObject {
         super.init()
         MenuController.active = self
         setupStatusItem()
+        MenuBarOverflowManager.shared.start()
         setupClipboardObserver()
         setupSnippetObserver()
         setupHotKeyObserver()
@@ -116,17 +129,21 @@ class MenuController: NSObject {
                 accessibilityDescription: NSLocalizedString("Clipy", comment: "status item accessibility")
             )?.withSymbolConfiguration(config)
             button.image?.isTemplate = true
+            button.target = self
+            button.action = #selector(statusButtonClicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         // 常驻菜单对象：靠 menuNeedsUpdate 在每次打开前就地刷新内容。
         let menu = NSMenu()
         menu.delegate = self
-        statusItem.menu = menu
+        legacyMenu = menu
 
         SyncManager.shared.onDevicesChanged = { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self else { return }
                 // 菜单打开期间只做设备区增量更新；关闭时无需处理，下次打开自然最新。
+                self.controlPanelStorage?.refreshSnapshots()
                 if self.isMenuOpen {
                     self.applyDeviceIncrementalUpdate()
                 }
@@ -134,6 +151,51 @@ class MenuController: NSObject {
         }
     }
     
+    func showControlPanel() {
+        guard let button = statusItem.button else { return }
+        controlPanel.show(from: button)
+    }
+
+    @objc private func statusButtonClicked(_ sender: NSStatusBarButton) {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            controlPanelStorage?.dismiss()
+            legacyMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.minY), in: sender)
+        } else {
+            controlPanel.toggle(from: sender)
+        }
+    }
+
+    private func performPanelAction(_ action: MenuBarPanelModel.Action) {
+        switch action {
+        case .search(let query):
+            NSApp.activate(ignoringOtherApps: true)
+            SearchWindow.shared.showWindow(initialQuery: query)
+        case .snippets: openSnippetEditor()
+        case .preferences: openPreferences()
+        case .syncSettings:
+            NSApp.activate(ignoringOtherApps: true)
+            SettingsWindow.shared.show(page: "sync")
+        case .notifications: openNotifications()
+        case .word: openWordLookup()
+        case .wordBook: openWordBook()
+        case .smartSwitch: openSmartSwitch()
+        case .password: openPasswordGenerator()
+        case .tokenUsage: openTokenUsage()
+        case .region: startScreenshotRegion()
+        case .window: startScreenshotWindow()
+        case .fullscreen: startScreenshotFullscreen()
+        case .screenshotSettings: openScreenshotPreferences()
+        case .permission: grantOverflowPermission()
+        case .quit: NSApp.terminate(nil)
+        case .sendText(let peerID):
+            let item = NSMenuItem(); item.representedObject = peerID
+            sendTextClicked(item)
+        case .sendFile(let peerID):
+            let item = NSMenuItem(); item.representedObject = peerID
+            sendFileClicked(item)
+        }
+    }
+
     private func setupClipboardObserver() {
         clipboardManager.onHistoryChanged = { [weak self] in
             DispatchQueue.main.async {
@@ -143,6 +205,8 @@ class MenuController: NSObject {
     }
 
     private func scheduleMenuUpdate() {
+        controlPanelStorage?.refreshHistory()
+        controlPanelStorage?.refreshSnapshots()
         // 菜单未打开：什么都不做，下次 menuNeedsUpdate 会整建。
         // 菜单已打开：禁止全量 removeAllItems 重建（会销毁正在交互的 item 并重新发起
         // 缩略图/HTML 标题异步加载，导致抖动与无法选中）。仅标记 dirty，
@@ -203,7 +267,9 @@ class MenuController: NSObject {
         tools.addItem(actionItem(L10n.t(.notificationSync) + (count > 0 ? " · \(count)" : ""),
                                  symbol: "bell", action: #selector(openNotifications), key: "N"))
         tools.addItem(actionItem(L10n.t(.generatePassword), symbol: "key.horizontal", action: #selector(openPasswordGenerator), key: "P"))
+        tools.addItem(actionItem(L10n.t(.tokenUsageTitle), symbol: "chart.bar.xaxis", action: #selector(openTokenUsage)))
         menu.addItem(submenuItem(L10n.t(.menuTools), symbol: "wrench.and.screwdriver", submenu: tools))
+        appendOverflowItems(to: menu)
         menu.addItem(.separator())
 
         menu.addItem(AppMenuStyle.header(L10n.t(.menuRecentHistory)))
@@ -265,6 +331,75 @@ class MenuController: NSObject {
         let quit = actionItem(L10n.t(.quit), symbol: "power", action: #selector(NSApplication.terminate(_:)), key: "q")
         quit.target = NSApp
         menu.addItem(quit)
+    }
+
+    private func appendOverflowItems(to menu: NSMenu) {
+        let manager = MenuBarOverflowManager.shared
+        if manager.enabled {
+            let title = L10n.t(.overflowTitle) + (manager.items.isEmpty ? "" : " · \(manager.items.count)")
+            menu.addItem(.separator())
+            menu.addItem(AppMenuStyle.header(title))
+            if manager.items.isEmpty {
+                menu.addItem(AppMenuStyle.detail(L10n.t(manager.status == .ready ? .overflowEmpty : manager.status.messageKey)))
+            } else {
+                for entry in manager.items {
+                    let row = actionItem(AppMenuStyle.compactTitle(entry.title), symbol: "app.dashed",
+                                         action: #selector(openOverflowItem(_:)))
+                    row.representedObject = entry
+                    if let icon = entry.image?.copy() as? NSImage {
+                        let size = NSSize(width: 16, height: 16)
+                        row.image = NSImage(size: size, flipped: false) { bounds in
+                            let scale = min(bounds.width / max(1, icon.size.width), bounds.height / max(1, icon.size.height))
+                            let fitted = NSSize(width: icon.size.width * scale, height: icon.size.height * scale)
+                            icon.draw(in: NSRect(x: (bounds.width - fitted.width) / 2, y: (bounds.height - fitted.height) / 2,
+                                                 width: fitted.width, height: fitted.height))
+                            return true
+                        }
+                    }
+                    row.isEnabled = entry.canPress
+                    row.toolTip = entry.title + "\n" + L10n.t(entry.canPress ? .overflowClickHint : .overflowUnavailable)
+                    menu.addItem(row)
+                }
+                if manager.status == .failed || manager.status == .partial || manager.status == .unconfirmed {
+                    menu.addItem(AppMenuStyle.detail(L10n.t(manager.status.messageKey)))
+                }
+            }
+            if manager.status == .needsPermission {
+                menu.addItem(actionItem(L10n.t(.overflowGrant), symbol: "hand.raised", action: #selector(grantOverflowPermission)))
+            }
+            menu.addItem(.separator())
+            menu.addItem(actionItem(L10n.t(.overflowRefresh), symbol: "arrow.clockwise", action: #selector(refreshOverflowItems)))
+        }
+        let toggle = actionItem(L10n.t(.overflowEnabled), symbol: "menubar.rectangle", action: #selector(toggleOverflowItems))
+        toggle.state = manager.enabled ? .on : .off
+        menu.addItem(toggle)
+    }
+
+    @objc private func toggleOverflowItems() {
+        let manager = MenuBarOverflowManager.shared
+        manager.setEnabled(!manager.enabled)
+    }
+
+    @objc private func refreshOverflowItems() { MenuBarOverflowManager.shared.refresh() }
+
+    @objc private func grantOverflowPermission() {
+        DispatchQueue.main.async {
+            AccessibilityManager.requestSystemPrompt()
+            AccessibilityManager.openSettings()
+        }
+    }
+
+    @objc private func openOverflowItem(_ sender: NSMenuItem) {
+        guard let entry = sender.representedObject as? MenuBarOverflowItem else { return }
+        legacyMenu?.cancelTracking()
+        // Preserve the captured entry across menuDidClose releasing the complete tree.
+        DispatchQueue.main.async {
+            MenuBarOverflowManager.shared.activate(entry) { result in
+                if result == .unavailable {
+                    AlertPresenter.showWarning(title: L10n.t(.overflowTitle), message: L10n.t(.overflowUnavailable))
+                }
+            }
+        }
     }
 
     private func actionItem(_ title: String, symbol: String, action: Selector, key: String = "") -> NSMenuItem {
@@ -757,6 +892,10 @@ class MenuController: NSObject {
         PasswordGeneratorWindow.show()
     }
 
+    @objc private func openTokenUsage() {
+        TokenUsageWindow.shared.showWindow()
+    }
+
     @objc private func registerGlobalHotKeys() {
         SearchGlobalHotKeyManager.register()
         WordGlobalHotKeyManager.register()
@@ -783,7 +922,7 @@ class MenuController: NSObject {
             isMenuDirtyWhileOpen = true
             return
         }
-        if clipboardManager.isMenuMemoryRetained, let menu = statusItem.menu {
+        if clipboardManager.isMenuMemoryRetained, let menu = legacyMenu {
             rebuildMenuContents(menu, with: clipboardManager.recentSummaries)
         }
     }
@@ -793,15 +932,18 @@ class MenuController: NSObject {
 
 extension MenuController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === statusItem.menu else { return }
+        guard menu === legacyMenu else { return }
+        MenuBarOverflowManager.shared.refreshForMenu()
+        MenuBarOverflowManager.shared.recordMenuPresentation()
         isMenuOpen = true
         isMenuDirtyWhileOpen = false
         refreshMenuForOpen(menu)
     }
 
     func menuDidClose(_ menu: NSMenu) {
-        guard menu === statusItem.menu else { return }
+        guard menu === legacyMenu else { return }
         isMenuOpen = false
+        MenuBarOverflowManager.shared.endMenuPresentation()
         // 打开期间累积的 dirty 不在这里重建：menuNeedsUpdate 每次打开都会
         // ensureMenuSummariesLoaded + rebuild，关闭后再建一次只会把刚释放的
         // 摘要重新拉回内存，并渲染一张没人看得见的菜单。
