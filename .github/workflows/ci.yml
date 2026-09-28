@@ -81,20 +81,20 @@ jobs:
         run: |
           flutter pub get --enforce-lockfile
           flutter build windows --release --no-pub -t lib/main_windows.dart
-      - name: Smoke-test Windows startup and persistent storage
+      - name: Package and smoke-test extracted Windows ZIP
         shell: pwsh
         run: |
-          $apps = @(Get-ChildItem clipy_android/build/windows -Filter ClipyClone.exe -Recurse -File |
-            Where-Object { $_.Directory.Name -eq 'Release' })
-          if ($apps.Count -ne 1) { throw "Expected one Release executable; found $($apps.Count)." }
-          $app = $apps[0]
-          $process = Start-Process -FilePath $app.FullName -WorkingDirectory $app.DirectoryName -PassThru
+          ./scripts/package_windows.ps1 -Version ci-smoke
+          $extracted = Join-Path $env:RUNNER_TEMP 'clipy-ci-smoke'
+          Expand-Archive -Path 'dist/ClipyClone-Windows-x64-vci-smoke.zip' -DestinationPath $extracted
+          $executable = Join-Path $extracted 'ClipyClone.exe'
+          $process = Start-Process -FilePath $executable -WorkingDirectory $extracted -PassThru
           try {
             Start-Sleep -Seconds 12
             $process.Refresh()
-            if ($process.HasExited) { throw "Windows app exited with code $($process.ExitCode)." }
+            if ($process.HasExited) { throw "Extracted Windows app exited with code $($process.ExitCode)." }
             $database = Join-Path $env:APPDATA 'ClipyClone/clipy.db'
-            if (-not (Test-Path $database)) { throw "Windows history database was not created." }
+            if (-not (Test-Path $database)) { throw "Extracted Windows app did not initialize its database." }
           } finally {
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }

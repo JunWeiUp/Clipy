@@ -141,10 +141,11 @@ x64 with Visual Studio C++ tools, run `flutter pub get --enforce-lockfile` and
 `./scripts/package_windows.ps1 -Version <version>` from the repository root.
 The script includes the Flutter bundle and MSVC runtime DLLs, verifies the
 extracted ZIP, and writes `dist/ClipyClone-Windows-x64-v<version>.zip`.
-CI launches both the build output and the extracted release ZIP, checking that
-the SQLite history database is created under the user's roaming application
-data directory. Clipboard, tray and bidirectional sync behavior still need a
-real Windows desktop check before public release.
+CI builds the runner and launches an extracted ZIP, checking that the SQLite
+history database is created under the user's roaming application data directory.
+The Release workflow repeats this check on the versioned ZIP. Clipboard, tray
+and bidirectional sync behavior still need a real Windows desktop check before
+public release.
 
 iOS uses the same Flutter code with Swift platform channels. CI builds with
 `flutter build ios --release --no-codesign --no-pub` and compiles the simulator
