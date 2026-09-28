@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'database/notification_repository.dart';
@@ -9,7 +10,20 @@ import 'sync_manager.dart';
 
 class NotificationManager {
   static final NotificationManager instance = NotificationManager._();
-  NotificationManager._();
+  NotificationManager._()
+    : _remoteRepository = NotificationRepository.instance,
+      _acknowledgeRemote = ((hash, peerId) =>
+          SyncManager.instance.sendNotificationAck(hash, toPeerId: peerId));
+
+  /// Supplies an isolated store and ACK sink for remote-notification regressions.
+  NotificationManager.forTesting({
+    required NotificationRepository repository,
+    required void Function(String hash, String peerId) acknowledge,
+  }) : _remoteRepository = repository,
+       _acknowledgeRemote = acknowledge;
+
+  final NotificationRepository _remoteRepository;
+  final void Function(String hash, String peerId) _acknowledgeRemote;
 
   static const _channel = MethodChannel(
     'com.clipyclone.clipy_android/notifications',
@@ -66,7 +80,11 @@ class NotificationManager {
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    isEnabled = prefs.getBool('notificationSyncEnabled') ?? false;
+    // Only Android can collect notifications from other applications. Desktop
+    // and iOS still store and display notifications received from Android.
+    isEnabled =
+        Platform.isAndroid &&
+        (prefs.getBool('notificationSyncEnabled') ?? false);
 
     // 一次性迁移旧键 notificationAllowedPackages → collectedPackages
     final legacy = prefs.getStringList('notificationAllowedPackages');
@@ -83,8 +101,10 @@ class NotificationManager {
     }
     syncedPackages = prefs.getStringList('notificationSyncedPackages') ?? [];
 
-    _channel.setMethodCallHandler(_handleMethodCall);
-    monitoringStartedAt = DateTime.now();
+    if (Platform.isAndroid) {
+      _channel.setMethodCallHandler(_handleMethodCall);
+      monitoringStartedAt = DateTime.now();
+    }
     if (isEnabled) {
       // 先消费 Kotlin 端在 channel=null 期间（锁屏 / 进程被回收）落盘的通知，
       // 再 refresh active 通知。两者都走 _handleNotificationPosted，由 upsert 去重保证幂等。
@@ -307,11 +327,17 @@ class NotificationManager {
     }
   }
 
-  void handleRemoteNotification(String decrypted, String senderDevice) {
+  Future<void> handleRemoteNotification(
+    String decrypted,
+    String senderDevice,
+  ) async {
     try {
       final json = jsonDecode(decrypted);
       final entry = NotificationEntry.fromJson(json);
-      unawaited(_upsertRemote(entry));
+      final result = await _remoteRepository.upsert(entry);
+      if (result.accepted) _notificationsChangedController.add(null);
+      // ACK duplicates too: a previous ACK can be lost after the row commits.
+      _acknowledgeRemote(entry.id, senderDevice);
     } catch (e) {
       appLog(
         'NotificationManager: error handling remote notification: $e',
@@ -320,18 +346,11 @@ class NotificationManager {
     }
   }
 
-  Future<void> _upsertRemote(NotificationEntry entry) async {
-    final result = await NotificationRepository.instance.upsert(entry);
-    if (result.accepted) {
-      _notificationsChangedController.add(null);
-    }
-  }
-
-  void handleRemoteDismiss(String decrypted) {
+  Future<void> handleRemoteDismiss(String decrypted) async {
     try {
       final json = jsonDecode(decrypted);
       final request = NotificationDismissRequest.fromJson(json);
-      dismissNotification(request);
+      await dismissNotification(request);
     } catch (e) {
       appLog(
         'NotificationManager: error handling remote dismiss: $e',
@@ -499,6 +518,18 @@ class NotificationManager {
   }
 
   Future<void> dismissNotification(NotificationDismissRequest request) async {
+    if (!Platform.isAndroid) {
+      try {
+        final removed = await _remoteRepository.removeMatching(request);
+        if (removed > 0) _notificationsChangedController.add(null);
+      } catch (e) {
+        appLog(
+          'NotificationManager: remote dismiss failed: $e',
+          level: 'error',
+        );
+      }
+      return;
+    }
     try {
       await _channel.invokeMethod('dismissNotification', {
         'packageName': request.packageName,
@@ -528,6 +559,15 @@ class NotificationManager {
   }
 
   Future<void> clearAll() async {
+    if (!Platform.isAndroid) {
+      try {
+        await _remoteRepository.clearAll();
+        _notificationsChangedController.add(null);
+      } catch (e) {
+        appLog('NotificationManager: remote clear failed: $e', level: 'error');
+      }
+      return;
+    }
     try {
       await _channel.invokeMethod('clearAllNotifications');
       await NotificationRepository.instance.clearAll();

@@ -26,7 +26,8 @@ bash scripts/check.sh all
 
 `all` runs repository checks, Dart formatting verification, static analysis and
 Flutter tests. It does not connect to peers, install packages on a device or start
-the app. CI also builds a debug APK and the native macOS bundle.
+the app. CI also builds a debug APK, native macOS bundle, Windows runner and
+unsigned iOS application.
 
 ```bash
 bash scripts/check.sh repo      # shell syntax, metadata tests, hygiene
@@ -97,9 +98,10 @@ Check `BUILD.txt` when switching between build channels and use a higher
 `BUILD_NUMBER` for a local replacement of a newer installed build.
 
 Version tags and the combined manual **Release** workflow retain their existing
-draft behavior and asset names. The Mac artifact is uploaded as soon as its own
-job succeeds, even if a separate Android job later fails. Neither Mac CI nor the
-standalone manual workflow publishes a release or requires Developer ID signing.
+draft behavior and macOS/Android asset names. The release assembly job waits
+for both the macOS/Android and Windows artifacts before creating a draft.
+Neither Mac CI nor the standalone manual workflow publishes a release or
+requires Developer ID signing.
 
 ## Android
 
@@ -130,6 +132,26 @@ in `clipy_android/pubspec.yaml`; keep them aligned with the current-version text
 both root README files. To upgrade a newer local or CI installation, explicitly
 supply a higher `BUILD_NUMBER`. Changing signing keys prevents in-place APK upgrades;
 back up user data before any uninstall/reinstall.
+
+## Windows and iOS
+
+Windows uses the Flutter runner in `clipy_android/windows/`. On Windows 10/11
+x64 with Visual Studio C++ tools, run `flutter pub get --enforce-lockfile` and
+`flutter build windows --release --no-pub -t lib/main_windows.dart` from `clipy_android/`, then
+`./scripts/package_windows.ps1 -Version <version>` from the repository root.
+The script includes the Flutter bundle and MSVC runtime DLLs, verifies the
+extracted ZIP, and writes `dist/ClipyClone-Windows-x64-v<version>.zip`.
+CI builds the runner and launches an extracted ZIP, checking that the SQLite
+history database is created under the user's roaming application data directory.
+The Release workflow repeats this check on the versioned ZIP. Clipboard, tray
+and bidirectional sync behavior still need a real Windows desktop check before
+public release.
+
+iOS uses the same Flutter code with Swift platform channels. CI builds with
+`flutter build ios --release --no-codesign --no-pub` and compiles the simulator
+runner with Xcode. It does not export an IPA or upload to TestFlight. On a Mac,
+verify UI and storage in Simulator; local-network permissions, user paste and
+foreground/background reconnect still need a signed physical-device check.
 
 ## Manual regression checks
 
@@ -182,7 +204,8 @@ test-only default otherwise, which a real device will reject at handshake) and
    [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md). Do not describe the whole
    macOS binary as MIT-only until the applicable terms are established.
 2. Run CI and device checks; document any unsupported/experimental platforms.
-   iOS currently has no build/device validation in CI and Android-only native hooks.
+   iOS has unsigned CI and Simulator coverage but no signed-device or public
+   distribution validation. Windows needs a clean-machine ZIP and tray check.
 3. Review dependency changes, data migrations, privacy permissions and logs.
    Enable repository branch protection/required CI and GitHub private vulnerability
    reporting in repository settings as appropriate (not configured by source files).

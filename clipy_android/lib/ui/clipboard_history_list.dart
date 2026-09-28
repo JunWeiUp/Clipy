@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../app_localizations.dart';
@@ -187,15 +188,21 @@ class _PaginatedClipboardHistoryListState
               const SizedBox(height: 16),
               Expanded(
                 child: SingleChildScrollView(
-                  child: SelectableText(
-                    entry.item.type == 'text' || entry.item.type == 'fileURL'
-                        ? entry.item.value.toString()
-                        : entry.item.title,
-                  ),
+                  child: entry.item.type == 'image'
+                      ? Image.file(
+                          File(entry.item.value as String),
+                          errorBuilder: (_, _, _) =>
+                              Text(context.l10n.fileNotFound),
+                        )
+                      : SelectableText(
+                          entry.item.type == 'fileURLs'
+                              ? (entry.item.value as List<String>).join('\n')
+                              : entry.item.value.toString(),
+                        ),
                 ),
               ),
               const SizedBox(height: 20),
-              if (entry.item.type == 'text')
+              if (entry.item.type == 'text' || Platform.isWindows)
                 Wrap(
                   spacing: 12,
                   runSpacing: 8,
@@ -208,14 +215,15 @@ class _PaginatedClipboardHistoryListState
                       icon: const Icon(Icons.copy_rounded),
                       label: Text(context.l10n.copyContent),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(sheetContext);
-                        _send(entry.item.value.toString());
-                      },
-                      icon: const Icon(Icons.send_outlined),
-                      label: Text(context.l10n.send),
-                    ),
+                    if (entry.item.type == 'text')
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          _send(entry.item.value.toString());
+                        },
+                        icon: const Icon(Icons.send_outlined),
+                        label: Text(context.l10n.send),
+                      ),
                   ],
                 ),
             ],
@@ -312,6 +320,8 @@ class _PaginatedClipboardHistoryListState
                             ? l10n.retryHint
                             : (_feed.query.isNotEmpty || _feed.filter != 'all'
                                   ? l10n.changeSearchHint
+                                  : Platform.isIOS
+                                  ? l10n.iosHistoryEmptyHint
                                   : l10n.historyEmptyHint),
                         action: _feed.failed
                             ? FilledButton(
@@ -348,7 +358,9 @@ class _PaginatedClipboardHistoryListState
                             : const SizedBox(height: 8);
                       }
                       final entry = _feed.entries[index];
-                      final isFile = entry.item.type == 'fileURL';
+                      final isFile =
+                          entry.item.type == 'fileURL' ||
+                          entry.item.type == 'fileURLs';
                       final isText = entry.item.type == 'text';
                       final uri = isText
                           ? Uri.tryParse(entry.item.value.toString().trim())
@@ -366,9 +378,7 @@ class _PaginatedClipboardHistoryListState
                       final showDate =
                           index == 0 ||
                           _dateLabel(_feed.entries[index - 1].date) != label;
-                      final title = isFile
-                          ? entry.item.value.toString().split('/').last
-                          : entry.item.title;
+                      final title = entry.item.title;
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -458,7 +468,15 @@ class _PaginatedClipboardHistoryListState
                                           Expanded(
                                             child: Text(
                                               isFile
-                                                  ? entry.item.value.toString()
+                                                  ? (entry.item.type ==
+                                                            'fileURLs'
+                                                        ? (entry.item.value
+                                                                  as List<
+                                                                    String
+                                                                  >)
+                                                              .first
+                                                        : entry.item.value
+                                                              .toString())
                                                   : isText
                                                   ? l10n.tapToCopy
                                                   : l10n.preview,

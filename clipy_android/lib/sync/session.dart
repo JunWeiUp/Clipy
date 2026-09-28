@@ -5,34 +5,48 @@ extension SyncSessionMethods on SyncManager {
   // Server
   // -----------------------------------------------------------------------
 
-  Future<bool> _startServer() async {
+  Future<bool> _startServer(int epoch) async {
+    if (!_isRunCurrent(epoch)) return false;
     try {
-      await _server?.close();
-      _server = await ServerSocket.bind(InternetAddress.anyIPv4, port);
+      final previous = _server;
+      await previous?.close();
+      if (!_isRunCurrent(epoch)) return false;
+      final server = await ServerSocket.bind(InternetAddress.anyIPv4, port);
+      if (!_isRunCurrent(epoch)) {
+        await server.close();
+        return false;
+      }
+      _server = server;
       appLog('Listening on 0.0.0.0:$port');
       // `onDone` must null out `_server` — otherwise the field stays non-null
       // after the listening stream closes, and `onSyncTick` would skip the
       // rebind, leaving :5566 refusing connections with the FGS alive.
-      _server!.listen(
-        _onInbound,
+      server.listen(
+        (socket) => _onInbound(socket, epoch),
         onError: (e) {
           appLog('Server error: $e', level: 'error');
-          _server = null;
+          if (identical(_server, server)) _server = null;
         },
         onDone: () {
           appLog('Server socket closed (onDone)', level: 'warning');
-          _server = null;
+          if (identical(_server, server)) _server = null;
         },
       );
       return true;
     } catch (e) {
-      _server = null;
-      appLog('Failed to bind :$port — $e', level: 'error');
+      if (_isRunCurrent(epoch)) {
+        _server = null;
+        appLog('Failed to bind :$port — $e', level: 'error');
+      }
       return false;
     }
   }
 
-  void _onInbound(Socket socket) {
+  void _onInbound(Socket socket, int epoch) {
+    if (!_isRunCurrent(epoch)) {
+      unawaited(socket.close());
+      return;
+    }
     final host = socket.remoteAddress.address;
     appLog('Inbound from $host');
     unawaited(
@@ -40,6 +54,7 @@ extension SyncSessionMethods on SyncManager {
         socket,
         host: host,
         inbound: true,
+        runEpoch: epoch,
         onHandshakeFailure: (f) {
           appLog('Inbound handshake failed from $host: $f', level: 'warning');
         },
@@ -92,7 +107,10 @@ extension SyncSessionMethods on SyncManager {
     Duration? timeout,
     void Function(String connectFailure)? onConnectFailure,
     void Function(String hsFailure)? onHandshakeFailure,
+    int? runEpoch,
   }) async {
+    final epoch = runEpoch ?? _runLifecycle.epoch;
+    if (!_isRunCurrent(epoch)) return;
     final resolved =
         peerId ?? (reason == 'scan' ? null : _resolvePeerId(host, peerPort));
     if (!_allowsProactiveDial(reason, resolved)) return;
@@ -117,6 +135,7 @@ extension SyncSessionMethods on SyncManager {
         timeout: timeout ?? SyncManager._connectTimeout,
       );
     } catch (e) {
+      if (!_isRunCurrent(epoch)) return;
       // SocketException with null osError + message "Connection timed out" or
       // "Connecting timed out" is the Dart-side timeout path (scanConnectTimeout).
       final isTimeout =
@@ -142,10 +161,15 @@ extension SyncSessionMethods on SyncManager {
       }
       return;
     }
+    if (!_isRunCurrent(epoch)) {
+      await socket.close();
+      return;
+    }
     await _performHandshake(
       socket,
       host: host,
       inbound: false,
+      runEpoch: epoch,
       onHandshakeFailure: reason == 'scan'
           ? onHandshakeFailure
           : (f) {
@@ -165,8 +189,20 @@ extension SyncSessionMethods on SyncManager {
     Socket socket, {
     required String host,
     required bool inbound,
+    required int runEpoch,
     void Function(String failure)? onHandshakeFailure,
   }) async {
+    if (!_isRunCurrent(runEpoch)) {
+      await socket.close();
+      return;
+    }
+    _handshakeSockets.add(socket);
+    unawaited(
+      socket.done.then<void>(
+        (_) => _handshakeSockets.remove(socket),
+        onError: (Object _) => _handshakeSockets.remove(socket),
+      ),
+    );
     final proof = _crypto.pairingProof(peerId);
     if (proof == null) {
       onHandshakeFailure?.call('notPaired');
@@ -214,7 +250,7 @@ extension SyncSessionMethods on SyncManager {
       onError: (e) {
         if (!firstFrame.isCompleted) firstFrame.complete(null);
         final id = adoptedPeerId;
-        if (id != null) {
+        if (id != null && identical(_sessions[id]?.socket, socket)) {
           appLog(
             'Socket error from ${id.substring(0, id.length.clamp(0, 8))}: $e',
             level: 'warning',
@@ -228,7 +264,7 @@ extension SyncSessionMethods on SyncManager {
       onDone: () {
         if (!firstFrame.isCompleted) firstFrame.complete(null);
         final id = adoptedPeerId;
-        if (id != null) {
+        if (id != null && identical(_sessions[id]?.socket, socket)) {
           appLog(
             'Socket closed by peer ${id.substring(0, id.length.clamp(0, 8))}',
           );
@@ -237,6 +273,15 @@ extension SyncSessionMethods on SyncManager {
       },
       cancelOnError: true,
     );
+
+    Future<bool> abandonIfStopped() async {
+      if (_isRunCurrent(runEpoch)) return false;
+      await subscription.cancel();
+      try {
+        await socket.close();
+      } catch (_) {}
+      return true;
+    }
 
     try {
       socket.add(helloData);
@@ -249,11 +294,13 @@ extension SyncSessionMethods on SyncManager {
       } catch (_) {}
       return;
     }
+    if (await abandonIfStopped()) return;
 
     final frame = await firstFrame.future.timeout(
       SyncManager._handshakeTimeout,
       onTimeout: () => null,
     );
+    if (await abandonIfStopped()) return;
     if (frame == null) {
       onHandshakeFailure?.call('readTimeout');
       await subscription.cancel();
@@ -340,6 +387,8 @@ extension SyncSessionMethods on SyncManager {
       }
     }
 
+    if (await abandonIfStopped()) return;
+
     final existing = _sessions[env.peerId];
     if (existing != null) {
       // Align with Mac: replace the old socket. Dropping the new fd while the
@@ -352,8 +401,11 @@ extension SyncSessionMethods on SyncManager {
       try {
         await existing.socket.close();
       } catch (_) {}
-      _sessions.remove(env.peerId);
+      if (identical(_sessions[env.peerId], existing)) {
+        _sessions.remove(env.peerId);
+      }
     }
+    if (await abandonIfStopped()) return;
 
     final name = env.name ?? env.peerId;
     final peerPort = env.port ?? port;
@@ -373,6 +425,7 @@ extension SyncSessionMethods on SyncManager {
       session.buffer.add(buffer.takeBytes());
     }
     _sessions[env.peerId] = session;
+    _handshakeSockets.remove(socket);
     adoptedPeerId = env.peerId;
     handshakeDone = true;
 
@@ -381,6 +434,7 @@ extension SyncSessionMethods on SyncManager {
     noteSessionEstablished();
     _recordPeer(env.peerId, name, host, peerPort);
     await _persistEndpoint(env.peerId, name, host, peerPort);
+    if (!_isRunCurrent(runEpoch)) return;
     if (session.buffer.length > 0) {
       _drainBuffer(env.peerId);
     }
@@ -544,7 +598,8 @@ extension SyncSessionMethods on SyncManager {
   }
 
   void _scheduleReconnect(String peerId) {
-    if (!isEnabled) return;
+    if (!_runLifecycle.isActive || !isEnabled) return;
+    final epoch = _runLifecycle.epoch;
     if (_reconnectTimers.containsKey(peerId)) return;
     // Debounce: don't fire another reconnect attempt within the min interval.
     // This caps data-driven reconnects (deliver write failures) so they can't
@@ -563,20 +618,29 @@ extension SyncSessionMethods on SyncManager {
     );
     _reconnectTimers[peerId] = Timer(Duration(seconds: delay.round()), () {
       _reconnectTimers.remove(peerId);
+      if (!_isRunCurrent(epoch)) return;
       if (_sessions.containsKey(peerId)) return;
       unawaited(() async {
         final reason = await _hasDirectPending(peerId) ? 'direct' : 'reconnect';
+        if (!_isRunCurrent(epoch)) return;
         final peer = _discoveredPeers[peerId];
         if (peer != null) {
-          await _dial(peer.host, peer.port, reason: reason, peerId: peerId);
+          await _dial(
+            peer.host,
+            peer.port,
+            reason: reason,
+            peerId: peerId,
+            runEpoch: epoch,
+          );
           return;
         }
         for (final e in await _readEndpointCache()) {
+          if (!_isRunCurrent(epoch)) return;
           if (e['peerId'] != peerId) continue;
           final host = e['host'] as String?;
           final p = e['port'] as int?;
           if (host == null || p == null) return;
-          await _dial(host, p, reason: reason, peerId: peerId);
+          await _dial(host, p, reason: reason, peerId: peerId, runEpoch: epoch);
           return;
         }
         triggerCrossBandDiscovery(scanFullSubnet: false);

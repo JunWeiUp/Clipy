@@ -109,6 +109,38 @@ void main() {
       isEmpty,
     );
   });
+  test('Windows multi-file copy stays one searchable history entry', () async {
+    const paths = <String>['C:\\Docs\\one.txt', 'C:\\Docs\\two.png'];
+    await repository.insert(
+      HistoryEntry(
+        item: HistoryItem(type: 'fileURLs', value: paths),
+        date: DateTime(2026),
+        contentHash: 'two-files',
+      ),
+    );
+    final found = await repository.fetchPage(
+      offset: 0,
+      limit: 1,
+      query: 'two.png',
+      filter: 'files',
+    );
+    expect(found.single.item.type, 'fileURLs');
+    expect(found.single.item.value, paths);
+  });
+
+  test('history limit also removes old image rows', () async {
+    await repository.insert(
+      HistoryEntry(
+        item: HistoryItem(type: 'image', value: '/private/old.png'),
+        date: DateTime.fromMillisecondsSinceEpoch(1),
+        contentHash: 'old-image',
+      ),
+    );
+    await repository.insert(entry('new', 2));
+    await repository.trimToLimit(1);
+    expect(await repository.count(), 1);
+    expect((await repository.latestEntry())!.item.type, 'text');
+  });
   test('failed insert rolls back deletion of the existing record', () async {
     await repository.insert(entry('old', 1));
     await db.execute(

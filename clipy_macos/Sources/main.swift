@@ -1,7 +1,19 @@
 import AppKit
 
 #if CLIPY_CORE_TESTS
-runCoreRegressionTests()
+if CommandLine.arguments.contains("--clipy-panel-snapshot") {
+    runMenuBarPanelSnapshot()
+} else if CommandLine.arguments.contains("--clipy-token-snapshot") {
+    runTokenUsageSnapshot()
+} else if CommandLine.arguments.contains("--clipy-overflow-fixture-menu") {
+    runMenuBarOverflowFixture(popover: false)
+} else if CommandLine.arguments.contains("--clipy-overflow-fixture-popover") {
+    runMenuBarOverflowFixture(popover: true)
+} else if CommandLine.arguments.contains("--clipy-overflow-live-tests") {
+    runMenuBarOverflowLiveTests()
+} else {
+    runCoreRegressionTests()
+}
 #else
 // OCR child mode must branch before any AppKit state exists: this same
 // executable is re-invoked with a flag as a short-lived Vision worker, and
@@ -59,6 +71,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         LaunchAtLoginManager.syncWithPreference()
         SyncManager.shared.start()
         print("Clipy clone started!")
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { menuController?.showControlPanel() }
+        return true
     }
 
     private func setupMainMenu() {

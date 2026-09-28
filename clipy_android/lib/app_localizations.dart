@@ -137,6 +137,8 @@ class AppStrings {
       _t('保留最近 $count 条', 'Keep the most recent $count items');
   String get excludedApps =>
       _t('排除的应用（Bundle ID，每行一个）', 'Excluded Apps (bundle IDs, one per line)');
+  String get windowsExcludedApps =>
+      _t('排除的应用（程序名，每行一个）', 'Excluded apps (executable names, one per line)');
   String get saveExcludedApps => _t('保存排除应用', 'Save Excluded Apps');
   String get enableLanSync => _t('启用局域网同步', 'Enable LAN Sync');
   String get myIPAddress => _t('本机 IP', 'My IP');
@@ -386,6 +388,10 @@ class AppStrings {
   String get historyEmptyHint => _t(
     '在 Clipy 打开时复制文字，或从已连接的设备同步内容，历史会出现在这里。',
     'Copy text while Clipy is open, or sync it from a connected device. Your history appears here.',
+  );
+  String get iosHistoryEmptyHint => _t(
+    '点击上方的系统粘贴按钮导入文字，或在前台从已连接的设备同步内容。',
+    'Use the Paste button above to import text, or sync from a connected device while Clipy is open.',
   );
   String get loadFailed => _t('暂时无法加载', 'Could not load content');
   String get retryHint =>

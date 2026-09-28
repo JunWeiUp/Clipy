@@ -1,9 +1,10 @@
 # Architecture and code map
 
-Clipy contains two native integration surfaces: a Swift/AppKit macOS menu-bar
-application and a Flutter application with Android/Kotlin background services.
-The Flutter tree also contains an experimental iOS target; Android-native
-capabilities and CI coverage must not be assumed to exist on iOS.
+Clipy keeps its Swift/AppKit macOS menu-bar application. The Flutter application
+shares UI, history storage and the v2 LAN protocol across Android, Windows and
+iOS. Kotlin owns Android background services, the Windows C++ runner owns the
+system clipboard and tray, and Swift owns iOS user-initiated paste and sandbox
+paths. Platform adapters never replace the shared protocol implementation.
 
 ## Repository layout
 
@@ -16,9 +17,13 @@ clipy_macos/
   Sources/Snippets/           snippets, folders and global hotkeys
   Sources/Sync/               discovery, transport, crypto, reliability, files
   Sources/Notifications/      notification storage and system routing
+  Sources/MenuBarPanel/       native control panel, asynchronous queries and focus handoff
+  Sources/MenuBarOverflow/    hidden status-item discovery, previews and AX actions
+  Sources/TokenUsage/         on-demand local agent usage import, pricing and macOS UI
   Sources/Screenshot/         capture/annotation/recording engine and adapters
   Sources/UI/                 shared SwiftUI views and window layouts
   Resources/Info.plist        reviewed bundle/permission metadata template
+  Resources/token-prices-*.json  bundled offline model-price snapshot and overrides
 clipy_android/
   lib/main.dart              default Dart entrypoint only
   lib/app/                   bootstrap, headless bridge, application root
@@ -27,6 +32,8 @@ clipy_android/
   lib/sync/                  protocol, crypto, sessions, discovery, reliability
   lib/ui/                    shared theme, components and history widgets
   android/app/src/main/      Kotlin services, platform channels, timer widget
+  windows/runner/            Win32 clipboard, tray and system path channels
+  ios/Runner/                Swift storage, file and paste-control channels
   test/                      deterministic Flutter/protocol tests
   tool/                      explicitly invoked integration probes
 scripts/                     shared build configuration and local checks
@@ -38,15 +45,42 @@ Existing managers, models, localization and notification UI remain directly unde
 `lib/` to keep their import/API surface stable. Move these by feature in focused
 follow-ups with tests; do not mix a protocol rewrite with directory reorganization.
 
+Windows uses `sqflite_common_ffi` with the same schema and Dart repositories.
+Its `main_windows.dart` target initializes the FFI factory before bootstrap,
+keeping the Android/iOS entrypoint free of desktop database initialization.
+The sqlite3 hook resolves Windows' `winsqlite3.dll` and system SQLite on the
+other platforms, avoiding an extra binary download during Android builds.
+`WM_CLIPBOARDUPDATE` delivers text, PNG images and file paths to
+`ClipboardManager`; copied images live under the private application data
+directory and are deleted with trimmed history. Closing the main window hides it
+to the system tray; explicit Exit destroys the runner. Text alone enters automatic
+history sync, while file transfer remains an explicit device action. The runner
+reports the clipboard-owner executable name when available so history can
+apply the user-configured app exclusion list. A session-local mutex redirects a
+second launch to the existing window so two listeners never write the same DB.
+
+iOS attaches its Flutter UI after core bootstrap (Android's Activity still owns
+`ui.attach`). Native `UIPasteControl` sends user-pasted text to history; there is
+no background clipboard polling. The app's documents directory holds received
+files and is visible in Files. The foreground sync listener stops when the app
+is backgrounded and restarts on resume. Android notifications received over LAN
+are stored and shown read-only on Windows/iOS; those platforms do not request
+Android notification-listener permissions.
+Stopping sync invalidates in-flight discovery and handshakes before closing the
+listener, cancels reconnect work and discards incomplete file transfers. A new
+foreground run uses a new connection generation, so a late result from the
+previous run cannot reopen a background session. Reconnection then fetches
+missed text history and flushes peers' durable pending messages.
+
 ## Ownership and data flow
 
-| Concern | macOS | Flutter / Android |
+| Concern | macOS | Flutter / Android, Windows, iOS |
 | --- | --- | --- |
 | Clipboard | `ClipboardManager` | `ClipboardManager`, native clipboard channel |
 | Persistence | `AppDatabase`, `HistoryRepository` | `database/` repositories, storage channel |
 | Sync orchestration | `SyncManager` | `sync_manager.dart` |
 | Wire contract | `SyncProtocol.swift`, `SyncCrypto.swift` | `sync/protocol.dart`, `sync/crypto.dart` |
-| Notification delivery | `NotificationManager`, `SystemNotificationRouter` | notification manager + native listener service |
+| Notification delivery | `NotificationManager`, `SystemNotificationRouter` | notification manager; Kotlin listener on Android, read-only mirror on Windows/iOS |
 | UI lifetime | `WindowSession`, window controllers | feature widget state + subscriptions |
 
 Local clipboard changes are normalized and deduplicated, persisted, then offered
@@ -58,6 +92,56 @@ Snippets have their own macOS manager and persistence. Screenshot confirmation
 passes through `ScreenshotSessionCoordinator` into clipboard history, optional
 save/sync and thumbnail presentation; screenshot internals should use the app
 integration protocol instead of reaching directly into unrelated controllers.
+
+## Menu-bar control panel (macOS)
+
+`MenuController` owns the status item and routes left clicks to `MenuBarPanelController`,
+while right clicks retain the native menu. The controller uses a nonactivating panel,
+closes before external actions, and validates caller/clipboard/generation before paste.
+The panel controller is created on first left click; background clipboard/device
+updates must not force its initialization.
+`MenuBarPanelModel` owns ephemeral tab, search and selection state; a serial cancellable
+worker uses the existing history search service. `MenuBarPanelView` renders the approved
+compact panel with shared typography, SF Symbols, language observation and semantic colors.
+Existing manager callbacks refresh only the open panel; there is no new idle polling.
+Native menu tracking defers those refreshes. Dismissal cancels queries and releases the view.
+
+Devices, notifications, snippets and tool actions use the existing managers/windows.
+The panel does not alter clipboard persistence, Android or the sync protocol. Tests in
+`MenuBarPanelRegression.swift` cover query races, close/reopen, geometry, keyboard selection
+and focus guards. The optional `CLIPY_PANEL_SNAPSHOT_DIR` core-test environment variable
+renders app-owned light/dark fixtures with fictional data and no real clipboard writes.
+
+## Hidden menu bar icons (macOS)
+
+`MenuBarOverflowManager` publishes an in-memory snapshot for `MenuController` and
+its opt-in General setting. `MenuBarItemProvider` reads `AXExtrasMenuBar` on one
+bounded worker and classifies full hosted-window bounds against the notch and front
+application menus (AX buttons are inset and may appear to fit while their window is hidden).
+Workspace activation refreshes retain the previous snapshot until new results arrive;
+disable, permission loss, sleep/lock and display changes still clear it immediately. Kernel process start times and retained AX element identity
+prevent PID/ordinal reuse from targeting a different item. Control Center owns
+many hosted status windows on macOS 26; `MenuBarSystemBridge` optionally correlates
+those windows by geometry instead of treating the hosting PID as app identity.
+Missing private symbols leave the AX/application-icon path available.
+
+Background checks read metadata only. Opening the panel or classic menu requests
+bounded ScreenCaptureKit previews of matched windows (macOS 14+ with existing
+Screen Recording permission); failures retain application icons and names. The
+classic menu remains a snapshot; the panel observes the published state. Clicking closes the panel or ends menu tracking before issuing
+one AXPress; unsupported or stale targets are not replaced with coordinates or
+application launches. An AX timeout is an unconfirmed result because native menu
+tracking can delay the reply even after the menu opens. Never automatically retry
+it or cover it with a modal failure alert.
+
+Disable, display changes, sleep/lock and permission loss invalidate pending work.
+Only one built-in screen is supported. `menuBarOverflowEnabled` defaults to false;
+window IDs, images and AX elements are never persisted or synchronized. Ordinary
+regressions mock lifecycle races; the explicitly enabled live tests use temporary
+status items and test original menus/popovers without moving existing icons.
+The 15-second AX refresh timer exists only while a panel or classic menu is open;
+closing it cancels outstanding preview work. Workspace/display events can still
+refresh metadata while idle without starting a polling timer.
 
 ## Critical lifecycle contracts
 
@@ -73,6 +157,8 @@ integration protocol instead of reaching directly into unrelated controllers.
   prevent reentrant deadlocks. Sockets must remain nonblocking with bounded waits.
 - OCR child dispatch runs before `NSApplication.shared`. Large media/CI caches
   and closed-window models need explicit idle release paths.
+- Idle reclaim skips every visible content window or panel, including capture
+  overlays and pinned images. Reclaim observer registration is idempotent.
 - Screenshot scratch/cache directories are Clipy-owned; never sweep macshot's
   or another application's directories.
 
@@ -89,4 +175,6 @@ integration protocol instead of reaching directly into unrelated controllers.
 - Version/build metadata: `pubspec.yaml` and `scripts/lib/build_common.sh`.
 
 See [Development](DEVELOPMENT.md) for verification boundaries and
+[the AI change guide](AI_CHANGE_GUIDE.md) for ownership, lifecycle and memory
+checks. See also
 [third-party notices](../THIRD_PARTY_NOTICES.md) before updating the screenshot port.

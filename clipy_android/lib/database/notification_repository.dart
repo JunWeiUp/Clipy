@@ -34,7 +34,9 @@ class NotificationUpsertResult {
 }
 
 class NotificationRepository {
-  NotificationRepository._();
+  NotificationRepository._() : _database = null;
+  NotificationRepository.forDatabase(Database database) : _database = database;
+  final Database? _database;
   static final NotificationRepository instance = NotificationRepository._();
 
   static const duplicateWindowMs = 30000;
@@ -47,7 +49,8 @@ class NotificationRepository {
   static const wechatPackageName = 'com.tencent.mm';
   int _insertsSinceTrim = 0;
 
-  Future<Database> get _db => AppDatabase.instance.database;
+  Future<Database> get _db async =>
+      _database ?? await AppDatabase.instance.database;
 
   NotificationEntry _fromRow(Map<String, Object?> row) {
     final extras = Map<String, dynamic>.from(
@@ -320,6 +323,29 @@ class NotificationRepository {
       where: 'notification_key = ?',
       whereArgs: [key],
     );
+  }
+
+  /// Apply a remote dismiss only to the notification identified by the sender.
+  /// A request without a key must not erase an entire application's history.
+  Future<int> removeMatching(NotificationDismissRequest request) async {
+    final key = request.notificationKey;
+    final group = request.groupKey;
+    if (request.packageName.isEmpty) return 0;
+    if (key != null && key.isNotEmpty) {
+      return (await _db).delete(
+        'notifications',
+        where: 'package_name = ? AND notification_key = ?',
+        whereArgs: [request.packageName, key],
+      );
+    }
+    if (group != null && group.isNotEmpty) {
+      return (await _db).delete(
+        'notifications',
+        where: 'package_name = ? AND group_key = ?',
+        whereArgs: [request.packageName, group],
+      );
+    }
+    return 0;
   }
 
   Future<void> clearAll() async {

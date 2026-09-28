@@ -92,6 +92,8 @@ struct SettingsView: View {
             PreferencesManager.shared.appLanguage = newValue
           }
 
+          MenuBarOverflowSettingsView()
+
           Toggle(L10n.t(.launchAtLogin), isOn: $launchAtLogin)
             .onChange(of: launchAtLogin) { newValue in
               do {

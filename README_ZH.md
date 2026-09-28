@@ -49,11 +49,11 @@
 
 ## 从菜单栏开始
 
-### 小小菜单，装下日常顺手的操作。
+### 从菜单栏直接搜索。
 
-搜索、查词、截图和最近复制，都在 Mac 菜单栏里。原生 Swift / AppKit，无需让一个窗口一直占着 Dock。
+Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今日 Token 用量和最近复制。片段、工具与已连接设备也随手可达，无需让窗口常驻 Dock。
 
-<a href="res/screenshots/macos-menu-en.png"><img src="res/screenshots/macos-menu-showcase.webp" alt="Clipy 菜单栏：搜索、最近复制、片段与常用工具" width="1120" /></a>
+<p align="center"><a href="res/screenshots/macos-panel-zh.png"><img src="res/screenshots/macos-panel-zh.png" alt="当前 Mac 菜单栏悬浮窗：顶部搜索、隐藏图标、今日 Token 用量与剪贴板历史" width="560" /></a></p>
 
 <table>
 <tr>
@@ -78,6 +78,12 @@
 </tr>
 </table>
 
+### 每天的 Agent 用量，一眼看清。
+
+点击今日摘要打开原生「Token 费用」窗口，按天和模型查看用量。费用按模型标价估算，未知模型会保留 Token 数并标明未定价。
+
+<p align="center"><a href="res/screenshots/macos-token-usage-zh.png"><img src="res/screenshots/macos-token-usage-zh.png" alt="Mac Token 费用窗口：近 30 天、Agent 状态与每日估算费用" width="860" /></a></p>
+
 **看到的灵感，也能留下。** 在 Mac 上截图、标注、OCR 提取文字，或直接贴到屏幕上。还有滚动长截图、录屏和单词查询。[看看这些工具 ↓](#完整功能说明)
 
 ## 在 Android 上，也很顺手
@@ -90,7 +96,7 @@
   <a href="res/screenshots/android-settings-dark-en.png"><img src="res/screenshots/android-settings-dark-en.png" alt="Android 深色外观下的设置页面" width="30%" /></a>
 </p>
 
-<sub>Android 展示 v1.0.19 起提供的四入口布局；截图来自使用虚构数据的独立模拟器。Mac 美化展示图可点击查看原始捕获，顶部为概念插画。[图片来源与制作说明](res/screenshots/README.md)</sub>
+<sub>Mac 悬浮窗与 Token 费用图片为使用虚构数据生成的源码构建原生截图；历史、片段和设置展示图经过装饰处理，点击可看原始捕获。Android 截图来自独立模拟器，顶部为概念插画。[图片来源与制作说明](res/screenshots/README.md)</sub>
 
 <details>
 <summary><b>再看一个细节：顺着浏览习惯的偏好设置</b></summary>
@@ -114,7 +120,7 @@
 <details>
 <summary><b>版本、下载与源码构建</b></summary>
 
-当前源码版本：**1.0.22** · 默认本地构建号 **10118** · [构建版本配置](clipy_android/pubspec.yaml)
+当前源码版本：**1.0.23** · 默认本地构建号 **10136** · [构建版本配置](clipy_android/pubspec.yaml)
 
 安装包请前往[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，具体应用版本和构建号以发布说明为准。Android 改版已在 v1.0.19 发布；准备新版期间，上方源码版本可能领先于公开安装包。Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
 
@@ -180,6 +186,11 @@
 - 单词表支持一键显示／隐藏中文释义，同时切换列表摘要、详情释义、短语翻译和例句翻译；会记住上次选择，关闭窗口或重启应用后仍然生效。独立查词窗口继续显示完整释义。
 - 使用无需 API Key 的有道网页词典接口，非有版本保障的公开 API，接口可能变化或暂时不可用；结果附词典来源链接。
 
+### 💰 每日 Token 用量（macOS 源码构建）
+- 点击菜单栏图标后，悬浮面板在隐藏菜单栏图标下方直接显示今日 Token 数与估算费用；点击摘要可打开「Token 费用」窗口，按天、模型、近 1／7／30 天和 Agent 查看明细。右键经典菜单也提供入口。
+- 打开浮层或统计窗口时读取 Codex、Claude Code、Gemini CLI 与 ZCode 已有的本地用量元数据，首次导入现有历史，之后增量刷新；也可手动刷新。本机只保存用量字段和文件路径哈希游标，不安装 hook、不常驻轮询、不保存提示词、回复或原始来源路径，也不将用量同步到 Android。首版暂不包含 Cursor。
+- 美元金额按内置模型标价**估算，不是订阅账单或实际扣费**。未知模型保留 Token 数并标为未定价，不显示成 0 美元。「更新模型价格」仅在用户点击时下载 [LiteLLM 价格数据](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)；平时可离线查看。
+
 ### 🔄 加密局域网同步
 - macOS 与 Android 之间全程 **AES-GCM 256 位**加密传输。
 - 设备通过 **/24 子网扫描** 与 **手动 IP:端口** 互相发现（可跨 2.4G/5G 子网）—— 无需云端、无需账号。
@@ -193,14 +204,15 @@
 - **双向** dismiss 与一键清除；支持按 App **白名单**过滤。
 
 ### macOS 界面
+- **隐藏的菜单栏图标（源码构建）：** 在偏好设置 → 通用或浮层设置中开启。单个内置屏幕上，被挤掉的项目直接显示在搜索框下方的图标栏中，优先显示原图，截取失败时显示应用图标和名称。点击通过辅助功能请求打开原菜单，部分应用可能不支持；不移动图标。需要辅助功能权限；屏幕录制权限仅用于原图预览（macOS 14+），并非必需。不保证动态图标内容复现；连接外屏时暂停。
 - 原生标题栏、清晰的浅色/深色内容背景，以及统一的 SF Symbols、间距与控件样式。
 - 按 <kbd>Esc</kbd> 关闭当前聚焦的窗口，包括设置、搜索、查词、单词表、片段及图片／视频编辑器、OCR 结果和贴图；保留原有保存提示，输入法组词、快捷键录入和模态对话框优先处理取消操作。
-- 紧凑菜单栏提供常用工具和最近六条复制内容；较早历史、片段与设备收纳到子菜单。
+- **轻量控制面板（源码构建）：** 左键点击菜单栏图标，打开原生浮层，顶部一行包含搜索、置顶和设置，下面是直出的隐藏图标、今日 Token 用量估算、「剪贴板 / 片段 / 工具」标签，以及设备和通知页面。搜索异步覆盖历史、片段与工具，首页展示最近六条复制内容；点击历史行会复制并粘贴支持的文本类型，行内「复制」按钮只复制并保持浮层打开。可固定面板，点击外部不关闭；右键菜单栏图标仍可打开经典原生菜单。上方展示的是当前源码构建，公开安装包可能不同。
 - 偏好设置与截图设置可连续滚动浏览各类选项，侧边分类随滚动高亮，也支持点击跳转。界面开发规范见 [macOS 设计标准](docs/MACOS_DESIGN.md)。
 
 ### ⌨️ 全局快捷键 与 🌍 国际化
 - 搜索、单词查询、智能切换应用、截图、每个片段均可绑定快捷键。
-- 中/英文界面；macOS 原生端与 Flutter Android 端。iOS 为实验性目标，未纳入 CI 与真机验证，不能默认使用 Android 原生能力。
+- 中/英文界面；macOS 使用原生实现，Android、Windows 和 iOS 源码目标使用 Flutter。Windows 新增本机文字／图片／文件历史与系统托盘；iOS 支持用户主动粘贴及前台局域网同步，不能在后台持续读取其他应用的剪贴板或通知。CI 对 iOS 进行无签名构建，目前没有可安装的 iOS 发布包。
 
 <details>
 <summary><b>🔐 关于安全的说明</b></summary>
@@ -239,7 +251,7 @@ INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh
 
 Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留 30 天），内含 **Apple Silicon / macOS 13+** 应用 ZIP、调试符号 ZIP、SHA-256 校验文件和安装说明。
 
-这些是临时签名的开发构建，不代表已正式发布；首次打开的「**隐私与安全 → 仍要打开**」操作和更新后授权说明见[安装指南](docs/MACOS_INSTALL.md)。版本标签仍创建现有双端 Release 草稿。
+这些是临时签名的开发构建，不代表已正式发布；首次打开的「**隐私与安全 → 仍要打开**」操作和更新后授权说明见[安装指南](docs/MACOS_INSTALL.md)。版本标签会创建待审核的多平台 Release 草稿。
 
 ### Android（Flutter）
 
@@ -265,7 +277,23 @@ Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留
 
 调试包位于 `clipy_android/build/app/outputs/flutter-apk/app-debug.apk`。调试包与发布包签名不同，不能假设可互相覆盖安装；如确需卸载重装，请先备份应用数据。
 
-iOS 仍为实验性目标，尚未纳入本项目 CI 验证。
+### Windows（Flutter + Win32）
+
+在 Windows 10/11 x64 上安装 Flutter **3.41.7** 和 Visual Studio 的「使用 C++ 的桌面开发」工作负载后构建：
+
+```powershell
+cd clipy_android
+flutter pub get --enforce-lockfile
+flutter build windows --release --no-pub -t lib/main_windows.dart
+cd ..
+./scripts/package_windows.ps1 -Version 1.0.23
+```
+
+产物为 `dist/ClipyClone-Windows-x64-v1.0.23.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。Windows 源码构建及下一版 Release 草稿中的 ZIP 未签名，是否已公开发布以发布页为准。
+
+### iOS（Flutter + Swift）
+
+iOS 15+ 目标已纳入 CI 无签名构建，目前不提供 IPA 或 TestFlight 下载。支持查看本地历史、通过系统粘贴按钮主动导入文字、前台同步、文件收发及查看 Android 镜像通知。iOS 限制后台持续运行和读取其他应用通知；公开分发前仍需签名真机验证权限与同步。
 
 ### 版本号与检查
 
@@ -275,10 +303,13 @@ Release 构建号为源码构建号加 Release 工作流运行序号。如需用
 
 在仓库根目录运行 `bash scripts/check.sh all` 可执行质量检查。macOS 上还需运行 `bash scripts/test_macos_core.sh`，验证搜索、单词查询、智能切换应用与 socket 回归用例；它使用临时测试程序，不安装或启动应用。智能切换测试使用模拟 API 响应，无需密钥，也不会激活真实应用。
 
+可选运行 `CLIPY_MENU_BAR_LIVE_TESTS=1 bash scripts/test_macos_core.sh`，在单个内置屏幕、已有辅助功能权限的环境中创建临时溢出图标，验证原生菜单和弹窗能否打开；不会安装应用或移动现有图标。
+
 ## 🏗️ 架构
 
 **macOS 应用** —— Swift + AppKit，原生菜单栏应用（`LSUIElement`，不占 Dock）：
 - `MenuController` —— 状态栏菜单：历史、片段、设备与各项操作。
+- `Sources/MenuBarOverflow/` —— 可选的隐藏菜单栏项目发现、图标预览和辅助功能操作；仅本机使用，不调整图标顺序。
 - `ClipboardManager` —— 剪贴板轮询、历史持久化、去重、同步分发。
 - `SnippetManager` —— 文件夹、片段、快捷键、导入导出。
 - `SyncManager` —— 子网/手动发现、带长度前缀的 TCP 同步（协议 v2）、AES-GCM 加密、可靠历史与通知投递。
@@ -324,7 +355,7 @@ assets/                   # Logo 与应用图标
 
 ## 🤝 贡献
 
-欢迎用中文或英文提交 Issue 和 Pull Request！先阅读[贡献规范](CONTRIBUTING.md)与[架构地图](docs/ARCHITECTURE.md)。贡献代码：
+欢迎用中文或英文提交 Issue 和 Pull Request！先阅读[贡献规范](CONTRIBUTING.md)、[架构地图](docs/ARCHITECTURE.md)与[修改指引](docs/AI_CHANGE_GUIDE.md)。贡献代码：
 
 1. Fork 仓库并创建功能分支。
 2. 运行 `bash scripts/check.sh all`，并构建受影响的原生平台。

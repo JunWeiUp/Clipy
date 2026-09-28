@@ -5,7 +5,7 @@ class StoragePaths {
   static const _channel = MethodChannel('com.clipyclone.clipy_android/storage');
 
   static Future<Directory> appStorageDirectory() async {
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isIOS || Platform.isWindows) {
       final path = await _channel.invokeMethod<String>(
         'getAppStorageDirectory',
       );
@@ -13,6 +13,9 @@ class StoragePaths {
         final dir = Directory(path);
         await dir.create(recursive: true);
         return dir;
+      }
+      if (Platform.isIOS || Platform.isWindows) {
+        throw StateError('Native application storage path is unavailable');
       }
     }
 
@@ -27,7 +30,9 @@ class StoragePaths {
   }
 
   static Future<Directory?> publicDownloadsDirectory() async {
-    if (!Platform.isAndroid) return null;
+    if (!Platform.isAndroid && !Platform.isIOS && !Platform.isWindows) {
+      return null;
+    }
 
     final path = await _channel.invokeMethod<String>('getDownloadsDirectory');
     if (path == null || path.isEmpty) return null;
