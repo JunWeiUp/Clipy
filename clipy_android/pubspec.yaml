@@ -20,7 +20,7 @@ dependencies:
   sqflite: ^2.4.2+1
   sqflite_common_ffi: ^2.3.6
   path: ^1.9.1
-  connectivity_plus: ^6.1.1
+  connectivity_plus: ^7.3.1
 
 dev_dependencies:
   flutter_test:
