@@ -9,6 +9,8 @@ import 'database/clipboard_repository.dart';
 import 'log_manager.dart';
 import 'models.dart';
 import 'sync_manager.dart';
+import 'storage_paths.dart';
+import 'package:path/path.dart' as p;
 
 class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   static final ClipboardManager instance = ClipboardManager._();
@@ -16,6 +18,9 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
 
   static const _clipboardChannel = MethodChannel(
     'com.clipyclone.clipy_android/clipboard',
+  );
+  static const _iosPasteChannel = MethodChannel(
+    'com.clipyclone.clipy_android/ios_paste',
   );
 
   String? _lastText;
@@ -39,6 +44,12 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     'com.android.onepassword',
     'com.agilebits.onepassword',
     'com.onepassword.android',
+  ];
+  static const List<String> _windowsExcludedApps = [
+    '1password.exe',
+    'bitwarden.exe',
+    'keepass.exe',
+    'keepassxc.exe',
   ];
 
   int _historyLimit = 1000;
@@ -82,12 +93,33 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
         _lifecycleObserverRegistered = true;
       }
       await startMonitoring();
+    } else if (Platform.isWindows) {
+      _clipboardChannel.setMethodCallHandler(_handleClipboardMethodCall);
+      // Windows runner sends WM_CLIPBOARDUPDATE through the same channel.
+      // Read the current value as a baseline without importing old content.
+      try {
+        final data = await _clipboardChannel
+            .invokeMethod<Map<dynamic, dynamic>>('getSnapshot');
+        if (data?['type'] == 'text') _lastText = data?['text'] as String?;
+      } catch (e) {
+        appLog('Windows clipboard baseline failed: $e', level: 'warning');
+      }
+    } else if (Platform.isIOS) {
+      _iosPasteChannel.setMethodCallHandler((call) async {
+        if (call.method == 'pasteText' && call.arguments is String) {
+          await importUserClipboardText(call.arguments as String);
+        }
+      });
     } else {
       _startPolling(const Duration(seconds: 1));
     }
   }
 
   Future<dynamic> _handleClipboardMethodCall(MethodCall call) async {
+    if (Platform.isWindows && call.method == 'onClipboardChanged') {
+      await _readWindowsClipboard();
+      return null;
+    }
     if (call.method == 'onClipboardChanged') {
       final args = Map<String, dynamic>.from(call.arguments as Map);
       final text = args['text'] as String?;
@@ -107,6 +139,94 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
       }
     }
     return null;
+  }
+
+  /// iOS reads another app's pasteboard only after an explicit user gesture.
+  Future<void> importUserClipboardText(String text) async {
+    if (text.isEmpty) return;
+    await _processClipboardText(
+      text,
+      recordHistory: true,
+      sourceApp: 'iOS',
+      force: true,
+    );
+  }
+
+  Future<void> _readWindowsClipboard() async {
+    try {
+      final data = await _clipboardChannel.invokeMethod<Map<dynamic, dynamic>>(
+        'getSnapshot',
+      );
+      if (data == null || data['ownedByClipy'] == true) return;
+      final sourceApp = data['sourceApp'] as String? ?? 'Windows';
+      if (_excludedApps.any(
+        (app) => app.toLowerCase() == sourceApp.toLowerCase(),
+      )) {
+        return;
+      }
+      if (data['type'] == 'text') {
+        final text = data['text'] as String?;
+        if (text != null && text.isNotEmpty) {
+          await _processClipboardText(
+            text,
+            recordHistory: true,
+            sourceApp: sourceApp,
+            force: true,
+          );
+        }
+      } else if (data['type'] == 'image') {
+        final bytes = data['bytes'] as Uint8List?;
+        if (bytes == null || bytes.isEmpty) return;
+        final hash = sha256.convert(bytes).toString();
+        final root = Directory(
+          p.join(
+            (await StoragePaths.appStorageDirectory()).path,
+            'clipboard-images',
+          ),
+        );
+        await root.create(recursive: true);
+        final file = File(p.join(root.path, '$hash.png'));
+        if (!await file.exists()) {
+          final temporary = File(
+            '${file.path}.${DateTime.now().microsecondsSinceEpoch}.tmp',
+          );
+          await temporary.writeAsBytes(bytes, flush: true);
+          try {
+            if (!await file.exists()) {
+              await temporary.rename(file.path);
+            }
+          } finally {
+            if (await temporary.exists()) {
+              await temporary.delete();
+            }
+          }
+        }
+        await _addToHistory(
+          HistoryEntry(
+            item: HistoryItem(type: 'image', value: file.path),
+            date: DateTime.now(),
+            sourceApp: sourceApp,
+            contentHash: hash,
+          ),
+        );
+      } else if (data['type'] == 'files') {
+        final paths = (data['paths'] as List?)?.cast<String>() ?? [];
+        if (paths.isEmpty) return;
+        final item = paths.length == 1
+            ? HistoryItem(type: 'fileURL', value: paths.first)
+            : HistoryItem(type: 'fileURLs', value: paths);
+        await _addToHistory(
+          HistoryEntry(
+            item: item,
+            date: DateTime.now(),
+            sourceApp: sourceApp,
+            contentHash: _contentHashForItem(item),
+          ),
+        );
+      }
+    } catch (e) {
+      appLog('Windows clipboard read failed: $e', level: 'warning');
+    }
   }
 
   Future<void> startMonitoring() async {
@@ -204,8 +324,9 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     String text, {
     required bool recordHistory,
     String? sourceApp,
+    bool force = false,
   }) async {
-    if (text == _lastText) return;
+    if (text == _lastText && !force) return;
     if (recordHistory) {
       final item = HistoryItem(type: 'text', value: text);
       final entry = HistoryEntry(
@@ -223,7 +344,10 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _historyLimit = prefs.getInt('historyLimit') ?? 1000;
     _excludedApps =
-        prefs.getStringList('excludedApps') ?? List.from(_defaultExcludedApps);
+        prefs.getStringList('excludedApps') ??
+        List.from(
+          Platform.isWindows ? _windowsExcludedApps : _defaultExcludedApps,
+        );
   }
 
   /// Records a remote-origin hash so the next local copy of the same content is
@@ -250,7 +374,10 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     HistoryEntry entry, {
     bool broadcast = true,
   }) async {
-    if (entry.sourceApp != null && _excludedApps.contains(entry.sourceApp)) {
+    if (entry.sourceApp != null &&
+        _excludedApps.any(
+          (app) => app.toLowerCase() == entry.sourceApp!.toLowerCase(),
+        )) {
       return;
     }
 
@@ -289,8 +416,30 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
 
   Future<void> copyToClipboard(HistoryItem item) async {
     if (item.type == 'text') {
-      await Clipboard.setData(ClipboardData(text: item.value as String));
+      if (Platform.isWindows) {
+        final ok = await _clipboardChannel.invokeMethod<bool>('setText', {
+          'text': item.value as String,
+        });
+        if (ok != true) throw StateError('Windows clipboard write failed');
+      } else {
+        await Clipboard.setData(ClipboardData(text: item.value as String));
+      }
       _lastText = item.value as String;
+    } else if (Platform.isWindows && item.type == 'image') {
+      final bytes = await File(item.value as String).readAsBytes();
+      final ok = await _clipboardChannel.invokeMethod<bool>('setImage', {
+        'bytes': bytes,
+      });
+      if (ok != true) throw StateError('Windows image clipboard write failed');
+    } else if (Platform.isWindows &&
+        (item.type == 'fileURL' || item.type == 'fileURLs')) {
+      final paths = item.type == 'fileURL'
+          ? <String>[item.value as String]
+          : (item.value as List<String>);
+      final ok = await _clipboardChannel.invokeMethod<bool>('setFiles', {
+        'paths': paths,
+      });
+      if (ok != true) throw StateError('Windows file clipboard write failed');
     }
   }
 
@@ -352,6 +501,19 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   static const _headlessClipboardPrefsMaxChars = 64 * 1024;
 
   Future<void> _writeSystemClipboard(String text) async {
+    if (Platform.isWindows) {
+      try {
+        await _clipboardChannel.invokeMethod<bool>('setText', {'text': text});
+      } catch (e) {
+        appLog('Windows clipboard write failed: $e', level: 'warning');
+      }
+      return;
+    }
+    if (Platform.isIOS) {
+      // Receiving a remote item adds it to history. Writing the system pasteboard
+      // on iOS is deliberately user-driven through the history Copy action.
+      return;
+    }
     if (text.length <= _headlessClipboardPrefsMaxChars) {
       try {
         final prefs = await SharedPreferences.getInstance();

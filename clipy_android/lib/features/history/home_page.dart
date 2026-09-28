@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:io';
 import '../../clipboard_manager.dart';
 import '../../sync_manager.dart';
 import '../../sync/pairing.dart';
 import '../../notification_sync_page.dart';
+import 'remote_notifications_page.dart';
 import '../../app_localizations.dart';
 import '../../ui/clipboard_history_list.dart';
 import '../../ui/app_components.dart';
@@ -164,7 +166,12 @@ class _HomePageState extends State<HomePage>
   );
   Future<void> _openFolder(String path) async {
     try {
-      await _channel.invokeMethod('openFolder', {'path': path});
+      final opened = await _channel.invokeMethod<bool>('openFolder', {
+        'path': path,
+      });
+      if (opened == false && mounted) {
+        showClipyMessage(context, context.l10n.fileNotFound);
+      }
     } on PlatformException catch (e) {
       if (mounted) {
         showClipyMessage(
@@ -181,8 +188,30 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  Widget _history() => PaginatedClipboardHistoryList(
-    onFileTap: (entry) => _openFolder(entry.item.value.toString()),
+  Widget _history() => Column(
+    children: [
+      if (Platform.isIOS)
+        const Padding(
+          padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: SizedBox(
+              width: 160,
+              height: 44,
+              child: UiKitView(viewType: 'clipy/iosPasteControl'),
+            ),
+          ),
+        ),
+      Expanded(
+        child: PaginatedClipboardHistoryList(
+          onFileTap: (entry) => _openFolder(
+            entry.item.type == 'fileURLs'
+                ? (entry.item.value as List<String>).first
+                : entry.item.value.toString(),
+          ),
+        ),
+      ),
+    ],
   );
   Widget _settings() => ListView(
     key: const PageStorageKey('settings'),
@@ -263,7 +292,9 @@ class _HomePageState extends State<HomePage>
     final pages = <Widget Function()>[
       _history,
       () => DevicesPage(key: ValueKey(_devicesGeneration)),
-      () => const NotificationSyncPage(embedded: true),
+      () => Platform.isAndroid
+          ? const NotificationSyncPage(embedded: true)
+          : const RemoteNotificationsPage(),
       _settings,
     ];
     final wide = MediaQuery.sizeOf(context).width >= 720;

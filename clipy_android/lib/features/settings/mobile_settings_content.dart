@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../clipboard_manager.dart';
 import '../../app_localizations.dart';
 import '../../ui/app_components.dart';
 import '../../ui/app_theme.dart';
@@ -25,23 +27,32 @@ class _MobileSettingsContentState extends State<MobileSettingsContent>
   );
   bool _timerWidgetPinned = false;
   bool _pinning = false;
+  late final TextEditingController _excludedAppsController;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _refreshPinned();
+    _excludedAppsController = TextEditingController(
+      text: ClipboardManager.instance.excludedApps.join('\n'),
+    );
+    if (Platform.isAndroid) {
+      _refreshPinned();
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _excludedAppsController.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refreshPinned();
+    if (Platform.isAndroid && state == AppLifecycleState.resumed) {
+      _refreshPinned();
+    }
   }
 
   Future<void> _refreshPinned() async {
@@ -152,48 +163,88 @@ class _MobileSettingsContentState extends State<MobileSettingsContent>
               ],
             ),
           ),
-          ClipySection(
-            title: l10n.homeWidgetSection,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const ClipyIcon(Icons.timer_outlined),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Text(
-                          l10n.timerWidgetTitle,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
+          if (Platform.isWindows)
+            ClipySection(
+              title: l10n.windowsExcludedApps,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: _excludedAppsController,
+                      minLines: 3,
+                      maxLines: 6,
+                      decoration: InputDecoration(
+                        labelText: l10n.windowsExcludedApps,
+                        border: const OutlineInputBorder(),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    l10n.timerWidgetDesc,
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 18),
-                  FilledButton.tonalIcon(
-                    onPressed: _timerWidgetPinned || _pinning ? null : _pin,
-                    icon: Icon(
-                      _timerWidgetPinned
-                          ? Icons.check_circle_outline
-                          : Icons.add_rounded,
                     ),
-                    label: Text(
-                      _timerWidgetPinned
-                          ? l10n.timerWidgetAdded
-                          : l10n.addToHomeScreen,
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: () async {
+                        final names = _excludedAppsController.text
+                            .split('\n')
+                            .map((name) => name.trim())
+                            .where((name) => name.isNotEmpty)
+                            .toSet()
+                            .toList();
+                        await ClipboardManager.instance.updateExcludedApps(
+                          names,
+                        );
+                        if (context.mounted) {
+                          showClipyMessage(context, l10n.settingsSaved);
+                        }
+                      },
+                      child: Text(l10n.saveExcludedApps),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
+          if (Platform.isAndroid)
+            ClipySection(
+              title: l10n.homeWidgetSection,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const ClipyIcon(Icons.timer_outlined),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Text(
+                            l10n.timerWidgetTitle,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      l10n.timerWidgetDesc,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 18),
+                    FilledButton.tonalIcon(
+                      onPressed: _timerWidgetPinned || _pinning ? null : _pin,
+                      icon: Icon(
+                        _timerWidgetPinned
+                            ? Icons.check_circle_outline
+                            : Icons.add_rounded,
+                      ),
+                      label: Text(
+                        _timerWidgetPinned
+                            ? l10n.timerWidgetAdded
+                            : l10n.addToHomeScreen,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ClipySection(
             title: l10n.toolsAndSupport,
             child: Column(

@@ -21,17 +21,13 @@ jobs:
   checks:
     uses: ./.github/workflows/ci.yml
 
-  release:
-    name: Build release draft
-    needs: checks
-    runs-on: macos-26
-    timeout-minutes: 45
-    permissions:
-      contents: write
-    env:
-      INSTALL_APP: "0"
-      LAUNCH_APP: "0"
-      SIGN_IDENTITY: "-"
+  metadata:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build: ${{ steps.version.outputs.build }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -44,13 +40,34 @@ jobs:
         run: |
           REPO_ROOT="$GITHUB_WORKSPACE"
           source scripts/lib/build_common.sh
+          SOURCE_VERSION="$(awk '/^version:/ {split($2, v, "+"); print v[1]; exit}' clipy_android/pubspec.yaml)"
           APP_VERSION="${RAW_VERSION#v}"
+          test "$APP_VERSION" = "$SOURCE_VERSION" || {
+            echo "Requested version $APP_VERSION does not match source $SOURCE_VERSION" >&2
+            exit 1
+          }
           BASE_BUILD="$(awk '/^version:/ {split($2, v, "+"); print v[2]; exit}' clipy_android/pubspec.yaml)"
           BUILD_NUMBER="$((BASE_BUILD + GITHUB_RUN_NUMBER))"
           resolve_build_version
-          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
-          echo "build=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
-          echo "tag=v$APP_VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$APP_VERSION"
+            echo "build=$BUILD_NUMBER"
+            echo "tag=v$APP_VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+  mac_android:
+    name: Build macOS and Android release files
+    needs: [checks, metadata]
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      INSTALL_APP: "0"
+      LAUNCH_APP: "0"
+      SIGN_IDENTITY: "-"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
@@ -78,8 +95,8 @@ jobs:
           printf '%s' "$CLIPY_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/clipy-release.jks"
       - name: Build both platforms
         env:
-          APP_VERSION: ${{ steps.version.outputs.version }}
-          BUILD_NUMBER: ${{ steps.version.outputs.build }}
+          APP_VERSION: ${{ needs.metadata.outputs.version }}
+          BUILD_NUMBER: ${{ needs.metadata.outputs.build }}
           CLIPY_KEYSTORE_PATH: ${{ runner.temp }}/clipy-release.jks
           CLIPY_KEYSTORE_PASSWORD: ${{ secrets.CLIPY_KEYSTORE_PASSWORD }}
           CLIPY_KEY_ALIAS: ${{ secrets.CLIPY_KEY_ALIAS }}
@@ -87,25 +104,112 @@ jobs:
         run: |
           bash build_macos_app.sh
           bash build_android_apk.sh
-      - name: Package macOS and checksums
+      - name: Package macOS
         env:
-          APP_VERSION: ${{ steps.version.outputs.version }}
+          APP_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           ditto -c -k --keepParent clipy_macos/ClipyClone.app "dist/ClipyClone-macOS-v${APP_VERSION}.zip"
           ditto -c -k --keepParent clipy_macos/ClipyClone.app.dSYM "dist/ClipyClone-macOS-symbols-v${APP_VERSION}.zip"
           cp LICENSE THIRD_PARTY_NOTICES.md dist/
+      - name: Upload macOS and Android release files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-mac-android
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove temporary signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/clipy-release.jks"
+
+  windows:
+    name: Build Windows x64 release file
+    needs: [checks, metadata]
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Read pinned Flutter version
+        id: flutter
+        shell: pwsh
+        run: |
+          $version = (Get-Content .fvmrc -Raw | ConvertFrom-Json).flutter
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          channel: stable
+          cache: true
+      - name: Build and package Windows application
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ needs.metadata.outputs.version }}
+          BUILD_NUMBER: ${{ needs.metadata.outputs.build }}
+        run: |
+          Push-Location clipy_android
+          flutter pub get --enforce-lockfile
+          flutter build windows --release --no-pub -t lib/main_windows.dart --build-name=$env:APP_VERSION --build-number=$env:BUILD_NUMBER
+          Pop-Location
+          ./scripts/package_windows.ps1 -Version $env:APP_VERSION
+      - name: Smoke-test extracted Windows package
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          $archive = "dist/ClipyClone-Windows-x64-v$env:APP_VERSION.zip"
+          $extracted = Join-Path $env:RUNNER_TEMP 'clipy-release-smoke'
+          Expand-Archive -Path $archive -DestinationPath $extracted
+          $executable = Join-Path $extracted 'ClipyClone.exe'
+          $process = Start-Process -FilePath $executable -WorkingDirectory $extracted -PassThru
+          try {
+            Start-Sleep -Seconds 12
+            $process.Refresh()
+            if ($process.HasExited) { throw "Extracted Windows app exited with code $($process.ExitCode)." }
+            $database = Join-Path $env:APPDATA 'ClipyClone/clipy.db'
+            if (-not (Test-Path $database)) { throw 'Extracted Windows app did not initialize its database.' }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+      - name: Upload Windows release file
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-windows
+          path: dist/ClipyClone-Windows-x64-v${{ needs.metadata.outputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Create three-platform release draft
+    needs: [metadata, mac_android, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Verify assets and create checksums
+        env:
+          APP_VERSION: ${{ needs.metadata.outputs.version }}
+        shell: bash
+        run: |
+          test -s "dist/ClipyClone-macOS-v${APP_VERSION}.zip"
+          test -s "dist/ClipyClone-Android-arm64-v8a-v${APP_VERSION}.apk"
+          test -s "dist/ClipyClone-Windows-x64-v${APP_VERSION}.zip"
           cd dist
-          shasum -a 256 ./*.apk ./*.zip > SHA256SUMS.txt
+          sha256sum ./*.apk ./*.zip > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
       - name: Create draft for licensing and signing review
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Clipy ${{ steps.version.outputs.tag }}
+          tag_name: ${{ needs.metadata.outputs.tag }}
+          name: Clipy ${{ needs.metadata.outputs.tag }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           draft: true
           fail_on_unmatched_files: true
           files: dist/*
-      - name: Remove temporary signing material
-        if: always()
-        run: rm -f "$RUNNER_TEMP/clipy-release.jks"

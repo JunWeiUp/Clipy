@@ -77,6 +77,9 @@ Future<void> bootstrapApplication() async {
   _registerSyncControlChannel();
   runApp(const SizedBox.shrink());
   await _bootstrapCore();
+  // Android attaches its UI from MainActivity. Desktop and iOS have no
+  // Activity-side ui.attach call, so show their UI after storage is ready.
+  if (!Platform.isAndroid) await _attachUi();
 }
 
 bool _uiAttached = false;

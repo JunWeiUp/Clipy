@@ -22,6 +22,7 @@ import 'storage_paths.dart';
 import 'sync/crypto.dart';
 import 'sync/diagnostics.dart';
 import 'sync/protocol.dart';
+import 'sync/run_lifecycle.dart';
 
 export 'sync/protocol.dart' show SyncEnvelope, SyncType;
 
@@ -224,6 +225,7 @@ class SyncManager with WidgetsBindingObserver {
 
   ServerSocket? _server;
   final Map<String, _Session> _sessions = {};
+  final Set<Socket> _handshakeSockets = {};
   final List<_PendingFrame> _pendingQueue = [];
   final Map<String, double> _reconnectBackoffSec = {};
   final Map<String, Timer> _reconnectTimers = {};
@@ -242,6 +244,10 @@ class SyncManager with WidgetsBindingObserver {
   /// A full /24 scan that arrived while another discovery run held
   /// [_discoveryRunning]; replayed once that run finishes (see _runDiscovery).
   bool _pendingAutoFullScan = false;
+  Future<void> _iosLifecycleTask = Future<void>.value();
+  final SyncRunLifecycle _runLifecycle = SyncRunLifecycle();
+
+  bool _isRunCurrent(int epoch) => isEnabled && _runLifecycle.isCurrent(epoch);
 
   bool isEnabled = false;
   bool get isServerRunning => _server != null;
@@ -333,7 +339,13 @@ class SyncManager with WidgetsBindingObserver {
     }
     displayName =
         prefs.getString('deviceName') ??
-        (Platform.isAndroid ? 'Android' : 'Device');
+        (Platform.isAndroid
+            ? 'Android'
+            : Platform.isIOS
+            ? 'iPhone'
+            : Platform.isWindows
+            ? 'Windows'
+            : 'Device');
     pairingSecret = prefs.getString(_pairingSecretKey) ?? '';
     _receiveDirPath = (await StoragePaths.receiveRootDirectory()).path;
     await _migrateAuthorizedPeerIds(prefs);
@@ -447,6 +459,26 @@ class SyncManager with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (Platform.isIOS && isEnabled) {
+      if (state == AppLifecycleState.paused ||
+          state == AppLifecycleState.hidden) {
+        _iosLifecycleTask = _iosLifecycleTask.then((_) => stop()).catchError((
+          Object error,
+        ) {
+          appLog('iOS background stop failed: $error', level: 'warning');
+        });
+      } else if (state == AppLifecycleState.resumed) {
+        _iosLifecycleTask = _iosLifecycleTask
+            .then((_) async {
+              await ensureStartedIfEnabled();
+              triggerCrossBandDiscovery();
+            })
+            .catchError((Object error) {
+              appLog('iOS foreground restart failed: $error', level: 'warning');
+            });
+      }
+      return;
+    }
     if (state == AppLifecycleState.resumed && isEnabled) {
       triggerCrossBandDiscovery();
     }
@@ -510,6 +542,7 @@ class SyncManager with WidgetsBindingObserver {
   bool get isPaired => _crypto.isPaired;
 
   Future<void> start() async {
+    if (_runLifecycle.isActive && _server != null) return;
     appLog('SyncManager v2 starting...');
     if (!isPaired) {
       appLog(
@@ -518,18 +551,25 @@ class SyncManager with WidgetsBindingObserver {
       );
       return;
     }
+    final epoch = _runLifecycle.begin();
     unawaited(PendingSyncRepository.instance.cleanOld());
     unawaited(PendingTextSyncRepository.instance.cleanOld());
     unawaited(NotificationRepository.instance.cleanOldPendingSync());
-    final ok = await _startServer();
+    final ok = await _startServer(epoch);
     if (!ok) {
-      appLog('Server failed to start', level: 'error');
+      if (_isRunCurrent(epoch)) {
+        _runLifecycle.stop();
+        appLog('Server failed to start', level: 'error');
+      }
       return;
     }
+    if (!_isRunCurrent(epoch)) return;
     _startConnectivityMonitoring();
     await _startForegroundService();
+    if (!_isRunCurrent(epoch)) return;
     _startPingTimer();
     await _loadEndpointCache();
+    if (!_isRunCurrent(epoch)) return;
     triggerCrossBandDiscovery();
   }
 
@@ -540,21 +580,39 @@ class SyncManager with WidgetsBindingObserver {
   /// `syncTick` Result is still pending, risking a deadlocked tick loop.
   /// `start()` is still used for user/init paths where FGS may not be up yet.
   Future<void> _rebindServer() async {
-    if (!isPaired) return;
+    if (!isEnabled || !isPaired) return;
+    final epoch = _runLifecycle.isActive
+        ? _runLifecycle.epoch
+        : _runLifecycle.begin();
     appLog('Rebinding ServerSocket (no platform re-entry)...');
-    final ok = await _startServer();
+    final ok = await _startServer(epoch);
     if (!ok) {
-      appLog('Server failed to rebind', level: 'error');
+      if (_isRunCurrent(epoch)) {
+        appLog('Server failed to rebind', level: 'error');
+      }
       return;
     }
+    if (!_isRunCurrent(epoch)) return;
     _startConnectivityMonitoring();
     _startPingTimer();
     await _loadEndpointCache();
+    if (!_isRunCurrent(epoch)) return;
     triggerCrossBandDiscovery();
   }
 
   Future<void> stop() async {
+    // Invalidate outstanding bind/connect/handshake/scan work before the first
+    // await. iOS keeps isEnabled=true while backgrounded, so that flag alone
+    // cannot prevent a late socket from reviving the listener.
+    _runLifecycle.stop();
     appLog('SyncManager v2 stopping...');
+    // These sockets have not reached _sessions yet, so the normal session
+    // cleanup below cannot close them. Destroying them wakes the handshake
+    // wait immediately instead of leaving a background socket for its timeout.
+    for (final socket in _handshakeSockets.toList()) {
+      socket.destroy();
+    }
+    _handshakeSockets.clear();
     _connectivitySub?.cancel();
     _connectivitySub = null;
     _scanDebounceTimer?.cancel();
@@ -566,6 +624,9 @@ class SyncManager with WidgetsBindingObserver {
     }
     _reconnectTimers.clear();
     _reconnectBackoffSec.clear();
+    _discoveryRunning = false;
+    _isRefreshingDiscovery = false;
+    _pendingAutoFullScan = false;
     for (final e in _historyFetchCatchUp.entries) {
       e.value.debounce?.cancel();
       e.value.maxWait?.cancel();
@@ -574,19 +635,37 @@ class SyncManager with WidgetsBindingObserver {
       }
     }
     _historyFetchCatchUp.clear();
-    for (final s in _sessions.values) {
+    final partFiles = _incomingFiles.values.map((f) => f.partFile).toList();
+    for (final id in _sessions.keys.toList()) {
+      _discardIncomingFilesFrom(id);
+    }
+    for (final id in _incomingFiles.keys.toList()) {
+      _discardIncomingFile(id);
+    }
+    for (final waiter in _fileAckWaiters.values) {
+      if (!waiter.isCompleted) waiter.complete(false);
+    }
+    _fileAckWaiters.clear();
+    final closingSessions = Map<String, _Session>.from(_sessions);
+    for (final entry in closingSessions.entries) {
+      final s = entry.value;
       await s.subscription?.cancel();
       try {
         await s.socket.close();
       } catch (_) {}
+      if (identical(_sessions[entry.key], s)) _sessions.remove(entry.key);
     }
-    _sessions.clear();
+    _inFlightHashes.clear();
     _pendingQueue.clear();
-    await _server?.close();
-    _server = null;
+    final listeningServer = _server;
+    await listeningServer?.close();
+    if (identical(_server, listeningServer)) _server = null;
+    await Future.wait(partFiles.map(_deleteQuietly));
     await _stopForegroundService();
-    _discoveredPeers.clear();
-    _emitPeers();
+    if (!_runLifecycle.isActive) {
+      _discoveredPeers.clear();
+      _emitPeers();
+    }
   }
 
   Future<void> _startForegroundService() async {
@@ -609,8 +688,10 @@ class SyncManager with WidgetsBindingObserver {
 
   void _startConnectivityMonitoring() {
     _connectivitySub?.cancel();
+    final epoch = _runLifecycle.epoch;
     var wasOffline = false;
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
+      if (!_isRunCurrent(epoch)) return;
       final offline = results.every((r) => r == ConnectivityResult.none);
       if (offline) {
         wasOffline = true;
@@ -618,14 +699,16 @@ class SyncManager with WidgetsBindingObserver {
       }
       if (wasOffline && isEnabled) {
         wasOffline = false;
-        unawaited(_recoverAfterNetworkRestore());
+        unawaited(_recoverAfterNetworkRestore(epoch));
       }
     });
   }
 
   /// Authorized cache dials only — full /24 scan is user refresh.
-  Future<void> _recoverAfterNetworkRestore() async {
+  Future<void> _recoverAfterNetworkRestore(int epoch) async {
+    if (!_isRunCurrent(epoch)) return;
     await _loadEndpointCache();
+    if (!_isRunCurrent(epoch)) return;
     final missing = authorizedPeerIds
         .where((id) => !_sessions.containsKey(id))
         .toList();
@@ -635,15 +718,25 @@ class SyncManager with WidgetsBindingObserver {
     }
     var cacheDialCount = 0;
     final disk = await _readEndpointCache();
+    if (!_isRunCurrent(epoch)) return;
     final byId = {
       for (final e in disk)
         if (e['peerId'] is String) e['peerId'] as String: e,
     };
     for (final id in missing) {
+      if (!_isRunCurrent(epoch)) return;
       final mem = _discoveredPeers[id];
       if (mem != null) {
         cacheDialCount++;
-        unawaited(_dial(mem.host, mem.port, reason: 'cache_dial', peerId: id));
+        unawaited(
+          _dial(
+            mem.host,
+            mem.port,
+            reason: 'cache_dial',
+            peerId: id,
+            runEpoch: epoch,
+          ),
+        );
         continue;
       }
       final e = byId[id];
@@ -651,7 +744,9 @@ class SyncManager with WidgetsBindingObserver {
       final p = e?['port'] as int?;
       if (host != null && p != null) {
         cacheDialCount++;
-        unawaited(_dial(host, p, reason: 'cache_dial', peerId: id));
+        unawaited(
+          _dial(host, p, reason: 'cache_dial', peerId: id, runEpoch: epoch),
+        );
       }
     }
     appLog('Network restored; authorized cache_dial count=$cacheDialCount');
@@ -756,17 +851,19 @@ class SyncManager with WidgetsBindingObserver {
         if (payload == null) return;
         final text = _decryptFrom(payload, from, env.type);
         if (text == null) return;
-        NotificationManager.instance.handleRemoteNotification(text, env.peerId);
+        unawaited(
+          NotificationManager.instance.handleRemoteNotification(text, from),
+        );
         break;
       case SyncType.notifDismiss:
         final payload = env.payload;
         if (payload == null) return;
         final text = _decryptFrom(payload, from, env.type);
         if (text == null) return;
-        NotificationManager.instance.handleRemoteDismiss(text);
+        unawaited(NotificationManager.instance.handleRemoteDismiss(text));
         break;
       case SyncType.notifClear:
-        NotificationManager.instance.clearAll();
+        unawaited(NotificationManager.instance.clearAll());
         break;
       case SyncType.notifAck:
         if (env.hash != null) {
@@ -935,6 +1032,23 @@ class SyncManager with WidgetsBindingObserver {
         'ack send failed to ${peerId.substring(0, peerId.length.clamp(0, 8))}: $e',
         level: 'warning',
       );
+    }
+  }
+
+  /// A notification ACK belongs only to its sender. Do not fan it out to all
+  /// discovered peers, since each peer maintains its own pending queue.
+  void sendNotificationAck(String hash, {required String toPeerId}) {
+    if (hash.isEmpty || toPeerId.isEmpty) return;
+    final session = _sessions[toPeerId];
+    if (session == null) return;
+    final data = syncEncodeFrame(
+      SyncEnvelope.make(type: SyncType.notifAck, peerId: peerId, hash: hash),
+    );
+    if (data == null) return;
+    try {
+      session.socket.add(data);
+    } catch (e) {
+      appLog('notification ACK send failed to $toPeerId: $e', level: 'warning');
     }
   }
 
