@@ -21,6 +21,87 @@ extension Notification.Name {
 }
 
 enum L10nKey: String {
+    case tokenUsageTitle
+    case tokenUsageHint
+    case tokenUsageToday
+    case tokenUsageEstimate
+    case tokenUsageTokens
+    case tokenUsageUnpriced
+    case tokenUsageNoData
+    case tokenUsageRefresh
+    case tokenUsageUpdatePrices
+    case tokenUsagePriceNote
+    case tokenUsagePriceSource
+    case tokenUsageBundledPrice
+    case tokenUsageAllAgents
+    case tokenUsageDay
+    case tokenUsageWeek
+    case tokenUsageMonth
+    case tokenUsageDaily
+    case tokenUsageModels
+    case tokenUsageStatusMissing
+    case tokenUsageStatusUnreadable
+    case tokenUsageStatusUnsupported
+    case tokenUsageStatusFailed
+    case tokenUsageStatusReady
+    case tokenUsageScanning
+    case tokenUsageUpdating
+    case panelLookupShortcut
+    case panelSwitchShortcut
+    case panelCaptureShortcut
+    case panelClipboard
+    case panelSearch
+    case panelPin
+    case panelUnpin
+    case panelAllHistory
+    case panelBack
+    case panelUse
+    case panelCopy
+    case panelCopied
+    case panelEmptySearch
+    case panelEmptyHint
+    case panelCapture
+    case panelCaptureHint
+    case panelWordHint
+    case panelBookHint
+    case panelSmartHint
+    case panelPasswordHint
+    case panelCaptureToolHint
+    case panelManageSnippets
+    case panelDevices
+    case panelMore
+    case panelEnable
+    case panelSettingsHint
+    case panelNoHistoryHint
+    case panelPinHint
+    case panelSyncHint
+    case panelSyncSettings
+    case panelAllNotifications
+    case panelDeviceCount
+    case panelHistoryResults
+    case panelRefresh
+    case panelMoreResults
+    case panelCopyOnlyHint
+
+    case overflowUnconfirmed
+    case overflowTitle
+    case overflowEnabled
+    case overflowHint
+    case overflowDisabled
+    case overflowPermission
+    case overflowDisplay
+    case overflowSuspended
+    case overflowLoading
+    case overflowPartial
+    case overflowReady
+    case overflowFailed
+    case overflowActivating
+    case overflowGrant
+    case overflowRefresh
+    case overflowEmpty
+    case overflowUnavailable
+    case overflowClickHint
+
     case smartVoiceTitle
     case smartVoiceEnabled
     case smartVoiceTrigger
@@ -503,6 +584,85 @@ struct L10n {
 
     private static let table: [AppLanguage: [L10nKey: String]] = [
         .zh: [
+            .tokenUsageTitle: "Token 费用",
+            .tokenUsageHint: "按 Agent 查看每日 Token 与估算费用",
+            .tokenUsageToday: "今日消耗",
+            .tokenUsageEstimate: "估算费用",
+            .tokenUsageTokens: "Token 数",
+            .tokenUsageUnpriced: "%d 条未定价",
+            .tokenUsageNoData: "暂无本地用量记录；可点击刷新重试。",
+            .tokenUsageRefresh: "刷新用量",
+            .tokenUsageUpdatePrices: "更新模型价格",
+            .tokenUsagePriceNote: "费用按当前模型标价估算，并非订阅账单或实际扣费。未定价的用量不计入金额。",
+            .tokenUsagePriceSource: "价格来源：%@",
+            .tokenUsageBundledPrice: "内置价格表",
+            .tokenUsageAllAgents: "全部 Agent",
+            .tokenUsageDay: "今日",
+            .tokenUsageWeek: "近 7 天",
+            .tokenUsageMonth: "近 30 天",
+            .tokenUsageDaily: "每日用量",
+            .tokenUsageModels: "模型明细",
+            .tokenUsageStatusMissing: "未找到记录",
+            .tokenUsageStatusUnreadable: "无法读取",
+            .tokenUsageStatusUnsupported: "格式暂不支持",
+            .tokenUsageStatusFailed: "读取失败",
+            .tokenUsageStatusReady: "已就绪",
+            .tokenUsageScanning: "正在读取用量…",
+            .tokenUsageUpdating: "正在更新价格…",
+            .panelLookupShortcut: "查词",
+            .panelSwitchShortcut: "智能切换",
+            .panelCaptureShortcut: "截图",
+            .panelClipboard: "剪贴板",
+            .panelSearch: "搜索剪贴板与功能",
+            .panelPin: "固定面板",
+            .panelUnpin: "取消固定",
+            .panelAllHistory: "查看全部历史",
+            .panelBack: "返回",
+            .panelUse: "复制并粘贴",
+            .panelCopy: "复制",
+            .panelCopied: "已复制",
+            .panelEmptySearch: "没有找到匹配内容",
+            .panelEmptyHint: "试试其他关键词，或打开完整历史。",
+            .panelCapture: "截图与录屏",
+            .panelCaptureHint: "选择区域后，可在选区工具栏中开始长截图或录屏。",
+            .panelWordHint: "词义、发音与中英翻译",
+            .panelBookHint: "收藏与复习单词",
+            .panelSmartHint: "打开应用、搜索与翻译",
+            .panelPasswordHint: "选择长度与字符类型",
+            .panelCaptureToolHint: "区域、窗口、全屏、长截图与录屏",
+            .panelManageSnippets: "管理片段",
+            .panelDevices: "设备",
+            .panelMore: "更多操作",
+            .panelEnable: "开启",
+            .panelSettingsHint: "更多设置与权限管理",
+            .panelNoHistoryHint: "复制的内容会出现在这里。",
+            .panelPinHint: "点击外部时保持面板打开",
+            .panelSyncHint: "发现设备后可发送文字或文件",
+            .panelSyncSettings: "连接与同步设置",
+            .panelAllNotifications: "查看全部通知",
+            .panelDeviceCount: "设备 %d",
+            .panelHistoryResults: "历史结果",
+            .panelRefresh: "刷新",
+            .panelMoreResults: "最多显示 40 条，完整结果请打开历史窗口",
+            .panelCopyOnlyHint: "复制内容；右键可选择粘贴、纯文本或文件操作",
+            .overflowUnconfirmed: "打开请求已发出；若未显示，应用可能不支持此操作。",
+            .overflowTitle: "隐藏的菜单栏图标",
+            .overflowEnabled: "显示隐藏的菜单栏图标",
+            .overflowHint: "在单个内置屏幕上显示被刘海或菜单挤掉的项目，不移动原图标。原图不可用时显示应用图标；屏幕录制权限可改善图标预览。点击尝试打开原菜单，部分应用可能不响应。",
+            .overflowDisabled: "隐藏图标显示已关闭。",
+            .overflowPermission: "需要辅助功能权限以读取菜单栏项目并打开原菜单。",
+            .overflowDisplay: "仅支持单个内置显示屏；连接外屏时暂停。",
+            .overflowSuspended: "当前暂停读取菜单栏项目。",
+            .overflowLoading: "正在读取图标，请稍后重新打开菜单…",
+            .overflowPartial: "部分应用未及时响应，列表可能不完整，可刷新重试。",
+            .overflowReady: "已就绪，自动更新隐藏项目。",
+            .overflowFailed: "上次操作未成功，可刷新后重试。",
+            .overflowActivating: "正在请求打开原菜单…",
+            .overflowGrant: "打开辅助功能设置…",
+            .overflowRefresh: "刷新隐藏图标",
+            .overflowEmpty: "未发现可识别的溢出图标",
+            .overflowUnavailable: "此项目无法打开原菜单，可能已退出、状态已变化或不支持辅助功能操作。请刷新后重试；不会自动启动应用。",
+            .overflowClickHint: "尝试打开原菜单；部分应用可能不响应。",
             .smartVoiceTitle: "语音自动入口",
             .smartVoiceEnabled: "确认非输入控件时，接入智能切换",
             .smartVoiceTrigger: "豆包的长按语音键",
@@ -974,6 +1134,85 @@ struct L10n {
             .excludedAppsHint: "在这些应用中复制的内容不会写入历史，也不会同步到其他设备。",
         ],
         .en: [
+            .tokenUsageTitle: "Token Usage",
+            .tokenUsageHint: "Daily tokens and estimated cost by agent",
+            .tokenUsageToday: "Today's usage",
+            .tokenUsageEstimate: "Estimated cost",
+            .tokenUsageTokens: "Tokens",
+            .tokenUsageUnpriced: "%d unpriced events",
+            .tokenUsageNoData: "No local usage records yet. Try refreshing after an agent has run.",
+            .tokenUsageRefresh: "Refresh usage",
+            .tokenUsageUpdatePrices: "Update model prices",
+            .tokenUsagePriceNote: "Costs use current model list prices, not subscription bills or actual charges. Unpriced usage is excluded from the amount.",
+            .tokenUsagePriceSource: "Price source: %@",
+            .tokenUsageBundledPrice: "Bundled prices",
+            .tokenUsageAllAgents: "All agents",
+            .tokenUsageDay: "Today",
+            .tokenUsageWeek: "Last 7 days",
+            .tokenUsageMonth: "Last 30 days",
+            .tokenUsageDaily: "Daily usage",
+            .tokenUsageModels: "Model breakdown",
+            .tokenUsageStatusMissing: "No records found",
+            .tokenUsageStatusUnreadable: "Cannot read",
+            .tokenUsageStatusUnsupported: "Unsupported format",
+            .tokenUsageStatusFailed: "Read failed",
+            .tokenUsageStatusReady: "Ready",
+            .tokenUsageScanning: "Reading usage…",
+            .tokenUsageUpdating: "Updating prices…",
+            .panelLookupShortcut: "Lookup",
+            .panelSwitchShortcut: "Switch",
+            .panelCaptureShortcut: "Capture",
+            .panelClipboard: "Clipboard",
+            .panelSearch: "Search clipboard and tools",
+            .panelPin: "Keep Panel Open",
+            .panelUnpin: "Unpin Panel",
+            .panelAllHistory: "View All History",
+            .panelBack: "Back",
+            .panelUse: "Copy and Paste",
+            .panelCopy: "Copy",
+            .panelCopied: "Copied",
+            .panelEmptySearch: "No Matches",
+            .panelEmptyHint: "Try another query or open the full history.",
+            .panelCapture: "Screenshots & Recording",
+            .panelCaptureHint: "Select a region, then choose scrolling capture or recording in the capture toolbar.",
+            .panelWordHint: "Definitions, pronunciation and translation",
+            .panelBookHint: "Save and review vocabulary",
+            .panelSmartHint: "Open apps, search and translate",
+            .panelPasswordHint: "Choose length and character types",
+            .panelCaptureToolHint: "Region, window, full screen, scrolling and recording",
+            .panelManageSnippets: "Manage Snippets",
+            .panelDevices: "Devices",
+            .panelMore: "More Actions",
+            .panelEnable: "Enable",
+            .panelSettingsHint: "More settings and permissions",
+            .panelNoHistoryHint: "Your copied content appears here.",
+            .panelPinHint: "Keep the panel open when clicking outside",
+            .panelSyncHint: "Send text or files to discovered devices",
+            .panelSyncSettings: "Connection & Sync Settings",
+            .panelAllNotifications: "View All Notifications",
+            .panelDeviceCount: "Devices %d",
+            .panelHistoryResults: "History Results",
+            .panelRefresh: "Refresh",
+            .panelMoreResults: "Showing up to 40 items. Open history for all results.",
+            .panelCopyOnlyHint: "Copy content; right-click for paste, plain text or file actions",
+            .overflowUnconfirmed: "The request was sent. If no menu appeared, the app may not support this action.",
+            .overflowTitle: "Hidden Menu Bar Icons",
+            .overflowEnabled: "Show hidden menu bar icons",
+            .overflowHint: "Show items obscured by the notch or application menus on a single built-in display, without moving them. App icons are used when original images are unavailable; Screen Recording can improve previews. Clicking requests the original menu; some apps may not respond.",
+            .overflowDisabled: "Hidden icon display is off.",
+            .overflowPermission: "Accessibility permission is needed to read menu bar items and open their menus.",
+            .overflowDisplay: "Available on a single built-in display; paused while external displays are connected.",
+            .overflowSuspended: "Menu bar inspection is paused.",
+            .overflowLoading: "Reading icons. Reopen this menu in a moment…",
+            .overflowPartial: "Some apps did not respond in time. The list may be incomplete; refresh to retry.",
+            .overflowReady: "Ready. Hidden items update automatically.",
+            .overflowFailed: "The last action failed. Refresh before trying again.",
+            .overflowActivating: "Requesting the original menu…",
+            .overflowGrant: "Open Accessibility Settings…",
+            .overflowRefresh: "Refresh Hidden Icons",
+            .overflowEmpty: "No identifiable overflowing icons",
+            .overflowUnavailable: "This item cannot open its original menu. The app may have exited, the item may have changed, or Accessibility actions may be unsupported. Refresh before retrying; the app will not be launched automatically.",
+            .overflowClickHint: "Request the original menu; some apps may not respond.",
             .smartVoiceTitle: "Automatic voice entry",
             .smartVoiceEnabled: "Open Smart Switch only for confirmed non-text focus",
             .smartVoiceTrigger: "Doubao hold-to-talk key",

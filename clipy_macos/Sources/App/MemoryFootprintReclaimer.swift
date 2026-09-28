@@ -7,23 +7,27 @@ enum MemoryFootprintReclaimer {
     private static let schedulerQueue = DispatchQueue(label: "com.clipy.memory-reclaim", qos: .utility)
     private static var pendingDelayedReclaim: DispatchWorkItem?
     private static var pendingFinalReclaim: DispatchWorkItem?
+    private static var didRegisterIdleHandlers = false
+    private static var idleObserverTokens: [NSObjectProtocol] = []
 
     static func registerIdleHandlers() {
+        guard !didRegisterIdleHandlers else { return }
+        didRegisterIdleHandlers = true
         let center = NotificationCenter.default
-        center.addObserver(
+        idleObserverTokens.append(center.addObserver(
             forName: NSApplication.didResignActiveNotification,
             object: NSApp,
             queue: .main
         ) { _ in
             reclaimIfIdle()
-        }
-        center.addObserver(
+        })
+        idleObserverTokens.append(center.addObserver(
             forName: NSApplication.didHideNotification,
             object: NSApp,
             queue: .main
         ) { _ in
             reclaimIfIdle()
-        }
+        })
         startIdleMonitor()
     }
 
@@ -62,7 +66,8 @@ enum MemoryFootprintReclaimer {
     }
 
     static func reclaimIfIdle() {
-        guard !hasVisibleInteractiveWindows() else { return }
+        guard !hasVisibleInteractiveWindows(),
+              MenuController.active?.isMenuBarMenuOpen != true else { return }
         ClipboardManager.shared.releaseMenuMemory()
         releaseOverlayPool()
         // The CIContext pools can grow large after a screenshot and never shrink
@@ -243,7 +248,6 @@ enum MemoryFootprintReclaimer {
 
     private static func hasVisibleInteractiveWindows() -> Bool {
         for window in NSApp.windows where window.isVisible {
-            if window is NSPanel { continue }
             if NSStringFromClass(type(of: window)).contains("StatusBar") { continue }
             return true
         }
