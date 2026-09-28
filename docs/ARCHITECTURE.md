@@ -1,9 +1,10 @@
 # Architecture and code map
 
-Clipy contains two native integration surfaces: a Swift/AppKit macOS menu-bar
-application and a Flutter application with Android/Kotlin background services.
-The Flutter tree also contains an experimental iOS target; Android-native
-capabilities and CI coverage must not be assumed to exist on iOS.
+Clipy keeps its Swift/AppKit macOS menu-bar application. The Flutter application
+shares UI, history storage and the v2 LAN protocol across Android, Windows and
+iOS. Kotlin owns Android background services, the Windows C++ runner owns the
+system clipboard and tray, and Swift owns iOS user-initiated paste and sandbox
+paths. Platform adapters never replace the shared protocol implementation.
 
 ## Repository layout
 
@@ -31,6 +32,8 @@ clipy_android/
   lib/sync/                  protocol, crypto, sessions, discovery, reliability
   lib/ui/                    shared theme, components and history widgets
   android/app/src/main/      Kotlin services, platform channels, timer widget
+  windows/runner/            Win32 clipboard, tray and system path channels
+  ios/Runner/                Swift storage, file and paste-control channels
   test/                      deterministic Flutter/protocol tests
   tool/                      explicitly invoked integration probes
 scripts/                     shared build configuration and local checks
@@ -42,15 +45,42 @@ Existing managers, models, localization and notification UI remain directly unde
 `lib/` to keep their import/API surface stable. Move these by feature in focused
 follow-ups with tests; do not mix a protocol rewrite with directory reorganization.
 
+Windows uses `sqflite_common_ffi` with the same schema and Dart repositories.
+Its `main_windows.dart` target initializes the FFI factory before bootstrap,
+keeping the Android/iOS entrypoint free of desktop database initialization.
+The sqlite3 hook resolves Windows' `winsqlite3.dll` and system SQLite on the
+other platforms, avoiding an extra binary download during Android builds.
+`WM_CLIPBOARDUPDATE` delivers text, PNG images and file paths to
+`ClipboardManager`; copied images live under the private application data
+directory and are deleted with trimmed history. Closing the main window hides it
+to the system tray; explicit Exit destroys the runner. Text alone enters automatic
+history sync, while file transfer remains an explicit device action. The runner
+reports the clipboard-owner executable name when available so history can
+apply the user-configured app exclusion list. A session-local mutex redirects a
+second launch to the existing window so two listeners never write the same DB.
+
+iOS attaches its Flutter UI after core bootstrap (Android's Activity still owns
+`ui.attach`). Native `UIPasteControl` sends user-pasted text to history; there is
+no background clipboard polling. The app's documents directory holds received
+files and is visible in Files. The foreground sync listener stops when the app
+is backgrounded and restarts on resume. Android notifications received over LAN
+are stored and shown read-only on Windows/iOS; those platforms do not request
+Android notification-listener permissions.
+Stopping sync invalidates in-flight discovery and handshakes before closing the
+listener, cancels reconnect work and discards incomplete file transfers. A new
+foreground run uses a new connection generation, so a late result from the
+previous run cannot reopen a background session. Reconnection then fetches
+missed text history and flushes peers' durable pending messages.
+
 ## Ownership and data flow
 
-| Concern | macOS | Flutter / Android |
+| Concern | macOS | Flutter / Android, Windows, iOS |
 | --- | --- | --- |
 | Clipboard | `ClipboardManager` | `ClipboardManager`, native clipboard channel |
 | Persistence | `AppDatabase`, `HistoryRepository` | `database/` repositories, storage channel |
 | Sync orchestration | `SyncManager` | `sync_manager.dart` |
 | Wire contract | `SyncProtocol.swift`, `SyncCrypto.swift` | `sync/protocol.dart`, `sync/crypto.dart` |
-| Notification delivery | `NotificationManager`, `SystemNotificationRouter` | notification manager + native listener service |
+| Notification delivery | `NotificationManager`, `SystemNotificationRouter` | notification manager; Kotlin listener on Android, read-only mirror on Windows/iOS |
 | UI lifetime | `WindowSession`, window controllers | feature widget state + subscriptions |
 
 Local clipboard changes are normalized and deduplicated, persisted, then offered

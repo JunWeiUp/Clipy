@@ -1,7 +1,7 @@
 name: clipy_android
 description: Clipboard history, encrypted LAN sync, notification mirroring, and file transfer for Clipy.
 publish_to: none
-version: 1.0.22+10118
+version: 1.0.23+10136
 
 environment:
   sdk: ">=3.11.0 <4.0.0"
@@ -18,6 +18,7 @@ dependencies:
   encrypt: ^5.0.3
   file_picker: ^11.0.2
   sqflite: ^2.4.2+1
+  sqflite_common_ffi: ^2.3.6
   path: ^1.9.1
   connectivity_plus: ^6.1.1
 
@@ -25,9 +26,17 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^2.0.0
-  sqflite_common_ffi: ^2.3.6
 
 flutter:
   uses-material-design: true
   assets:
     - assets/branding/clipy-logo.png
+
+# The shared package is initialized only by main_windows.dart. Android/iOS use
+# sqflite's native plugin. Resolve SQLite from each OS instead of downloading
+# native assets for every target; Windows 10/11 provides winsqlite3.dll.
+hooks:
+  user_defines:
+    sqlite3:
+      source: system
+      name_windows: winsqlite3

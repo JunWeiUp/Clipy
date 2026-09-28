@@ -120,7 +120,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今�
 <details>
 <summary><b>版本、下载与源码构建</b></summary>
 
-当前源码版本：**1.0.22** · 默认本地构建号 **10118** · [构建版本配置](clipy_android/pubspec.yaml)
+当前源码版本：**1.0.23** · 默认本地构建号 **10136** · [构建版本配置](clipy_android/pubspec.yaml)
 
 安装包请前往[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，具体应用版本和构建号以发布说明为准。Android 改版已在 v1.0.19 发布；准备新版期间，上方源码版本可能领先于公开安装包。Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
 
@@ -212,7 +212,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今�
 
 ### ⌨️ 全局快捷键 与 🌍 国际化
 - 搜索、单词查询、智能切换应用、截图、每个片段均可绑定快捷键。
-- 中/英文界面；macOS 原生端与 Flutter Android 端。iOS 为实验性目标，未纳入 CI 与真机验证，不能默认使用 Android 原生能力。
+- 中/英文界面；macOS 使用原生实现，Android、Windows 和 iOS 源码目标使用 Flutter。Windows 新增本机文字／图片／文件历史与系统托盘；iOS 支持用户主动粘贴及前台局域网同步，不能在后台持续读取其他应用的剪贴板或通知。CI 对 iOS 进行无签名构建，目前没有可安装的 iOS 发布包。
 
 <details>
 <summary><b>🔐 关于安全的说明</b></summary>
@@ -251,7 +251,7 @@ INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh
 
 Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留 30 天），内含 **Apple Silicon / macOS 13+** 应用 ZIP、调试符号 ZIP、SHA-256 校验文件和安装说明。
 
-这些是临时签名的开发构建，不代表已正式发布；首次打开的「**隐私与安全 → 仍要打开**」操作和更新后授权说明见[安装指南](docs/MACOS_INSTALL.md)。版本标签仍创建现有双端 Release 草稿。
+这些是临时签名的开发构建，不代表已正式发布；首次打开的「**隐私与安全 → 仍要打开**」操作和更新后授权说明见[安装指南](docs/MACOS_INSTALL.md)。版本标签会创建待审核的多平台 Release 草稿。
 
 ### Android（Flutter）
 
@@ -277,7 +277,23 @@ Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留
 
 调试包位于 `clipy_android/build/app/outputs/flutter-apk/app-debug.apk`。调试包与发布包签名不同，不能假设可互相覆盖安装；如确需卸载重装，请先备份应用数据。
 
-iOS 仍为实验性目标，尚未纳入本项目 CI 验证。
+### Windows（Flutter + Win32）
+
+在 Windows 10/11 x64 上安装 Flutter **3.41.7** 和 Visual Studio 的「使用 C++ 的桌面开发」工作负载后构建：
+
+```powershell
+cd clipy_android
+flutter pub get --enforce-lockfile
+flutter build windows --release --no-pub -t lib/main_windows.dart
+cd ..
+./scripts/package_windows.ps1 -Version 1.0.23
+```
+
+产物为 `dist/ClipyClone-Windows-x64-v1.0.23.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。Windows 源码构建及下一版 Release 草稿中的 ZIP 未签名，是否已公开发布以发布页为准。
+
+### iOS（Flutter + Swift）
+
+iOS 15+ 目标已纳入 CI 无签名构建，目前不提供 IPA 或 TestFlight 下载。支持查看本地历史、通过系统粘贴按钮主动导入文字、前台同步、文件收发及查看 Android 镜像通知。iOS 限制后台持续运行和读取其他应用通知；公开分发前仍需签名真机验证权限与同步。
 
 ### 版本号与检查
 

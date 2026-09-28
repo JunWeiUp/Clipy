@@ -1,5 +1,7 @@
+import 'dart:io';
+
 class HistoryItem {
-  final String type; // 'text', 'image', 'rtf', 'pdf', 'fileURL'
+  final String type; // 'text', 'image', 'rtf', 'pdf', 'fileURL', 'fileURLs'
   final dynamic value;
 
   HistoryItem({required this.type, required this.value});
@@ -22,7 +24,10 @@ class HistoryItem {
       case 'image':
         return '[Image]';
       case 'fileURL':
-        return '[File] ${value.toString().split('/').last}';
+        return '[File] ${value.toString().split(Platform.pathSeparator).last}';
+      case 'fileURLs':
+        final paths = value as List<String>;
+        return '[${paths.length} Files] ${paths.first.split(Platform.pathSeparator).last}';
       default:
         return '[$type]';
     }

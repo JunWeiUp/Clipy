@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../app_localizations.dart';
@@ -40,7 +41,11 @@ class _DevicesPageState extends State<DevicesPage> {
       await prefs.setBool('syncEnabled', enabled);
       manager.isEnabled = enabled;
       if (enabled) {
-        unawaited(NotificationManager.instance.requestNotificationPermission());
+        if (Platform.isAndroid) {
+          unawaited(
+            NotificationManager.instance.requestNotificationPermission(),
+          );
+        }
         await manager.start();
         if (!manager.isServerRunning) throw StateError('Server not listening');
       } else {

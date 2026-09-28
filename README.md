@@ -120,7 +120,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.22** · Default local build **10118** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.23** · Default local build **10136** · [Build metadata](clipy_android/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version above may be ahead of published packages while a release is being prepared. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
@@ -212,7 +212,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 
 ### ⌨️ Global hotkeys & 🌍 i18n
 - Hotkeys for search, word lookup, smart app switching, screenshots, and every snippet.
-- Chinese / English UI; native macOS and Flutter Android. The iOS target is experimental and not built or device-tested in CI; Android-native features are not available there by default.
+- Chinese / English UI; native macOS and Flutter Android, Windows, and iOS source targets. Windows adds local text/image/file history and a system tray. iOS supports user-initiated paste and foreground LAN sync; it cannot continuously read other apps' clipboards or notifications in the background. CI builds iOS without signing, so there is no installable iOS release package yet.
 
 <details>
 <summary><b>🔐 A note on security</b></summary>
@@ -251,7 +251,7 @@ Local macOS builds are ad-hoc signed, not Developer ID signed or notarized. See 
 
 After the Mac job succeeds, download its artifact from the run summary (GitHub sign-in required; retained for 30 days). It includes the **Apple Silicon / macOS 13+** app ZIP, symbols ZIP, SHA-256 checksums and installation instructions.
 
-These are ad-hoc signed development builds, not published releases. See the [first-launch guide](docs/MACOS_INSTALL.md) for **Privacy & Security → Open Anyway** and permissions after updates. Version tags continue to create the existing combined Release draft.
+These are ad-hoc signed development builds, not published releases. See the [first-launch guide](docs/MACOS_INSTALL.md) for **Privacy & Security → Open Anyway** and permissions after updates. Version tags create a reviewed multi-platform Release draft.
 
 ### Android (Flutter)
 
@@ -277,7 +277,23 @@ For a debug build without release signing credentials:
 
 Debug output: `clipy_android/build/app/outputs/flutter-apk/app-debug.apk`. Debug and release signing identities differ; do not assume in-place upgrades between them. Back up app data before any necessary uninstall/reinstall.
 
-iOS remains experimental and is not validated by this project's CI.
+### Windows (Flutter + Win32)
+
+Build on Windows 10/11 x64 with Flutter **3.41.7** and Visual Studio's Desktop development with C++ workload:
+
+```powershell
+cd clipy_android
+flutter pub get --enforce-lockfile
+flutter build windows --release --no-pub -t lib/main_windows.dart
+cd ..
+./scripts/package_windows.ps1 -Version 1.0.23
+```
+
+The package is `dist/ClipyClone-Windows-x64-v1.0.23.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source builds and the next Release draft are unsigned; check the release notes for the actual public availability.
+
+### iOS (Flutter + Swift)
+
+The iOS 15+ target builds in CI without signing and is not offered as an IPA or TestFlight download. It shows local history, imports clipboard text from a user-tapped native Paste control, syncs while foregrounded, sends/receives files, and displays Android-mirrored notifications. Background execution and access to other apps' notifications are restricted by iOS. A signed device build and real-device permission/sync check are required before public distribution.
 
 ### Versions and checks
 

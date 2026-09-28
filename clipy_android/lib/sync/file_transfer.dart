@@ -16,7 +16,8 @@ extension SyncFileTransferMethods on SyncManager {
   // -----------------------------------------------------------------------
 
   Future<bool> sendFileToPeerImpl(File file, {required String peerId}) async {
-    if (!isEnabled) return false;
+    final epoch = _runLifecycle.epoch;
+    if (!_isRunCurrent(epoch)) return false;
     if (!await file.exists()) return false;
     final length = await file.length();
     if (length > SyncManager.fileMaxBytes) {
@@ -62,6 +63,10 @@ extension SyncFileTransferMethods on SyncManager {
     emit(0);
     try {
       final sha256Hex = await _hashFile(file);
+      if (!_isRunCurrent(epoch)) {
+        emit(0, failed: true);
+        return false;
+      }
       final waiter = Completer<bool>();
       _fileAckWaiters[fileId] = waiter;
 
@@ -106,6 +111,7 @@ extension SyncFileTransferMethods on SyncManager {
         var outstanding = 0;
         const outstandingLimit = 4 * 1024 * 1024;
         for (var index = 0; index < chunkCount; index++) {
+          if (!_isRunCurrent(epoch)) break;
           // The receiver may reject (oversize / disk full) mid-stream; stop
           // burning bandwidth once it has answered.
           if (waiter.isCompleted) break;
@@ -152,6 +158,10 @@ extension SyncFileTransferMethods on SyncManager {
       } finally {
         await raf.close();
       }
+      if (!_isRunCurrent(epoch)) {
+        emit(1, failed: true);
+        return false;
+      }
       if (waiter.isCompleted && !await waiter.future) {
         emit(1, failed: true);
         return false;
@@ -183,9 +193,11 @@ extension SyncFileTransferMethods on SyncManager {
 
   /// Dial `direct` (no auth, like the text send) and poll for the session.
   Future<_Session?> _waitForSession(String peerId, Duration timeout) async {
+    final epoch = _runLifecycle.epoch;
+    if (!_isRunCurrent(epoch)) return null;
     final deadline = DateTime.now().add(timeout);
     var dialed = false;
-    while (DateTime.now().isBefore(deadline)) {
+    while (_isRunCurrent(epoch) && DateTime.now().isBefore(deadline)) {
       final session = _sessions[peerId];
       if (session != null) return session;
       if (!dialed) {
@@ -193,16 +205,29 @@ extension SyncFileTransferMethods on SyncManager {
         final peer = _discoveredPeers[peerId];
         if (peer != null) {
           unawaited(
-            _dial(peer.host, peer.port, reason: 'direct', peerId: peerId),
+            _dial(
+              peer.host,
+              peer.port,
+              reason: 'direct',
+              peerId: peerId,
+              runEpoch: epoch,
+            ),
           );
         } else {
           unawaited(() async {
             for (final e in await _readEndpointCache()) {
+              if (!_isRunCurrent(epoch)) return;
               if (e['peerId'] != peerId) continue;
               final host = e['host'] as String?;
               final p = e['port'] as int?;
               if (host == null || p == null) return;
-              await _dial(host, p, reason: 'direct', peerId: peerId);
+              await _dial(
+                host,
+                p,
+                reason: 'direct',
+                peerId: peerId,
+                runEpoch: epoch,
+              );
               return;
             }
           }());
@@ -210,7 +235,7 @@ extension SyncFileTransferMethods on SyncManager {
       }
       await Future.delayed(const Duration(milliseconds: 200));
     }
-    return _sessions[peerId];
+    return _isRunCurrent(epoch) ? _sessions[peerId] : null;
   }
 
   Future<String> _hashFile(File file) async {

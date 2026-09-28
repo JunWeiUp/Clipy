@@ -11,10 +11,11 @@
 | Apple Silicon Mac，macOS 13+ | `ClipyClone-macOS-v<version>.zip`（不是 symbols 符号包） |
 | Android，arm64 | `ClipyClone-Android-arm64-v8a-v<version>.apk` |
 | Android，armeabi-v7a | `ClipyClone-Android-armeabi-v7a-v<version>.apk` |
+| Windows 10/11 x64（从 v1.0.23 起） | `ClipyClone-Windows-x64-v<version>.zip` |
 
-同一发布页附有 APK 和 ZIP 的 `SHA256SUMS.txt` 校验文件。当前本地源码为 **v1.0.22**，默认构建号 **10118**；CI 会再加上工作流运行序号。如需用本地构建覆盖正式 APK，应使用相同签名密钥和高于已安装包的构建号，不要在未备份数据时卸载应用。
+同一发布页附有 APK 和 ZIP 的 `SHA256SUMS.txt` 校验文件。当前本地源码为 **v1.0.23**，默认构建号 **10136**；CI 会再加上工作流运行序号。如需用本地构建覆盖正式 APK，应使用相同签名密钥和高于已安装包的构建号，不要在未备份数据时卸载应用。
 
-macOS ZIP 中是 **arm64** 应用，不是 Intel 或通用架构版本。本次发布没有 iOS 安装包，iOS 源码目标仍为实验性。开发版构建方法见[开发指南](DEVELOPMENT.md)。
+macOS ZIP 中是 **arm64** 应用，不是 Intel 或通用架构版本。Windows 须待 v1.0.23 正式发布后才会出现在最新正式版；更早的公开版本与草稿可能没有该附件。iOS 没有公开安装包，CI 仅构建无签名源码。开发版构建方法见[开发指南](DEVELOPMENT.md)。
 
 ## 安装并试用剪贴板历史
 

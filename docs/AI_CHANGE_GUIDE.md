@@ -20,6 +20,8 @@ The source is authoritative when a guide and implementation disagree.
 | Sync | `Sources/Sync/`, `clipy_android/lib/sync/` | Wire changes require both implementations and `PROTOCOL.md`. Persist remote history before ACK. | socket/protocol tests on both sides |
 | Android startup and background work | `clipy_android/lib/app/`, `android/app/src/main/` | One Flutter engine; channels belong to `Application`, not the visible Activity. FGS types must match the manifest. | Flutter tests, Android build/device checks |
 | Android screens | `clipy_android/lib/features/`, `lib/ui/` | Features own page state; repositories own persistence; follow `ANDROID_DESIGN.md`. | `scripts/check.sh flutter` |
+| Windows desktop system integration | `clipy_android/windows/runner/`, `lib/clipboard_manager.dart` | C++ owns clipboard events, tray and system paths; Dart owns durable history and sync. | Windows CI build, ZIP extraction and real desktop smoke |
+| iOS app integration | `clipy_android/ios/Runner/`, `lib/app/bootstrap.dart`, `lib/storage_paths.dart` | User-initiated paste only; foreground sync lifecycle; no Android listener calls. | unsigned iOS build, simulator launch and device permission check |
 
 `Sources/` in macOS rows means `clipy_macos/Sources/`. `build_macos_app.sh`
 collects Swift files recursively, so adding a source file needs no project-file edit.

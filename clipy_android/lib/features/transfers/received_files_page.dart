@@ -117,7 +117,12 @@ class _ReceivedFilesPageState extends State<ReceivedFilesPage> {
 
   Future<void> _openFolder(String filePath) async {
     try {
-      await _channel.invokeMethod('openFolder', {'path': filePath});
+      final opened = await _channel.invokeMethod<bool>('openFolder', {
+        'path': filePath,
+      });
+      if (opened == false && mounted) {
+        showClipyMessage(context, context.l10n.fileNotFound);
+      }
     } on PlatformException catch (e) {
       if (!mounted) return;
       final message = e.code == 'FILE_NOT_FOUND'
