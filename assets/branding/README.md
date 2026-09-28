@@ -24,9 +24,12 @@ service, API key or additional package is required to build Clipy.
 | Android 8+ | `mipmap-anydpi-v26/ic_launcher.xml` | Independent blue background and transparent foreground; system-applied mask |
 | Android 13+ | `mipmap-anydpi-v33/ic_launcher.xml` | Adds a white alpha silhouette for launcher-themed icons |
 | iOS | `clipy_android/ios/Runner/Assets.xcassets/AppIcon.appiconset/` | 15 opaque RGB sizes from `Contents.json`, no baked mask or padding |
+| Windows | `clipy_android/windows/runner/resources/app_icon.ico` | Seven PNG-backed ICO sizes exported from the approved macOS tile |
 | Documentation | `Logo.png` | 512 px rounded transparent tile used by both root README files |
 
 Android paths above are relative to `clipy_android/android/app/src/main/res/`.
+After updating the master exports, run `swift scripts/export_windows_icon.swift`
+to regenerate the Windows resource, then run `python3 scripts/check_icons.py`.
 The foreground layers are 432 px at xxxhdpi (108 dp); the 54 dp tall mark is
 centered and checked against the 66 dp safe circle. The system is free to apply
 circle, rounded-square or other masks. See the official

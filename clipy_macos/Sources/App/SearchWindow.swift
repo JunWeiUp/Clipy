@@ -8,7 +8,7 @@ final class SearchWindow {
 
     private init() {}
 
-    func showWindow() {
+    func showWindow(initialQuery: String? = nil) {
         session.present(
             create: { [self] in
                 let viewModel = SearchViewModel()
@@ -39,6 +39,7 @@ final class SearchWindow {
                 self?.viewModel?.reactivate()
             }
         )
+        if let initialQuery { viewModel?.acceptPanelQuery(initialQuery) }
     }
 
     func closeWindow() {

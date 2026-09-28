@@ -7,6 +7,9 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
 }
 
 func runCoreRegressionTests() {
+    runTokenUsageRegressionTests()
+    runMenuBarPanelRegressionTests()
+    runMenuBarOverflowRegressionTests()
     runSyncTransportRegressionTests()
     runFolderTransferRegressionTests()
     runHistoryCopyRegressionTests()

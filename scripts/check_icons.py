@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ANDROID = ROOT / 'clipy_android/android/app/src/main/res'
 IOS = ROOT / 'clipy_android/ios/Runner/Assets.xcassets/AppIcon.appiconset'
+WINDOWS = ROOT / 'clipy_android/windows/runner/resources/app_icon.ico'
 ATTR = '{http://schemas.android.com/apk/res/android}'
 
 
@@ -119,7 +120,14 @@ def main():
             png(IOS / entry['filename'], size, False)
             checked.add(key)
     require(len(checked) == 15, 'Unexpected iOS icon catalogue; review platform coverage')
-    print('App icons passed: macOS/README, Android legacy/adaptive/themed, 15 opaque iOS sizes.')
+    icon = WINDOWS.read_bytes()
+    require(struct.unpack_from('<HHH', icon) == (0, 1, 7), 'Windows ICO header is invalid')
+    for index, size in enumerate((16, 24, 32, 48, 64, 128, 256)):
+        width, height, _, _, _, _, length, offset = struct.unpack_from('<BBBBHHII', icon, 6 + index * 16)
+        require(width == height == (size % 256), f'Windows ICO missing {size}px image')
+        require(icon[offset:offset + 8] == b'\x89PNG\r\n\x1a\n' and offset + length <= len(icon),
+                f'Windows ICO {size}px payload is invalid')
+    print('App icons passed: macOS/README, Android legacy/adaptive/themed, 15 iOS sizes, Windows ICO.')
 
 
 if __name__ == '__main__':

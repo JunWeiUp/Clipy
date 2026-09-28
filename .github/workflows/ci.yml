@@ -55,3 +55,90 @@ jobs:
   macos:
     name: macOS compile and bundle validation
     uses: ./.github/workflows/macos.yml
+
+  windows:
+    name: Windows x64 compile
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Read pinned Flutter version
+        id: flutter
+        shell: pwsh
+        run: |
+          $version = (Get-Content .fvmrc -Raw | ConvertFrom-Json).flutter
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          channel: stable
+          cache: true
+      - name: Build Windows application
+        shell: pwsh
+        working-directory: clipy_android
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter build windows --release --no-pub -t lib/main_windows.dart
+      - name: Package and smoke-test extracted Windows ZIP
+        shell: pwsh
+        run: |
+          ./scripts/package_windows.ps1 -Version ci-smoke
+          $extracted = Join-Path $env:RUNNER_TEMP 'clipy-ci-smoke'
+          Expand-Archive -Path 'dist/ClipyClone-Windows-x64-vci-smoke.zip' -DestinationPath $extracted
+          $executable = Join-Path $extracted 'ClipyClone.exe'
+          $process = Start-Process -FilePath $executable -WorkingDirectory $extracted -PassThru
+          try {
+            Start-Sleep -Seconds 12
+            $process.Refresh()
+            if ($process.HasExited) { throw "Extracted Windows app exited with code $($process.ExitCode)." }
+            $database = Join-Path $env:APPDATA 'ClipyClone/clipy.db'
+            if (-not (Test-Path $database)) { throw "Extracted Windows app did not initialize its database." }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+
+  ios:
+    name: iOS unsigned build and simulator compile
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Read pinned Flutter version
+        id: flutter
+        run: echo "version=$(jq -r .flutter .fvmrc)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          channel: stable
+          cache: true
+      - name: Resolve dependencies
+        working-directory: clipy_android
+        run: flutter pub get --enforce-lockfile
+      - name: Build unsigned iOS application
+        working-directory: clipy_android
+        run: flutter build ios --release --no-codesign --no-pub
+      - name: Compile iOS Simulator runner
+        working-directory: clipy_android
+        run: |
+          ARCH="$(uname -m)"
+          xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/clipy-ios-simulator" \
+            ARCHS="$ARCH" ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
+      - name: Launch iOS application in Simulator
+        shell: bash
+        run: |
+          SIMULATOR="$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          print(next(d["udid"] for group in devices.values() for d in group if "iPhone" in d["name"]))
+          ')"
+          xcrun simctl boot "$SIMULATOR"
+          xcrun simctl bootstatus "$SIMULATOR" -b
+          xcrun simctl install "$SIMULATOR" "$RUNNER_TEMP/clipy-ios-simulator/Build/Products/Debug-iphonesimulator/Runner.app"
+          xcrun simctl launch "$SIMULATOR" com.clipyclone.clipy.ios
