@@ -13,7 +13,7 @@
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=1262f3)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
-[![License review](https://img.shields.io/badge/license-review_required-orange)](THIRD_PARTY_NOTICES.md)
+[![macOS license GPLv3](https://img.shields.io/badge/macOS-GPLv3-blue)](LICENSE.GPL-3.0) [![Clipy code MIT](https://img.shields.io/badge/Clipy_code-MIT-green)](LICENSE)
 
 **[A closer look](#a-closer-look)** · **[Android](#at-home-on-android)** · **[Get started](#get-started-in-three-steps)** · **[All features](#feature-reference)**
 
@@ -115,7 +115,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 
 **[Installation & troubleshooting](docs/GETTING_STARTED.md)** · **[Report a problem](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[Suggest a feature](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
 
-> **Before sharing:** sync is designed for trusted networks; set a strong private pairing secret. Read the [security boundaries](SECURITY.md). The macshot-derived screenshot module still needs a [third-party license review](THIRD_PARTY_NOTICES.md); the combined application must not be assumed to be MIT-only.
+> **Before sharing:** sync is designed for trusted networks; set a strong private pairing secret. Read the [security boundaries](SECURITY.md). The macOS application includes a modified macshot screenshot module and is distributed under [GPLv3](LICENSE.GPL-3.0); see [provenance and source access](THIRD_PARTY_NOTICES.md).
 
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
@@ -372,13 +372,13 @@ git push origin "v${VERSION}"
 
 The `Release` workflow can also be triggered manually with the matching `X.Y.Z` version. Complete the checklist before either trigger; the workflow publishes directly. Do not move or overwrite existing version tags.
 
-The workflow publishes a normal, latest release with exactly three uploaded packages: macOS ZIP, Android arm64 APK and Windows x64 ZIP. SHA-256 digests appear on GitHub beside each package; no separate checksum, symbols, license or notice file is uploaded. The macOS app and Windows ZIP include the project's license and notice files. GitHub also generates source-code archives separately from uploaded packages. After publication, check the asset links and update published-version text in both README files and both getting-started guides. See [GitHub's release instructions](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository).
+The workflow publishes a normal, latest release with exactly three uploaded packages: macOS ZIP, Android arm64 APK and Windows x64 ZIP. SHA-256 digests appear on GitHub beside each package; no separate checksum, symbols, license or notice file is uploaded. The macOS app bundles MIT and GPLv3 texts and third-party notices; the Windows ZIP bundles its applicable MIT text and notices. GitHub also generates source-code archives separately from uploaded packages. After publication, check the asset links and update published-version text in both README files and both getting-started guides. See [GitHub's release instructions](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository).
 
 Use the [release notes template](docs/RELEASE_NOTES_TEMPLATE.md) to explain user-visible changes, upgrade steps, and the platforms included in each release.
 
 ## 📄 License
 
-The repository currently contains an [MIT License](LICENSE), but the macshot-derived screenshot module needs a separate license/provenance review. Do not assume the combined application is MIT-only. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Clipy-authored code remains under [MIT](LICENSE). The combined macOS application includes modified macshot code and is distributed under [GNU GPLv3](LICENSE.GPL-3.0). Android and Windows do not include macshot. See [provenance, modifications and source access](THIRD_PARTY_NOTICES.md).
 
 ## ⭐ Star History
 
