@@ -289,7 +289,7 @@ cd ..
 ./scripts/package_windows.ps1 -Version 1.0.23
 ```
 
-The package is `dist/ClipyClone-Windows-x64-v1.0.23.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source builds and the next Release draft are unsigned; check the release notes for the actual public availability.
+The package is `dist/ClipyClone-Windows-x64-v1.0.23.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Current source builds add a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture depends on the selected app responding to Windows `PrintWindow`; unsupported or protected windows show a failure. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source builds and the next Release draft are unsigned; check the release notes for the actual public availability.
 
 ### iOS (Flutter + Swift)
 
