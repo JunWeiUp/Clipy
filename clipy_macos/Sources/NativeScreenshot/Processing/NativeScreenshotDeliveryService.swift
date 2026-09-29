@@ -90,6 +90,16 @@ enum NativeScreenshotDeliveryService {
         )
     }
 
+    static func saveToDefault(_ image: CGImage) async throws -> URL {
+        let preferences = PreferencesManager.shared
+        return try await save(
+            image,
+            in: preferences.screenshotSaveDirectory,
+            format: preferredFormat(preferences.imageFormat),
+            quality: preferences.imageQuality
+        )
+    }
+
     /// Quick capture overrides auto-save and the default post-capture action.
     /// History still records the image once for recovery and search.
     static func deliverQuick(

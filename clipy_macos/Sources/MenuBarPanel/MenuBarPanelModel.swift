@@ -16,7 +16,14 @@ final class MenuBarPanelModel: ObservableObject {
     enum Page { case home, capture, devices, notifications, settings }
     enum Action { case search(String), snippets, preferences, syncSettings, notifications, word, wordBook, smartSwitch, password, tokenUsage
         case region, window, fullscreen, screenshotSettings, permission, quit
+        case recordingPauseToggle, recordingStop, recordingCancel
         case sendText(String), sendFile(String)
+    }
+    struct RecordingStatus: Equatable {
+        var active = false
+        var started = false
+        var paused = false
+        var finalizing = false
     }
     enum Tool: String, CaseIterable {
         case capture, word, wordBook, smartSwitch, password
@@ -60,6 +67,7 @@ final class MenuBarPanelModel: ObservableObject {
     @Published var devices: [DeviceEntry] = []
     @Published var notifications: [NotificationManager.NotificationEntry] = []
     @Published var notificationCount = 0
+    @Published var recording = RecordingStatus()
     @Published var pinned = false
     @Published var selectedID: String?
     @Published private(set) var loading = false
@@ -102,6 +110,7 @@ final class MenuBarPanelModel: ObservableObject {
         pending?.cancel(); pending = nil
         cancellation?.cancel(); cancellation = nil
         history = []; folders = []; devices = []; notifications = []
+        recording = RecordingStatus()
         query = ""; selectedID = nil; loading = false; notice = nil
     }
     func refreshHistory() { scheduleSearch(immediate: true) }

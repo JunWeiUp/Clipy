@@ -159,6 +159,14 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
         model.devices = SyncManager.shared.availableDeviceEntries
         model.notificationCount = NotificationManager.shared.notificationCount
         model.notifications = NotificationManager.shared.fetchPage(offset: 0, limit: 12)
+        model.recording = MainActor.assumeIsolated {
+            let coordinator = NativeScreenshotCoordinator.shared
+            return MenuBarPanelModel.RecordingStatus(
+                active: coordinator.hasActiveRecording,
+                started: coordinator.hasStartedRecording,
+                paused: coordinator.isRecordingPaused,
+                finalizing: coordinator.isRecordingFinalizing)
+        }
     }
     private func installInputMonitors() {
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in

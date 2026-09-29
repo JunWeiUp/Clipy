@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import Foundation
 
 enum NativeScreenshotEditorError: Error {
@@ -49,6 +50,8 @@ struct NativeScreenshotBeautifyOptions {
     var cornerRadius: CGFloat = 16
     var shadowRadius: CGFloat = 18
     var windowHeaderHeight: CGFloat = 34
+    var backgroundImage: CGImage?
+    var backgroundBlur: CGFloat = 0
 
     init(
         mode: NativeScreenshotBeautifyMode = .rounded,
@@ -57,7 +60,9 @@ struct NativeScreenshotBeautifyOptions {
         margin: CGFloat = 32,
         cornerRadius: CGFloat = 16,
         shadowRadius: CGFloat = 18,
-        windowHeaderHeight: CGFloat = 34
+        windowHeaderHeight: CGFloat = 34,
+        backgroundImage: CGImage? = nil,
+        backgroundBlur: CGFloat = 0
     ) {
         self.mode = mode
         self.gradientTop = gradientTop
@@ -66,12 +71,15 @@ struct NativeScreenshotBeautifyOptions {
         self.cornerRadius = cornerRadius
         self.shadowRadius = shadowRadius
         self.windowHeaderHeight = windowHeaderHeight
+        self.backgroundImage = backgroundImage
+        self.backgroundBlur = backgroundBlur
     }
 }
 
 /// Pure image operations. Rectangles and output sizes are native image pixels.
 /// Crop rectangles use an upper-left origin; all returned images are upright.
 enum NativeScreenshotImageEditor {
+    enum AppendDirection: Equatable { case below, right }
     fileprivate static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
     private static let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
         | CGBitmapInfo.byteOrder32Big.rawValue
@@ -102,6 +110,36 @@ enum NativeScreenshotImageEditor {
                             y: vertical ? CGFloat(image.height) : 0)
         context.scaleBy(x: horizontal ? -1 : 1, y: vertical ? -1 : 1)
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return try makeImage(context)
+    }
+
+    /// Keep both inputs at their native pixel size and align their top edges.
+    /// The shared context limits also prevent an appended result from growing
+    /// beyond the editor's bounded bitmap budget.
+    static func append(
+        _ first: CGImage,
+        image second: CGImage,
+        direction: AppendDirection
+    ) throws -> CGImage {
+        let width: Int
+        let height: Int
+        switch direction {
+        case .below:
+            width = max(first.width, second.width)
+            height = try pixelDimension(CGFloat(first.height) + CGFloat(second.height))
+        case .right:
+            width = try pixelDimension(CGFloat(first.width) + CGFloat(second.width))
+            height = max(first.height, second.height)
+        }
+        let context = try makeContext(width: width, height: height, source: first)
+        context.setFillColor(NativeScreenshotEditorColor.white.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.draw(first, in: CGRect(x: 0, y: height - first.height,
+                                      width: first.width, height: first.height))
+        let secondOrigin: CGPoint = direction == .below
+            ? .zero : CGPoint(x: first.width, y: height - second.height)
+        context.draw(second, in: CGRect(origin: secondOrigin,
+                                        size: CGSize(width: second.width, height: second.height)))
         return try makeImage(context)
     }
 
@@ -174,8 +212,10 @@ enum NativeScreenshotImageEditor {
     ) throws -> CGImage {
         guard options.margin.isFinite, options.cornerRadius.isFinite,
               options.shadowRadius.isFinite, options.windowHeaderHeight.isFinite,
+              options.backgroundBlur.isFinite,
               options.margin >= 0, options.cornerRadius >= 0,
-              options.shadowRadius >= 0, options.windowHeaderHeight >= 0 else {
+              options.shadowRadius >= 0, options.windowHeaderHeight >= 0,
+              options.backgroundBlur >= 0, options.backgroundBlur <= 50 else {
             throw NativeScreenshotEditorError.invalidOptions
         }
         let margin = ceil(options.margin)
@@ -198,6 +238,30 @@ enum NativeScreenshotImageEditor {
             end: CGPoint(x: bounds.midX, y: bounds.minY),
             options: []
         )
+        if let background = options.backgroundImage {
+            let backdrop: CGImage
+            if options.backgroundBlur > 0 {
+                let input = CIImage(cgImage: background)
+                let blurred = input.clampedToExtent()
+                    .applyingFilter("CIGaussianBlur", parameters: [
+                        kCIInputRadiusKey: options.backgroundBlur
+                    ])
+                backdrop = CIContext(options: [.cacheIntermediates: false])
+                    .createCGImage(blurred, from: input.extent) ?? background
+            } else {
+                backdrop = background
+            }
+            let scale = max(bounds.width / CGFloat(backdrop.width),
+                            bounds.height / CGFloat(backdrop.height))
+            let fill = CGRect(x: (bounds.width - CGFloat(backdrop.width) * scale) / 2,
+                              y: (bounds.height - CGFloat(backdrop.height) * scale) / 2,
+                              width: CGFloat(backdrop.width) * scale,
+                              height: CGFloat(backdrop.height) * scale)
+            context.saveGState()
+            context.clip(to: bounds)
+            context.draw(backdrop, in: fill)
+            context.restoreGState()
+        }
 
         let card = CGRect(x: inset, y: inset,
                           width: CGFloat(image.width), height: CGFloat(image.height) + header)

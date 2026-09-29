@@ -13,6 +13,7 @@ struct NativeScreenshotRecognitionRegression {
 
     static func main() throws {
         try testGeometryAndSuggestions()
+        try testTranslatedAnnotations()
         try testPreviewThenConfirm()
         try testVisionQRCode()
         try testVisionOCR()
@@ -111,6 +112,12 @@ struct NativeScreenshotRecognitionRegression {
         assert(NativeScreenshotTranslationAvailability.status(forMacOSMajorVersion: 13) == .requiresMacOS15)
         assert(NativeScreenshotTranslationAvailability.status(forMacOSMajorVersion: 14) == .requiresMacOS15)
         assert(NativeScreenshotTranslationAvailability.status(forMacOSMajorVersion: 15) == .available)
+        let targets = NativeScreenshotTranslationTarget.all
+        assert(Set(targets.map(\.code)).count == targets.count,
+               "persisted translation language codes must stay unambiguous")
+        assert(NativeScreenshotTranslationTarget.appleCode(for: "zh-CN") == "zh-Hans")
+        assert(NativeScreenshotTranslationTarget.appleCode(for: "zh-TW") == "zh-Hant")
+        assert(NativeScreenshotTranslationTarget.appleCode(for: "nb") == "no")
         let image = try solidImage(width: 40, height: 30, red: 1, green: 1, blue: 1)
         let review = NativeScreenshotRedactionReview(sourceImage: image, suggestions: [])
         let reviewHost = NSHostingView(rootView: NativeScreenshotRedactionReviewView(

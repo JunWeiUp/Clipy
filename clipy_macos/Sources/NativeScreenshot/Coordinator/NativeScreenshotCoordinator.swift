@@ -14,38 +14,80 @@ final class NativeScreenshotCoordinator {
     private var scrollSession: NativeScreenshotScrollingCaptureSession?
     private var scrollHUD: NativeScreenshotLongCaptureHUD?
     private var scrollPollTask: Task<Void, Never>?
+    private var scrollModeSwitchTask: Task<Void, Never>?
+    private var scrollCaptureReady = false
     private var scrollCompletionID: UUID?
     private var recorder: NativeScreenshotRecorder?
+    private var recordingSetup: NativeScreenshotRecordingSetupPanel?
+    private var recordingRegion: CGRect?
+    private var recordingDisplayID: CGDirectDisplayID?
+    private var recordingSetupGeneration: UInt64 = 0
+    private var recordingCountdown: NativeScreenshotRecordingCountdownHUD?
     private var recordingHUD: NativeScreenshotRecordingHUD?
     private var recordingSessionID: UUID?
     private var recordingStarted = false
+    private var recordingPaused = false
+    private var recordingFinalizing = false
+    private var recordingControlsHidden = false
+    private var recordingWarningHideTask: Task<Void, Never>?
+    private var captureHandoffID: UUID?
 
     private init() {}
 
+    var hasActiveRecording: Bool { recordingSessionID != nil }
+    var hasStartedRecording: Bool { recordingSessionID != nil && recordingStarted }
+    var isRecordingPaused: Bool { recordingPaused }
+    var isRecordingFinalizing: Bool { recordingFinalizing }
+
+    func stopRecordingFromMenu() {
+        Task { await stopRecording() }
+    }
+
+    func cancelRecordingFromMenu() {
+        Task { await cancelRecording() }
+    }
+
+    func toggleRecordingPauseFromMenu() {
+        toggleRecordingPause()
+    }
+
     func startCapture(mode: NativeScreenshotSelectionMode, fromMenu: Bool = false) {
-        guard overlay == nil, scrollSession == nil, recordingSessionID == nil else { return }
+        guard overlay == nil, scrollSession == nil, scrollCompletionID == nil,
+              captureHandoffID == nil,
+              recordingSetup == nil, recordingSessionID == nil else { return }
         let callbacks = NativeScreenshotOverlayCallbacks(
             onConfirm: { [weak self] image in self?.finishOverlay(); self?.deliver(image) },
-            onCancel: { [weak self] in self?.finishOverlay() },
-            onRecordingRequested: { [weak self] rect in
+            onCancel: { [weak self] in
+                self?.recordingSetupGeneration &+= 1
+                self?.recordingSetup?.close()
+                self?.recordingSetup = nil
+                self?.recordingRegion = nil
+                self?.recordingDisplayID = nil
                 self?.finishOverlay()
-                Task { @MainActor [weak self] in await self?.startRecording(region: rect) }
+            },
+            onRecordingRequested: { [weak self] rect in
+                self?.queueRecordingSetup(region: rect)
             },
             onScrollingRequested: { [weak self] rect in
-                self?.finishOverlay()
-                Task { @MainActor [weak self] in await self?.startScrolling(region: rect) }
+                guard let self else { return }
+                let handoffID = UUID()
+                self.captureHandoffID = handoffID
+                self.finishOverlay()
+                Task { @MainActor [weak self] in
+                    await self?.startScrolling(region: rect, handoffID: handoffID)
+                }
             },
             onOCRRequested: { [weak self] image in
                 self?.finishOverlay()
-                self?.showRecognition(for: image)
+                self?.showRecognition(for: image, initialIntent: .text)
             },
             onQRCodeRequested: { [weak self] image in
                 self?.finishOverlay()
-                self?.showRecognition(for: image)
+                self?.showRecognition(for: image, initialIntent: .qrCode)
             },
             onAutoRedactRequested: { [weak self] image in
                 self?.finishOverlay()
-                self?.showRecognition(for: image)
+                self?.showRecognition(for: image, initialIntent: .redact)
             },
             onPinRequested: { [weak self] image in
                 self?.finishOverlay()
@@ -60,6 +102,11 @@ final class NativeScreenshotCoordinator {
                 self?.deliverQuick(image, mode: mode)
             },
             onError: { [weak self] error in
+                self?.recordingSetupGeneration &+= 1
+                self?.recordingSetup?.close()
+                self?.recordingSetup = nil
+                self?.recordingRegion = nil
+                self?.recordingDisplayID = nil
                 self?.finishOverlay()
                 self?.showCaptureError(error)
             }
@@ -83,9 +130,17 @@ final class NativeScreenshotCoordinator {
     }
 
     func cancelActiveSession() {
+        captureHandoffID = nil
         overlay?.cancel()
         overlay = nil
         cancelScrolling()
+        recordingSetup?.close()
+        recordingSetup = nil
+        recordingRegion = nil
+        recordingDisplayID = nil
+        recordingSetupGeneration &+= 1
+        recordingCountdown?.close()
+        recordingCountdown = nil
         Task { await cancelRecording() }
         detachedEditor?.close()
         detachedEditor = nil
@@ -115,7 +170,9 @@ final class NativeScreenshotCoordinator {
     ) {
         switch action {
         case .confirm: deliver(image)
-        case .ocr, .qrCode, .autoRedact: showRecognition(for: image)
+        case .ocr: showRecognition(for: image, initialIntent: .text)
+        case .qrCode: showRecognition(for: image, initialIntent: .qrCode)
+        case .autoRedact: showRecognition(for: image, initialIntent: .redact)
         case .pin: deliver(image, action: .pin)
         case .save: deliver(image, action: .saveAs)
         }
@@ -195,19 +252,30 @@ final class NativeScreenshotCoordinator {
         // four uncompressed screenshots while the cards are visible.
         let sourceRect = image.sourceRect
         let pixelScale = image.pixelsPerPoint
+        let pinRect = Self.appKitPinRect(for: sourceRect)
         NativeScreenshotThumbnailPresenter.shared.present(
             image: image.image,
             actions: .init(
-                copy: {
+                copy: { currentPNG in
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
-                    pasteboard.setData(png, forType: .png)
+                    pasteboard.setData(currentPNG, forType: .png)
                 },
-                save: { [weak self] in
+                save: { [weak self] currentPNG in
                     Task { @MainActor in
                         do {
                             let decoded = try await Task.detached(priority: .userInitiated) {
-                                try nativeScreenshotDecodePNG(png)
+                                try nativeScreenshotDecodePNG(currentPNG)
+                            }.value
+                            _ = try await NativeScreenshotDeliveryService.saveToDefault(decoded)
+                        } catch { self?.showError(error) }
+                    }
+                },
+                saveAs: { [weak self] currentPNG in
+                    Task { @MainActor in
+                        do {
+                            let decoded = try await Task.detached(priority: .userInitiated) {
+                                try nativeScreenshotDecodePNG(currentPNG)
                             }.value
                             _ = try await NativeScreenshotDeliveryService.saveOnly(decoded)
                         }
@@ -215,24 +283,25 @@ final class NativeScreenshotCoordinator {
                         catch { self?.showError(error) }
                     }
                 },
-                pin: {
+                pin: { currentPNG in
                     Task { @MainActor in
                         guard let decoded = try? await Task.detached(
                             priority: .userInitiated,
-                            operation: { try nativeScreenshotDecodePNG(png) }
+                            operation: { try nativeScreenshotDecodePNG(currentPNG) }
                         ).value else { return }
                         let nsImage = NSImage(
                             cgImage: decoded,
                             size: NSSize(width: decoded.width, height: decoded.height)
                         )
-                        PinPanelController.shared.pin(image: nsImage, skipIngest: true)
+                        PinPanelController.shared.pin(image: nsImage,
+                                                      at: pinRect, skipIngest: true)
                     }
                 },
-                edit: { [weak self] in
+                edit: { [weak self] currentPNG in
                     Task { @MainActor in
                         do {
                             let decoded = try await Task.detached(priority: .userInitiated) {
-                                try nativeScreenshotDecodePNG(png)
+                                try nativeScreenshotDecodePNG(currentPNG)
                             }.value
                             self?.openEditor(NativeScreenshotCapturedImage(
                                 image: decoded, sourceRect: sourceRect,
@@ -243,25 +312,61 @@ final class NativeScreenshotCoordinator {
                 }
             ),
             force: force,
-            estimatedBytes: png.count
+            estimatedBytes: png.count,
+            pngData: png
         )
     }
 
-    private func showRecognition(for image: NativeScreenshotCapturedImage) {
+    private func showRecognition(
+        for image: NativeScreenshotCapturedImage,
+        initialIntent: NativeScreenshotRecognitionIntent
+    ) {
         NativeScreenshotRecognitionWindowController.open(
             image: image.image,
             language: PreferencesManager.shared.screenshotOCRLanguage,
+            initialIntent: initialIntent,
             onRedactedImage: { [weak self] covered in
                 self?.deliver(NativeScreenshotCapturedImage(
                     image: covered,
                     sourceRect: image.sourceRect,
                     pixelsPerPoint: image.pixelsPerPoint
                 ), action: .copy)
+            },
+            onCopyOriginal: { [weak self] in
+                self?.deliver(image, action: .copy)
+            },
+            onSaveOriginal: { [weak self] in
+                self?.deliver(image, action: .saveAs)
+            },
+            onContinueEditing: { [weak self] in
+                self?.openEditor(image)
             }
         )
     }
 
-    private func startScrolling(region: CGRect) async {
+    /// ScreenCaptureKit uses a top-left desktop origin; pinned AppKit windows
+    /// require a bottom-left rect on the matching NSScreen.
+    private static func appKitPinRect(for captureRect: CGRect) -> CGRect? {
+        guard captureRect.width > 1, captureRect.height > 1 else { return nil }
+        let match = NSScreen.screens.compactMap { screen -> (CGRect, NSScreen, CGFloat)? in
+            guard let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+                as? NSNumber)?.uint32Value else { return nil }
+            let display = CGDisplayBounds(id)
+            let overlap = captureRect.intersection(display)
+            let area = overlap.isNull ? 0 : overlap.width * overlap.height
+            return (display, screen, area)
+        }.max { $0.2 < $1.2 }
+        guard let (display, screen, area) = match,
+              area >= captureRect.width * captureRect.height * 0.8 else { return nil }
+        return CGRect(
+            x: screen.frame.minX + captureRect.minX - display.minX,
+            y: screen.frame.maxY - (captureRect.maxY - display.minY),
+            width: captureRect.width, height: captureRect.height
+        )
+    }
+
+    private func startScrolling(region: CGRect, handoffID: UUID) async {
+        guard captureHandoffID == handoffID else { return }
         let hud = NativeScreenshotLongCaptureHUD()
         let preferences = PreferencesManager.shared
         let options = NativeScreenshotScrollingCaptureSession.Options(
@@ -281,30 +386,25 @@ final class NativeScreenshotCoordinator {
             afterFrame: { [weak hud] in hud?.restoreAfterFrame() }
         )
         scrollSession = session
+        captureHandoffID = nil
         scrollHUD = hud
+        scrollCaptureReady = false
         hud.onStop = { [weak self] in self?.finishScrolling() }
         hud.onCancel = { [weak self] in self?.cancelScrolling() }
-        hud.show()
+        hud.onAutoScrollToggle = { [weak self, weak session] enabled in
+            guard let self, let session, self.scrollSession === session else { return }
+            preferences.scrollAutoScrollEnabled = enabled
+            guard self.scrollCaptureReady else { return }
+            self.switchScrollingMode(session, autoScrollEnabled: enabled)
+        }
+        hud.show(near: region, autoScrollEnabled: preferences.scrollAutoScrollEnabled)
         do {
             let first = try await session.start()
             guard scrollSession === session else { return }
+            scrollCaptureReady = true
             hud.updatePreview(first, addedRows: nil)
             if preferences.scrollAutoScrollEnabled {
-                do {
-                    try session.startAutomaticScroll(
-                        onFrame: { [weak self] result, preview in
-                            self?.handleScrollFrame(result, preview: preview)
-                        },
-                        onError: { [weak self] error in self?.showError(error) },
-                        onReachedEnd: { [weak self] in self?.finishScrolling() }
-                    )
-                } catch NativeScreenshotScrollingCaptureSession.SessionError
-                    .automaticScrollNeedsAccessibility {
-                    hud.setStatus(NativeScreenshotUserText.string(
-                        "自动滚动需要辅助功能权限，可手动滚动。",
-                        "Auto scroll needs Accessibility permission; scroll manually."))
-                    startManualScrollPolling(session)
-                }
+                beginAutomaticScrolling(session)
             } else {
                 startManualScrollPolling(session)
             }
@@ -312,6 +412,52 @@ final class NativeScreenshotCoordinator {
             guard scrollSession === session else { return }
             cancelScrolling()
             showCaptureError(error)
+        }
+    }
+
+    private func switchScrollingMode(
+        _ session: NativeScreenshotScrollingCaptureSession,
+        autoScrollEnabled: Bool
+    ) {
+        scrollPollTask?.cancel()
+        scrollPollTask = nil
+        session.stopAutomaticScroll()
+        scrollModeSwitchTask?.cancel()
+        // A prior capture may still be unwinding after cancellation. Wait for
+        // that task before starting the other mode's capture loop.
+        scrollModeSwitchTask = Task { @MainActor [weak self, weak session] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled, let self, let session,
+                  self.scrollSession === session else { return }
+            if autoScrollEnabled { self.beginAutomaticScrolling(session) }
+            else { self.startManualScrollPolling(session) }
+            self.scrollModeSwitchTask = nil
+        }
+    }
+
+    private func beginAutomaticScrolling(_ session: NativeScreenshotScrollingCaptureSession) {
+        do {
+            try session.startAutomaticScroll(
+                onFrame: { [weak self] result, preview in
+                    self?.handleScrollFrame(result, preview: preview)
+                },
+                onError: { [weak self, weak session] error in
+                    guard let self, let session, self.scrollSession === session else { return }
+                    self.cancelScrolling()
+                    self.showError(error)
+                },
+                onReachedEnd: { [weak self] in self?.finishScrolling() }
+            )
+        } catch NativeScreenshotScrollingCaptureSession.SessionError.automaticScrollNeedsAccessibility {
+            scrollHUD?.setStatus(NativeScreenshotUserText.string(
+                "自动滚动需要辅助功能权限，可手动滚动。",
+                "Auto scroll needs Accessibility permission; scroll manually."))
+            scrollHUD?.setAutoScrollEnabled(false)
+            PreferencesManager.shared.scrollAutoScrollEnabled = false
+            startManualScrollPolling(session)
+        } catch {
+            showError(error)
+            startManualScrollPolling(session)
         }
     }
 
@@ -357,6 +503,8 @@ final class NativeScreenshotCoordinator {
                 } catch is CancellationError {
                     break
                 } catch {
+                    guard self?.scrollSession === session else { break }
+                    self?.cancelScrolling()
                     self?.showError(error)
                     break
                 }
@@ -386,6 +534,9 @@ final class NativeScreenshotCoordinator {
     }
 
     private func finishScrolling() {
+        scrollModeSwitchTask?.cancel()
+        scrollModeSwitchTask = nil
+        scrollCaptureReady = false
         scrollPollTask?.cancel()
         scrollPollTask = nil
         guard let session = scrollSession else { return }
@@ -419,6 +570,9 @@ final class NativeScreenshotCoordinator {
     }
 
     private func cancelScrolling() {
+        scrollModeSwitchTask?.cancel()
+        scrollModeSwitchTask = nil
+        scrollCaptureReady = false
         scrollCompletionID = nil
         scrollPollTask?.cancel()
         scrollPollTask = nil
@@ -428,11 +582,98 @@ final class NativeScreenshotCoordinator {
         scrollHUD = nil
     }
 
-    private func startRecording(region: CGRect) async {
-        guard recordingSessionID == nil else { return }
+    private func queueRecordingSetup(region: CGRect) {
+        recordingSetupGeneration &+= 1
+        let generation = recordingSetupGeneration
+        // The visible size fields are authoritative immediately. A pending
+        // display refresh may reposition the controls, but Start must never
+        // use the previous rectangle.
+        recordingRegion = region
+        if let setup = recordingSetup, let recordingDisplayID {
+            setup.show(near: region, displayID: recordingDisplayID)
+        }
+        Task { @MainActor [weak self] in
+            await self?.showRecordingSetup(region: region, generation: generation)
+        }
+    }
+
+    private func showRecordingSetup(region: CGRect, generation: UInt64) async {
+        guard recordingSessionID == nil,
+              recordingSetupGeneration == generation else { return }
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: true)
+            guard overlay != nil, recordingSessionID == nil,
+                  recordingSetupGeneration == generation else { return }
+            guard let display = content.displays.max(by: {
+                $0.frame.intersection(region).area < $1.frame.intersection(region).area
+            }), display.frame.contains(region) else {
+                throw NativeScreenshotRecordingError.displayUnavailable
+            }
+            recordingRegion = region
+            recordingDisplayID = display.displayID
+            if let setup = recordingSetup {
+                setup.show(near: region, displayID: display.displayID)
+            } else {
+                let setup = NativeScreenshotRecordingSetupPanel()
+                recordingSetup = setup
+                setup.onStart = { [weak self, weak setup] selection in
+                    guard let self, let setup, self.recordingSetup === setup else { return }
+                    let handoffID = UUID()
+                    self.captureHandoffID = handoffID
+                    self.recordingSetup = nil
+                    self.recordingSetupGeneration &+= 1
+                    let selectedRegion = self.recordingRegion ?? region
+                    self.recordingRegion = nil
+                    self.recordingDisplayID = nil
+                    self.overlay?.dismissForHandoff()
+                    self.overlay = nil
+                    Task { @MainActor [weak self] in
+                        await self?.startRecording(region: selectedRegion,
+                                                   selection: selection,
+                                                   handoffID: handoffID)
+                    }
+                }
+                setup.onCancel = { [weak self, weak setup] in
+                    guard let self, let setup, self.recordingSetup === setup else { return }
+                    self.recordingSetup = nil
+                    self.recordingSetupGeneration &+= 1
+                    self.recordingRegion = nil
+                    self.recordingDisplayID = nil
+                    self.overlay?.dismissForHandoff()
+                    self.overlay = nil
+                }
+                setup.onMove = { [weak self] in
+                    self?.overlay?.beginRecordingSelectionMove()
+                }
+                setup.show(near: region, displayID: display.displayID)
+            }
+        } catch {
+            guard recordingSetupGeneration == generation else { return }
+            recordingSetupGeneration &+= 1
+            recordingSetup?.close()
+            recordingSetup = nil
+            recordingRegion = nil
+            recordingDisplayID = nil
+            overlay?.dismissForHandoff()
+            overlay = nil
+            showCaptureError(error)
+        }
+    }
+
+    private func startRecording(
+        region: CGRect,
+        selection: NativeScreenshotRecordingSetupSelection,
+        handoffID: UUID
+    ) async {
+        guard recordingSessionID == nil, captureHandoffID == handoffID else { return }
         let sessionID = UUID()
         recordingSessionID = sessionID
+        captureHandoffID = nil
         recordingStarted = false
+        recordingPaused = false
+        recordingFinalizing = false
+        recordingControlsHidden = selection.hidesHUD
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(
                 false, onScreenWindowsOnly: true
@@ -456,15 +697,34 @@ final class NativeScreenshotCoordinator {
                             "The recording region must fit on one display. Select a smaller area and try again.")]
                 )
             }
+            if selection.delaySeconds > 0 {
+                let countdown = NativeScreenshotRecordingCountdownHUD()
+                recordingCountdown = countdown
+                countdown.onCancel = { [weak self] in
+                    Task { @MainActor [weak self] in await self?.cancelRecording() }
+                }
+                countdown.show(near: region, displayID: display.displayID)
+                for seconds in stride(from: selection.delaySeconds, through: 1, by: -1) {
+                    countdown.update(seconds: seconds)
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard recordingSessionID == sessionID else { return }
+                }
+                countdown.close()
+                recordingCountdown = nil
+            }
             let local = region.intersection(display.frame)
                 .offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
             let outputURL = try newRecordingURL()
             let preferences = PreferencesManager.shared
-            let hud = NativeScreenshotRecordingHUD(showTimer: !preferences.hideRecordingHUD)
+            let hud = NativeScreenshotRecordingHUD(showTimer: !selection.hidesHUD)
             recordingHUD = hud
             hud.onStop = { [weak self] in Task { @MainActor in await self?.stopRecording() } }
             hud.onCancel = { [weak self] in Task { @MainActor in await self?.cancelRecording() } }
-            hud.show()
+            hud.onPauseToggle = { [weak self] in self?.toggleRecordingPause() }
+            // The HUD must exist on screen when the filter is built so the
+            // capture stream can exclude this exact window, even if hidden
+            // controls were selected for the recording itself.
+            hud.show(near: region, displayID: display.displayID)
             let refreshed = try await SCShareableContent.excludingDesktopWindows(
                 false, onScreenWindowsOnly: false
             )
@@ -479,13 +739,14 @@ final class NativeScreenshotCoordinator {
                 displayID: display.displayID,
                 sourceRect: local,
                 outputURL: outputURL,
-                framesPerSecond: preferences.recordingFPS,
-                includesSystemAudio: preferences.recordSystemAudio,
-                includesMicrophone: preferences.recordMicAudio,
-                highlightsMouseClicks: preferences.recordMouseHighlight,
-                webcam: preferences.recordWebcam ? webcamOptions(preferences) : nil,
-                keystrokeMode: !preferences.recordKeystroke ? .off
-                    : (preferences.keystrokeShowAll ? .allKeys : .shortcutsOnly)
+                framesPerSecond: selection.framesPerSecond,
+                includesSystemAudio: selection.includesSystemAudio,
+                includesMicrophone: selection.includesMicrophone,
+                microphoneDeviceID: selection.microphoneDeviceID,
+                highlightsMouseClicks: selection.highlightsMouseClicks,
+                webcam: selection.includesWebcam ? webcamOptions(preferences) : nil,
+                webcamDeviceID: selection.webcamDeviceID,
+                keystrokeMode: selection.keystrokeMode
             )
             let recorder = NativeScreenshotRecorder(options: options,
                                                     excludedWindows: excluded)
@@ -495,12 +756,20 @@ final class NativeScreenshotCoordinator {
                     self?.recordingEnded(result, sessionID: sessionID)
                 }
             }
+            recorder.onAutomaticStopBegan = { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.beginRecordingFinalizing(sessionID: sessionID)
+                }
+            }
             recorder.onCameraUnavailable = { [weak self, weak hud] in
                 Task { @MainActor [weak self, weak hud] in
                     guard self?.recordingSessionID == sessionID else { return }
                     hud?.addWarning(NativeScreenshotUserText.string(
                         "摄像头已断开，后续画面不再包含摄像头。",
                         "Camera disconnected; the remaining video will not include it."))
+                    if let hud {
+                        self?.showHiddenRecordingWarning(on: hud, sessionID: sessionID)
+                    }
                 }
             }
             try await recorder.start()
@@ -509,9 +778,14 @@ final class NativeScreenshotCoordinator {
                 return
             }
             recordingStarted = true
+            hud.startTiming()
             if !recorder.warnings.isEmpty {
                 appLog(recorder.warnings.joined(separator: " | "), level: .warning)
                 showRecordingWarnings(recorder.warnings, on: hud)
+            }
+            if selection.hidesHUD {
+                if recorder.warnings.isEmpty { hud.window.orderOut(nil) }
+                else { showHiddenRecordingWarning(on: hud, sessionID: sessionID) }
             }
         } catch {
             guard recordingSessionID == sessionID else { return }
@@ -575,17 +849,65 @@ final class NativeScreenshotCoordinator {
             "Missing: \(missingEnglish.joined(separator: ", ")); recording continues."))
     }
 
+    private func showHiddenRecordingWarning(
+        on hud: NativeScreenshotRecordingHUD,
+        sessionID: UUID
+    ) {
+        guard recordingControlsHidden, recordingSessionID == sessionID else { return }
+        hud.window.orderFrontRegardless()
+        recordingWarningHideTask?.cancel()
+        recordingWarningHideTask = Task { @MainActor [weak self, weak hud] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled, let self,
+                  self.recordingSessionID == sessionID,
+                  self.recordingControlsHidden else { return }
+            hud?.window.orderOut(nil)
+            self.recordingWarningHideTask = nil
+        }
+    }
+
     private func stopRecording() async {
-        guard let recorder, let sessionID = recordingSessionID,
-              recordingStarted else {
+        guard let sessionID = recordingSessionID else { return }
+        guard !recordingFinalizing else { return }
+        guard recordingStarted else {
             await cancelRecording()
             return
         }
+        // A previous Stop owns the encoder once it removes `recorder`.
+        // Repeated clicks must wait for that result, not cancel the session.
+        guard let recorder else { return }
+        beginRecordingFinalizing(sessionID: sessionID)
         self.recorder = nil
         do {
             let url = try await recorder.stop()
             recordingEnded(.success(url), sessionID: sessionID)
+        } catch NativeScreenshotRecordingError.captureUnavailable {
+            // The duration-limit callback already owns stop(). Its result will
+            // complete this session; treating this race as failure would delete
+            // a valid movie when the automatic callback arrives.
         } catch { recordingEnded(.failure(error), sessionID: sessionID) }
+    }
+
+    private func beginRecordingFinalizing(sessionID: UUID) {
+        guard recordingSessionID == sessionID, !recordingFinalizing else { return }
+        recordingFinalizing = true
+        recordingWarningHideTask?.cancel()
+        recordingWarningHideTask = nil
+        recordingHUD?.close()
+        recordingHUD = nil
+    }
+
+    private func toggleRecordingPause() {
+        guard let recorder, recordingSessionID != nil, recordingStarted else { return }
+        if recordingPaused {
+            if recorder.resume() {
+                recordingPaused = false
+                recordingHUD?.setPaused(false)
+            }
+        } else if recorder.pause() {
+            recordingPaused = true
+            recordingHUD?.setPaused(true)
+        }
     }
 
     private func recordingEnded(_ result: Result<URL, Error>, sessionID: UUID) {
@@ -595,6 +917,13 @@ final class NativeScreenshotCoordinator {
         }
         recordingSessionID = nil
         recordingStarted = false
+        recordingPaused = false
+        recordingFinalizing = false
+        recordingControlsHidden = false
+        recordingWarningHideTask?.cancel()
+        recordingWarningHideTask = nil
+        recordingCountdown?.close()
+        recordingCountdown = nil
         recorder = nil
         recordingHUD?.close()
         recordingHUD = nil
@@ -608,8 +937,16 @@ final class NativeScreenshotCoordinator {
     }
 
     private func cancelRecording() async {
+        guard !recordingFinalizing else { return }
         recordingSessionID = nil
         recordingStarted = false
+        recordingPaused = false
+        recordingFinalizing = false
+        recordingControlsHidden = false
+        recordingWarningHideTask?.cancel()
+        recordingWarningHideTask = nil
+        recordingCountdown?.close()
+        recordingCountdown = nil
         let recorder = self.recorder
         self.recorder = nil
         recordingHUD?.close()

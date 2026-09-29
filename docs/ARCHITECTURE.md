@@ -90,11 +90,22 @@ Receiving remote content must not create an infinite rebroadcast loop.
 
 Snippets have their own macOS manager and persistence. Screenshot entry points
 call `NativeScreenshotCoordinator`, which owns one temporary selection, long
-capture or recording session. The overlay returns a captured image; delivery
-encodes it, adds it to clipboard history once, and applies the selected
-copy/save/pin/OCR action. Recognition and redaction require an explicit user
-action. The capture, annotation, recording and WebP encoding modules stay
-independent from clipboard, sync and application windows.
+capture or recording session. The selection overlay owns its inline annotation
+canvas and attached tool/action strips; an explicit editor action opens the
+detached image editor. It returns one flattened captured image to delivery,
+which encodes it, adds it to clipboard history once, and applies the selected
+copy/save/pin/OCR action. Recording choices live beside the still-visible
+selection, then the coordinator removes every selection window before starting
+ScreenCaptureKit. Long-capture and recording HUDs release their windows,
+timers and monitors when stopped or cancelled. Recognition, translation and
+redaction require an explicit user action. The capture, annotation, recording
+and WebP encoding modules stay independent from clipboard, sync and application
+windows.
+Floating thumbnails retain bounded compressed PNG data; save, Quick Look,
+transform and batch export run on demand. The video editor stores effect
+segments on a source-time timeline and applies cuts, speed changes and visual
+effects on export. Hidden recording controls remain available from both status
+item surfaces, while input warnings briefly reveal the excluded recording HUD.
 
 ## Menu-bar control panel (macOS)
 
@@ -106,6 +117,8 @@ updates must not force its initialization.
 `MenuBarPanelModel` owns ephemeral tab, search and selection state; a serial cancellable
 worker uses the existing history search service. `MenuBarPanelView` renders the approved
 compact panel with shared typography, SF Symbols, language observation and semantic colors.
+While recording is active, the open panel reads coordinator state and shows
+pause, stop and cancel controls without polling.
 Existing manager callbacks refresh only the open panel; there is no new idle polling.
 Native menu tracking defers those refreshes. Dismissal cancels queries and releases the view.
 
