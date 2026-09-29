@@ -8,14 +8,13 @@ Open the [latest published release](https://github.com/JunWeiUp/Clipy/releases/l
 
 | Device | Asset to download from the release page |
 | --- | --- |
-| Mac with Apple Silicon, macOS 13+ | `ClipyClone-macOS-v<version>.zip` (not the symbols ZIP) |
+| Mac with Apple Silicon, macOS 13+ | `ClipyClone-macOS-v<version>.zip` |
 | Android, arm64 | `ClipyClone-Android-arm64-v8a-v<version>.apk` |
-| Android, armeabi-v7a | `ClipyClone-Android-armeabi-v7a-v<version>.apk` |
 | Windows 10/11 x64, starting with v1.0.23 | `ClipyClone-Windows-x64-v<version>.zip` |
 
-The same release provides `SHA256SUMS.txt` for the APK and ZIP files. Current local source is **v1.0.23**, build **10136**; CI adds the workflow run number. If replacing a release APK with a local build, use the same signing key and a build number higher than the installed package; do not uninstall without backing up app data.
+The release uploads these three packages; GitHub displays each one's SHA-256 digest. It also generates source-code archives separately. Current local source is **v1.0.23**, build **10136**; CI adds the workflow run number. If replacing a release APK with a local build, use the same signing key and a build number higher than the installed package; do not uninstall without backing up app data.
 
-The macOS ZIP contains an **arm64** application; it is not an Intel or universal build. Windows appears only after v1.0.23 is publicly released; older published releases and drafts may omit it. iOS has no published installer; CI builds its source without signing. For development builds, read [Development](DEVELOPMENT.md).
+The macOS ZIP contains an **arm64** application; it is not an Intel or universal build. The Android release APK targets arm64; the local build script can also produce an ARM32 APK. Older published releases may omit Windows. iOS has no published installer; CI builds its source without signing. For development builds, read [Development](DEVELOPMENT.md).
 
 ## Install and try clipboard history
 

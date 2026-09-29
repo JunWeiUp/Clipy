@@ -37,6 +37,11 @@ private final class VoiceFocusReaderFixture {
 
 @MainActor
 func runSmartSwitchFocusWarmupTests() async {
+    // These fixtures assert focus classification and the number of warmup reads.
+    // Deadline behavior is exercised separately below with an explicit short
+    // timeout; the production 150 ms default would make a busy CI runner race
+    // the two 35 ms retry intervals in these unrelated assertions.
+    let fixtureRequestTimeout: TimeInterval = 2
     var focusedReads = 0, enableRequests = 0
     for expected in [SmartSwitchFocusKind.textInput, .textInput, .nonText] {
         let result = SmartSwitchFocusMonitor.inspectFocusedAfterEnablingManualAX(enabled: false, enable: {
@@ -54,7 +59,7 @@ func runSmartSwitchFocusWarmupTests() async {
         readFocused: { .init(kind: .unknown, detail: "noFocus") })
     precondition(stillWarming.retryAfterWarmup, "Unready Electron focus did not receive a bounded retry")
     func inspect(_ fixture: VoiceFocusReaderFixture, bundleID: String = "dev.zcode.app") async -> SmartSwitchFocusMonitor.Snapshot {
-        let monitor = SmartSwitchFocusMonitor(reader: fixture.read)
+        let monitor = SmartSwitchFocusMonitor(requestTimeout: fixtureRequestTimeout, reader: fixture.read)
         return await withCheckedContinuation { continuation in
             monitor.inspect(pid: 123, bundleID: bundleID) { continuation.resume(returning: $0) }
         }
@@ -79,7 +84,7 @@ func runSmartSwitchFocusWarmupTests() async {
         let editor = VoiceFocusReaderFixture([.init(kind: .unknown, detail: "focusedStatus=-25212"),
                                              .init(kind: .textInput, detail: "role=AXTextArea"),
                                              .init(kind: .nonText, detail: "role=AXButton")])
-        let editorMonitor = SmartSwitchFocusMonitor(reader: editor.read)
+        let editorMonitor = SmartSwitchFocusMonitor(requestTimeout: fixtureRequestTimeout, reader: editor.read)
         for expected in [SmartSwitchFocusKind.unknown, .textInput, .nonText] {
             let result = await withCheckedContinuation { continuation in
                 editorMonitor.inspect(pid: 789, bundleID: bundleID) { continuation.resume(returning: $0) }
@@ -118,7 +123,7 @@ func runSmartSwitchFocusWarmupTests() async {
     // Each inspection must use the new reader result, not a cached input verdict.
     let changing = VoiceFocusReaderFixture([.init(kind: .textInput, detail: "role=AXTextArea"),
                                            .init(kind: .nonText, detail: "role=AXButton")])
-    let monitor = SmartSwitchFocusMonitor(reader: changing.read)
+    let monitor = SmartSwitchFocusMonitor(requestTimeout: fixtureRequestTimeout, reader: changing.read)
     func fresh() async -> SmartSwitchFocusMonitor.Snapshot {
         await withCheckedContinuation { continuation in
             monitor.inspect(pid: 456, bundleID: "test.editor") { continuation.resume(returning: $0) }
