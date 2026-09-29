@@ -143,30 +143,67 @@ final class NativeScreenshotOverlayController {
 
     func start() async {
         guard !finished else { return }
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        func elapsedMilliseconds() -> Int {
+            Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1_000)
+        }
         do {
+            appLog("NativeScreenshot startup stage=permission mode=\(mode)", level: .info)
             guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
                 throw NativeScreenshotCaptureError.screenRecordingPermissionRequired
             }
-            let content = try await SCShareableContent.excludingDesktopWindows(
-                false, onScreenWindowsOnly: true
-            )
+            // A system permission prompt is user-controlled; start the deadline
+            // only after the user has granted access.
+            let deadline = ProcessInfo.processInfo.systemUptime + 16
+            func budget(stage: String, maximumSeconds: Double) throws -> UInt64 {
+                let remaining = deadline - ProcessInfo.processInfo.systemUptime
+                guard remaining > 0 else { throw NativeScreenshotStartupTimeout(stage: stage) }
+                return UInt64(min(maximumSeconds, remaining) * 1_000_000_000)
+            }
+            appLog("NativeScreenshot startup stage=shareable-content begin", level: .info)
+            let content = try await NativeScreenshotStartupDeadline.run(
+                stage: "listing displays", nanoseconds: try budget(stage: "listing displays", maximumSeconds: 5),
+                onTimeout: { [capture] in capture.cancel() }
+            ) {
+                try await SCShareableContent.excludingDesktopWindows(
+                    false, onScreenWindowsOnly: true
+                )
+            }
+            guard !finished else { return }
+            appLog("NativeScreenshot startup stage=shareable-content complete displays=\(content.displays.count) elapsedMs=\(elapsedMilliseconds())", level: .info)
             orderedWindows = Self.windowsInFrontToBackOrder(content.windows)
             let screens = NSScreen.screens
             for display in content.displays {
                 try Task.checkCancellation()
                 guard let screen = screens.first(where: { Self.displayID(for: $0) == display.displayID }) else {
+                    appLog("NativeScreenshot startup stage=display skipped id=\(display.displayID) reason=no-NSScreen", level: .warning)
                     continue
                 }
-                let captured = try await capture.captureDisplay(
-                    displayID: display.displayID, showsCursor: preferences.captureCursor)
+                let displayID = display.displayID
+                let displayStartedAt = ProcessInfo.processInfo.systemUptime
+                appLog("NativeScreenshot startup stage=display begin id=\(displayID)", level: .info)
+                let captured = try await NativeScreenshotStartupDeadline.run(
+                    stage: "capturing display \(displayID)",
+                    nanoseconds: try budget(stage: "capturing display \(displayID)", maximumSeconds: 8),
+                    onTimeout: { [capture] in capture.cancel() }
+                ) { [capture, preferences] in
+                    try await capture.captureDisplay(
+                        displayID: displayID, showsCursor: preferences.captureCursor
+                    )
+                }
+                guard !finished else { return }
                 snapshots.append(DisplaySnapshot(screen: screen, display: display, capture: captured))
+                appLog("NativeScreenshot startup stage=display complete id=\(displayID) pixels=\(captured.image.width)x\(captured.image.height) elapsedMs=\(Int((ProcessInfo.processInfo.systemUptime - displayStartedAt) * 1_000))", level: .info)
             }
             guard !snapshots.isEmpty else { throw NativeScreenshotCaptureError.displayNotFound }
             guard !finished else { return }
             showSelectionPanels()
             installKeyboardMonitor()
+            appLog("NativeScreenshot startup stage=overlay-visible panels=\(panels.count) elapsedMs=\(elapsedMilliseconds())", level: .info)
         } catch {
             guard !finished else { return }
+            let failedStage = (error as? NativeScreenshotStartupTimeout)?.stage ?? "unknown"
+            appLog("NativeScreenshot startup failed mode=\(mode) stage=\(failedStage) elapsedMs=\(elapsedMilliseconds()) error=\(error.localizedDescription)", level: .error)
             finish(restoreFocus: true)
             callbacks.onError(error)
         }
@@ -1538,14 +1575,17 @@ final class NativeScreenshotOverlayController {
         Task {
             defer { delivering = false }
             do {
-                let image: NativeScreenshotCapturedImage
-                if mode == .window, let windowID = originalWindowID,
-                   inlineCanvas?.hasUnsavedEdits != true {
-                    image = try await capture.captureWindow(
-                        windowID: windowID, showsCursor: preferences.captureCursor)
-                } else {
-                    image = try previewSelectedImage()
-                }
+                let image = try await NativeScreenshotShareImagePipeline.resolve(
+                    exactWindowID: mode == .window ? originalWindowID : nil,
+                    hasInlineEdits: inlineCanvas?.hasUnsavedEdits == true,
+                    captureExactWindow: { windowID in
+                        try await capture.captureWindow(
+                            windowID: windowID, showsCursor: preferences.captureCursor)
+                    }, renderProcessedPreview: {
+                        try previewSelectedImage()
+                    }, postprocessWindow: { captured in
+                        try await processSelectedImage(captured)
+                    })
                 guard !finished, selectedRect == originalRect,
                       selectedWindowID == originalWindowID,
                       let view = actionPanel?.contentView else { return }

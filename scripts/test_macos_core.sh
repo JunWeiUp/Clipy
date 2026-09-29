@@ -30,6 +30,14 @@ swiftc "${SOURCES[@]}" "${TEST_DIR}/CoreRegression.swift" "${TEST_DIR}/WordLooku
   -lcompression -o "${TEST_DIR}/core-tests"
 "${TEST_DIR}/core-tests"
 
+# Sharing keeps its toolbar visible. Exercise the exact-window branch without
+# requiring Screen Recording permission or opening a system share sheet.
+swiftc "${REPO_ROOT}/clipy_macos/Sources/NativeScreenshot/UI/NativeScreenshotShareImagePipeline.swift" \
+  "${REPO_ROOT}/clipy_macos/Tests/NativeScreenshotShareImageRegression.swift" \
+  -swift-version 5 -target "${MACOS_ARCH}-apple-macos13.0" \
+  -o "${TEST_DIR}/share-image"
+"${TEST_DIR}/share-image"
+
 # Explicit opt-in: disposable status items, real AXPress, existing permissions only.
 if [ "${CLIPY_MENU_BAR_LIVE_TESTS:-0}" = 1 ]; then
   "${TEST_DIR}/core-tests" --clipy-overflow-live-tests

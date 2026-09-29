@@ -135,6 +135,12 @@ struct NativeScreenshotRecognitionPanel: View {
         editableText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
     }
 
+    static func showsEmptyTextResult(hasScannedText: Bool,
+                                     recognizedLines: [NativeScreenshotRecognizedText],
+                                     editableText: String) -> Bool {
+        hasScannedText && recognizedLines.isEmpty && editableText.isEmpty
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             Image(nsImage: NSImage(cgImage: image,
@@ -149,10 +155,23 @@ struct NativeScreenshotRecognitionPanel: View {
             VStack(spacing: 0) {
                 header
                 Divider()
-                NativeScreenshotEditableOCRText(text: $editableText)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .accessibilityLabel(NativeScreenshotRecognitionLabels.text(
-                        "可编辑的识别文字", "Editable recognized text"))
+                ZStack(alignment: .topLeading) {
+                    NativeScreenshotEditableOCRText(text: $editableText)
+                        .accessibilityLabel(NativeScreenshotRecognitionLabels.text(
+                            "可编辑的识别文字", "Editable recognized text"))
+                    if Self.showsEmptyTextResult(hasScannedText: hasScannedText,
+                                                 recognizedLines: textLines,
+                                                 editableText: editableText) {
+                        Text(NativeScreenshotRecognitionLabels.text(
+                            "未识别到文字。可重新识别或直接输入。",
+                            "No text found. Retry recognition or type here."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .padding(14)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if hasScannedQR { qrSection }
                 Divider()
                 footer

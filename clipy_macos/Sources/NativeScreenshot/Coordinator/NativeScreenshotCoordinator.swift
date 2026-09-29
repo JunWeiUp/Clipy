@@ -52,9 +52,20 @@ final class NativeScreenshotCoordinator {
     }
 
     func startCapture(mode: NativeScreenshotSelectionMode, fromMenu: Bool = false) {
-        guard overlay == nil, scrollSession == nil, scrollCompletionID == nil,
-              captureHandoffID == nil,
-              recordingSetup == nil, recordingSessionID == nil else { return }
+        let blockers: [String?] = [
+            overlay != nil ? "overlay" : nil,
+            scrollSession != nil ? "scrollSession" : nil,
+            scrollCompletionID != nil ? "scrollCompletion" : nil,
+            captureHandoffID != nil ? "captureHandoff" : nil,
+            recordingSetup != nil ? "recordingSetup" : nil,
+            recordingSessionID != nil ? "recordingSession" : nil
+        ]
+        let active = blockers.compactMap { $0 }
+        guard active.isEmpty else {
+            appLog("NativeScreenshot startup ignored mode=\(mode) fromMenu=\(fromMenu) active=\(active.joined(separator: ","))", level: .warning)
+            return
+        }
+        appLog("NativeScreenshot startup requested mode=\(mode) fromMenu=\(fromMenu)", level: .info)
         let callbacks = NativeScreenshotOverlayCallbacks(
             onConfirm: { [weak self] image in self?.finishOverlay(); self?.deliver(image) },
             onCancel: { [weak self] in

@@ -102,10 +102,12 @@ final class NativeScreenshotLongCaptureHUD: NSObject {
 
         setAutoScrollEnabled(autoScrollEnabled)
         isOpen = true
+        layoutControlBar()
         if let selectionFrame, let visible = selectionScreen?.visibleFrame {
             if NativeScreenshotSessionHUDGeometry.scrollPreviewFrame(
                 selection: selectionFrame, visible: visible,
-                imagePixels: CGSize(width: 1, height: 1)) != nil {
+                imagePixels: CGSize(width: 1, height: 1),
+                controls: window.frame) != nil {
                 makePreviewWindow()
             }
         } else if let visible = selectionScreen?.visibleFrame {
@@ -113,7 +115,6 @@ final class NativeScreenshotLongCaptureHUD: NSObject {
                 x: visible.midX - window.frame.width / 2,
                 y: visible.maxY - window.frame.height - 16))
         }
-        layoutControlBar()
         window.orderFrontRegardless()
         // A Carbon hotkey works without Input Monitoring or Accessibility.
         registeredEscapeHotKey = HotKeyManager.shared.register(
@@ -180,7 +181,8 @@ final class NativeScreenshotLongCaptureHUD: NSObject {
               let visible = selectionScreen?.visibleFrame,
               let frame = NativeScreenshotSessionHUDGeometry.scrollPreviewFrame(
                 selection: selectionFrame, visible: visible,
-                imagePixels: CGSize(width: image.width, height: image.height))
+                imagePixels: CGSize(width: image.width, height: image.height),
+                controls: window.frame)
         else { return }
         let maximumWidth: CGFloat = NativeScreenshotSessionHUDGeometry.previewWidth - 8
         let scale = min(1, maximumWidth / CGFloat(max(1, image.width)),

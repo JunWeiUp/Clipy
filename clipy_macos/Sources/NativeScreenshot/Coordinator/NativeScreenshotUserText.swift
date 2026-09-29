@@ -1,10 +1,13 @@
 import Foundation
 
 enum NativeScreenshotUserText {
-    static func string(_ chinese: String, _ english: String) -> String {
+    static var usesChinese: Bool {
         let raw = UserDefaults.standard.string(forKey: "appLanguage")
-        let prefersChinese = raw == "zh"
+        return raw == "zh"
             || (raw != "en" && Locale.preferredLanguages.first?.hasPrefix("zh") == true)
-        return prefersChinese ? chinese : english
+    }
+
+    static func string(_ chinese: String, _ english: String) -> String {
+        usesChinese ? chinese : english
     }
 }

@@ -15,6 +15,9 @@ swiftc "${COMMON[@]}" "${SOURCES}/Annotation/"*.swift "${TESTS}/NativeScreenshot
 swiftc "${COMMON[@]}" "${SOURCES}/Annotation/"*.swift "${SOURCES}/Capture/NativeScreenshotCaptureGeometry.swift" "${SOURCES}/Capture/NativeScreenshotStaticCapture.swift" "${TESTS}/NativeScreenshotCaptureRegression.swift" -o "${TEST_DIR}/capture"
 "${TEST_DIR}/capture"
 
+swiftc "${COMMON[@]}" "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "${SOURCES}/Capture/NativeScreenshotStartupDeadline.swift" "${TESTS}/NativeScreenshotStartupRegression.swift" -o "${TEST_DIR}/startup"
+"${TEST_DIR}/startup"
+
 swiftc "${COMMON[@]}" "${SOURCES}/Editor/"*.swift "${TESTS}/NativeScreenshotImageEditorRegression.swift" -o "${TEST_DIR}/image-editor"
 "${TEST_DIR}/image-editor"
 
@@ -29,6 +32,7 @@ swiftc "${COMMON[@]}" "${SOURCES}/UI/NativeScreenshotSelectionPresets.swift" \
 "${TEST_DIR}/selection-presets"
 
 swiftc "${COMMON[@]}" -Xlinker -weak_framework -Xlinker Translation \
+  "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" \
   "${SOURCES}/Annotation/"*.swift "${SOURCES}/Recognition/"*.swift \
   "${TESTS}/NativeScreenshotRecognitionRegression.swift" \
   "${TESTS}/NativeScreenshotTranslatedAnnotationRegression.swift" -o "${TEST_DIR}/recognition"
