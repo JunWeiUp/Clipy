@@ -137,6 +137,20 @@ enum NativeScreenshotCaptureRegression {
     }
 
     private static func composeAcrossDisplays() throws {
+        let striped = try stripedImage(width: 100, height: 100)
+        let (upright, _) = try NativeScreenshotCaptureComposer.compose(
+            region: CGRect(x: 0, y: 0, width: 100, height: 100),
+            pieces: [NativeScreenshotCapturePiece(
+                displayFrame: CGRect(x: 0, y: 0, width: 100, height: 100), image: striped)],
+            maxOutputPixels: 10_000)
+        let topStripe = try require(NativeScreenshotAnnotationRenderer.sampleColor(
+            at: CGPoint(x: 50, y: 10), in: upright))
+        let bottomStripe = try require(NativeScreenshotAnnotationRenderer.sampleColor(
+            at: CGPoint(x: 50, y: 90), in: upright))
+        precondition(topStripe.red > 0.9 && topStripe.blue < 0.1
+                     && bottomStripe.blue > 0.9 && bottomStripe.red < 0.1,
+                     "a selected image must retain the source's top-to-bottom orientation")
+
         let red = try solidImage(width: 400, height: 400, red: 1, blue: 0)
         let blue = try solidImage(width: 200, height: 200, red: 0, blue: 1)
         let (image, scale) = try NativeScreenshotCaptureComposer.compose(
@@ -187,6 +201,15 @@ enum NativeScreenshotCaptureRegression {
         let context = try bitmap(width: width, height: height)
         context.setFillColor(CGColor(red: red, green: 0, blue: blue, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return try require(context.makeImage())
+    }
+
+    private static func stripedImage(width: Int, height: Int) throws -> CGImage {
+        let context = try bitmap(width: width, height: height)
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height / 2))
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: height / 2, width: width, height: height / 2))
         return try require(context.makeImage())
     }
 

@@ -21,8 +21,13 @@ swiftc "${COMMON[@]}" "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "$
 swiftc "${COMMON[@]}" "${SOURCES}/Editor/"*.swift "${TESTS}/NativeScreenshotImageEditorRegression.swift" -o "${TEST_DIR}/image-editor"
 "${TEST_DIR}/image-editor"
 
-swiftc "${COMMON[@]}" -D EDITOR_STANDALONE_TEST "${SOURCES}/Annotation/"*.swift "${SOURCES}/Editor/"*.swift "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "${SOURCES}/UI/NativeScreenshotEditorController.swift" "${SOURCES}/UI/NativeScreenshotCanvasGeometry.swift" "${SOURCES}/UI/NativeScreenshotLocalization.swift" "${SOURCES}/UI/NativeScreenshotToolbarConfiguration.swift" "${TESTS}/NativeScreenshotEditorUIRegression.swift" -o "${TEST_DIR}/editor-ui"
+swiftc "${COMMON[@]}" -D EDITOR_STANDALONE_TEST "${SOURCES}/Annotation/"*.swift "${SOURCES}/Editor/"*.swift "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "${SOURCES}/UI/NativeScreenshotEditorController.swift" "${SOURCES}/UI/NativeScreenshotCanvasGeometry.swift" "${SOURCES}/UI/NativeScreenshotLocalization.swift" "${SOURCES}/UI/NativeScreenshotToolbarConfiguration.swift" "${SOURCES}/UI/NativeScreenshotRememberedTool.swift" "${TESTS}/NativeScreenshotEditorUIRegression.swift" -o "${TEST_DIR}/editor-ui"
 "${TEST_DIR}/editor-ui"
+
+swiftc "${COMMON[@]}" "${SOURCES}/Annotation/"*.swift \
+  "${SOURCES}/UI/NativeScreenshotRememberedTool.swift" \
+  "${TESTS}/NativeScreenshotRememberedToolRegression.swift" -o "${TEST_DIR}/remembered-tool"
+"${TEST_DIR}/remembered-tool"
 
 swiftc "${COMMON[@]}" "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "${SOURCES}/UI/NativeScreenshotToolbarConfiguration.swift" "${TESTS}/NativeScreenshotToolbarConfigurationRegression.swift" -o "${TEST_DIR}/toolbar-config"
 "${TEST_DIR}/toolbar-config"

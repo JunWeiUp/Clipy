@@ -81,10 +81,8 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         canvas.pressureEnabled = prefs.pencilPressureEnabled
         canvas.pencilSmoothing = NativeScreenshotPencilSmoothing(rawValue: prefs.pencilSmoothMode) ?? .smooth
         canvas.smartMarkerEnabled = prefs.smartMarkerEnabled
-        if prefs.rememberLastTool,
-           let raw = UserDefaults.standard.string(forKey: "nativeScreenshot.lastTool"),
-           let kind = NativeScreenshotAnnotationKind(rawValue: raw),
-           prefs.nativeScreenshotToolbarConfiguration.isToolEnabled(kind.rawValue) {
+        let kind = NativeScreenshotRememberedTool.initial(remember: prefs.rememberLastTool)
+        if prefs.nativeScreenshotToolbarConfiguration.isToolEnabled(kind.rawValue) {
             canvas.tool = .annotation(kind)
         }
         canvas.textProvider = { [weak self] in self?.textInputValue ?? "" }
@@ -96,9 +94,8 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
             guard let self else { return }
             self.refreshToolSelection()
             self.rebuildOptions()
-            if PreferencesManager.shared.rememberLastTool {
-                UserDefaults.standard.set(kind?.rawValue, forKey: "nativeScreenshot.lastTool")
-            }
+            NativeScreenshotRememberedTool.store(
+                kind, remember: PreferencesManager.shared.rememberLastTool)
         }
         canvas.onCopyImage = { [weak self] in self?.copyRenderedImage() }
         canvas.onSaveImage = { [weak self] in self?.deliver(.save) }
@@ -711,13 +708,8 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         } else {
             canvas.tool = .select
         }
-        if PreferencesManager.shared.rememberLastTool {
-            if case let .annotation(kind) = canvas.tool {
-                UserDefaults.standard.set(kind.rawValue, forKey: "nativeScreenshot.lastTool")
-            } else {
-                UserDefaults.standard.removeObject(forKey: "nativeScreenshot.lastTool")
-            }
-        }
+        NativeScreenshotRememberedTool.store(
+            kind, remember: PreferencesManager.shared.rememberLastTool)
         refreshToolSelection()
         rebuildOptions()
         panel?.makeFirstResponder(canvas)
@@ -768,9 +760,8 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
 
     private func selectEditorMode(_ kind: NativeScreenshotAnnotationKind) {
         canvas.tool = .annotation(kind)
-        if PreferencesManager.shared.rememberLastTool {
-            UserDefaults.standard.set(kind.rawValue, forKey: "nativeScreenshot.lastTool")
-        }
+        NativeScreenshotRememberedTool.store(
+            kind, remember: PreferencesManager.shared.rememberLastTool)
         refreshToolSelection()
         rebuildOptions()
         panel?.makeFirstResponder(canvas)
@@ -1342,6 +1333,7 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
     }
 
     private nonisolated static func thumbnail(_ image: CGImage, maximumDimension: Int) -> CGImage? {
+        if max(image.width, image.height) <= maximumDimension { return image }
         let scale = min(1, CGFloat(maximumDimension) / CGFloat(max(image.width, image.height)))
         let width = max(1, Int((CGFloat(image.width) * scale).rounded()))
         let height = max(1, Int((CGFloat(image.height) * scale).rounded()))
@@ -1384,6 +1376,14 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
             _ = scaled.insert(copy)
         }
         return (try? NativeScreenshotAnnotationRenderer.render(baseImage: base, document: scaled)) ?? base
+    }
+
+    nonisolated static func inlinePreviewMaximumDimension(
+        canvasSize: CGSize, backingScale: CGFloat
+    ) -> Int {
+        let scale = backingScale.isFinite && backingScale > 0 ? backingScale : 1
+        let visiblePixels = max(canvasSize.width, canvasSize.height) * scale
+        return Int(min(8192, max(2048, ceil(visiblePixels))))
     }
 
     private func showForm(
@@ -2179,10 +2179,14 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
               displayAttemptedGeneration != contentGeneration else { return }
         displayAttemptedGeneration = contentGeneration
         let snapshot = renderSnapshot()
+        // The inline canvas is shown at the selection's point size. Match its
+        // backing pixels so a Retina selection stays sharp after editing starts.
+        let maximumDimension = NativeScreenshotEditorController.inlinePreviewMaximumDimension(
+            canvasSize: bounds.size, backingScale: window?.backingScaleFactor ?? 1)
         let work = DispatchWorkItem { [weak self] in
             let preview = NativeScreenshotEditorController.boundedPreviewSource(
                 baseImage: snapshot.image, document: snapshot.document,
-                maximumDimension: 2048)
+                maximumDimension: maximumDimension)
             DispatchQueue.main.async {
                 guard let self, self.window != nil,
                       self.contentGeneration == snapshot.generation else { return }

@@ -453,8 +453,6 @@ enum NativeScreenshotCaptureComposer {
                 CGBitmapInfo.byteOrder32Little.rawValue
         ) else { throw NativeScreenshotCaptureError.frameConversionFailed }
 
-        context.translateBy(x: 0, y: CGFloat(size.height))
-        context.scaleBy(x: 1, y: -1)
         context.interpolationQuality = .high
         var drewPiece = false
         for piece in pieces {
@@ -469,7 +467,14 @@ enum NativeScreenshotCaptureComposer {
                     intersection: overlap, region: region, scale: scale
                   ),
                   let cropped = piece.image.cropping(to: crop) else { continue }
-            context.draw(cropped, in: destination)
+            // `destination` uses top-left screen coordinates. The bitmap
+            // context is bottom-left based; move the rect without flipping the
+            // CGImage itself, or text in an inline selection appears inverted.
+            context.draw(cropped, in: CGRect(
+                x: destination.minX,
+                y: CGFloat(size.height) - destination.maxY,
+                width: destination.width,
+                height: destination.height))
             drewPiece = true
         }
         guard drewPiece else { throw NativeScreenshotCaptureError.invalidRegion }

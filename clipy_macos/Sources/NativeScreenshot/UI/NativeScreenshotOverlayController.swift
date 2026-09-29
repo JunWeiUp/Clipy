@@ -126,6 +126,12 @@ final class NativeScreenshotOverlayController {
         originalFrontmostApp = restoreApplication
         selectionPreset = selectionStore.activePreselection
         let saved = PreferencesManager.shared
+        let remembered = NativeScreenshotRememberedTool.initial(remember: saved.rememberLastTool)
+        let configuration = saved.nativeScreenshotToolbarConfiguration
+        activeTool = configuration.isToolEnabled(remembered.rawValue) ? remembered
+            : NativeScreenshotAnnotationKind.allCases.first {
+                configuration.isToolEnabled($0.rawValue)
+            }
         effects.preset = NativeScreenshotImageProcessor.EffectPreset(
             rawValue: saved.effectsPreset) ?? .none
         effects.adjustments = .init(
@@ -650,7 +656,13 @@ final class NativeScreenshotOverlayController {
         actionPanel = actions
         showSizePanel(for: selectedRect, above: false)
         tool.makeKeyAndOrderFront(nil)
-        if activeTool != nil { showToolOptions() }
+        if let activeTool {
+            if inlineCanvas == nil {
+                Task { await makeInlineCanvasIfNeeded(tool: activeTool) }
+            } else {
+                showToolOptions()
+            }
+        }
         updateSelectionViews()
     }
 
@@ -916,9 +928,7 @@ final class NativeScreenshotOverlayController {
 
     private func activateTool(_ kind: NativeScreenshotAnnotationKind?) {
         activeTool = kind
-        if preferences.rememberLastTool {
-            UserDefaults.standard.set(kind?.rawValue, forKey: "nativeScreenshot.lastTool")
-        }
+        NativeScreenshotRememberedTool.store(kind, remember: preferences.rememberLastTool)
         if selectedRect != nil { showActionPanel() }
         if let kind {
             Task { await makeInlineCanvasIfNeeded(tool: kind) }
