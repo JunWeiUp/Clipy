@@ -5,11 +5,13 @@
 #include <flutter/flutter_view_controller.h>
 #include <flutter/encodable_value.h>
 #include <flutter/method_channel.h>
+#include <flutter/method_result.h>
 #include <gdiplus.h>
 
 #include <memory>
 
 #include "win32_window.h"
+#include "screenshot_capture.h"
 
 // Flutter view plus the native clipboard and tray surfaces.
 class FlutterWindow : public Win32Window {
@@ -38,6 +40,9 @@ class FlutterWindow : public Win32Window {
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> clipboard_channel_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> screenshot_channel_;
+  std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> screenshot_result_;
+  std::unique_ptr<ScreenshotCapture> screenshot_capture_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> storage_channel_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> open_folder_channel_;
   ULONG_PTR gdiplus_token_ = 0;

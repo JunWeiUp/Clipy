@@ -12,6 +12,7 @@
 // Clipboard access stays in the Windows host. Dart owns history, persistence,
 // deduplication and the LAN protocol.
 flutter::EncodableMap ReadClipboardSnapshot(HWND owner);
+std::vector<uint8_t> EncodeBitmapToPng(HBITMAP bitmap);
 bool WriteClipboardImage(HWND owner, const std::vector<uint8_t>& png);
 bool WriteClipboardText(HWND owner, const std::string& text);
 bool WriteClipboardFiles(HWND owner, const std::vector<std::string>& paths);

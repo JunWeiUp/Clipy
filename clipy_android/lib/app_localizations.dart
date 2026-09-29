@@ -113,6 +113,20 @@ class AppStrings {
   );
   String get showAdvancedFeatures => _t('显示高级功能', 'Show Advanced Features');
   String get clearHistory => _t('清空历史记录', 'Clear History');
+  String get screenshot => _t('截图', 'Screenshot');
+  String get screenshotRegion => _t('区域截图', 'Capture Region');
+  String get screenshotWindow => _t('窗口截图', 'Capture Window');
+  String get screenshotFullscreen => _t('全屏截图', 'Capture Display');
+  String get screenshotSaved =>
+      _t('截图已复制并保存到历史', 'Screenshot copied and saved to history');
+  String get screenshotCopyFailed => _t(
+    '截图已保存到历史，但复制到剪贴板失败',
+    'Screenshot saved to history, but clipboard copy failed',
+  );
+  String get screenshotFailed => _t(
+    '截图失败，请重试或选择其他窗口',
+    'Screenshot failed; retry or choose another window',
+  );
   String get appLogs => _t('应用日志', 'App Logs');
   String get clearLogs => _t('清空日志', 'Clear Logs');
   String get clearLogsConfirm => _t(
