@@ -290,6 +290,12 @@ struct NativeScreenshotEditorUIRegression {
         assert(NativeScreenshotAnnotationRenderer.sampleColor(
             at: CGPoint(x: 60, y: 60), in: preview)!.green < 0.1,
             "live preview must retain annotations after downsampling")
+        assert(NativeScreenshotEditorController.inlinePreviewMaximumDimension(
+            canvasSize: CGSize(width: 1512, height: 982), backingScale: 2) == 3024,
+            "Retina inline editing must keep every displayed device pixel")
+        assert(NativeScreenshotEditorController.inlinePreviewMaximumDimension(
+            canvasSize: CGSize(width: 3840, height: 2160), backingScale: 1) == 3840,
+            "a 4K inline selection must not be reduced to a 2048-pixel preview")
 
         let loupe = NativeScreenshotAnnotationContent.magnifier(
             source: CGRect(x: 0, y: 0, width: 10, height: 10),
