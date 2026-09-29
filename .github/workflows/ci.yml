@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, feat/windows-screenshot]
   pull_request:
   workflow_dispatch:
   workflow_call:
