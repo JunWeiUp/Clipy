@@ -66,6 +66,11 @@ enum L10nKey: String {
     case panelBookHint
     case panelSmartHint
     case panelPasswordHint
+    case keepAwakeTitle
+    case keepAwakeHint
+    case keepAwakeOn
+    case keepAwakeOff
+    case keepAwakeFailed
     case panelCaptureToolHint
     case panelManageSnippets
     case panelDevices
@@ -631,6 +636,11 @@ struct L10n {
             .panelBookHint: "收藏与复习单词",
             .panelSmartHint: "打开应用、搜索与翻译",
             .panelPasswordHint: "选择长度与字符类型",
+            .keepAwakeTitle: "保持唤醒",
+            .keepAwakeHint: "阻止闲置时屏幕关闭和 Mac 睡眠；合盖或手动睡眠仍有效",
+            .keepAwakeOn: "已开启",
+            .keepAwakeOff: "已关闭",
+            .keepAwakeFailed: "无法更改保持唤醒状态，请稍后重试。",
             .panelCaptureToolHint: "区域、窗口、全屏、长截图与录屏",
             .panelManageSnippets: "管理片段",
             .panelDevices: "设备",
@@ -1183,6 +1193,11 @@ struct L10n {
             .panelBookHint: "Save and review vocabulary",
             .panelSmartHint: "Open apps, search and translate",
             .panelPasswordHint: "Choose length and character types",
+            .keepAwakeTitle: "Keep Awake",
+            .keepAwakeHint: "Prevent idle display and system sleep; lid close and manual sleep still work",
+            .keepAwakeOn: "On",
+            .keepAwakeOff: "Off",
+            .keepAwakeFailed: "Could not change Keep Awake. Please try again.",
             .panelCaptureToolHint: "Region, window, full screen, scrolling and recording",
             .panelManageSnippets: "Manage Snippets",
             .panelDevices: "Devices",

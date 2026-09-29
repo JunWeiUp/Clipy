@@ -74,7 +74,7 @@ func runMenuBarPanelRegressionTests() {
     model.query = "Find"
     check(model.visibleSnippets.count == 1, "global search is limited by old folder")
     model.query = ""; model.selectTab(.tools)
-    check(model.visibleTools == [.wordBook, .password], "tools tab repeats persistent quick actions")
+    check(model.visibleTools == [.wordBook, .password, .keepAwake], "tools tab shows the keep awake control")
     model.moveSelection(1)
     check(model.selectedID == "t:wordBook", "tools are not keyboard selectable")
     var openedWordBook = false

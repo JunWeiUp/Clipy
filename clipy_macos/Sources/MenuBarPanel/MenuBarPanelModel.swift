@@ -14,12 +14,12 @@ final class MenuBarPanelModel: ObservableObject {
         }
     }
     enum Page { case home, capture, devices, notifications, settings }
-    enum Action { case search(String), snippets, preferences, syncSettings, notifications, word, wordBook, smartSwitch, password, tokenUsage
+    enum Action { case search(String), snippets, preferences, syncSettings, notifications, word, wordBook, smartSwitch, password, tokenUsage, toggleKeepAwake
         case region, window, fullscreen, screenshotSettings, permission, quit
         case sendText(String), sendFile(String)
     }
     enum Tool: String, CaseIterable {
-        case capture, word, wordBook, smartSwitch, password
+        case capture, word, wordBook, smartSwitch, password, keepAwake
         var title: L10nKey {
             switch self {
             case .capture: return .panelCapture
@@ -27,6 +27,7 @@ final class MenuBarPanelModel: ObservableObject {
             case .wordBook: return .wordBook
             case .smartSwitch: return .smartSwitchTitle
             case .password: return .generatePassword
+            case .keepAwake: return .keepAwakeTitle
             }
         }
         var hint: L10nKey {
@@ -36,6 +37,7 @@ final class MenuBarPanelModel: ObservableObject {
             case .wordBook: return .panelBookHint
             case .smartSwitch: return .panelSmartHint
             case .password: return .panelPasswordHint
+            case .keepAwake: return .keepAwakeHint
             }
         }
         var symbol: String {
@@ -45,6 +47,7 @@ final class MenuBarPanelModel: ObservableObject {
             case .wordBook: return "books.vertical"
             case .smartSwitch: return "arrow.triangle.swap"
             case .password: return "key.horizontal"
+            case .keepAwake: return "sun.max"
             }
         }
     }
@@ -85,7 +88,7 @@ final class MenuBarPanelModel: ObservableObject {
 
     var isSearching: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var visibleTools: [Tool] {
-        isSearching ? matchingTools : matchingTools.filter { $0 == .wordBook || $0 == .password }
+        isSearching ? matchingTools : matchingTools.filter { $0 == .wordBook || $0 == .password || $0 == .keepAwake }
     }
     var visibleSnippets: [Snippet] {
         folders.filter { isSearching || folderID == nil || $0.id == folderID }
@@ -123,6 +126,7 @@ final class MenuBarPanelModel: ObservableObject {
         case .wordBook: onAction?(.wordBook)
         case .smartSwitch: onAction?(.smartSwitch)
         case .password: onAction?(.password)
+        case .keepAwake: onAction?(.toggleKeepAwake)
         }
     }
     var selectableIDs: [String] {

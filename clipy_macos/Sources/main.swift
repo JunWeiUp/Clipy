@@ -78,6 +78,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        KeepAwakeManager.shared.stop()
+    }
+
     private func setupMainMenu() {
         let mainMenu = NSMenu()
 

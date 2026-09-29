@@ -39,7 +39,11 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
 
     override init() {
         super.init()
-        model.onAction = { [weak self] action in self?.handoff(action) }
+        model.onAction = { [weak self] action in
+            guard let self else { return }
+            if case .toggleKeepAwake = action { self.onAction?(action) }
+            else { self.handoff(action) }
+        }
         model.onHistory = { [weak self] entry, action in self?.use(entry, action: action) }
         model.onSnippet = { [weak self] id in
             guard let self, let snippet = SnippetManager.shared.snippet(id: id) else { return }

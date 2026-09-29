@@ -31,31 +31,31 @@ jobs:
       ios: ${{ steps.platforms.outputs.ios }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        if: github.event_name == 'pull_request' && !inputs.full_matrix
+        if: ${{ !inputs.full_matrix && github.event_name != 'workflow_dispatch' }}
         with:
           persist-credentials: false
-          # The PR merge commit has the base and head commits as its parents.
+          # Covers the common single-commit push and pull request merge commit.
           fetch-depth: 2
       - name: Detect changed paths
         id: platforms
         shell: bash
         env:
-          FORCE_ALL: ${{ inputs.full_matrix || github.event_name != 'pull_request' }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FORCE_ALL: ${{ inputs.full_matrix || github.event_name == 'workflow_dispatch' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           macos=false android=false windows=false ios=false
           if [[ "$FORCE_ALL" == true ]]; then
             macos=true android=true windows=true ios=true
-          elif [[ -z "$PR_BASE_SHA" || -z "$PR_HEAD_SHA" ]] ||
-               ! git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null ||
-               ! git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
-            # A shallow checkout must never turn a missing comparison into skipped CI.
+          elif [[ -z "$BASE_SHA" || -z "$HEAD_SHA" ]] ||
+               ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null ||
+               ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            # A missing comparison must never turn into skipped CI.
             macos=true android=true windows=true ios=true
           else
-            changed_files="$RUNNER_TEMP/clipy-pr-changed-files"
-            if ! git diff --name-only --no-renames -z "$PR_BASE_SHA" "$PR_HEAD_SHA" > "$changed_files"; then
+            changed_files="$RUNNER_TEMP/clipy-changed-files"
+            if ! git diff --name-only --no-renames -z "$BASE_SHA" "$HEAD_SHA" > "$changed_files"; then
               macos=true android=true windows=true ios=true
             else
               all=false

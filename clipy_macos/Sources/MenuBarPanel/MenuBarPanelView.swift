@@ -4,6 +4,7 @@ import SwiftUI
 struct MenuBarPanelView: View {
     @ObservedObject var model: MenuBarPanelModel
     @ObservedObject var overflow: MenuBarOverflowManager
+    @ObservedObject private var keepAwake = KeepAwakeManager.shared
     @EnvironmentObject private var language: AppLanguageObserver
     @State private var showingLastIcon = false
     var activateIcon: (MenuBarOverflowItem) -> Void
@@ -288,7 +289,9 @@ struct MenuBarPanelView: View {
     private var toolList: some View {
         VStack(spacing: 0) {
             ForEach(model.visibleTools, id: \.rawValue) { tool in
-                toolRow(tool.title, detail: tool.hint, symbol: tool.symbol) { model.useTool(tool) }
+                toolRow(tool.title, detail: tool.hint, symbol: tool.symbol,
+                        status: tool == .keepAwake ? L10n.t(keepAwake.isActive ? .keepAwakeOn : .keepAwakeOff) : nil,
+                        active: tool == .keepAwake && keepAwake.isActive) { model.useTool(tool) }
                     .id("t:" + tool.rawValue)
                     .background(model.selectedID == "t:" + tool.rawValue ? AppColor.accent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 8))
                     .onHover { if $0 { model.selectedID = "t:" + tool.rawValue } }
@@ -407,7 +410,9 @@ struct MenuBarPanelView: View {
     private func pill(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) { Text(title).font(AppFont.secondary).lineLimit(1).padding(.horizontal, 11).padding(.vertical, 5).contentShape(Rectangle()).background(selected ? AppColor.accent.opacity(0.13) : Color.primary.opacity(0.045), in: Capsule()).foregroundStyle(selected ? AppColor.accent : .secondary) }.buttonStyle(.plain).accessibilityAddTraits(selected ? [.isSelected] : [])
     }
-    private func toolRow(_ title: L10nKey, detail: L10nKey?, symbol: String, action: @escaping () -> Void) -> some View {
+    private func toolRow(_ title: L10nKey, detail: L10nKey?, symbol: String,
+                         status: String? = nil, active: Bool = false,
+                         action: @escaping () -> Void) -> some View {
         VStack(spacing: 0) {
             Button(action: action) {
                 HStack(spacing: 12) {
@@ -417,9 +422,14 @@ struct MenuBarPanelView: View {
                         if let detail { Text(L10n.t(detail)).font(AppFont.caption).foregroundStyle(.secondary).lineLimit(2) }
                     }
                     Spacer()
-                    Image(systemName: "chevron.right").font(AppFont.caption).foregroundStyle(.secondary)
+                    if let status {
+                        Text(status).font(AppFont.caption)
+                            .foregroundStyle(active ? AppColor.accent : Color.secondary)
+                    } else {
+                        Image(systemName: "chevron.right").font(AppFont.caption).foregroundStyle(.secondary)
+                    }
                 }.padding(.horizontal, 8).padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+            }.buttonStyle(.plain).accessibilityValue(status ?? "")
             Divider()
         }
     }

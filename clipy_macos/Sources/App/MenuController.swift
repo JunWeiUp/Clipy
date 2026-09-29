@@ -181,6 +181,12 @@ class MenuController: NSObject {
         case .smartSwitch: openSmartSwitch()
         case .password: openPasswordGenerator()
         case .tokenUsage: openTokenUsage()
+        case .toggleKeepAwake:
+            if !KeepAwakeManager.shared.toggle() {
+                controlPanelStorage?.model.notice = L10n.t(.keepAwakeFailed)
+            } else {
+                controlPanelStorage?.model.notice = nil
+            }
         case .region: startScreenshotRegion()
         case .window: startScreenshotWindow()
         case .fullscreen: startScreenshotFullscreen()
@@ -256,6 +262,9 @@ class MenuController: NSObject {
         }
         tools.addItem(word)
         tools.addItem(actionItem(L10n.t(.wordBook), symbol: "books.vertical", action: #selector(openWordBook)))
+        let keepAwake = actionItem(L10n.t(.keepAwakeTitle), symbol: "sun.max", action: #selector(toggleKeepAwake(_:)))
+        keepAwake.state = KeepAwakeManager.shared.isActive ? .on : .off
+        tools.addItem(keepAwake)
         let smartSwitch = actionItem(L10n.t(.smartSwitchTitle), symbol: "arrow.triangle.swap", action: #selector(openSmartSwitch))
         let switchConfig = SmartSwitchStore.shared.configuration
         if switchConfig.shortcutEnabled {
@@ -894,6 +903,16 @@ class MenuController: NSObject {
 
     @objc private func openTokenUsage() {
         TokenUsageWindow.shared.showWindow()
+    }
+
+    @objc private func toggleKeepAwake(_ sender: NSMenuItem) {
+        if KeepAwakeManager.shared.toggle() {
+            sender.state = KeepAwakeManager.shared.isActive ? .on : .off
+        } else {
+            let alert = NSAlert()
+            alert.messageText = L10n.t(.keepAwakeFailed)
+            alert.runModal()
+        }
     }
 
     @objc private func registerGlobalHotKeys() {

@@ -120,7 +120,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.23** · Default local build **10136** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.24** · Default local build **10149** · [Build metadata](clipy_android/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version above may be ahead of published packages while a release is being prepared. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
@@ -208,6 +208,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 - Native title bars, readable light/dark content surfaces, consistent SF Symbols, spacing and controls.
 - Press <kbd>Esc</kbd> to close the focused window, including settings, search, word lookup, vocabulary, snippet and image/video editors, OCR results and pinned images. Existing save prompts still apply; input-method composition, shortcut recording and modal dialogs handle cancellation first.
 - **Control panel (source builds):** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, a compact estimate of today's Token usage below them, Clipboard / Snippets / Tools tabs, and device/notification pages. Detail pages use a smaller Back/title layout; Tools omits actions already in the persistent footer. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-click the menu-bar icon for the classic native menu. The gallery above shows the current source build; published packages may differ.
+- **Keep Awake (source builds):** use the Tools tab or the classic menu's Tools submenu to prevent idle display and system sleep. The switch stays on only until you turn it off or quit Clipy; closing the laptop lid and manual Sleep still work.
 - Preferences and screenshot settings scroll continuously across categories; the sidebar follows the visible section and supports click-to-jump. See the [macOS design standard](docs/MACOS_DESIGN.md) for UI development guidance.
 
 ### ⌨️ Global hotkeys & 🌍 i18n
@@ -247,7 +248,7 @@ INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh
 
 Local macOS builds are ad-hoc signed, not Developer ID signed or notarized. See [build and signing options](docs/DEVELOPMENT.md#macos).
 
-**Build on GitHub:** open [Actions → macOS Build](https://github.com/JunWeiUp/Clipy/actions/workflows/macos.yml) and choose **Run workflow** to build just the Mac app, with no signing secrets or Android setup. Pushes to `main`/`master` and pull requests affecting macOS run the same Mac job through CI.
+**Build on GitHub:** open [Actions → macOS Build](https://github.com/JunWeiUp/Clipy/actions/workflows/macos.yml) and choose **Run workflow** to build just the Mac app, with no signing secrets or Android setup. Pushes to `main`/`master` and pull requests affecting macOS run the same Mac job through CI; release checks still run every platform.
 
 After the Mac job succeeds, download its artifact from the run summary (GitHub sign-in required; retained for 30 days). It contains only the **Apple Silicon / macOS 13+** app ZIP; the run summary links to the installation guide and the packaging step prints its SHA-256 digest.
 
@@ -286,10 +287,10 @@ cd clipy_android
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.23
+./scripts/package_windows.ps1 -Version 1.0.24
 ```
 
-The package is `dist/ClipyClone-Windows-x64-v1.0.23.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Current source builds add a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
+The package is `dist/ClipyClone-Windows-x64-v1.0.24.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Current source builds add a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
 
 ### iOS (Flutter + Swift)
 

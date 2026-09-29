@@ -120,7 +120,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今�
 <details>
 <summary><b>版本、下载与源码构建</b></summary>
 
-当前源码版本：**1.0.23** · 默认本地构建号 **10136** · [构建版本配置](clipy_android/pubspec.yaml)
+当前源码版本：**1.0.24** · 默认本地构建号 **10149** · [构建版本配置](clipy_android/pubspec.yaml)
 
 安装包请前往[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，具体应用版本和构建号以发布说明为准。Android 改版已在 v1.0.19 发布；准备新版期间，上方源码版本可能领先于公开安装包。Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
 
@@ -208,6 +208,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今�
 - 原生标题栏、清晰的浅色/深色内容背景，以及统一的 SF Symbols、间距与控件样式。
 - 按 <kbd>Esc</kbd> 关闭当前聚焦的窗口，包括设置、搜索、查词、单词表、片段及图片／视频编辑器、OCR 结果和贴图；保留原有保存提示，输入法组词、快捷键录入和模态对话框优先处理取消操作。
 - **轻量控制面板（源码构建）：** 左键点击菜单栏图标，打开原生浮层，顶部一行包含搜索、置顶和设置，下面是直出的隐藏图标、简写的今日 Token 用量估算、「剪贴板 / 片段 / 工具」标签，以及设备和通知页面。详情页采用更小的返回／标题布局；工具页不重复列出底部快捷操作。搜索异步覆盖历史、片段与工具，首页展示最近六条复制内容；点击历史行会复制并粘贴支持的文本类型，行内「复制」按钮只复制并保持浮层打开。可固定面板，点击外部不关闭；右键菜单栏图标仍可打开经典原生菜单。上方展示的是当前源码构建，公开安装包可能不同。
+- **保持唤醒（源码构建）：** 从「工具」标签或经典菜单的「工具」子菜单开启，阻止闲置时屏幕关闭和系统睡眠；再次点击或退出 Clipy 即关闭。合盖和手动睡眠仍然有效。
 - 偏好设置与截图设置可连续滚动浏览各类选项，侧边分类随滚动高亮，也支持点击跳转。界面开发规范见 [macOS 设计标准](docs/MACOS_DESIGN.md)。
 
 ### ⌨️ 全局快捷键 与 🌍 国际化
@@ -247,7 +248,7 @@ INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh
 
 本地 macOS 构建使用 ad-hoc 签名，不含 Developer ID 签名或公证。详见[构建与签名选项](docs/DEVELOPMENT.md#macos)。
 
-**在 GitHub 打包：**打开 [Actions → macOS Build](https://github.com/JunWeiUp/Clipy/actions/workflows/macos.yml)，点击 **Run workflow**，即可单独构建 Mac 应用，无需签名密钥或 Android 配置。推送到 `main`/`master` 和提交涉及 macOS 的 PR 时，CI 也会调用同一 Mac 任务。
+**在 GitHub 打包：**打开 [Actions → macOS Build](https://github.com/JunWeiUp/Clipy/actions/workflows/macos.yml)，点击 **Run workflow**，即可单独构建 Mac 应用，无需签名密钥或 Android 配置。推送到 `main`/`master` 和提交涉及 macOS 的 PR 时，CI 也会调用同一 Mac 任务；发布检查仍覆盖所有平台。
 
 Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留 30 天），其中只包含 **Apple Silicon / macOS 13+** 应用 ZIP；运行摘要提供安装指南链接，打包步骤会输出 SHA-256 摘要。
 
@@ -286,10 +287,10 @@ cd clipy_android
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.23
+./scripts/package_windows.ps1 -Version 1.0.24
 ```
 
-产物为 `dist/ClipyClone-Windows-x64-v1.0.23.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。当前源码构建在「历史记录」增加「截图」菜单，支持区域、窗口和显示器截图；完成后复制 PNG 并保存到本机历史。窗口截图使用 Windows `PrintWindow`：目标应用可能拒绝捕获，也可能返回空白画面，受保护或使用 GPU 绘制的内容尤其需要实机检查。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。Windows 源码构建与正式版 ZIP 均未签名；公开版本以发布页为准。
+产物为 `dist/ClipyClone-Windows-x64-v1.0.24.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。当前源码构建在「历史记录」增加「截图」菜单，支持区域、窗口和显示器截图；完成后复制 PNG 并保存到本机历史。窗口截图使用 Windows `PrintWindow`：目标应用可能拒绝捕获，也可能返回空白画面，受保护或使用 GPU 绘制的内容尤其需要实机检查。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。Windows 源码构建与正式版 ZIP 均未签名；公开版本以发布页为准。
 
 ### iOS（Flutter + Swift）
 
