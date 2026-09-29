@@ -209,7 +209,13 @@ struct NativeScreenshotToolbarConfiguration: Codable, Equatable {
         shortcuts[id] = key
     }
 
-    var accentColor: NSColor { Self.color(from: accentHex) ?? Self.color(from: Self.default.accentHex)! }
+    var accentColor: NSColor {
+        // The old capture chrome followed the macOS accent until a user chose
+        // a toolbar color. Keep that dynamic default while honoring migrated
+        // archived colors and explicit custom hex values.
+        if accentHex == Self.default.accentHex { return .controlAccentColor }
+        return Self.color(from: accentHex) ?? .controlAccentColor
+    }
     var iconColor: NSColor { Self.color(from: iconHex) ?? Self.color(from: Self.default.iconHex)! }
     var backgroundColor: NSColor {
         Self.color(from: backgroundHex) ?? Self.color(from: Self.default.backgroundHex)!

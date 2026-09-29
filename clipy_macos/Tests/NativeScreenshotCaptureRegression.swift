@@ -4,9 +4,101 @@ import Foundation
 @main
 enum NativeScreenshotCaptureRegression {
     static func main() throws {
+        try nativeDisplayPixelsAndLimits()
+        try mixedScaleWindowPixels()
+        try rejectUnexpectedFirstFrameSize()
+        localizedCaptureResolutionErrors()
         try geometryAcrossMixedScaleDisplays()
         try composeAcrossDisplays()
         print("NativeScreenshotCaptureRegression passed")
+    }
+
+    private static func nativeDisplayPixelsAndLimits() throws {
+        let retinaFrame = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let native = NativeScreenshotPixelSize(width: 3024, height: 1964)
+        precondition(NativeScreenshotCaptureResolution.displayPixels(
+            frame: retinaFrame, modePixels: native, backingScaleFactor: 1) == native,
+            "the display mode's physical pixels must win over a nominal fallback")
+        precondition(NativeScreenshotCaptureResolution.displayPixels(
+            frame: retinaFrame, modePixels: nil, backingScaleFactor: 2) == native,
+            "a missing display mode must use the matched screen's 2× backing scale")
+        precondition(NativeScreenshotCaptureResolution.displayPixels(
+            frame: retinaFrame,
+            modePixels: NativeScreenshotPixelSize(width: 0, height: 0),
+            backingScaleFactor: 2) == native,
+            "an unusable display mode must use the matched screen's backing scale")
+        precondition(NativeScreenshotCaptureResolution.displayPixels(
+            frame: retinaFrame, modePixels: nil, backingScaleFactor: nil) == nil,
+            "unknown resolution must not silently fall back to a blurry 1× frame")
+        precondition(NativeScreenshotCaptureResolution.fitsOutputLimit(
+            native, maxPixels: 5_939_136))
+        precondition(!NativeScreenshotCaptureResolution.fitsOutputLimit(
+            native, maxPixels: 5_939_135),
+            "native capture must still obey the configured pixel cap")
+    }
+
+    private static func mixedScaleWindowPixels() throws {
+        let displays = [
+            NativeScreenshotDisplayResolution(
+                frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+                pixels: NativeScreenshotPixelSize(width: 3024, height: 1964)),
+            NativeScreenshotDisplayResolution(
+                frame: CGRect(x: 1512, y: 0, width: 1920, height: 1080),
+                pixels: NativeScreenshotPixelSize(width: 1920, height: 1080))
+        ]
+        let crossing = CGRect(x: 1400, y: 100, width: 400, height: 300)
+        precondition(NativeScreenshotCaptureResolution.windowPixels(
+            frame: crossing, displays: displays, maxPixels: 480_000)
+            == NativeScreenshotPixelSize(width: 800, height: 600),
+            "a window crossing 1× and 2× displays needs the higher pixel density")
+        precondition(NativeScreenshotCaptureResolution.windowPixels(
+            frame: crossing, displays: displays, maxPixels: 479_999) == nil,
+            "a high-density window must not evade the pixel cap")
+        precondition(NativeScreenshotCaptureResolution.windowPixels(
+            frame: CGRect(x: 2000, y: 100, width: 400, height: 300),
+            displays: displays, maxPixels: 480_000)
+            == NativeScreenshotPixelSize(width: 400, height: 300),
+            "a window wholly on the 1× display must remain 1×")
+    }
+
+    private static func rejectUnexpectedFirstFrameSize() throws {
+        let native = NativeScreenshotPixelSize(width: 3024, height: 1964)
+        try NativeScreenshotCaptureResolution.validateFrame(actual: native, expected: native)
+        do {
+            try NativeScreenshotCaptureResolution.validateFrame(
+                actual: NativeScreenshotPixelSize(width: 1512, height: 982), expected: native)
+            preconditionFailure("a 1× first frame was silently accepted")
+        } catch let error as NativeScreenshotCaptureError {
+            guard case let .frameSizeMismatch(expected, actual) = error else { throw error }
+            precondition(expected == native && actual == NativeScreenshotPixelSize(
+                width: 1512, height: 982),
+                "the mismatch must preserve both dimensions for diagnosis")
+        }
+    }
+
+    private static func localizedCaptureResolutionErrors() {
+        let previousLanguage = UserDefaults.standard.object(forKey: "appLanguage")
+        defer {
+            if let previousLanguage {
+                UserDefaults.standard.set(previousLanguage, forKey: "appLanguage")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "appLanguage")
+            }
+        }
+        let actual = NativeScreenshotPixelSize(width: 1512, height: 982)
+        let expected = NativeScreenshotPixelSize(width: 3024, height: 1964)
+        let mismatch = NativeScreenshotCaptureError.frameSizeMismatch(
+            expected: expected, actual: actual)
+        UserDefaults.standard.set("zh", forKey: "appLanguage")
+        precondition(NativeScreenshotCaptureError.nativeResolutionUnavailable.localizedDescription
+            == "无法确定显示器的原生像素分辨率，请重试。")
+        precondition(mismatch.localizedDescription
+            == "截图帧分辨率异常：实际 1512×982，预期 3024×1964。请重试。")
+        UserDefaults.standard.set("en", forKey: "appLanguage")
+        precondition(NativeScreenshotCaptureError.nativeResolutionUnavailable.localizedDescription
+            == "The display's native pixel resolution is unavailable. Please retry.")
+        precondition(mismatch.localizedDescription
+            == "Screen Capture returned 1512×982 pixels instead of the requested 3024×1964. Please retry.")
     }
 
     private static func geometryAcrossMixedScaleDisplays() throws {

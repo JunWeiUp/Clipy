@@ -8,15 +8,22 @@ enum NativeScreenshotRecordingPanelPlacement {
     static func place(_ window: NSWindow, near region: CGRect, displayID: CGDirectDisplayID) {
         guard let screen = NSScreen.screens.first(where: {
             ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
-        }) ?? NSScreen.main else { return }
-        let displayFrame = CGDisplayBounds(displayID)
+        }) ?? NSScreen.main,
+              let selection = selectionFrame(region: region, displayID: displayID) else { return }
         let visible = screen.visibleFrame
-        let selection = CGRect(
+        window.setFrameOrigin(origin(
+            selection: selection, visible: visible, panelSize: window.frame.size))
+    }
+
+    static func selectionFrame(region: CGRect, displayID: CGDirectDisplayID) -> CGRect? {
+        guard let screen = NSScreen.screens.first(where: {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
+        }) ?? NSScreen.main else { return nil }
+        let displayFrame = CGDisplayBounds(displayID)
+        return CGRect(
             x: screen.frame.minX + region.minX - displayFrame.minX,
             y: screen.frame.maxY - (region.maxY - displayFrame.minY),
             width: region.width, height: region.height)
-        window.setFrameOrigin(origin(
-            selection: selection, visible: visible, panelSize: window.frame.size))
     }
 
     /// Align with the selection's upper-right edge, then fall below when

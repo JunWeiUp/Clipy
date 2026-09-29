@@ -13,6 +13,7 @@ final class NativeScreenshotLongCaptureHUD: NSObject {
 
     private let preview = NSImageView()
     private var previewWindow: NSPanel?
+    private var selectionBorderWindow: NSPanel?
     private let status = NSTextField(labelWithString: "")
     private let autoScrollButton = NSButton()
     private let stopButton = NSButton()
@@ -103,6 +104,7 @@ final class NativeScreenshotLongCaptureHUD: NSObject {
         setAutoScrollEnabled(autoScrollEnabled)
         isOpen = true
         layoutControlBar()
+        makeSelectionBorderWindow()
         if let selectionFrame, let visible = selectionScreen?.visibleFrame {
             if NativeScreenshotSessionHUDGeometry.scrollPreviewFrame(
                 selection: selectionFrame, visible: visible,
@@ -115,6 +117,7 @@ final class NativeScreenshotLongCaptureHUD: NSObject {
                 x: visible.midX - window.frame.width / 2,
                 y: visible.maxY - window.frame.height - 16))
         }
+        selectionBorderWindow?.orderFrontRegardless()
         window.orderFrontRegardless()
         // A Carbon hotkey works without Input Monitoring or Accessibility.
         registeredEscapeHotKey = HotKeyManager.shared.register(
@@ -134,12 +137,14 @@ final class NativeScreenshotLongCaptureHUD: NSObject {
     }
 
     func hideForFrame() {
+        selectionBorderWindow?.orderOut(nil)
         window.orderOut(nil)
         previewWindow?.orderOut(nil)
     }
 
     func restoreAfterFrame() {
         guard isOpen else { return }
+        selectionBorderWindow?.orderFrontRegardless()
         window.orderFrontRegardless()
         if preview.image != nil { previewWindow?.orderFrontRegardless() }
     }
@@ -156,6 +161,9 @@ final class NativeScreenshotLongCaptureHUD: NSObject {
         globalEscapeMonitor = nil
         window.orderOut(nil)
         window.contentView = nil
+        selectionBorderWindow?.orderOut(nil)
+        selectionBorderWindow?.contentView = nil
+        selectionBorderWindow = nil
         previewWindow?.orderOut(nil)
         previewWindow?.contentView = nil
         previewWindow = nil
@@ -257,6 +265,27 @@ final class NativeScreenshotLongCaptureHUD: NSObject {
         previewWindow = panel
     }
 
+    private func makeSelectionBorderWindow() {
+        guard selectionBorderWindow == nil, let selectionFrame else { return }
+        let inset: CGFloat = 2.5
+        let frame = selectionFrame.insetBy(dx: -inset, dy: -inset)
+        let panel = NSPanel(contentRect: frame,
+                            styleMask: [.borderless, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 2)
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isReleasedWhenClosed = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.contentView = NativeScreenshotCaptureBorderView(
+            frame: CGRect(origin: .zero, size: frame.size),
+            selectionInset: inset, phase: .scrolling,
+            accent: .controlAccentColor)
+        selectionBorderWindow = panel
+    }
+
     private func layoutControlBar() {
         let measured = (status.stringValue as NSString).size(
             withAttributes: [.font: status.font ?? .systemFont(ofSize: 12)]).width
@@ -303,15 +332,52 @@ final class NativeScreenshotLongCaptureHUD: NSObject {
     @objc private func cancelPressed() { onCancel?() }
 }
 
+private final class NativeScreenshotCaptureBorderView: NSView {
+    private let selectionInset: CGFloat
+    private let phase: NativeScreenshotSelectionChrome.Phase
+    private let accent: NSColor
+
+    init(frame: CGRect, selectionInset: CGFloat,
+         phase: NativeScreenshotSelectionChrome.Phase, accent: NSColor) {
+        self.selectionInset = selectionInset
+        self.phase = phase
+        self.accent = accent
+        super.init(frame: frame)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        NativeScreenshotSelectionChrome.draw(
+            in: context,
+            rect: bounds.insetBy(dx: selectionInset, dy: selectionInset),
+            style: NativeScreenshotSelectionChrome.style(
+                for: phase, accent: accent))
+    }
+}
+
 @MainActor
 final class NativeScreenshotRecordingHUD: NSObject {
     let window: NSPanel
+    var captureExcludedWindowNumbers: Set<Int> {
+        var numbers: Set<Int> = [window.windowNumber]
+        if let selectionBorderWindow, selectionBorderWindow.isVisible {
+            numbers.insert(selectionBorderWindow.windowNumber)
+        }
+        return numbers
+    }
+    var visibleSelectionBorderWindowNumber: Int? {
+        guard let selectionBorderWindow, selectionBorderWindow.isVisible else { return nil }
+        return selectionBorderWindow.windowNumber
+    }
     var onStop: (() -> Void)?
     var onCancel: (() -> Void)?
     var onPauseToggle: (() -> Void)?
 
     private let bar = NativeScreenshotHUDChrome(frame: CGRect(x: 0, y: 0, width: 164, height: 32))
     private let warningBox = NativeScreenshotHUDChrome(frame: .zero)
+    private var selectionBorderWindow: NSPanel?
     private let timerLabel = NSTextField(labelWithString: "00:00")
     private let recordDot = NSTextField(labelWithString: "●")
     private let warningLabel = NSTextField(labelWithString: "")
@@ -399,13 +465,43 @@ final class NativeScreenshotRecordingHUD: NSObject {
         if let region, let displayID {
             NativeScreenshotRecordingPanelPlacement.place(window, near: region,
                                                            displayID: displayID)
+            makeSelectionBorderWindow(region: region, displayID: displayID)
         } else if let screen = NSScreen.main {
             let visible = screen.visibleFrame
             window.setFrameOrigin(NSPoint(
                 x: visible.midX - window.frame.width / 2,
                 y: visible.maxY - window.frame.height - 20))
         }
+        selectionBorderWindow?.orderFrontRegardless()
         window.orderFrontRegardless()
+    }
+
+    private func makeSelectionBorderWindow(region: CGRect, displayID: CGDirectDisplayID) {
+        guard selectionBorderWindow == nil,
+              let selection = NativeScreenshotRecordingPanelPlacement.selectionFrame(
+                region: region, displayID: displayID) else { return }
+        let inset: CGFloat = 3
+        let frame = selection.insetBy(dx: -inset, dy: -inset)
+        let panel = NSPanel(contentRect: frame,
+                            styleMask: [.borderless, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isReleasedWhenClosed = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = true
+        panel.contentView = NativeScreenshotCaptureBorderView(
+            frame: CGRect(origin: .zero, size: frame.size),
+            selectionInset: inset, phase: .recording,
+            accent: PreferencesManager.shared.nativeScreenshotToolbarConfiguration.accentColor)
+        selectionBorderWindow = panel
+    }
+
+    func hideSelectionBorder() {
+        selectionBorderWindow?.orderOut(nil)
     }
 
     /// Start the visible clock only after ScreenCaptureKit starts delivering.
@@ -449,6 +545,9 @@ final class NativeScreenshotRecordingHUD: NSObject {
     func close() {
         timer?.invalidate()
         timer = nil
+        selectionBorderWindow?.orderOut(nil)
+        selectionBorderWindow?.contentView = nil
+        selectionBorderWindow = nil
         window.orderOut(nil)
         window.contentView = nil
         onStop = nil

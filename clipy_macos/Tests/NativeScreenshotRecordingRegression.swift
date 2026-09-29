@@ -13,6 +13,8 @@ enum NativeScreenshotRecordingRegression {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
+        testRetinaOutputAndCropGeometry(in: directory)
+
         let base = NativeScreenshotRecordingOptions(
             displayID: 1,
             sourceRect: CGRect(x: 0, y: 0, width: 1_501, height: 1_001),
@@ -223,6 +225,54 @@ enum NativeScreenshotRecordingRegression {
         let gifProperties = properties?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
         precondition(gifProperties?[kCGImagePropertyGIFLoopCount] as? Int == 0)
         print("NativeScreenshotRecordingRegression passed")
+    }
+
+    private static func testRetinaOutputAndCropGeometry(in directory: URL) {
+        let displayFrame = CGRect(x: 1000, y: 200, width: 1512, height: 982)
+        let nativePixels = NativeScreenshotPixelSize(width: 3024, height: 1964)
+        let scale = NativeScreenshotRecordingResolution.displayScale(
+            frame: displayFrame, modePixels: nativePixels, backingScaleFactor: 1)
+        precondition(scale == 2,
+                     "recording must use physical mode pixels, not the 1× CGDisplayPixelsWide value")
+        precondition(NativeScreenshotRecordingResolution.displayScale(
+            frame: displayFrame, modePixels: nil, backingScaleFactor: 2) == 2,
+            "recording must use the matched screen's Retina scale when the mode is missing")
+        precondition(NativeScreenshotRecordingResolution.displayScale(
+            frame: displayFrame, modePixels: nil, backingScaleFactor: nil) == nil,
+            "unknown display resolution must not silently produce a blurry 1× recording")
+        precondition(NativeScreenshotRecordingResolution.displayScale(
+            frame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+            modePixels: NativeScreenshotPixelSize(width: 1920, height: 1080),
+            backingScaleFactor: 2) == 1,
+            "a 1× external display must retain its physical 1× output")
+
+        let full = NativeScreenshotRecordingOptions(
+            displayID: 1, sourceRect: CGRect(x: 0, y: 0, width: 1512, height: 982),
+            outputURL: directory.appendingPathComponent("retina-full.mp4"), maxDimension: 4096)
+        precondition(full.outputSize(displayScale: scale!) == CGSize(width: 3024, height: 1964),
+                     "the default size cap should retain all native Retina pixels")
+        let capped = NativeScreenshotRecordingOptions(
+            displayID: 1, sourceRect: full.sourceRect,
+            outputURL: directory.appendingPathComponent("retina-capped.mp4"), maxDimension: 1280)
+        precondition(capped.outputSize(displayScale: scale!).width == 1280,
+                     "the existing MP4 dimension cap must still apply")
+
+        let crop = NativeScreenshotRecordingOptions(
+            displayID: 1, sourceRect: CGRect(x: 100, y: 50, width: 400, height: 200),
+            outputURL: directory.appendingPathComponent("retina-crop.mp4"))
+        let croppedSize = crop.outputSize(displayScale: scale!)
+        precondition(croppedSize == CGSize(width: 800, height: 400),
+                     "a 400×200 point selection should encode at 800×400 Retina pixels")
+        precondition(crop.sourceRect == CGRect(x: 100, y: 50, width: 400, height: 200),
+                     "the SCStream sourceRect must remain in display-local points")
+        precondition(crop.outputPoint(
+            forGlobalPoint: CGPoint(x: 1300, y: 350),
+            displayFrame: displayFrame, outputSize: croppedSize) == CGPoint(x: 400, y: 200),
+            "the center click should map to the center of the 2× recording")
+        precondition(crop.outputPoint(
+            forGlobalPoint: CGPoint(x: 1099, y: 350),
+            displayFrame: displayFrame, outputSize: croppedSize) == nil,
+            "a click outside the source rect must remain outside after scaling")
     }
 }
 #endif

@@ -12,7 +12,7 @@ COMMON=(-swift-version 5 -target "${MACOS_ARCH}-apple-macos13.0" -D OFFLINE)
 swiftc "${COMMON[@]}" "${SOURCES}/Annotation/"*.swift "${TESTS}/NativeScreenshotAnnotationRegression.swift" -o "${TEST_DIR}/annotation"
 "${TEST_DIR}/annotation"
 
-swiftc "${COMMON[@]}" "${SOURCES}/Annotation/"*.swift "${SOURCES}/Capture/NativeScreenshotCaptureGeometry.swift" "${SOURCES}/Capture/NativeScreenshotStaticCapture.swift" "${TESTS}/NativeScreenshotCaptureRegression.swift" -o "${TEST_DIR}/capture"
+swiftc "${COMMON[@]}" "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "${SOURCES}/Annotation/"*.swift "${SOURCES}/Capture/NativeScreenshotCaptureGeometry.swift" "${SOURCES}/Capture/NativeScreenshotStaticCapture.swift" "${TESTS}/NativeScreenshotCaptureRegression.swift" -o "${TEST_DIR}/capture"
 "${TEST_DIR}/capture"
 
 swiftc "${COMMON[@]}" "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "${SOURCES}/Capture/NativeScreenshotStartupDeadline.swift" "${TESTS}/NativeScreenshotStartupRegression.swift" -o "${TEST_DIR}/startup"
@@ -31,6 +31,14 @@ swiftc "${COMMON[@]}" "${SOURCES}/UI/NativeScreenshotSelectionPresets.swift" \
   "${TESTS}/NativeScreenshotSelectionPresetsRegression.swift" -o "${TEST_DIR}/selection-presets"
 "${TEST_DIR}/selection-presets"
 
+swiftc "${COMMON[@]}" "${SOURCES}/UI/NativeScreenshotSelectionChrome.swift" \
+  "${TESTS}/NativeScreenshotSelectionChromeRegression.swift" -o "${TEST_DIR}/selection-chrome"
+"${TEST_DIR}/selection-chrome"
+
+swiftc "${COMMON[@]}" "${SOURCES}/UI/NativeScreenshotSelectionInputState.swift" \
+  "${TESTS}/NativeScreenshotSelectionInputRegression.swift" -o "${TEST_DIR}/selection-input"
+"${TEST_DIR}/selection-input"
+
 swiftc "${COMMON[@]}" -Xlinker -weak_framework -Xlinker Translation \
   "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" \
   "${SOURCES}/Annotation/"*.swift "${SOURCES}/Recognition/"*.swift \
@@ -43,7 +51,7 @@ swiftc "${COMMON[@]}" -D NATIVE_SCREENSHOT_THUMBNAIL_FILE_TEST \
   "${TESTS}/NativeScreenshotThumbnailFileRegression.swift" -o "${TEST_DIR}/thumbnail-file"
 "${TEST_DIR}/thumbnail-file"
 
-swiftc "${COMMON[@]}" -D NATIVE_SCREENSHOT_RECORDING_TESTS "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "${SOURCES}/Recording/"*.swift "${TESTS}/NativeScreenshotRecordingRegression.swift" -o "${TEST_DIR}/recording"
+swiftc "${COMMON[@]}" -D NATIVE_SCREENSHOT_RECORDING_TESTS "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "${SOURCES}/Capture/NativeScreenshotCaptureGeometry.swift" "${SOURCES}/Capture/NativeScreenshotStaticCapture.swift" "${SOURCES}/Recording/"*.swift "${TESTS}/NativeScreenshotRecordingRegression.swift" -o "${TEST_DIR}/recording"
 "${TEST_DIR}/recording"
 
 swiftc "${COMMON[@]}" "${SOURCES}/Coordinator/NativeScreenshotSessionHUDGeometry.swift" \
