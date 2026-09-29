@@ -97,11 +97,11 @@ number. Artifact names also include run ID and attempt to distinguish them.
 Check `BUILD.txt` when switching between build channels and use a higher
 `BUILD_NUMBER` for a local replacement of a newer installed build.
 
-Version tags and the combined manual **Release** workflow retain their existing
-draft behavior and macOS/Android asset names. The release assembly job waits
-for both the macOS/Android and Windows artifacts before creating a draft.
-Neither Mac CI nor the standalone manual workflow publishes a release or
-requires Developer ID signing.
+Version tags and the combined manual **Release** workflow publish a normal,
+latest release after checks and all three platform builds succeed. It uploads
+only the macOS ZIP, Android arm64 APK and Windows x64 ZIP. Standalone Mac CI
+still produces a development artifact and does not publish a release or require
+Developer ID signing.
 
 ## Android
 
@@ -126,6 +126,8 @@ CLIPY_ALLOW_DEBUG_SIGNING=1 ./build_android_apk.sh
 
 Output: `dist/ClipyClone-Android-{armeabi-v7a,arm64-v8a}-v<version>.apk`.
 `SPLIT_PER_ABI=0` creates one APK; the default split packaging targets ARM32/ARM64.
+The Release workflow uploads only the arm64 APK; the ARM32 build remains a local
+output of the shared script.
 Build numbers now come directly from Flutter metadata, with no device-specific
 minimum hidden in Gradle. The current source version and build number are recorded
 in `clipy_android/pubspec.yaml`; keep them aligned with the current-version text in
@@ -203,7 +205,9 @@ test-only default otherwise, which a real device will reject at handshake) and
 1. Resolve the **blocking macshot license/provenance review** in
    [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md). Do not describe the whole
    macOS binary as MIT-only until the applicable terms are established.
-2. Run CI and device checks; document any unsupported/experimental platforms.
+2. Run CI and device checks before triggering Release; document any
+   unsupported/experimental platforms. The workflow publishes automatically
+   once its jobs pass.
    iOS has unsigned CI and Simulator coverage but no signed-device or public
    distribution validation. Windows needs a clean-machine ZIP and tray check.
 3. Review dependency changes, data migrations, privacy permissions and logs.
@@ -215,13 +219,18 @@ test-only default otherwise, which a real device will reject at handshake) and
 5. Update `clipy_android/pubspec.yaml`, `README.md` and `README_ZH.md` in the same
    change. Version tags must use `vX.Y.Z`, match the source version and never
    overwrite an existing tag. README source-version text is separate from the
-   Release badge, which only tracks published releases, not drafts. CI build
+   Release badge, which only tracks published releases. CI build
    numbers use the checked-in build number plus the workflow run number. Keep
    them monotonically increasing across releases and any workflow/build-number
    policy changes.
-6. A version tag or manual Release workflow runs checks and creates a **draft**.
-   Inspect APK signing/upgrade compatibility, the macOS signing/notarization status,
-   `SHA256SUMS.txt`, symbols and notices before manually publishing.
+6. Before pushing a version tag or starting the manual Release workflow,
+   inspect APK signing/upgrade compatibility, macOS signing/notarization and
+   the bundled license notices. These triggers publish a **normal release**
+   once checks pass. Verify the three uploaded package names and GitHub's
+   per-asset SHA-256 digests after publication. The macOS app and Windows ZIP
+   include `LICENSE` and `THIRD_PARTY_NOTICES.md`; Flutter's Android build
+   includes generated dependency notices, while the repository's legal files
+   remain available at the release tag.
 
 This setup does not retroactively audit old releases, Git history or third-party
-licenses, nor does a draft automatically resolve distribution obligations.
+licenses; an automated public release does not resolve distribution obligations.
