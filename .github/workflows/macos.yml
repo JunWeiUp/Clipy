@@ -20,13 +20,14 @@ jobs:
       LAUNCH_APP: "0"
       SIGN_IDENTITY: "-"
       MACOS_ARCH: arm64
-      GENERATE_DSYM: "1"
+      GENERATE_DSYM: "0"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - run: xcodebuild -version
-      - run: bash scripts/check.sh repo
+      - name: Repository and screenshot provenance checks (standalone run)
+        if: github.event_name == 'workflow_dispatch'
+        run: bash scripts/check.sh repo
       - name: Resolve build metadata
         id: version
         run: |
@@ -55,13 +56,7 @@ jobs:
           mkdir -p dist/macos
           PACKAGE="ClipyClone-macOS-${MACOS_ARCH}-v${APP_VERSION}-build${BUILD_NUMBER}"
           ditto -c -k --keepParent "$APP" "dist/macos/$PACKAGE.zip"
-          ditto -c -k --keepParent "$APP.dSYM" "dist/macos/$PACKAGE-symbols.zip"
-          cp LICENSE THIRD_PARTY_NOTICES.md dist/macos/
-          cp docs/MACOS_INSTALL.md dist/macos/INSTALL.md
-          printf 'Version: %s\nBuild: %s\nArchitecture: %s\nCommit: %s\nRun: %s/%s/actions/runs/%s\nSigning: ad-hoc (not notarized)\n' \
-            "$APP_VERSION" "$BUILD_NUMBER" "$MACOS_ARCH" "$GITHUB_SHA" \
-            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > dist/macos/BUILD.txt
-          (cd dist/macos && shasum -a 256 ./*.zip > SHA256SUMS.txt && shasum -a 256 -c SHA256SUMS.txt)
+          shasum -a 256 "dist/macos/$PACKAGE.zip"
 
           # Verify the delivered archive, including executable permissions and signature.
           VERIFY_DIR="$(mktemp -d "$RUNNER_TEMP/clipy-archive.XXXXXX")"
@@ -74,7 +69,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ClipyClone-macOS-arm64-v${{ steps.version.outputs.version }}-build${{ steps.version.outputs.build }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: dist/macos/
+          path: dist/macos/*.zip
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
@@ -88,8 +83,8 @@ jobs:
             printf 'Version: %s · Build: %s · Apple Silicon (arm64) · macOS 13+\n\n' "$APP_VERSION" "$BUILD_NUMBER"
             echo 'Ad-hoc signed; no Developer ID or Apple notarization. 临时签名，未经 Apple 公证。'
             echo 'Sign in to GitHub to download; artifacts are retained for 30 days. 登录 GitHub 后下载，保留 30 天。'
-            echo 'Extract the artifact, then the app ZIP (not the symbols ZIP); move ClipyClone.app to Applications.'
-            echo '解压下载文件，再解压应用 ZIP（非 symbols ZIP），将 ClipyClone.app 移到「应用程序」。'
+            echo 'Extract the artifact, then the app ZIP; move ClipyClone.app to Applications.'
+            echo '解压下载文件，再解压应用 ZIP，将 ClipyClone.app 移到「应用程序」。'
             echo 'If blocked as unverified, use System Settings → Privacy & Security → Open Anyway for this trusted app.'
-            echo '若提示无法验证，确认信任来源后到「系统设置 → 隐私与安全 → 仍要打开」。详见包内 INSTALL.md。'
+            printf '若提示无法验证，确认信任来源后到「系统设置 → 隐私与安全 → 仍要打开」。详见[安装指南](https://github.com/%s/blob/%s/docs/MACOS_INSTALL.md)。\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -26,8 +26,11 @@ bash scripts/check.sh all
 
 `all` runs repository checks, Dart formatting verification, static analysis and
 Flutter tests. It does not connect to peers, install packages on a device or start
-the app. CI also builds a debug APK, native macOS bundle, Windows runner and
-unsigned iOS application.
+the app. CI always runs repository checks. Pull requests
+build and test only affected platforms; shared Flutter source or configuration
+changes run Android, Windows and iOS checks. Main/master pushes, manual CI runs
+and Release calls run the full matrix, including the debug APK, native macOS
+bundle, Windows runner and unsigned iOS application.
 
 ```bash
 bash scripts/check.sh repo      # shell syntax, metadata tests, hygiene
@@ -72,19 +75,21 @@ it does not import certificates or use signing secrets.
 
 `.github/workflows/macos.yml` is both a reusable workflow and the standalone
 **macOS Build** manual entry point. `ci.yml` calls it for main/master pushes,
-pull requests and CI runs; the existing Release checks reuse it too. Run
+pull requests that affect macOS, manual CI runs and Release checks. Run
 **Actions → macOS Build → Run workflow** to build independently of Flutter,
 Android checks and Android signing credentials. The manual entry point becomes
 available once the workflow is on the repository's default branch.
 
-The job runs repository and native regression checks, builds with
-`SIGN_IDENTITY=-`, validates version metadata and arm64 architecture, then checks
+CI runs repository checks in a separate job; standalone macOS runs check the
+repository directly. The macOS job runs native
+regression checks, builds with `SIGN_IDENTITY=-`, validates version metadata
+and arm64 architecture, then checks
 the signature both before packaging and after extracting the app ZIP. The app
 is zipped with `ditto` before upload to preserve its executable permissions.
 `INSTALL_APP=0` and `LAUNCH_APP=0` prevent installation or launch on the runner.
 
-The run summary links to an artifact containing the app ZIP, dSYM ZIP,
-`SHA256SUMS.txt`, `BUILD.txt`, license notices and the bilingual
+The run summary links to an artifact containing only the app ZIP. License
+notices are inside the app bundle, and the summary links to the bilingual
 [installation guide](MACOS_INSTALL.md). Sign in to GitHub to download it within
 30 days. These builds target Apple Silicon / macOS 13+; they are not Intel or
 universal binaries, and are not public GitHub Releases.
@@ -94,7 +99,7 @@ source build number plus the caller's `GITHUB_RUN_NUMBER`, matching the Release
 formula. Run numbers are scoped to each workflow, so build numbers across manual
 Mac, CI and Release runs are not a global sequence; reruns keep the same build
 number. Artifact names also include run ID and attempt to distinguish them.
-Check `BUILD.txt` when switching between build channels and use a higher
+Check the run summary or app's `Info.plist` when switching build channels and use a higher
 `BUILD_NUMBER` for a local replacement of a newer installed build.
 
 Version tags and the combined manual **Release** workflow publish a normal,
