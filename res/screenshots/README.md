@@ -6,7 +6,7 @@ The README begins with the cross-device concept artwork in `../readme/connected-
 
 Mac gallery order in both README files:
 
-1. `macos-panel-en.png` / `macos-panel-zh.png` — current native menu-bar panel: top search, hidden icons, today's Token summary and history.
+1. `macos-panel-en.png` / `macos-panel-zh.png` — current 520 × 640 pt native menu-bar panel: top search, scrollable hidden icons, compact today's Token summary and history.
 2. `macos-history-showcase.webp` and `macos-snippets-showcase.webp` — side-by-side History and Snippet Library stories.
 3. `macos-token-usage-en.png` / `macos-token-usage-zh.png` — current native daily Token Usage window with fictional Agent totals.
 4. `macos-preferences-showcase.webp` — continuous settings, inside an expandable detail.

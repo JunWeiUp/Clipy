@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// A menu-bar surface can receive search input without taking the caller's app focus.
@@ -28,6 +29,8 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
     private var globalMonitor: Any?
     private var snapshotsPending = false
     private var historyPending = false
+    private var resizePending = false
+    private var sizeObservers: [AnyCancellable] = []
     private var generation: UInt64 = 0
     private var previousApp: NSRunningApplication?
     var onAction: ((MenuBarPanelModel.Action) -> Void)?
@@ -43,6 +46,11 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
             self.use(HistoryEntry(item: .text(snippet.content), date: Date(), sourceApp: nil, contentHash: nil), action: .use, reorder: false)
         }
         model.onClose = { [weak self] in self?.dismiss() }
+        sizeObservers = [
+            model.$page.sink { [weak self] _ in self?.scheduleResize() },
+            model.$tab.sink { [weak self] _ in self?.scheduleResize() },
+            model.$devices.sink { [weak self] _ in self?.scheduleResize() }
+        ]
         observe(NotificationCenter.default, NSMenu.didBeginTrackingNotification) { $0.panel?.menuDepth += 1 }
         observe(NotificationCenter.default, NSMenu.didEndTrackingNotification) { owner in
             owner.panel?.menuDepth = max(0, (owner.panel?.menuDepth ?? 0) - 1)
@@ -81,7 +89,7 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
         let screen = buttonWindow.screen ?? NSScreen.main
         guard let screen else { return }
         let frame = MenuBarPanelPolicy.frame(anchor: rect, visible: screen.visibleFrame,
-                                            preferred: CGSize(width: 560, height: 716))
+                                            preferred: MenuBarPanelPolicy.preferredSize(page: .home, tab: .clipboard))
         let window = panel ?? makePanel()
         panel = window
         ClipboardManager.shared.refreshFromPasteboardIfNeeded()
@@ -103,6 +111,21 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
         MenuBarOverflowManager.shared.refreshForMenu()
         MenuBarOverflowManager.shared.recordMenuPresentation()
         SyncManager.shared.triggerCrossBandDiscovery()
+    }
+    private func scheduleResize() {
+        guard isVisible, !resizePending else { return }
+        resizePending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.resizePending = false
+            guard self.isVisible, let button = self.anchor, let buttonWindow = button.window,
+                  let screen = buttonWindow.screen ?? NSScreen.main, let panel = self.panel else { return }
+            let anchor = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+            let frame = MenuBarPanelPolicy.frame(anchor: anchor, visible: screen.visibleFrame,
+                                                preferred: MenuBarPanelPolicy.preferredSize(page: self.model.page, tab: self.model.tab,
+                                                                                            deviceCount: self.model.devices.count))
+            if panel.frame != frame { panel.setFrame(frame, display: true) }
+        }
     }
     private func makePanel() -> MenuBarControlPanel {
         let window = MenuBarControlPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -178,7 +201,11 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
     private func handleKey(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
         if flags == .command {
-            if event.charactersIgnoringModifiers == "f" { model.focusRequest += 1; return true }
+            if event.charactersIgnoringModifiers == "f" {
+                if model.page != .home { model.navigate(.home) }
+                model.focusRequest += 1
+                return true
+            }
             if event.charactersIgnoringModifiers == "," { handoff(.preferences); return true }
             if event.charactersIgnoringModifiers == "w" { dismiss(); return true }
             if let char = event.charactersIgnoringModifiers, let number = Int(char), (1...6).contains(number) {

@@ -114,6 +114,11 @@ updates must not force its initialization.
 `MenuBarPanelModel` owns ephemeral tab, search and selection state; a serial cancellable
 worker uses the existing history search service. `MenuBarPanelView` renders the approved
 compact panel with shared typography, SF Symbols, language observation and semantic colors.
+`MenuBarPanelPolicy` provides a compact preferred size per home tab/detail page, with
+the Devices page scaled to its count; the controller observes navigation and device
+updates and repositions the visible panel under its status item.
+Detail pages replace the home search/strip/tabs/footer with a Back/title row, while
+the Tools tab omits actions already present in the home footer.
 Existing manager callbacks refresh only the open panel; there is no new idle polling.
 Native menu tracking defers those refreshes. Dismissal cancels queries and releases the view.
 
