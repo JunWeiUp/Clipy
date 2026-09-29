@@ -163,9 +163,11 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
                     guard let self else { return }
                     self.sampleQueue.async { [weak self] in
                         guard let self,
+                              self.acceptsSamples,
                               let generation = self.videoCompositor?.showKeystroke(text) else { return }
                         self.sampleQueue.asyncAfter(deadline: .now() + 1.25) { [weak self] in
                             guard let self,
+                                  self.acceptsSamples,
                                   self.videoCompositor?.expireKeystroke(generation: generation) == true else { return }
                             _ = self.movieWriter?.appendCleanFrameAtCurrentTime()
                         }
@@ -210,7 +212,10 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
     /// Stops capture, finalizes the MP4 and atomically moves it to the requested destination.
     @discardableResult
     func stop() async throws -> URL {
-        guard transition(from: .recording, to: .stopping) else {
+        // Make the state change on the sample queue. An in-flight callback
+        // finishes before this transition, and every later callback observes
+        // `.stopping` before it can append another sample.
+        guard sampleQueue.sync(execute: { transition(from: .recording, to: .stopping) }) else {
             throw NativeScreenshotRecordingError.captureUnavailable
         }
         defer {
@@ -222,10 +227,20 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
             await stopCamera()
             await stopClickMonitor()
             await stopKeystrokeMonitor()
-            guard let writer = sampleQueue.sync(execute: { movieWriter }), let temp = temporaryURL else {
+            guard let temp = temporaryURL else {
                 throw NativeScreenshotRecordingError.writerFailed("编码器已释放")
             }
-            try await writer.finish()
+            // The state is already .stopping. Drain queued sample callbacks,
+            // then extend the last clean frame and close all inputs on their
+            // owning queue before waiting for AVAssetWriter to finish.
+            let writer = try sampleQueue.sync { () throws -> NativeScreenshotMovieWriter in
+                guard let writer = movieWriter else {
+                    throw NativeScreenshotRecordingError.writerFailed("编码器已释放")
+                }
+                try writer.prepareToFinish()
+                return writer
+            }
+            try await writer.completeFinish()
             try FileManager.default.moveItem(at: temp, to: options.outputURL)
             sampleQueue.sync { movieWriter = nil }
             stream = nil
@@ -255,10 +270,12 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
 
     /// Cancels without delivering a file. Safe to call while starting or recording.
     func cancel() async {
-        let shouldCancel = stateLock.withLock { () -> Bool in
-            guard state == .starting || state == .recording else { return false }
-            state = .stopping
-            return true
+        let shouldCancel = sampleQueue.sync { () -> Bool in
+            stateLock.withLock {
+                guard state == .starting || state == .recording else { return false }
+                state = .stopping
+                return true
+            }
         }
         guard shouldCancel else { return }
         try? await stream?.stopCapture()
@@ -394,7 +411,14 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
         self.keystrokeMonitor = nil
     }
 
+    /// Samples can arrive during startup, before `startCapture()` returns, but
+    /// none may append once stop/cancel moves the recorder to `.stopping`.
+    private var acceptsSamples: Bool {
+        stateLock.withLock { state == .starting || state == .recording }
+    }
+
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard acceptsSamples else { return }
         guard let writer = movieWriter else { return }
         switch type {
         case .screen:
@@ -416,6 +440,7 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard acceptsSamples else { return }
         if output === cameraOutput {
             if cameraAvailable { videoCompositor?.updateCameraFrame(sampleBuffer) }
         } else {

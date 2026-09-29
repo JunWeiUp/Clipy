@@ -377,7 +377,14 @@ final class PinPanelController {
            let tiff = image.tiffRepresentation,
            let bitmap = NSBitmapImageRep(data: tiff),
            let pngData = bitmap.representation(using: .png, properties: [:]) {
-            ClipboardManager.shared.ingestCapturedImage(pngData, copyToPasteboard: true)
+            do {
+                try ClipboardManager.shared.ingestCapturedImage(
+                    pngData, copyToPasteboard: true)
+            } catch {
+                appLog("Pin image: \(error.localizedDescription)", level: .error)
+                NSAlert(error: error).runModal()
+                return
+            }
         }
 
         // Pins are floating reference overlays. Downsample to a max edge of

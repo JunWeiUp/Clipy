@@ -15,6 +15,7 @@ final class NativeScreenshotMovieWriter {
     private(set) var appendError: Error?
     private var firstVideoUptime: TimeInterval?
     private var lastVideoSample: CMSampleBuffer?
+    private var inputsFinished = false
 
     init(url: URL, size: CGSize, systemAudio: Bool, microphone: Bool, maxDuration: TimeInterval) throws {
         writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -53,7 +54,7 @@ final class NativeScreenshotMovieWriter {
     }
 
     func appendVideo(_ sample: CMSampleBuffer, cleanFallback: CMSampleBuffer? = nil) {
-        guard appendError == nil, CMSampleBufferDataIsReady(sample) else { return }
+        guard !inputsFinished, appendError == nil, CMSampleBufferDataIsReady(sample) else { return }
         let time = CMSampleBufferGetPresentationTimeStamp(sample)
         guard time.isValid, !time.isIndefinite else { return }
         if firstVideoTime == nil {
@@ -91,7 +92,7 @@ final class NativeScreenshotMovieWriter {
     }
 
     private func appendAudio(_ sample: CMSampleBuffer, input: AVAssetWriterInput?) {
-        guard let input, appendError == nil, let firstVideoTime,
+        guard let input, !inputsFinished, appendError == nil, let firstVideoTime,
               CMSampleBufferDataIsReady(sample) else { return }
         let time = CMSampleBufferGetPresentationTimeStamp(sample)
         guard time.isValid, time >= firstVideoTime,
@@ -105,7 +106,7 @@ final class NativeScreenshotMovieWriter {
     /// Ends a transient overlay even when the captured desktop stays unchanged.
     @discardableResult
     func appendCleanFrameAtCurrentTime() -> Bool {
-        guard let firstVideoTime, let lastVideoTime, let firstVideoUptime,
+        guard !inputsFinished, let firstVideoTime, let lastVideoTime, let firstVideoUptime,
               let lastVideoSample, writer.status == .writing,
               videoInput.isReadyForMoreMediaData else { return false }
         let elapsed = min(maxDuration, ProcessInfo.processInfo.systemUptime - firstVideoUptime)
@@ -130,21 +131,35 @@ final class NativeScreenshotMovieWriter {
         return false
     }
 
-    func finish() async throws {
+    /// Call on the recorder's sample queue after it has stopped accepting new
+    /// samples. This keeps the final frame and input state changes serialized
+    /// with every append callback.
+    func prepareToFinish() throws {
+        guard !inputsFinished else {
+            throw NativeScreenshotRecordingError.writerFailed("编码器已结束")
+        }
         if let appendError {
+            inputsFinished = true
             writer.cancelWriting()
             throw appendError
         }
         guard firstVideoTime != nil, lastVideoTime != nil else {
+            inputsFinished = true
             writer.cancelWriting()
             throw NativeScreenshotRecordingError.noFrames
         }
         // A static screen may not emit new frames. Extend the final clean frame to stop time.
         _ = appendCleanFrameAtCurrentTime()
         lastVideoSample = nil
+        inputsFinished = true
         videoInput.markAsFinished()
         systemAudioInput?.markAsFinished()
         microphoneInput?.markAsFinished()
+    }
+
+    /// May wait away from the sample queue. No input may append after
+    /// `prepareToFinish()` has marked the tracks finished.
+    func completeFinish() async throws {
         await withCheckedContinuation { continuation in
             writer.finishWriting { continuation.resume() }
         }
@@ -153,7 +168,13 @@ final class NativeScreenshotMovieWriter {
         }
     }
 
+    func finish() async throws {
+        try prepareToFinish()
+        try await completeFinish()
+    }
+
     func cancel() {
+        inputsFinished = true
         lastVideoSample = nil
         writer.cancelWriting()
     }

@@ -38,7 +38,7 @@ enum NativeScreenshotDeliveryService {
 
         // The image enters history exactly once. Copy only for the explicit
         // copy action; other actions may put text or files on the pasteboard.
-        ClipboardManager.shared.ingestCapturedImage(
+        try ClipboardManager.shared.ingestCapturedImage(
             png, copyToPasteboard: chosenAction == .copy
         )
 
@@ -98,7 +98,7 @@ enum NativeScreenshotDeliveryService {
     ) async throws -> Delivery {
         let selected = min(3, max(0, mode))
         let png = try await encodePNG(captured.image)
-        ClipboardManager.shared.ingestCapturedImage(
+        try ClipboardManager.shared.ingestCapturedImage(
             png, copyToPasteboard: selected == 1 || selected == 2
         )
         let saved: URL?
