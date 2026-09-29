@@ -5,7 +5,7 @@ import SwiftUI
 /// Localized labels are intentionally injected only at the presentation layer;
 /// detection and saved suggestions do not retain sensitive OCR strings.
 enum NativeScreenshotRecognitionLabels {
-    static var usesChinese: Bool { Locale.current.identifier.hasPrefix("zh") }
+    static var usesChinese: Bool { NativeScreenshotUserText.usesChinese }
 
     static func text(_ chinese: String, _ english: String) -> String {
         usesChinese ? chinese : english

@@ -17,6 +17,7 @@ struct NativeScreenshotRecognitionRegression {
         try testPreviewThenConfirm()
         try testVisionQRCode()
         try testVisionOCR()
+        try testNoTextResult()
         try testUIConstructionAndAvailability()
         print("NativeScreenshotRecognitionRegression passed")
     }
@@ -106,6 +107,41 @@ struct NativeScreenshotRecognitionRegression {
         assert(lines.contains(where: { $0.text.uppercased().contains("HELLO") }),
                "Vision should recognize large synthetic English text")
         assert(lines.allSatisfy { $0.bounds.minX >= 0 && $0.bounds.minY >= 0 })
+    }
+
+    private static func testNoTextResult() throws {
+        let blank = try solidImage(width: 400, height: 160, red: 1, green: 1, blue: 1)
+        let lines = try NativeScreenshotRecognitionService.recognizeTextSynchronously(
+            in: blank, language: .automatic)
+        assert(lines.isEmpty, "a blank image should not produce OCR text")
+        assert(NativeScreenshotRecognitionPanel.showsEmptyTextResult(
+            hasScannedText: true, recognizedLines: lines, editableText: ""),
+            "completed OCR with no text should show an explicit empty state")
+        assert(!NativeScreenshotRecognitionPanel.showsEmptyTextResult(
+            hasScannedText: false, recognizedLines: lines, editableText: ""),
+            "opening the panel or scanning QR alone must not claim OCR found nothing")
+        assert(!NativeScreenshotRecognitionPanel.showsEmptyTextResult(
+            hasScannedText: true, recognizedLines: lines, editableText: "typed manually"),
+            "manual text must replace the empty state")
+        let recognized = [NativeScreenshotRecognizedText(
+            text: "HELLO", confidence: 0.99,
+            bounds: CGRect(x: 10, y: 10, width: 80, height: 20))]
+        assert(!NativeScreenshotRecognitionPanel.showsEmptyTextResult(
+            hasScannedText: true, recognizedLines: recognized, editableText: "HELLO"),
+            "recognized OCR text must keep the editable result visible")
+
+        let previousLanguage = UserDefaults.standard.object(forKey: "appLanguage")
+        defer {
+            if let previousLanguage {
+                UserDefaults.standard.set(previousLanguage, forKey: "appLanguage")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "appLanguage")
+            }
+        }
+        UserDefaults.standard.set("zh", forKey: "appLanguage")
+        assert(NativeScreenshotRecognitionLabels.text("未识别到文字", "No text found") == "未识别到文字")
+        UserDefaults.standard.set("en", forKey: "appLanguage")
+        assert(NativeScreenshotRecognitionLabels.text("未识别到文字", "No text found") == "No text found")
     }
 
     private static func testUIConstructionAndAvailability() throws {
