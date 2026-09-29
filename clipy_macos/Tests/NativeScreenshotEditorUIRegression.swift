@@ -15,6 +15,7 @@ enum NativeScreenshotDeliveryAction {
 }
 
 enum NativeScreenshotImageProcessor {
+    enum FileFormat { case png }
     struct Adjustments {
         var brightness: Float = 0
         var contrast: Float = 1
@@ -23,6 +24,18 @@ enum NativeScreenshotImageProcessor {
     }
 
     static func adjust(_ image: CGImage, using values: Adjustments) throws -> CGImage { image }
+    static func cgImage(from image: NSImage) throws -> CGImage {
+        guard let output = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            throw NativeScreenshotEditorError.imageCreationFailed
+        }
+        return output
+    }
+    static func encode(_ image: CGImage, as format: FileFormat) throws -> Data {
+        guard let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+            throw NativeScreenshotEditorError.imageCreationFailed
+        }
+        return data
+    }
 }
 
 enum NativeScreenshotWindowActivation {
@@ -51,6 +64,7 @@ final class PreferencesManager {
     var smartMarkerEnabled = false
     var rememberLastTool = true
     var showToolShortcutsInTooltips = false
+    var nativeScreenshotToolbarConfiguration = NativeScreenshotToolbarConfiguration.default
 }
 #endif
 
@@ -71,6 +85,39 @@ struct NativeScreenshotEditorUIRegression {
             charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
         canvas.keyDown(with: escape)
         assert(escapeCount == 1, "Escape must route through the editor cancellation policy")
+        var configured = NativeScreenshotToolbarConfiguration.default
+        try configured.setShortcut("j", forToolID: "pencil")
+        PreferencesManager.shared.nativeScreenshotToolbarConfiguration = configured
+        let customKey = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: 0, context: nil, characters: "j",
+            charactersIgnoringModifiers: "j", isARepeat: false, keyCode: 38)!
+        canvas.keyDown(with: customKey)
+        guard case .annotation(.pencil) = canvas.tool else {
+            assertionFailure("Configured toolbar shortcut must select the matching editor tool")
+            return
+        }
+        var hiddenToolConfiguration = configured
+        hiddenToolConfiguration.setToolEnabled(false, id: "pencil")
+        let visibleTools = NativeScreenshotEditorController.visibleEditorToolIDs(
+            configuration: hiddenToolConfiguration)
+        assert(visibleTools.contains("select") && !visibleTools.contains("pencil")
+               && visibleTools.contains("arrow"),
+               "Detached editor must honor the toolbar's enabled-tool choices")
+        assert(Set(visibleTools) == Set(hiddenToolConfiguration.enabledToolIDs),
+               "The editor must show exactly the configured annotation tools")
+        let reachableTools = NativeScreenshotEditorController.reachableEditorToolIDs(
+            configuration: configured)
+        assert(reachableTools == Set(NativeScreenshotAnnotationKind.allCases.map(\.rawValue))
+               .union(["select"]),
+               "Default editor submenus must expose every annotation mode")
+        assert(NativeScreenshotEditorController.editorModes(for: .rectangle)
+               == [.rectangle, .filledRectangle])
+        assert(NativeScreenshotEditorController.editorModes(for: .pixelate)
+               == [.pixelate, .blur, .solidCensor, .eraseCensor])
+        assert(!NativeScreenshotEditorController.reachableEditorToolIDs(
+            configuration: hiddenToolConfiguration).contains("pencil"),
+            "Hiding an unrelated tool must still take effect")
         let start = CGPoint(x: 10, y: 10)
         let end = CGPoint(x: 30, y: 25)
         canvas.arrowStyle = .curvedDashed

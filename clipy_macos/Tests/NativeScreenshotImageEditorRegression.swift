@@ -9,6 +9,7 @@ struct NativeScreenshotImageEditorRegression {
 
     static func main() throws {
         try testCropAndFlips()
+        try testAppendAlignment()
         try testResizeAndRotation()
         try testBeautifyWrap()
         try testInvalidInputs()
@@ -61,6 +62,19 @@ struct NativeScreenshotImageEditorRegression {
         assert(diagonal.width == 15 && diagonal.height == 15)
         let corner = sample(diagonal, x: 0, y: 0)
         assert(abs(corner[0] - 0.2) < 0.03 && abs(corner[1] - 0.3) < 0.03)
+    }
+
+    private static func testAppendAlignment() throws {
+        let first = try quadrantImage(width: 12, height: 8)
+        let second = try quadrantImage(width: 6, height: 4)
+        let below = try NativeScreenshotImageEditor.append(first, image: second, direction: .below)
+        assert(below.width == 12 && below.height == 12)
+        expectColor(sample(below, x: 1, y: 1), red: 1, green: 0, blue: 0)
+        expectColor(sample(below, x: 1, y: 9), red: 1, green: 0, blue: 0)
+        let right = try NativeScreenshotImageEditor.append(first, image: second, direction: .right)
+        assert(right.width == 18 && right.height == 8)
+        expectColor(sample(right, x: 1, y: 1), red: 1, green: 0, blue: 0)
+        expectColor(sample(right, x: 13, y: 1), red: 1, green: 0, blue: 0)
     }
 
     private static func testBeautifyWrap() throws {

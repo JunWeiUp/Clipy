@@ -16,6 +16,29 @@ final class NativeScreenshotMovieWriter {
     private var firstVideoUptime: TimeInterval?
     private var lastVideoSample: CMSampleBuffer?
     private var inputsFinished = false
+    private var pauseBeganUptime: TimeInterval?
+    private var pausedDuration: TimeInterval = 0
+
+    /// Capture remains live while paused, but timestamps delivered to the
+    /// encoder omit the paused interval so video and both audio tracks agree.
+    var activeElapsed: TimeInterval {
+        guard let firstVideoUptime else { return 0 }
+        let now = ProcessInfo.processInfo.systemUptime
+        let currentPause = pauseBeganUptime.map { now - $0 } ?? 0
+        return max(0, now - firstVideoUptime - pausedDuration - currentPause)
+    }
+
+    func pause() {
+        guard !inputsFinished, pauseBeganUptime == nil else { return }
+        _ = appendCleanFrameAtCurrentTime()
+        pauseBeganUptime = ProcessInfo.processInfo.systemUptime
+    }
+
+    func resume() {
+        guard let pauseBeganUptime else { return }
+        pausedDuration += max(0, ProcessInfo.processInfo.systemUptime - pauseBeganUptime)
+        self.pauseBeganUptime = nil
+    }
 
     init(url: URL, size: CGSize, systemAudio: Bool, microphone: Bool, maxDuration: TimeInterval) throws {
         writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -54,8 +77,10 @@ final class NativeScreenshotMovieWriter {
     }
 
     func appendVideo(_ sample: CMSampleBuffer, cleanFallback: CMSampleBuffer? = nil) {
-        guard !inputsFinished, appendError == nil, CMSampleBufferDataIsReady(sample) else { return }
-        let time = CMSampleBufferGetPresentationTimeStamp(sample)
+        guard !inputsFinished, pauseBeganUptime == nil, appendError == nil,
+              CMSampleBufferDataIsReady(sample) else { return }
+        guard let adjusted = shiftingPastPauses(sample) else { return }
+        let time = CMSampleBufferGetPresentationTimeStamp(adjusted)
         guard time.isValid, !time.isIndefinite else { return }
         if firstVideoTime == nil {
             guard writer.startWriting() else {
@@ -74,10 +99,10 @@ final class NativeScreenshotMovieWriter {
         // The first sample may arrive before the encoder reports readiness.
         // AVAssetWriterInput accepts it after startSession and primes its pipeline.
         guard videoInput.isReadyForMoreMediaData || lastVideoTime == nil else { return }
-        if videoInput.append(sample) {
+        if videoInput.append(adjusted) {
             lastVideoTime = time
             // Duration extension must never preserve transient camera/key/click overlays.
-            lastVideoSample = cleanFallback ?? sample
+            lastVideoSample = cleanFallback.flatMap(shiftingPastPauses) ?? adjusted
         } else {
             appendError = NativeScreenshotRecordingError.writerFailed(writer.error?.localizedDescription ?? "视频帧写入失败")
         }
@@ -92,24 +117,72 @@ final class NativeScreenshotMovieWriter {
     }
 
     private func appendAudio(_ sample: CMSampleBuffer, input: AVAssetWriterInput?) {
-        guard let input, !inputsFinished, appendError == nil, let firstVideoTime,
+        guard let input, !inputsFinished, pauseBeganUptime == nil,
+              appendError == nil, let firstVideoTime,
               CMSampleBufferDataIsReady(sample) else { return }
-        let time = CMSampleBufferGetPresentationTimeStamp(sample)
+        guard let adjusted = shiftingPastPauses(sample) else { return }
+        let time = CMSampleBufferGetPresentationTimeStamp(adjusted)
         guard time.isValid, time >= firstVideoTime,
               CMTimeGetSeconds(time - firstVideoTime) < maxDuration,
               input.isReadyForMoreMediaData else { return }
-        if !input.append(sample) {
+        if !input.append(adjusted) {
             appendError = NativeScreenshotRecordingError.writerFailed(writer.error?.localizedDescription ?? "音频帧写入失败")
         }
+    }
+
+    private func shiftingPastPauses(_ sample: CMSampleBuffer) -> CMSampleBuffer? {
+        guard pausedDuration > 0 else { return sample }
+        var count = 0
+        guard CMSampleBufferGetSampleTimingInfoArray(
+            sample, entryCount: 0, arrayToFill: nil, entriesNeededOut: &count
+        ) == noErr, count > 0 else {
+            appendError = NativeScreenshotRecordingError.writerFailed("无法读取录制时间戳")
+            return nil
+        }
+        var entries = [CMSampleTimingInfo](repeating: CMSampleTimingInfo(
+            duration: .invalid, presentationTimeStamp: .invalid, decodeTimeStamp: .invalid
+        ), count: count)
+        let readStatus = entries.withUnsafeMutableBufferPointer { buffer in
+            CMSampleBufferGetSampleTimingInfoArray(
+                sample, entryCount: count, arrayToFill: buffer.baseAddress,
+                entriesNeededOut: nil
+            )
+        }
+        guard readStatus == noErr else {
+            appendError = NativeScreenshotRecordingError.writerFailed("无法读取录制时间戳")
+            return nil
+        }
+        let offset = CMTime(seconds: pausedDuration, preferredTimescale: 1_000_000)
+        for index in entries.indices {
+            if entries[index].presentationTimeStamp.isValid {
+                entries[index].presentationTimeStamp = entries[index].presentationTimeStamp - offset
+            }
+            if entries[index].decodeTimeStamp.isValid {
+                entries[index].decodeTimeStamp = entries[index].decodeTimeStamp - offset
+            }
+        }
+        var result: CMSampleBuffer?
+        let copyStatus = entries.withUnsafeMutableBufferPointer { buffer in
+            CMSampleBufferCreateCopyWithNewTiming(
+                allocator: kCFAllocatorDefault, sampleBuffer: sample,
+                sampleTimingEntryCount: count, sampleTimingArray: buffer.baseAddress,
+                sampleBufferOut: &result
+            )
+        }
+        guard copyStatus == noErr, let result else {
+            appendError = NativeScreenshotRecordingError.writerFailed("无法调整暂停后的录制时间戳")
+            return nil
+        }
+        return result
     }
 
     /// Ends a transient overlay even when the captured desktop stays unchanged.
     @discardableResult
     func appendCleanFrameAtCurrentTime() -> Bool {
-        guard !inputsFinished, let firstVideoTime, let lastVideoTime, let firstVideoUptime,
+        guard !inputsFinished, let firstVideoTime, let lastVideoTime,
               let lastVideoSample, writer.status == .writing,
               videoInput.isReadyForMoreMediaData else { return false }
-        let elapsed = min(maxDuration, ProcessInfo.processInfo.systemUptime - firstVideoUptime)
+        let elapsed = min(maxDuration, activeElapsed)
         let encoded = CMTimeGetSeconds(lastVideoTime - firstVideoTime)
         guard elapsed - encoded > 0.03 else { return false }
         let time = firstVideoTime + CMTime(seconds: elapsed, preferredTimescale: 600)
@@ -177,5 +250,6 @@ final class NativeScreenshotMovieWriter {
         inputsFinished = true
         lastVideoSample = nil
         writer.cancelWriting()
+        try? FileManager.default.removeItem(at: writer.outputURL)
     }
 }

@@ -7,11 +7,12 @@ import ScreenCaptureKit
 /// Region MP4 capture for macOS 13+. Each instance is single-use.
 final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
     AVCaptureAudioDataOutputSampleBufferDelegate, AVCaptureVideoDataOutputSampleBufferDelegate {
-    enum State { case idle, starting, recording, stopping, finished }
+    enum State { case idle, starting, recording, paused, stopping, finished }
 
     private let options: NativeScreenshotRecordingOptions
     private let excludedWindows: [SCWindow]
     private let sampleQueue = DispatchQueue(label: "NativeScreenshot.recording.samples", qos: .userInitiated)
+    private let captureSessionQueue = DispatchQueue(label: "NativeScreenshot.recording.captureSessions", qos: .userInitiated)
     private let stateLock = NSLock()
     private var state: State = .idle
     private var stream: SCStream?
@@ -27,10 +28,13 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
     private var temporaryURL: URL?
     private var microphoneActive = false
     private var durationStopQueued = false
+    private var automaticStopScheduled = false  // stateLock only
 
     /// Warnings include optional features denied by the system without aborting screen capture.
     private(set) var warnings: [String] = []
     var onAutomaticStop: ((Result<URL, Error>) -> Void)?
+    /// Called on the main queue before the duration-limit stop begins.
+    var onAutomaticStopBegan: (() -> Void)?
     var onCameraUnavailable: (() -> Void)?
 
     init(options: NativeScreenshotRecordingOptions, excludedWindows: [SCWindow] = []) {
@@ -76,14 +80,25 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
             temporaryURL = temp
 
             microphoneActive = await prepareMicrophoneIfRequested()
+            guard stateLock.withLock({ state == .starting }) else {
+                throw NativeScreenshotRecordingError.captureUnavailable
+            }
             sampleQueue.sync { videoCompositor = NativeScreenshotVideoCompositor(webcam: options.webcam) }
             await prepareCameraIfRequested()
+            guard stateLock.withLock({ state == .starting }) else {
+                throw NativeScreenshotRecordingError.captureUnavailable
+            }
             if let microphoneSession {
                 await withCheckedContinuation { continuation in
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        microphoneSession.startRunning()
+                    captureSessionQueue.async { [weak self] in
+                        if let self, self.stateLock.withLock({ self.state == .starting }) {
+                            microphoneSession.startRunning()
+                        }
                         continuation.resume()
                     }
+                }
+                guard stateLock.withLock({ state == .starting }) else {
+                    throw NativeScreenshotRecordingError.captureUnavailable
                 }
                 if !microphoneSession.isRunning {
                     microphoneActive = false
@@ -92,10 +107,15 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
             }
             if let cameraSession {
                 await withCheckedContinuation { continuation in
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        cameraSession.startRunning()
+                    captureSessionQueue.async { [weak self] in
+                        if let self, self.stateLock.withLock({ self.state == .starting }) {
+                            cameraSession.startRunning()
+                        }
                         continuation.resume()
                     }
+                }
+                guard stateLock.withLock({ state == .starting }) else {
+                    throw NativeScreenshotRecordingError.captureUnavailable
                 }
                 if !cameraSession.isRunning {
                     warnings.append("摄像头启动失败，录屏继续但不包含摄像头。")
@@ -187,9 +207,7 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
                 try? await stream.stopCapture()
                 throw NativeScreenshotRecordingError.captureUnavailable
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + options.maxDuration) { [weak self] in
-                self?.stopForDurationLimit()
-            }
+            scheduleDurationLimitCheck(after: options.maxDuration)
         } catch {
             try? await stream?.stopCapture()
             await stopMicrophone()
@@ -209,13 +227,57 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
         }
     }
 
+    /// Keep the capture sessions running so resuming does not renegotiate
+    /// permissions or leave a blank segment. The serial sample queue drains all
+    /// earlier frames before the state change and drops later samples.
+    @discardableResult
+    func pause() -> Bool {
+        sampleQueue.sync {
+            guard transition(from: .recording, to: .paused) else { return false }
+            movieWriter?.pause()
+            return true
+        }
+    }
+
+    @discardableResult
+    func resume() -> Bool {
+        let resumed = sampleQueue.sync { () -> Bool in
+            guard stateLock.withLock({ state == .paused }) else { return false }
+            movieWriter?.resume()
+            return transition(from: .paused, to: .recording)
+        }
+        if resumed { scheduleDurationLimitCheck(after: remainingDuration) }
+        return resumed
+    }
+
+    private var remainingDuration: TimeInterval {
+        sampleQueue.sync { max(0, options.maxDuration - (movieWriter?.activeElapsed ?? 0)) }
+    }
+
+    private func scheduleDurationLimitCheck(after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, delay)) { [weak self] in
+            guard let self, self.stateLock.withLock({ self.state == .recording }) else { return }
+            if self.remainingDuration <= 0.01 {
+                self.stopForDurationLimit()
+            } else {
+                self.scheduleDurationLimitCheck(after: self.remainingDuration)
+            }
+        }
+    }
+
     /// Stops capture, finalizes the MP4 and atomically moves it to the requested destination.
     @discardableResult
     func stop() async throws -> URL {
         // Make the state change on the sample queue. An in-flight callback
         // finishes before this transition, and every later callback observes
         // `.stopping` before it can append another sample.
-        guard sampleQueue.sync(execute: { transition(from: .recording, to: .stopping) }) else {
+        guard sampleQueue.sync(execute: {
+            stateLock.withLock {
+                guard state == .recording || state == .paused else { return false }
+                state = .stopping
+                return true
+            }
+        }) else {
             throw NativeScreenshotRecordingError.captureUnavailable
         }
         defer {
@@ -268,16 +330,17 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
         }
     }
 
-    /// Cancels without delivering a file. Safe to call while starting or recording.
-    func cancel() async {
+    /// Cancels without delivering a file. Safe to call while starting, recording or paused.
+    @discardableResult
+    func cancel() async -> Bool {
         let shouldCancel = sampleQueue.sync { () -> Bool in
             stateLock.withLock {
-                guard state == .starting || state == .recording else { return false }
+                guard state == .starting || state == .recording || state == .paused else { return false }
                 state = .stopping
                 return true
             }
         }
-        guard shouldCancel else { return }
+        guard shouldCancel else { return false }
         try? await stream?.stopCapture()
         await stopMicrophone()
         await stopCamera()
@@ -292,6 +355,7 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
         removeCameraObserver()
         sampleQueue.sync { videoCompositor?.clear(); videoCompositor = nil }
         stateLock.withLock { state = .finished }
+        return true
     }
 
     private func prepareMicrophoneIfRequested() async -> Bool {
@@ -301,7 +365,15 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
             warnings.append("麦克风权限被拒绝，录屏将不包含麦克风音轨。")
             return false
         }
-        guard let device = AVCaptureDevice.default(for: .audio) else {
+        let devices = AVCaptureDevice.devices(for: .audio)
+        let device = options.microphoneDeviceID.flatMap { selected in
+            devices.first(where: { $0.uniqueID == selected })
+        } ?? AVCaptureDevice.default(for: .audio)
+        if options.microphoneDeviceID != nil,
+           device?.uniqueID != options.microphoneDeviceID {
+            warnings.append("选定的麦克风已不可用，已改用系统默认麦克风。")
+        }
+        guard let device else {
             warnings.append("未找到可用麦克风，录屏将不包含麦克风音轨。")
             return false
         }
@@ -325,10 +397,10 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
     }
 
     private func stopMicrophone() async {
-        guard let microphoneSession, microphoneSession.isRunning else { return }
+        guard let microphoneSession else { return }
         await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                microphoneSession.stopRunning()
+            captureSessionQueue.async {
+                if microphoneSession.isRunning { microphoneSession.stopRunning() }
                 continuation.resume()
             }
         }
@@ -340,7 +412,15 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
             warnings.append("摄像头权限被拒绝，录屏将不包含摄像头。")
             return
         }
-        guard let device = AVCaptureDevice.default(for: .video) else {
+        let devices = AVCaptureDevice.devices(for: .video)
+        let device = options.webcamDeviceID.flatMap { selected in
+            devices.first(where: { $0.uniqueID == selected })
+        } ?? AVCaptureDevice.default(for: .video)
+        if options.webcamDeviceID != nil,
+           device?.uniqueID != options.webcamDeviceID {
+            warnings.append("选定的摄像头已不可用，已改用系统默认摄像头。")
+        }
+        guard let device else {
             warnings.append("未找到可用摄像头，录屏将不包含摄像头。")
             return
         }
@@ -366,13 +446,13 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
                 queue: nil
             ) { [weak self] _ in
                 guard let self else { return }
-                guard self.stateLock.withLock({ self.state == .recording }) else { return }
+                guard self.stateLock.withLock({ self.state == .recording || self.state == .paused }) else { return }
                 self.sampleQueue.async {
                     guard self.cameraAvailable else { return }
                     self.cameraAvailable = false
                     self.videoCompositor?.clearCameraFrame()
                     DispatchQueue.main.async {
-                        guard self.stateLock.withLock({ self.state == .recording }) else { return }
+                        guard self.stateLock.withLock({ self.state == .recording || self.state == .paused }) else { return }
                         self.onCameraUnavailable?()
                     }
                 }
@@ -383,10 +463,10 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
     }
 
     private func stopCamera() async {
-        guard let cameraSession, cameraSession.isRunning else { return }
+        guard let cameraSession else { return }
         await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                cameraSession.stopRunning()
+            captureSessionQueue.async {
+                if cameraSession.isRunning { cameraSession.stopRunning() }
                 continuation.resume()
             }
         }
@@ -449,25 +529,39 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        guard stateLock.withLock({ state == .recording }) else { return }
+        guard stateLock.withLock({ state == .recording || state == .paused }) else { return }
         Task { [weak self] in
             guard let self else { return }
-            await self.cancel()
-            DispatchQueue.main.async { self.onAutomaticStop?(.failure(error)) }
+            if await self.cancel() {
+                DispatchQueue.main.async { self.onAutomaticStop?(.failure(error)) }
+            }
         }
     }
 
     private func stopForDurationLimit() {
-        guard stateLock.withLock({ state == .recording }) else { return }
-        Task { [weak self] in
+        let shouldSchedule = stateLock.withLock { () -> Bool in
+            guard state == .recording, !automaticStopScheduled else { return false }
+            automaticStopScheduled = true
+            return true
+        }
+        guard shouldSchedule else { return }
+        DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            do {
-                let url = try await self.stop()
-                DispatchQueue.main.async { self.onAutomaticStop?(.success(url)) }
-            } catch NativeScreenshotRecordingError.captureUnavailable {
-                // A concurrent manual stop or cancel already owns the result.
-            } catch {
-                DispatchQueue.main.async { self.onAutomaticStop?(.failure(error)) }
+            // The user may pause after the duration limit was reached but
+            // before this main-queue handoff. A paused recorder still owns the
+            // completed movie and must finalize it.
+            guard self.stateLock.withLock({ self.state == .recording || self.state == .paused }) else { return }
+            self.onAutomaticStopBegan?()
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let url = try await self.stop()
+                    DispatchQueue.main.async { self.onAutomaticStop?(.success(url)) }
+                } catch NativeScreenshotRecordingError.captureUnavailable {
+                    // A concurrent manual stop or cancel already owns the result.
+                } catch {
+                    DispatchQueue.main.async { self.onAutomaticStop?(.failure(error)) }
+                }
             }
         }
     }

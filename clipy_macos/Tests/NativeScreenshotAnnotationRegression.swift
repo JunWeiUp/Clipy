@@ -12,10 +12,26 @@ struct NativeScreenshotAnnotationRegression {
 
     static func main() throws {
         try testDocumentEdits()
+        testTranslationBatchUndo()
         try testSamplerAndCensors()
         try testAllExportedTools()
         try testArrowStyles()
         print("NativeScreenshotAnnotationRegression passed")
+    }
+
+    private static func testTranslationBatchUndo() {
+        var document = NativeScreenshotAnnotationDocument(
+            canvasSize: CGSize(width: width, height: height))
+        let first = NativeScreenshotAnnotation(content: .richText(
+            rect: CGRect(x: 3, y: 4, width: 40, height: 16),
+            runs: [.init(text: "first")]))
+        let second = NativeScreenshotAnnotation(content: .richText(
+            rect: CGRect(x: 3, y: 24, width: 40, height: 16),
+            runs: [.init(text: "second")]))
+        assert(document.insertBatch([first, second, first]) == 2)
+        assert(document.annotations.count == 2)
+        assert(document.undo() && document.annotations.isEmpty)
+        assert(document.redo() && document.annotations.count == 2)
     }
 
     private static func testDocumentEdits() throws {

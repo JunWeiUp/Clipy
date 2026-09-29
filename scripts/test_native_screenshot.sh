@@ -18,14 +18,34 @@ swiftc "${COMMON[@]}" "${SOURCES}/Annotation/"*.swift "${SOURCES}/Capture/Native
 swiftc "${COMMON[@]}" "${SOURCES}/Editor/"*.swift "${TESTS}/NativeScreenshotImageEditorRegression.swift" -o "${TEST_DIR}/image-editor"
 "${TEST_DIR}/image-editor"
 
-swiftc "${COMMON[@]}" -D EDITOR_STANDALONE_TEST "${SOURCES}/Annotation/"*.swift "${SOURCES}/Editor/"*.swift "${SOURCES}/UI/NativeScreenshotEditorController.swift" "${SOURCES}/UI/NativeScreenshotCanvasGeometry.swift" "${SOURCES}/UI/NativeScreenshotLocalization.swift" "${TESTS}/NativeScreenshotEditorUIRegression.swift" -o "${TEST_DIR}/editor-ui"
+swiftc "${COMMON[@]}" -D EDITOR_STANDALONE_TEST "${SOURCES}/Annotation/"*.swift "${SOURCES}/Editor/"*.swift "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "${SOURCES}/UI/NativeScreenshotEditorController.swift" "${SOURCES}/UI/NativeScreenshotCanvasGeometry.swift" "${SOURCES}/UI/NativeScreenshotLocalization.swift" "${SOURCES}/UI/NativeScreenshotToolbarConfiguration.swift" "${TESTS}/NativeScreenshotEditorUIRegression.swift" -o "${TEST_DIR}/editor-ui"
 "${TEST_DIR}/editor-ui"
 
-swiftc "${COMMON[@]}" -Xlinker -weak_framework -Xlinker Translation "${SOURCES}/Recognition/"*.swift "${TESTS}/NativeScreenshotRecognitionRegression.swift" -o "${TEST_DIR}/recognition"
+swiftc "${COMMON[@]}" "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "${SOURCES}/UI/NativeScreenshotToolbarConfiguration.swift" "${TESTS}/NativeScreenshotToolbarConfigurationRegression.swift" -o "${TEST_DIR}/toolbar-config"
+"${TEST_DIR}/toolbar-config"
+
+swiftc "${COMMON[@]}" "${SOURCES}/UI/NativeScreenshotSelectionPresets.swift" \
+  "${TESTS}/NativeScreenshotSelectionPresetsRegression.swift" -o "${TEST_DIR}/selection-presets"
+"${TEST_DIR}/selection-presets"
+
+swiftc "${COMMON[@]}" -Xlinker -weak_framework -Xlinker Translation \
+  "${SOURCES}/Annotation/"*.swift "${SOURCES}/Recognition/"*.swift \
+  "${TESTS}/NativeScreenshotRecognitionRegression.swift" \
+  "${TESTS}/NativeScreenshotTranslatedAnnotationRegression.swift" -o "${TEST_DIR}/recognition"
 "${TEST_DIR}/recognition"
 
-swiftc "${COMMON[@]}" -D NATIVE_SCREENSHOT_RECORDING_TESTS "${SOURCES}/Recording/"*.swift "${TESTS}/NativeScreenshotRecordingRegression.swift" -o "${TEST_DIR}/recording"
+swiftc "${COMMON[@]}" -D NATIVE_SCREENSHOT_THUMBNAIL_FILE_TEST \
+  "${SOURCES}/Delivery/NativeScreenshotThumbnailPresenter.swift" \
+  "${TESTS}/NativeScreenshotThumbnailFileRegression.swift" -o "${TEST_DIR}/thumbnail-file"
+"${TEST_DIR}/thumbnail-file"
+
+swiftc "${COMMON[@]}" -D NATIVE_SCREENSHOT_RECORDING_TESTS "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "${SOURCES}/Recording/"*.swift "${TESTS}/NativeScreenshotRecordingRegression.swift" -o "${TEST_DIR}/recording"
 "${TEST_DIR}/recording"
+
+swiftc "${COMMON[@]}" "${SOURCES}/Coordinator/NativeScreenshotSessionHUDGeometry.swift" \
+  "${SOURCES}/Recording/NativeScreenshotRecordingPanelPlacement.swift" \
+  "${TESTS}/NativeScreenshotSessionHUDGeometryRegression.swift" -o "${TEST_DIR}/session-hud-geometry"
+"${TEST_DIR}/session-hud-geometry"
 
 swiftc "${COMMON[@]}" "${SOURCES}/Coordinator/NativeScreenshotUserText.swift" "${SOURCES}/Delivery/NativeScreenshotVideoSegmentExporter.swift" "${TESTS}/NativeScreenshotVideoSegmentRegression.swift" -o "${TEST_DIR}/video-segment"
 "${TEST_DIR}/video-segment"

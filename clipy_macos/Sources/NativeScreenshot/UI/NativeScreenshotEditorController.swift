@@ -13,10 +13,17 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
     private var panel: NSPanel?
     private var scrollView: NSScrollView?
     private var optionContent: NSView?
+    private weak var optionsBar: NSView?
+    private weak var dimensionsLabel: NSTextField?
+    private weak var zoomButton: NSButton?
+    /// nil means the image follows the available viewport; an explicit value is
+    /// a display scale and never changes the exported image pixels.
+    private var previewZoom: CGFloat?
     private weak var colorWell: NSColorWell?
     private weak var textField: NSTextField?
     private weak var richTextEditor: NSTextView?
-    private weak var toolPicker: NSPopUpButton?
+    private var toolButtons: [NSButton] = []
+    private var textInputValue = ""
     private let initialBeautify: NativeScreenshotBeautifyOptions?
     private let initialEffects: NativeScreenshotImageProcessor.Adjustments?
     private let activationID = UUID()
@@ -45,6 +52,7 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
 
     init(
         base: NativeScreenshotCapturedImage,
+        defaultsAlreadyApplied: Bool = false,
         onAction: @escaping (NativeScreenshotDeliveryAction, NativeScreenshotCapturedImage) -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -52,7 +60,7 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         self.onAction = onAction
         self.onCancel = onCancel
         let prefs = PreferencesManager.shared
-        initialBeautify = prefs.beautifyEnabled ? NativeScreenshotBeautifyOptions(
+        initialBeautify = !defaultsAlreadyApplied && prefs.beautifyEnabled ? NativeScreenshotBeautifyOptions(
             mode: prefs.beautifyMode == 0 ? .window : .rounded,
             margin: CGFloat(prefs.beautifyPadding),
             cornerRadius: CGFloat(prefs.beautifyCornerRadius),
@@ -62,8 +70,8 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
             contrast: Float(prefs.effectsContrast),
             saturation: Float(prefs.effectsSaturation),
             sharpness: Float(prefs.effectsSharpness))
-        initialEffects = effects.brightness != 0 || effects.contrast != 1
-            || effects.saturation != 1 || effects.sharpness != 0 ? effects : nil
+        initialEffects = !defaultsAlreadyApplied && (effects.brightness != 0 || effects.contrast != 1
+            || effects.saturation != 1 || effects.sharpness != 0) ? effects : nil
         canvas = NativeScreenshotAnnotationCanvasView(image: base.image)
         super.init()
         canvas.textFontSize = prefs.screenshotTextFontSize
@@ -75,25 +83,25 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         canvas.smartMarkerEnabled = prefs.smartMarkerEnabled
         if prefs.rememberLastTool,
            let raw = UserDefaults.standard.string(forKey: "nativeScreenshot.lastTool"),
-           let kind = NativeScreenshotAnnotationKind(rawValue: raw) {
+           let kind = NativeScreenshotAnnotationKind(rawValue: raw),
+           prefs.nativeScreenshotToolbarConfiguration.isToolEnabled(kind.rawValue) {
             canvas.tool = .annotation(kind)
         }
+        canvas.textProvider = { [weak self] in self?.textInputValue ?? "" }
         canvas.onSampledColor = { [weak self] sampled in self?.showSampledColor(sampled) }
         canvas.onEscape = { [weak self] in self?.requestCancel() }
         canvas.onImageSizeChanged = { [weak self] in self?.fitCanvasToViewport() }
         canvas.onSelectionChanged = { [weak self] in self?.rebuildOptions() }
         canvas.onToolShortcut = { [weak self] kind in
             guard let self else { return }
-            if let kind {
-                self.toolPicker?.selectItem(at: NativeScreenshotAnnotationKind.allCases.firstIndex(of: kind).map { $0 + 1 } ?? 0)
-            } else {
-                self.toolPicker?.selectItem(at: 0)
-            }
+            self.refreshToolSelection()
             self.rebuildOptions()
             if PreferencesManager.shared.rememberLastTool {
                 UserDefaults.standard.set(kind?.rawValue, forKey: "nativeScreenshot.lastTool")
             }
         }
+        canvas.onCopyImage = { [weak self] in self?.copyRenderedImage() }
+        canvas.onSaveImage = { [weak self] in self?.deliver(.save) }
     }
 
     func show() {
@@ -117,27 +125,32 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         panel.level = .floating
         panel.isReleasedWhenClosed = false
         panel.delegate = self
-        panel.minSize = NSSize(width: 800, height: 380)
+        panel.minSize = NSSize(width: 800, height: 400)
         panel.center()
 
         let root = NSView(frame: CGRect(origin: .zero, size: frame.size))
         root.wantsLayer = true
         root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        let imageBar = makeImageBar(width: width)
+        imageBar.frame.origin.y = height - 32
         let toolbar = makeToolbar(width: width)
-        toolbar.frame.origin.y = height - 56
         let options = makeOptionsBar(width: width)
-        options.frame.origin.y = height - 102
-        let scroll = NSScrollView(frame: CGRect(x: 0, y: 0, width: width, height: height - 102))
+        let actions = makeActionBar(width: width, height: height)
+        let scroll = NSScrollView(frame: CGRect(x: 0, y: 0, width: width, height: height - 32))
         scroll.hasHorizontalScroller = true
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = true
-        scroll.backgroundColor = .black
+        scroll.backgroundColor = NSColor(white: 0.15, alpha: 1)
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 116, right: 50)
+        scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: -116, right: -50)
         scroll.autoresizingMask = [.width, .height]
+        scroll.contentView = NativeScreenshotEditorClipView(frame: scroll.contentView.frame)
         scrollView = scroll
         let fit = min(
-            (width - 24) / CGFloat(canvas.image.width),
-            (height - 126) / CGFloat(canvas.image.height)
+            (width - 74) / CGFloat(canvas.image.width),
+            (height - 172) / CGFloat(canvas.image.height)
         )
         let canvasScale = max(0.05, min(1, fit))
         canvas.frame = CGRect(
@@ -149,8 +162,12 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         root.addSubview(scroll)
         root.addSubview(options)
         root.addSubview(toolbar)
-        toolbar.autoresizingMask = [.width, .minYMargin]
-        options.autoresizingMask = [.width, .minYMargin]
+        root.addSubview(actions)
+        root.addSubview(imageBar)
+        toolbar.autoresizingMask = [.minXMargin, .maxXMargin, .maxYMargin]
+        options.autoresizingMask = [.minXMargin, .maxXMargin, .maxYMargin]
+        actions.autoresizingMask = [.minXMargin, .minYMargin]
+        imageBar.autoresizingMask = [.width, .minYMargin]
         panel.contentView = root
         self.panel = panel
         NativeScreenshotWindowActivation.opened(activationID)
@@ -158,6 +175,7 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(canvas)
+        fitCanvasToViewport()
         applyInitialProcessing()
     }
 
@@ -215,6 +233,10 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         if shouldNotify { onCancel() }
     }
 
+    func windowDidResize(_ notification: Notification) {
+        if previewZoom == nil { fitCanvasToViewport() }
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard !closing else { return true }
         guard busySheet == nil else { return false }
@@ -251,92 +273,266 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         NativeScreenshotWindowActivation.closed(activationID)
     }
 
+    private func makeImageBar(width: CGFloat) -> NSView {
+        let bar = NSView(frame: CGRect(x: 0, y: 0, width: width, height: 32))
+        bar.wantsLayer = true
+        bar.layer?.backgroundColor = PreferencesManager.shared.nativeScreenshotToolbarConfiguration.backgroundColor.cgColor
+        let dimensions = NSTextField(labelWithString: "\(canvas.image.width) × \(canvas.image.height)")
+        dimensions.frame = CGRect(x: 12, y: 6, width: 145, height: 18)
+        dimensions.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        dimensions.textColor = PreferencesManager.shared.nativeScreenshotToolbarConfiguration.iconColor.withAlphaComponent(0.55)
+        dimensions.toolTip = NativeScreenshotText.get(.pixelDimensions)
+        bar.addSubview(dimensions)
+        dimensionsLabel = dimensions
+        var x: CGFloat = 170
+        func add(_ symbol: String, _ key: NativeScreenshotText.Key, action: Selector) {
+            let control = iconButton(symbol, title: NativeScreenshotText.get(key), action: action)
+            control.frame = CGRect(x: x, y: 4, width: 24, height: 24)
+            bar.addSubview(control)
+            x += 28
+        }
+        add("crop", .chooseCrop, action: #selector(beginCropFromBar))
+        add("arrow.left.and.right.righttriangle.left.righttriangle.right", .flipHorizontal,
+            action: #selector(flipHorizontalFromBar))
+        add("arrow.up.and.down.righttriangle.up.righttriangle.down", .flipVertical,
+            action: #selector(flipVerticalFromBar))
+        x += 8
+        add("rectangle.badge.plus", .appendImage, action: #selector(appendImageFromBar))
+        let zoom = NSButton(title: "100% ▾", target: self, action: #selector(showZoomMenu(_:)))
+        zoom.isBordered = false
+        zoom.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        zoom.contentTintColor = PreferencesManager.shared.nativeScreenshotToolbarConfiguration.iconColor.withAlphaComponent(0.7)
+        zoom.frame = CGRect(x: width - 92, y: 4, width: 80, height: 24)
+        zoom.autoresizingMask = [.minXMargin]
+        zoom.toolTip = NativeScreenshotText.get(.zoomFit)
+        bar.addSubview(zoom)
+        zoomButton = zoom
+        return bar
+    }
+
     private func makeToolbar(width: CGFloat) -> NSView {
-        let toolbar = NSVisualEffectView(frame: CGRect(x: 0, y: 0, width: width, height: 56))
-        toolbar.material = .titlebar
-        toolbar.blendingMode = .withinWindow
-        toolbar.state = .active
-
-        let toolPicker = NSPopUpButton(frame: CGRect(x: 12, y: 13, width: 120, height: 30), pullsDown: false)
-        toolPicker.addItem(withTitle: NativeScreenshotText.get(.selectMove))
-        for (index, kind) in NativeScreenshotAnnotationKind.allCases.enumerated() {
-            toolPicker.addItem(withTitle: Self.title(for: kind))
-            if PreferencesManager.shared.showToolShortcutsInTooltips,
-               let key = Self.toolShortcutKeys[kind] {
-                toolPicker.item(at: index + 1)?.toolTip = "\(Self.title(for: kind)) (\(key))"
-            }
+        let barWidth = min(width - 120, 820)
+        let toolbar = chromeView(frame: CGRect(x: (width - barWidth) / 2, y: 20,
+                                               width: barWidth, height: 44))
+        let scroll = NSScrollView(frame: CGRect(x: 5, y: 4, width: barWidth - 10, height: 36))
+        scroll.drawsBackground = false
+        scroll.hasHorizontalScroller = true
+        scroll.hasVerticalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.autoresizingMask = [.width, .height]
+        let row = NSView(frame: CGRect(x: 0, y: 0, width: 1, height: 36))
+        let configuration = PreferencesManager.shared.nativeScreenshotToolbarConfiguration
+        var x: CGFloat = 4
+        for kind in Self.editorToolOrder where configuration.isToolEnabled(kind?.rawValue ?? "select") {
+            let title = kind.map(Self.title(for:)) ?? NativeScreenshotText.get(.selectMove)
+            let shortcut = configuration.shortcut(forToolID: kind?.rawValue ?? "select")
+            let tooltip = PreferencesManager.shared.showToolShortcutsInTooltips && shortcut != nil
+                ? "\(title) (\(shortcut!.uppercased()))" : title
+            let item = iconButton(Self.symbol(for: kind), title: tooltip,
+                                  action: #selector(selectToolFromButton(_:)))
+            item.setButtonType(.toggle)
+            item.tag = kind.flatMap { NativeScreenshotAnnotationKind.allCases.firstIndex(of: $0) }
+                .map { $0 + 1 } ?? 0
+            item.frame = CGRect(x: x, y: 1, width: 34, height: 34)
+            item.setAccessibilityIdentifier("editor.tool.\(kind?.rawValue ?? "select")")
+            row.addSubview(item)
+            toolButtons.append(item)
+            x += 37
         }
-        if case let .annotation(kind) = canvas.tool,
-           let index = NativeScreenshotAnnotationKind.allCases.firstIndex(of: kind) {
-            toolPicker.selectItem(at: index + 1)
-        }
-        toolPicker.target = self
-        toolPicker.action = #selector(changeTool(_:))
-        toolPicker.toolTip = NativeScreenshotText.get(.toolPicker)
-        toolbar.addSubview(toolPicker)
-        self.toolPicker = toolPicker
-
-        let colorWell = NSColorWell(frame: CGRect(x: 140, y: 14, width: 38, height: 28))
+        x += 4
+        let colorWell = NSColorWell(frame: CGRect(x: x, y: 4, width: 30, height: 28))
         colorWell.color = .systemRed
         colorWell.target = self
         colorWell.action = #selector(changeColor(_:))
         colorWell.toolTip = NativeScreenshotText.get(.annotationColor)
-        toolbar.addSubview(colorWell)
+        row.addSubview(colorWell)
         self.colorWell = colorWell
-
-        let widthSlider = NSSlider(value: 3, minValue: 1, maxValue: 24,
-                                   target: self, action: #selector(changeLineWidth(_:)))
-        widthSlider.frame = CGRect(x: 187, y: 16, width: 80, height: 24)
-        widthSlider.toolTip = NativeScreenshotText.get(.lineWidth)
-        toolbar.addSubview(widthSlider)
-
-        let textField = NSTextField(frame: CGRect(x: 276, y: 15, width: 118, height: 25))
-        textField.placeholderString = NativeScreenshotText.get(.textOrEmoji)
-        textField.stringValue = ""
-        textField.toolTip = NativeScreenshotText.get(.textOrEmoji)
-        textField.delegate = self
-        canvas.textProvider = { [weak textField] in textField?.stringValue ?? "" }
-        toolbar.addSubview(textField)
-        self.textField = textField
-
-        let actionPicker = NSPopUpButton(frame: CGRect(x: 402, y: 13, width: 92, height: 30), pullsDown: false)
-        for key: NativeScreenshotText.Key in [.actions, .ocr, .qrCode, .autoRedact, .pin, .save] {
-            actionPicker.addItem(withTitle: NativeScreenshotText.get(key))
+        x += 38
+        let historyButtons: [(String, NativeScreenshotText.Key, Selector)] = [
+            ("arrow.uturn.backward", .undo, #selector(undoEdit)),
+            ("arrow.uturn.forward", .redo, #selector(redoEdit))
+        ]
+        for (symbol, key, action) in historyButtons {
+            let item = iconButton(symbol, title: NativeScreenshotText.get(key), action: action)
+            item.frame = CGRect(x: x, y: 1, width: 34, height: 34)
+            row.addSubview(item)
+            x += 37
         }
-        actionPicker.target = self
-        actionPicker.action = #selector(pickAction(_:))
-        actionPicker.toolTip = NativeScreenshotText.get(.processImage)
-        toolbar.addSubview(actionPicker)
-
-        let undo = button(NativeScreenshotText.get(.undo), action: #selector(undoEdit))
-        let redo = button(NativeScreenshotText.get(.redo), action: #selector(redoEdit))
-        let done = button(NativeScreenshotText.get(.done), action: #selector(confirmEdit))
-        let cancel = button(NativeScreenshotText.get(.cancel), action: #selector(cancelEdit))
-        cancel.keyEquivalent = "\u{1b}"
-        let buttons = [undo, redo, done, cancel]
-        let stack = NSStackView(views: buttons)
-        stack.orientation = .horizontal
-        stack.spacing = 6
-        stack.frame = CGRect(x: max(402, width - 296), y: 11, width: 284, height: 32)
-        stack.autoresizingMask = [.minXMargin]
-        toolbar.addSubview(stack)
+        let edits = NSPopUpButton(frame: CGRect(x: x, y: 2, width: 40, height: 32), pullsDown: true)
+        edits.addItem(withTitle: "")
+        edits.item(at: 0)?.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: NativeScreenshotText.get(.imageEdits))
+        for key: NativeScreenshotText.Key in [
+            .chooseCrop, .applyCrop, .flipHorizontal, .flipVertical,
+            .transform, .beautify, .imageEffects
+        ] { edits.addItem(withTitle: NativeScreenshotText.get(key)) }
+        edits.target = self
+        edits.action = #selector(pickImageEdit(_:))
+        edits.toolTip = NativeScreenshotText.get(.imageEdits)
+        row.addSubview(edits)
+        x += 43
+        row.frame.size.width = x + 4
+        scroll.documentView = row
+        toolbar.addSubview(scroll)
+        refreshToolSelection()
         return toolbar
     }
 
+    private func makeActionBar(width: CGFloat, height: CGFloat) -> NSView {
+        let configuration = PreferencesManager.shared.nativeScreenshotToolbarConfiguration
+        let actions: [(String?, String, String, Selector)] = [
+            (nil, "checkmark", NativeScreenshotText.get(.done), #selector(confirmEdit)),
+            (nil, "doc.on.doc", NativeScreenshotUserText.string("复制", "Copy"), #selector(copyFromButton)),
+            ("save", "square.and.arrow.down", NativeScreenshotText.get(.save), #selector(saveFromButton)),
+            ("pin", "pin", NativeScreenshotText.get(.pin), #selector(pinFromButton)),
+            ("ocr", "text.viewfinder", NativeScreenshotText.get(.ocr), #selector(ocrFromButton)),
+            ("qrCode", "qrcode.viewfinder", NativeScreenshotText.get(.qrCode), #selector(qrFromButton)),
+            ("autoRedact", "eye.slash", NativeScreenshotText.get(.autoRedact), #selector(redactFromButton))
+        ]
+        let visible = actions.filter { $0.0.map(configuration.isActionEnabled) ?? true }
+        let contentHeight = CGFloat(visible.count) * 38 + 12
+        let barHeight = min(contentHeight, max(160, height - 140))
+        let bar = chromeView(frame: CGRect(x: width - 66, y: height - 36 - barHeight,
+                                           width: 46, height: barHeight))
+        let scroll = NSScrollView(frame: CGRect(x: 2, y: 4, width: 42, height: barHeight - 8))
+        scroll.drawsBackground = false
+        scroll.hasHorizontalScroller = false
+        scroll.hasVerticalScroller = contentHeight > barHeight
+        scroll.scrollerStyle = .overlay
+        scroll.autoresizingMask = [.width, .height]
+        let column = NSView(frame: CGRect(x: 0, y: 0, width: 42, height: contentHeight))
+        for (index, item) in visible.enumerated() {
+            let button = iconButton(item.1, title: item.2, action: item.3)
+            button.frame = CGRect(x: 3, y: contentHeight - 7 - CGFloat(index + 1) * 38,
+                                  width: 36, height: 36)
+            button.setAccessibilityIdentifier("editor.action.\(item.0 ?? "done")")
+            column.addSubview(button)
+        }
+        scroll.documentView = column
+        bar.addSubview(scroll)
+        return bar
+    }
+
+    private func chromeView(frame: CGRect) -> NSVisualEffectView {
+        let view = NSVisualEffectView(frame: frame)
+        view.material = .hudWindow
+        view.blendingMode = .withinWindow
+        view.state = .active
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 11
+        view.layer?.masksToBounds = true
+        view.layer?.backgroundColor = PreferencesManager.shared.nativeScreenshotToolbarConfiguration.backgroundColor.cgColor
+        return view
+    }
+
+    private func iconButton(_ symbol: String, title: String, action: Selector) -> NSButton {
+        let button = NSButton()
+        button.isBordered = false
+        button.bezelStyle = .recessed
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .medium))
+        button.contentTintColor = PreferencesManager.shared.nativeScreenshotToolbarConfiguration.iconColor
+        button.toolTip = title
+        button.target = self
+        button.action = action
+        return button
+    }
+
+    private static let editorToolOrder: [NativeScreenshotAnnotationKind?] = [
+        .pencil, .line, .arrow, .rectangle, .ellipse, .highlighter, .richText,
+        .number, nil, .pixelate, .spotlight, .magnifier, .stamp, .colorSampler,
+        .ruler, .filledRectangle, .blur, .solidCensor, .eraseCensor
+    ]
+
+    static func editorModes(for kind: NativeScreenshotAnnotationKind) -> [NativeScreenshotAnnotationKind] {
+        switch kind {
+        case .rectangle, .filledRectangle: return [.rectangle, .filledRectangle]
+        case .pixelate, .blur, .solidCensor, .eraseCensor:
+            return [.pixelate, .blur, .solidCensor, .eraseCensor]
+        default: return [kind]
+        }
+    }
+
+    static func visibleEditorToolIDs(configuration: NativeScreenshotToolbarConfiguration) -> [String] {
+        editorToolOrder.compactMap { kind -> String? in
+            let id = kind?.rawValue ?? "select"
+            return configuration.isToolEnabled(id) ? id : nil
+        }
+    }
+
+    static func reachableEditorToolIDs(configuration: NativeScreenshotToolbarConfiguration) -> Set<String> {
+        let visible = visibleEditorToolIDs(configuration: configuration)
+        var ids = Set(visible)
+        for id in visible {
+            guard let kind = NativeScreenshotAnnotationKind(rawValue: id) else { continue }
+            ids.formUnion(editorModes(for: kind).map(\.rawValue))
+        }
+        return ids
+    }
+
+    private static func symbol(for kind: NativeScreenshotAnnotationKind?) -> String {
+        guard let kind else { return "cursorarrow" }
+        switch kind {
+        case .pencil: return "pencil.tip"
+        case .line: return "line.diagonal"
+        case .arrow: return "arrow.up.right"
+        case .rectangle: return "rectangle"
+        case .filledRectangle: return "rectangle.fill"
+        case .ellipse: return "circle"
+        case .highlighter: return "highlighter"
+        case .richText: return "textformat"
+        case .number: return "1.circle"
+        case .stamp: return "face.smiling"
+        case .pixelate: return "square.grid.3x3"
+        case .blur: return "drop.halffull"
+        case .solidCensor: return "rectangle.fill"
+        case .eraseCensor: return "eraser"
+        case .magnifier: return "plus.magnifyingglass"
+        case .ruler: return "ruler"
+        case .colorSampler: return "eyedropper"
+        case .spotlight: return "viewfinder"
+        }
+    }
+
+    private func refreshToolSelection() {
+        let selectedKind: NativeScreenshotAnnotationKind?
+        if case let .annotation(kind) = canvas.tool {
+            selectedKind = kind
+        } else {
+            selectedKind = nil
+        }
+        let configuration = PreferencesManager.shared.nativeScreenshotToolbarConfiguration
+        let displayedKind: NativeScreenshotAnnotationKind?
+        if let selectedKind, !configuration.isToolEnabled(selectedKind.rawValue) {
+            displayedKind = Self.editorModes(for: selectedKind).first {
+                configuration.isToolEnabled($0.rawValue)
+            }
+        } else {
+            displayedKind = selectedKind
+        }
+        let selected = displayedKind.flatMap {
+            NativeScreenshotAnnotationKind.allCases.firstIndex(of: $0)
+        }.map { $0 + 1 } ?? 0
+        for button in toolButtons {
+            button.state = button.tag == selected ? .on : .off
+            button.contentTintColor = button.tag == selected ? configuration.accentColor : configuration.iconColor
+        }
+    }
+
     private func makeOptionsBar(width: CGFloat) -> NSView {
-        let bar = NSVisualEffectView(frame: CGRect(x: 0, y: 0, width: width, height: 46))
-        bar.material = .titlebar
-        bar.blendingMode = .withinWindow
-        bar.state = .active
+        let barWidth = min(width - 120, 720)
+        let bar = chromeView(frame: CGRect(x: (width - barWidth) / 2, y: 68,
+                                           width: barWidth, height: 44))
         let scroll = NSScrollView(frame: bar.bounds)
         scroll.autoresizingMask = [.width, .height]
         scroll.drawsBackground = false
         scroll.hasHorizontalScroller = true
         scroll.hasVerticalScroller = false
         scroll.autohidesScrollers = true
-        let content = NSView(frame: CGRect(x: 0, y: 0, width: 1050, height: 44))
+        let content = NSView(frame: CGRect(x: 0, y: 0, width: barWidth, height: 44))
         scroll.documentView = content
         bar.addSubview(scroll)
+        optionsBar = bar
         optionContent = content
         rebuildOptions()
         return bar
@@ -372,23 +568,28 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
             place(view, width: width)
         }
 
-        let edits = NSPopUpButton(frame: .zero, pullsDown: true)
-        edits.addItem(withTitle: NativeScreenshotText.get(.imageEdits))
-        for key: NativeScreenshotText.Key in [
-            .chooseCrop, .applyCrop, .flipHorizontal, .flipVertical,
-            .transform, .beautify, .imageEffects
-        ] {
-            edits.addItem(withTitle: NativeScreenshotText.get(key))
+        if case let .annotation(kind) = canvas.tool {
+            label(.lineWidth, width: 55)
+            slider(Double(canvas.style.lineWidth), range: 1...24,
+                   action: #selector(changeLineWidth(_:)), width: 105)
+            if kind == .richText || kind == .stamp {
+                let input = NSTextField(frame: .zero)
+                input.placeholderString = NativeScreenshotText.get(.textOrEmoji)
+                input.stringValue = textInputValue
+                input.toolTip = NativeScreenshotText.get(.textOrEmoji)
+                input.delegate = self
+                place(input, width: 132)
+                textField = input
+            }
         }
-        edits.target = self
-        edits.action = #selector(pickImageEdit(_:))
-        place(edits, width: 160)
 
         switch canvas.tool {
         case .select:
-            place(button(NativeScreenshotText.get(.shrink), action: #selector(shrinkSelection)), width: 68)
-            place(button(NativeScreenshotText.get(.enlarge), action: #selector(enlargeSelection)), width: 68)
-            place(button(NativeScreenshotText.get(.deleteSelected), action: #selector(deleteSelection)), width: 100)
+            if canvas.hasSelectedAnnotation {
+                place(button(NativeScreenshotText.get(.shrink), action: #selector(shrinkSelection)), width: 68)
+                place(button(NativeScreenshotText.get(.enlarge), action: #selector(enlargeSelection)), width: 68)
+                place(button(NativeScreenshotText.get(.deleteSelected), action: #selector(deleteSelection)), width: 100)
+            }
             if canvas.selectedRichText != nil {
                 place(button(NativeScreenshotText.get(.editText), action: #selector(editText)), width: 100)
                 check(.bold, value: canvas.textBold, action: #selector(changeBold(_:)), width: 72)
@@ -406,6 +607,35 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
             place(button(NativeScreenshotText.get(.applyCrop), action: #selector(applyCrop)), width: 110)
         case let .annotation(kind):
             switch kind {
+            case .rectangle, .filledRectangle:
+                let modes = Self.editorModes(for: kind)
+                let control = NSSegmentedControl(labels: [
+                    NativeScreenshotUserText.string("轮廓", "Outline"),
+                    NativeScreenshotUserText.string("填充", "Fill")
+                ], trackingMode: .selectOne, target: self,
+                   action: #selector(changeRectangleMode(_:)))
+                control.selectedSegment = modes.firstIndex(of: kind) ?? 0
+                place(control, width: 150)
+            case .pixelate, .blur, .solidCensor, .eraseCensor:
+                let modes = Self.editorModes(for: kind)
+                let control = NSSegmentedControl(labels: [
+                    NativeScreenshotUserText.string("马赛克", "Pixelate"),
+                    NativeScreenshotUserText.string("模糊", "Blur"),
+                    NativeScreenshotUserText.string("纯色", "Solid"),
+                    NativeScreenshotUserText.string("擦除", "Erase")
+                ], trackingMode: .selectOne, target: self,
+                   action: #selector(changeCensorMode(_:)))
+                control.selectedSegment = modes.firstIndex(of: kind) ?? 0
+                place(control, width: 294)
+                if kind == .pixelate {
+                    label(.pixelBlock)
+                    slider(Double(canvas.pixelBlockSize), range: 2...64,
+                           action: #selector(changePixelBlock(_:)))
+                } else if kind == .blur {
+                    label(.blurRadius)
+                    slider(Double(canvas.blurRadius), range: 1...40,
+                           action: #selector(changeBlurRadius(_:)))
+                }
             case .arrow:
                 label(.arrowStyle)
                 let picker = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -452,14 +682,6 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
             case .highlighter:
                 check(.smartMarker, value: canvas.smartMarkerEnabled,
                       action: #selector(changeSmartMarker(_:)), width: 150)
-            case .pixelate:
-                label(.pixelBlock)
-                slider(Double(canvas.pixelBlockSize), range: 2...64,
-                       action: #selector(changePixelBlock(_:)))
-            case .blur:
-                label(.blurRadius)
-                slider(Double(canvas.blurRadius), range: 1...40,
-                       action: #selector(changeBlurRadius(_:)))
             case .magnifier:
                 label(.magnifierZoom)
                 slider(Double(canvas.magnifierScale), range: 1.25...4,
@@ -468,7 +690,8 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
                 break
             }
         }
-        content.frame.size.width = max(x + 14, 800)
+        content.frame.size.width = max(x + 14, optionsBar?.frame.width ?? 0)
+        optionsBar?.isHidden = x == 12
     }
 
     private func button(_ title: String, action: Selector) -> NSButton {
@@ -478,13 +701,15 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         return button
     }
 
-    @objc private func changeTool(_ sender: NSPopUpButton) {
-        if sender.indexOfSelectedItem == 0 {
-            canvas.tool = .select
-        } else {
-            let index = sender.indexOfSelectedItem - 1
+    @objc private func selectToolFromButton(_ sender: NSButton) {
+        let kind = sender.tag == 0 ? nil : NativeScreenshotAnnotationKind.allCases[sender.tag - 1]
+        guard PreferencesManager.shared.nativeScreenshotToolbarConfiguration
+            .isToolEnabled(kind?.rawValue ?? "select") else { return }
+        if let kind {
             canvas.clearSelection()
-            canvas.tool = .annotation(NativeScreenshotAnnotationKind.allCases[index])
+            canvas.tool = .annotation(kind)
+        } else {
+            canvas.tool = .select
         }
         if PreferencesManager.shared.rememberLastTool {
             if case let .annotation(kind) = canvas.tool {
@@ -493,6 +718,7 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
                 UserDefaults.standard.removeObject(forKey: "nativeScreenshot.lastTool")
             }
         }
+        refreshToolSelection()
         rebuildOptions()
         panel?.makeFirstResponder(canvas)
     }
@@ -514,7 +740,10 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
     }
 
     func controlTextDidChange(_ obj: Notification) {
-        if obj.object as AnyObject? === textField { canvas.textOverride = nil }
+        if obj.object as AnyObject? === textField {
+            textInputValue = textField?.stringValue ?? ""
+            canvas.textOverride = nil
+        }
         if let control = obj.object as? NSView,
            livePreview?.controls.contains(where: { $0 === control }) == true {
             refreshLivePreview()
@@ -523,6 +752,28 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
 
     @objc private func changeArrowStyle(_ sender: NSPopUpButton) {
         canvas.arrowStyle = NativeScreenshotArrowStyle(rawValue: sender.indexOfSelectedItem) ?? .solid
+    }
+
+    @objc private func changeRectangleMode(_ sender: NSSegmentedControl) {
+        let modes = Self.editorModes(for: .rectangle)
+        guard modes.indices.contains(sender.selectedSegment) else { return }
+        selectEditorMode(modes[sender.selectedSegment])
+    }
+
+    @objc private func changeCensorMode(_ sender: NSSegmentedControl) {
+        let modes = Self.editorModes(for: .pixelate)
+        guard modes.indices.contains(sender.selectedSegment) else { return }
+        selectEditorMode(modes[sender.selectedSegment])
+    }
+
+    private func selectEditorMode(_ kind: NativeScreenshotAnnotationKind) {
+        canvas.tool = .annotation(kind)
+        if PreferencesManager.shared.rememberLastTool {
+            UserDefaults.standard.set(kind.rawValue, forKey: "nativeScreenshot.lastTool")
+        }
+        refreshToolSelection()
+        rebuildOptions()
+        panel?.makeFirstResponder(canvas)
     }
 
     @objc private func changeSmoothing(_ sender: NSPopUpButton) {
@@ -641,7 +892,9 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
             if self?.canvas.replaceSelectedRichText(runs) != true {
                 self?.canvas.textOverride = editor.string
             }
-            self?.textField?.stringValue = editor.string.replacingOccurrences(of: "\n", with: " ")
+            let value = editor.string.replacingOccurrences(of: "\n", with: " ")
+            self?.textInputValue = value
+            self?.textField?.stringValue = value
         }
         alert.window.makeFirstResponder(editor)
     }
@@ -752,12 +1005,104 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         let image = canvas.image
         let fit = min((available.width - 24) / CGFloat(image.width),
                       (available.height - 24) / CGFloat(image.height))
-        let scale = max(0.05, min(1, fit))
+        let scale = previewZoom ?? max(0.05, min(1, fit))
         canvas.frame = CGRect(x: 0, y: 0,
                               width: CGFloat(image.width) * scale,
                               height: CGFloat(image.height) * scale)
+        dimensionsLabel?.stringValue = "\(image.width) × \(image.height)"
+        zoomButton?.title = "\(Int((scale * 100).rounded()))% ▾"
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    private func setPreviewZoom(_ zoom: CGFloat?) {
+        previewZoom = zoom
+        fitCanvasToViewport()
+        panel?.makeFirstResponder(canvas)
+    }
+
+    @objc private func zoom50() { setPreviewZoom(0.5) }
+    @objc private func zoom100() { setPreviewZoom(1) }
+    @objc private func zoom200() { setPreviewZoom(2) }
+    @objc private func zoomFit() { setPreviewZoom(nil) }
+    @objc private func zoomIn() { setPreviewZoom(min(8, (previewZoom ?? currentFitScale()) * 1.25)) }
+    @objc private func zoomOut() { setPreviewZoom(max(0.1, (previewZoom ?? currentFitScale()) / 1.25)) }
+
+    private func currentFitScale() -> CGFloat {
+        guard let scrollView else { return 1 }
+        let size = scrollView.contentSize
+        return max(0.05, min(1, (size.width - 24) / CGFloat(canvas.image.width),
+                            (size.height - 24) / CGFloat(canvas.image.height)))
+    }
+
+    @objc private func showZoomMenu(_ sender: NSButton) {
+        let menu = NSMenu()
+        let zoomActions: [(String, Selector)] = [
+            (NativeScreenshotUserText.string("放大", "Zoom In"), #selector(zoomIn)),
+            (NativeScreenshotUserText.string("缩小", "Zoom Out"), #selector(zoomOut)),
+            (NativeScreenshotText.get(.zoomFit), #selector(zoomFit)),
+            (NativeScreenshotText.get(.zoom50), #selector(zoom50)),
+            (NativeScreenshotText.get(.zoom100), #selector(zoom100)),
+            (NativeScreenshotText.get(.zoom200), #selector(zoom200))
+        ]
+        for (title, action) in zoomActions {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: CGPoint(x: 0, y: sender.bounds.maxY + 2), in: sender)
+    }
+
+    @objc private func beginCropFromBar() {
+        canvas.tool = .crop
+        refreshToolSelection()
+        rebuildOptions()
+        panel?.makeFirstResponder(canvas)
+    }
+
+    @objc private func flipHorizontalFromBar() {
+        performImageTransform {
+            try NativeScreenshotImageEditor.flip($0, horizontal: true, vertical: false)
+        }
+    }
+
+    @objc private func flipVerticalFromBar() {
+        performImageTransform {
+            try NativeScreenshotImageEditor.flip($0, horizontal: false, vertical: true)
+        }
+    }
+
+    @objc private func appendImageFromBar() {
+        guard let panel, busySheet == nil else { return }
+        let chooser = NSOpenPanel()
+        chooser.allowedContentTypes = [.image]
+        chooser.allowsMultipleSelection = false
+        chooser.canChooseDirectories = false
+        chooser.beginSheetModal(for: panel) { [weak self] response in
+            guard response == .OK, let url = chooser.url,
+                  let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let incoming = CGImageSourceCreateImageAtIndex(source, 0, nil),
+                  let self else { return }
+            let direction = NSAlert()
+            direction.messageText = NativeScreenshotText.get(.appendImage)
+            direction.addButton(withTitle: NativeScreenshotText.get(.appendBelow))
+            direction.addButton(withTitle: NativeScreenshotText.get(.appendRight))
+            direction.addButton(withTitle: NativeScreenshotText.get(.cancel))
+            direction.beginSheetModal(for: panel) { [weak self] choice in
+                guard let self else { return }
+                switch choice {
+                case .alertFirstButtonReturn:
+                    self.performImageTransform {
+                        try NativeScreenshotImageEditor.append($0, image: incoming, direction: .below)
+                    }
+                case .alertSecondButtonReturn:
+                    self.performImageTransform {
+                        try NativeScreenshotImageEditor.append($0, image: incoming, direction: .right)
+                    }
+                default: break
+                }
+            }
+        }
     }
 
     @objc private func pickImageEdit(_ sender: NSPopUpButton) {
@@ -766,7 +1111,7 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         switch index {
         case 1:
             canvas.tool = .crop
-            toolPicker?.selectItem(at: 0)
+            refreshToolSelection()
             rebuildOptions()
             panel?.makeFirstResponder(canvas)
         case 2: applyCrop()
@@ -786,7 +1131,7 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         }
         performImageTransform { try NativeScreenshotImageEditor.crop($0, to: crop) }
         canvas.tool = .select
-        toolPicker?.selectItem(at: 0)
+        refreshToolSelection()
         rebuildOptions()
     }
 
@@ -1079,21 +1424,36 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
 
     @objc private func undoEdit() { canvas.undo() }
     @objc private func redoEdit() { canvas.redo() }
-    @objc private func cancelEdit() { requestCancel() }
     @objc private func confirmEdit() { deliver(.confirm) }
+    @objc private func copyFromButton() { copyRenderedImage() }
+    @objc private func saveFromButton() { deliver(.save) }
+    @objc private func pinFromButton() { deliver(.pin) }
+    @objc private func ocrFromButton() { deliver(.ocr) }
+    @objc private func qrFromButton() { deliver(.qrCode) }
+    @objc private func redactFromButton() { deliver(.autoRedact) }
 
-    @objc private func pickAction(_ sender: NSPopUpButton) {
-        let action: NativeScreenshotDeliveryAction
-        switch sender.indexOfSelectedItem {
-        case 1: action = .ocr
-        case 2: action = .qrCode
-        case 3: action = .autoRedact
-        case 4: action = .pin
-        case 5: action = .save
-        default: return
+    private func copyRenderedImage() {
+        let snapshot = canvas.renderSnapshot()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result<Data, Error> {
+                let image = try snapshot.document.annotations.isEmpty ? snapshot.image
+                    : NativeScreenshotAnnotationRenderer.render(
+                        baseImage: snapshot.image, document: snapshot.document)
+                return try NativeScreenshotImageProcessor.encode(image, as: .png)
+            }
+            DispatchQueue.main.async {
+                guard let self, !self.closing,
+                      self.canvas.contentGeneration == snapshot.generation else { return }
+                switch result {
+                case let .success(data):
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setData(data, forType: .png)
+                case let .failure(error):
+                    if let panel = self.panel { NSAlert(error: error).beginSheetModal(for: panel) }
+                }
+            }
         }
-        sender.selectItem(at: 0)
-        deliver(action)
     }
 
     private func deliver(_ action: NativeScreenshotDeliveryAction) {
@@ -1143,14 +1503,22 @@ final class NativeScreenshotEditorController: NSObject, NSWindowDelegate, NSText
         }
     }
 
-    private static let toolShortcutKeys: [NativeScreenshotAnnotationKind: String] = [
-        .pencil: "P", .line: "L", .arrow: "A", .rectangle: "R",
-        .filledRectangle: "F", .ellipse: "E", .highlighter: "H",
-        .richText: "T", .number: "N", .stamp: "S",
-        .pixelate: "M", .blur: "B", .solidCensor: "X",
-        .eraseCensor: "D", .magnifier: "G", .ruler: "U",
-        .colorSampler: "C", .spotlight: "O"
-    ]
+}
+
+/// Keep a smaller image centered while the user resizes the detached editor.
+@available(macOS 13.0, *)
+private final class NativeScreenshotEditorClipView: NSClipView {
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var rect = super.constrainBoundsRect(proposedBounds)
+        guard let documentView else { return rect }
+        if documentView.frame.width < rect.width {
+            rect.origin.x = (documentView.frame.width - rect.width) / 2
+        }
+        if documentView.frame.height < rect.height {
+            rect.origin.y = (documentView.frame.height - rect.height) / 2
+        }
+        return rect
+    }
 }
 
 enum NativeScreenshotCanvasTool {
@@ -1161,6 +1529,9 @@ enum NativeScreenshotCanvasTool {
 
 @available(macOS 13.0, *)
 final class NativeScreenshotAnnotationCanvasView: NSView {
+    private static let internalAnnotationType = NSPasteboard.PasteboardType(
+        "com.clipyclone.screenshot.annotation")
+    private static var internalClipboard: (annotation: NativeScreenshotAnnotation, changeCount: Int)?
     private(set) var image: CGImage
     private var baselineImage: CGImage
     private var document: NativeScreenshotAnnotationDocument
@@ -1172,6 +1543,7 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
     }
     private(set) var contentGeneration: UInt64 = 0
     private var displayImage: CGImage?
+    private var transientPreviewImage: CGImage?
     private var displayAttemptedGeneration: UInt64?
     private var displayWork: DispatchWorkItem?
     private let displayQueue = DispatchQueue(label: "clipy.screenshot.canvas-preview", qos: .userInitiated)
@@ -1199,7 +1571,10 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
     var onEscape: (() -> Void)?
     var onImageSizeChanged: (() -> Void)?
     var onSelectionChanged: (() -> Void)?
+    var onContentChanged: (() -> Void)?
     var onToolShortcut: ((NativeScreenshotAnnotationKind?) -> Void)?
+    var onCopyImage: (() -> Void)?
+    var onSaveImage: (() -> Void)?
     var arrowStyle: NativeScreenshotArrowStyle = .solid
     var pencilSmoothing: NativeScreenshotPencilSmoothing = .smooth
     var pressureEnabled = false
@@ -1210,6 +1585,7 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
     var textBackgroundEnabled = false
     var textBackgroundColor: NativeScreenshotColor = .yellow
     var textFontSize: CGFloat = 24
+    var textFontName: String?
     var stampImage: CGImage?
     var smartMarkerEnabled = false
     var pixelBlockSize: CGFloat = 12
@@ -1219,6 +1595,8 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
 
     var canPreserveImageUndo: Bool { image.bytesPerRow * image.height <= imageUndoByteLimit }
     var hasUnsavedEdits: Bool { image !== baselineImage || !document.annotations.isEmpty }
+    var hasImageTransform: Bool { image !== baselineImage }
+    var hasSelectedAnnotation: Bool { selectedAnnotationID != nil }
 
     init(image: CGImage) {
         self.image = image
@@ -1258,6 +1636,11 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
             cachedRevision = document.revision
         }
         return result
+    }
+
+    func showTransientPreview(_ preview: CGImage?) {
+        transientPreviewImage = preview
+        needsDisplay = true
     }
 
     func undo() {
@@ -1309,6 +1692,7 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
            let first = runs.first {
             textOverride = runs.map(\.text).joined()
             textFontSize = first.fontSize
+            textFontName = first.fontName
             textBold = first.bold
             textItalic = first.italic
             textUnderline = first.underline
@@ -1375,6 +1759,7 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
             var edited = run
             edited.color = style.strokeColor
             edited.fontSize = textFontSize
+            edited.fontName = textFontName
             edited.bold = textBold
             edited.italic = textItalic
             edited.underline = textUnderline
@@ -1398,11 +1783,74 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
         return true
     }
 
+    @discardableResult
+    func insertAnnotations(_ annotations: [NativeScreenshotAnnotation]) -> Int {
+        let inserted = document.insertBatch(annotations)
+        guard inserted > 0 else { return 0 }
+        selectedAnnotationID = nil
+        imageRedo.removeAll()
+        invalidateRendered()
+        return inserted
+    }
+
     func deleteSelection() {
         guard let selectedAnnotationID, document.remove(id: selectedAnnotationID) else { return }
         self.selectedAnnotationID = nil
         imageRedo.removeAll()
         invalidateRendered()
+    }
+
+    @discardableResult
+    func duplicateSelection() -> Bool {
+        guard let selectedAnnotationID,
+              let selected = document.annotations.first(where: { $0.id == selectedAnnotationID }) else {
+            return false
+        }
+        return insertCopy(of: selected)
+    }
+
+    @discardableResult
+    func copySelection() -> Bool {
+        guard let selectedAnnotationID,
+              let selected = document.annotations.first(where: { $0.id == selectedAnnotationID }) else {
+            return false
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setData(Data([1]), forType: Self.internalAnnotationType)
+        Self.internalClipboard = (selected, pasteboard.changeCount)
+        return true
+    }
+
+    @discardableResult
+    func pasteSelection() -> Bool {
+        let pasteboard = NSPasteboard.general
+        if let copied = Self.internalClipboard,
+           copied.changeCount == pasteboard.changeCount,
+           pasteboard.data(forType: Self.internalAnnotationType) != nil {
+            return insertCopy(of: copied.annotation)
+        }
+        guard let image = pasteboard.readObjects(forClasses: [NSImage.self], options: nil)?.first as? NSImage,
+              let source = try? NativeScreenshotImageProcessor.cgImage(from: image),
+              source.width > 0, source.height > 0,
+              source.width <= 8_192, source.height <= 8_192,
+              source.width <= 16_000_000 / source.height else { return false }
+        let maxSide = min(CGFloat(self.image.width), CGFloat(self.image.height)) * 0.65
+        let factor = min(1, maxSide / CGFloat(max(source.width, source.height)))
+        let size = CGSize(width: max(1, CGFloat(source.width) * factor),
+                          height: max(1, CGFloat(source.height) * factor))
+        let rect = CGRect(x: max(0, (CGFloat(self.image.width) - size.width) / 2),
+                          y: max(0, (CGFloat(self.image.height) - size.height) / 2),
+                          width: size.width, height: size.height)
+        return insertAnnotation(NativeScreenshotAnnotation(
+            content: .stamp(rect: rect, content: .image(source)), style: style))
+    }
+
+    private func insertCopy(of original: NativeScreenshotAnnotation) -> Bool {
+        var copy = original
+        copy.id = UUID()
+        copy.content = original.content.translated(by: CGSize(width: 16, height: 16))
+        return insertAnnotation(copy)
     }
 
     func applyImageTransform(_ operation: (CGImage) throws -> CGImage) throws {
@@ -1444,7 +1892,18 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        if let displayImage {
+        if let transientPreviewImage {
+            NSColor.black.setFill()
+            bounds.fill()
+            let width = CGFloat(transientPreviewImage.width)
+            let height = CGFloat(transientPreviewImage.height)
+            let scale = min(bounds.width / max(1, width), bounds.height / max(1, height))
+            let fitted = CGRect(x: (bounds.width - width * scale) / 2,
+                                y: (bounds.height - height * scale) / 2,
+                                width: width * scale, height: height * scale)
+            NSImage(cgImage: transientPreviewImage,
+                    size: CGSize(width: width, height: height)).draw(in: fitted)
+        } else if let displayImage {
             NSImage(cgImage: displayImage, size: bounds.size).draw(in: bounds)
         } else {
             NSColor.black.setFill()
@@ -1576,15 +2035,33 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
-            onEscape?()
+            if selectedAnnotationID != nil { clearSelection() }
+            else {
+                switch tool {
+                case .select: onEscape?()
+                case .crop, .annotation:
+                    tool = .select
+                    onToolShortcut?(nil)
+                }
+            }
         } else if event.modifierFlags.contains(.command) && event.keyCode == 6 {
             if event.modifierFlags.contains(.shift) { redo() } else { undo() }
+        } else if event.modifierFlags.contains(.command) && event.keyCode == 8 {
+            if !copySelection() { onCopyImage?() }
+        } else if event.modifierFlags.contains(.command) && event.keyCode == 9 {
+            _ = pasteSelection()
+        } else if event.modifierFlags.contains(.command) && event.keyCode == 2 {
+            _ = duplicateSelection()
+        } else if event.modifierFlags.contains(.command) && event.keyCode == 1 {
+            onSaveImage?()
         } else if event.keyCode == 51 || event.keyCode == 117 {
             deleteSelection()
         } else if !event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
             super.keyDown(with: event)
         } else if let key = event.charactersIgnoringModifiers?.lowercased(),
-                  let kind = Self.shortcutTools[key] {
+                  let toolID = PreferencesManager.shared.nativeScreenshotToolbarConfiguration
+                    .toolID(forShortcut: key) {
+            let kind = NativeScreenshotAnnotationKind(rawValue: toolID)
             if let kind { tool = .annotation(kind) } else { tool = .select }
             clearSelection()
             onToolShortcut?(kind)
@@ -1592,16 +2069,6 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
             super.keyDown(with: event)
         }
     }
-
-    private static let shortcutTools: [String: NativeScreenshotAnnotationKind?] = [
-        "v": nil, "p": .pencil, "l": .line, "a": .arrow,
-        "r": .rectangle, "f": .filledRectangle, "e": .ellipse,
-        "h": .highlighter, "t": .richText, "n": .number,
-        "s": .stamp, "m": .pixelate, "b": .blur,
-        "x": .solidCensor, "d": .eraseCensor,
-        "g": .magnifier, "u": .ruler, "c": .colorSampler,
-        "o": .spotlight
-    ]
 
     private func strokePressure(_ event: NSEvent) -> CGFloat {
         guard pressureEnabled, event.pressure > 0 else { return 1 }
@@ -1637,6 +2104,7 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
             guard !value.isEmpty else { return nil }
             let runs = [NativeScreenshotTextRun(
                                 text: value, color: style.strokeColor,
+                                fontName: textFontName,
                                 fontSize: textFontSize, bold: textBold, italic: textItalic,
                                 underline: textUnderline, outlineWidth: textOutlineWidth,
                                 backgroundColor: textBackgroundEnabled ? textBackgroundColor : nil)]
@@ -1694,6 +2162,7 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
 
     private func invalidateRendered() {
         contentGeneration &+= 1
+        transientPreviewImage = nil
         cachedImage = nil
         cachedRevision = nil
         displayImage = nil
@@ -1702,6 +2171,7 @@ final class NativeScreenshotAnnotationCanvasView: NSView {
         displayWork = nil
         scheduleDisplayPreview()
         needsDisplay = true
+        onContentChanged?()
     }
 
     private func scheduleDisplayPreview() {

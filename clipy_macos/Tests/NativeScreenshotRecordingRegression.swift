@@ -18,9 +18,13 @@ enum NativeScreenshotRecordingRegression {
             sourceRect: CGRect(x: 0, y: 0, width: 1_501, height: 1_001),
             outputURL: directory.appendingPathComponent("test.mp4"),
             framesPerSecond: 24,
+            microphoneDeviceID: "test-microphone",
+            webcamDeviceID: "test-camera",
             maxDimension: 1_280
         )
         _ = try base.validated()
+        precondition(base.microphoneDeviceID == "test-microphone")
+        precondition(base.webcamDeviceID == "test-camera")
         let size = base.outputSize(displayScale: 2)
         precondition(Int(size.width) <= 1_280 && Int(size.height) <= 1_280)
         precondition(Int(size.width).isMultiple(of: 2) && Int(size.height).isMultiple(of: 2))
@@ -152,18 +156,61 @@ enum NativeScreenshotRecordingRegression {
         let staticDuration = try await AVURLAsset(url: staticURL).load(.duration)
         precondition(staticDuration.seconds >= 0.15 && staticDuration.seconds < 0.8)
 
+        // A paused capture keeps the stream open, but the finished movie must
+        // contain only active time. Inspect the encoded asset, not just the
+        // in-memory timestamp bookkeeping.
+        let pausedURL = directory.appendingPathComponent("paused.mp4")
+        let pausedWriter = try NativeScreenshotMovieWriter(
+            url: pausedURL, size: CGSize(width: 320, height: 240),
+            systemAudio: false, microphone: false, maxDuration: 10
+        )
+        pausedWriter.appendVideo(staticSample!)
+        try await Task.sleep(nanoseconds: 60_000_000)
+        let pauseStarted = ProcessInfo.processInfo.systemUptime
+        pausedWriter.pause()
+        let activeBefore = pausedWriter.activeElapsed
+        try await Task.sleep(nanoseconds: 250_000_000)
+        precondition(abs(pausedWriter.activeElapsed - activeBefore) < 0.03)
+        pausedWriter.resume()
+        let pausedInterval = ProcessInfo.processInfo.systemUptime - pauseStarted
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let sourceTime = pausedInterval + 0.16
+        var resumedTiming = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: 30),
+            presentationTimeStamp: CMTime(seconds: sourceTime, preferredTimescale: 1_000_000),
+            decodeTimeStamp: .invalid
+        )
+        var resumedSample: CMSampleBuffer?
+        precondition(CMSampleBufferCreateCopyWithNewTiming(
+            allocator: kCFAllocatorDefault, sampleBuffer: staticSample!,
+            sampleTimingEntryCount: 1, sampleTimingArray: &resumedTiming,
+            sampleBufferOut: &resumedSample) == noErr)
+        pausedWriter.appendVideo(resumedSample!)
+        let adjustedTime = CMTimeGetSeconds(pausedWriter.lastVideoTime!)
+        precondition(adjustedTime > 0.08 && adjustedTime < 0.26)
+        try await pausedWriter.finish()
+        let pausedDuration = try await AVURLAsset(url: pausedURL).load(.duration)
+        precondition(pausedDuration.seconds > 0.08)
+        precondition(pausedDuration.seconds < sourceTime - 0.08,
+                     "Paused time leaked into the MP4: \(pausedDuration.seconds)")
+
+        let cancelledURL = directory.appendingPathComponent("cancelled.mp4")
         let cancelledWriter = try NativeScreenshotMovieWriter(
-            url: directory.appendingPathComponent("cancelled.mp4"),
+            url: cancelledURL,
             size: CGSize(width: 320, height: 240),
             systemAudio: false, microphone: false, maxDuration: 10
         )
         sampleQueue.sync {
             cancelledWriter.appendVideo(staticSample!)
+            cancelledWriter.pause()
             let lastTime = cancelledWriter.lastVideoTime
             cancelledWriter.cancel()
+            cancelledWriter.resume()
             cancelledWriter.appendVideo(lateSample!)
             precondition(cancelledWriter.lastVideoTime == lastTime)
         }
+        precondition(!FileManager.default.fileExists(atPath: cancelledURL.path),
+                     "Cancelled MP4 left a temporary output file")
 
         let gifURL = directory.appendingPathComponent("synthetic.gif")
         try await NativeScreenshotGIFExporter.export(

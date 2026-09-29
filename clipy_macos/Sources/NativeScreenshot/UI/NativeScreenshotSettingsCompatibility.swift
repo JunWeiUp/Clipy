@@ -24,7 +24,7 @@ enum NativeScreenshotSettingsCompatibility {
         "Downscale Retina Screenshots to 1×": "将 Retina 截图缩小至 1×",
         "Enable Beautify Wrap by Default": "默认启用美化包裹",
         "Frame Rate (FPS)": "帧率（FPS）",
-        "Hide Recording Timer HUD": "隐藏录制计时浮层",
+        "Hide Recording Controls": "隐藏录屏控件",
         "Huge": "超大",
         "Input Monitoring": "输入监控",
         "Keystroke Display": "按键显示",

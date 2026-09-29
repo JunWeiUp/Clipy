@@ -50,6 +50,22 @@ struct NativeScreenshotAnnotationDocument {
         return true
     }
 
+    /// One OCR translation can add several editable text blocks. Keep those
+    /// blocks as a single undo step, while still rejecting duplicate IDs and
+    /// transient color-sampler entries.
+    @discardableResult
+    mutating func insertBatch(_ candidates: [NativeScreenshotAnnotation]) -> Int {
+        var knownIDs = Set(annotations.map(\.id))
+        let accepted = candidates.filter { annotation in
+            annotation.kind != .colorSampler && knownIDs.insert(annotation.id).inserted
+        }
+        guard !accepted.isEmpty else { return 0 }
+        recordEdit()
+        annotations.append(contentsOf: accepted)
+        revision &+= 1
+        return accepted.count
+    }
+
     @discardableResult
     mutating func replace(_ annotation: NativeScreenshotAnnotation) -> Bool {
         guard annotation.kind != .colorSampler,

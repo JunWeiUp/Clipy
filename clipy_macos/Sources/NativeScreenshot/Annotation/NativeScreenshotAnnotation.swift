@@ -45,17 +45,22 @@ struct NativeScreenshotAnnotationStyle {
     var fillColor: NativeScreenshotColor = .white
     var lineWidth: CGFloat = 3
     var opacity: CGFloat = 1
+    /// Translation text covers the source line with its sampled background;
+    /// keeping this on the text annotation makes the whole block move together.
+    var fillsTextBox: Bool = false
 
     init(
         strokeColor: NativeScreenshotColor = .red,
         fillColor: NativeScreenshotColor = .white,
         lineWidth: CGFloat = 3,
-        opacity: CGFloat = 1
+        opacity: CGFloat = 1,
+        fillsTextBox: Bool = false
     ) {
         self.strokeColor = strokeColor
         self.fillColor = fillColor
         self.lineWidth = lineWidth
         self.opacity = opacity
+        self.fillsTextBox = fillsTextBox
     }
 }
 

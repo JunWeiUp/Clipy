@@ -9,8 +9,10 @@ struct NativeScreenshotRecordingOptions {
     let framesPerSecond: Int
     let includesSystemAudio: Bool
     let includesMicrophone: Bool
+    let microphoneDeviceID: String?
     let highlightsMouseClicks: Bool
     let webcam: Webcam?
+    let webcamDeviceID: String?
     let keystrokeMode: KeystrokeMode
     let maxDuration: TimeInterval
     let maxDimension: Int
@@ -22,8 +24,10 @@ struct NativeScreenshotRecordingOptions {
         framesPerSecond: Int = 30,
         includesSystemAudio: Bool = false,
         includesMicrophone: Bool = false,
+        microphoneDeviceID: String? = nil,
         highlightsMouseClicks: Bool = false,
         webcam: Webcam? = nil,
+        webcamDeviceID: String? = nil,
         keystrokeMode: KeystrokeMode = .off,
         maxDuration: TimeInterval = 3_600,
         maxDimension: Int = 4_096
@@ -34,8 +38,10 @@ struct NativeScreenshotRecordingOptions {
         self.framesPerSecond = framesPerSecond
         self.includesSystemAudio = includesSystemAudio
         self.includesMicrophone = includesMicrophone
+        self.microphoneDeviceID = microphoneDeviceID
         self.highlightsMouseClicks = highlightsMouseClicks
         self.webcam = webcam
+        self.webcamDeviceID = webcamDeviceID
         self.keystrokeMode = keystrokeMode
         self.maxDuration = maxDuration
         self.maxDimension = maxDimension

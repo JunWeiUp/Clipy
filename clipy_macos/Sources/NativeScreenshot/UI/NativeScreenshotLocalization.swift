@@ -25,6 +25,8 @@ enum NativeScreenshotText {
         case arrowSolid, arrowDashed, arrowCurved, arrowCurvedDashed
         case arrowSketch, arrowDoubleHeaded
         case smoothingNone, smoothingSmooth, smoothingRefined
+        case pixelDimensions, appendImage, appendBelow, appendRight
+        case zoom50, zoom100, zoom200, zoomFit
 
         var words: (zh: String, en: String) {
             switch self {
@@ -127,6 +129,14 @@ enum NativeScreenshotText {
             case .smoothingNone: return ("无", "None")
             case .smoothingSmooth: return ("平滑", "Smooth")
             case .smoothingRefined: return ("精细", "Refined")
+            case .pixelDimensions: return ("图像像素尺寸", "Image pixel dimensions")
+            case .appendImage: return ("追加图片…", "Append image…")
+            case .appendBelow: return ("追加到下方", "Append below")
+            case .appendRight: return ("追加到右侧", "Append to right")
+            case .zoom50: return ("50%", "50%")
+            case .zoom100: return ("100%", "100%")
+            case .zoom200: return ("200%", "200%")
+            case .zoomFit: return ("适合窗口", "Fit")
             }
         }
     }

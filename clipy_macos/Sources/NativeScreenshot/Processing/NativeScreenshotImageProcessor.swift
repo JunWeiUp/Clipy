@@ -13,6 +13,7 @@ enum NativeScreenshotImageProcessor {
         case invalidImage
         case unavailableEncoder(String)
         case renderingFailed
+        case noForegroundSubject
     }
 
     enum FileFormat: String {
@@ -44,6 +45,51 @@ enum NativeScreenshotImageProcessor {
         var contrast: Float = 1
         var saturation: Float = 1
         var sharpness: Float = 0
+    }
+
+    enum EffectPreset: Int, CaseIterable {
+        case none, noir, mono, sepia, chrome, fade, instant, vivid
+
+        var title: String {
+            switch self {
+            case .none: return NativeScreenshotUserText.string("无", "None")
+            case .noir: return NativeScreenshotUserText.string("黑色", "Noir")
+            case .mono: return NativeScreenshotUserText.string("单色", "Mono")
+            case .sepia: return NativeScreenshotUserText.string("复古", "Sepia")
+            case .chrome: return NativeScreenshotUserText.string("铬色", "Chrome")
+            case .fade: return NativeScreenshotUserText.string("褪色", "Fade")
+            case .instant: return NativeScreenshotUserText.string("即时", "Instant")
+            case .vivid: return NativeScreenshotUserText.string("鲜艳", "Vivid")
+            }
+        }
+
+        /// Construct the public Core Image filter used by this UI preset.
+        /// Keeping the filter itself here avoids string-based filter lookup.
+        fileprivate func makeFilter() -> CIFilter? {
+            switch self {
+            case .none, .vivid: return nil
+            case .noir: return CIFilter.photoEffectNoir()
+            case .mono: return CIFilter.photoEffectMono()
+            case .chrome: return CIFilter.photoEffectChrome()
+            case .fade: return CIFilter.photoEffectFade()
+            case .instant: return CIFilter.photoEffectInstant()
+            case .sepia:
+                let filter = CIFilter.sepiaTone()
+                filter.intensity = 0.8
+                return filter
+            }
+        }
+    }
+
+    struct Effects {
+        var preset: EffectPreset = .none
+        var adjustments = Adjustments()
+
+        var isIdentity: Bool {
+            preset == .none && adjustments.brightness == 0
+                && adjustments.contrast == 1 && adjustments.saturation == 1
+                && adjustments.sharpness == 0
+        }
     }
 
     enum ObscureStyle {
@@ -159,6 +205,78 @@ enum NativeScreenshotImageProcessor {
         sharpen.inputImage = colored
         sharpen.sharpness = values.sharpness
         guard let output = sharpen.outputImage,
+              let rendered = makeContext().createCGImage(output, from: input.extent) else {
+            throw ImageError.renderingFailed
+        }
+        return rendered
+    }
+
+    /// A preset is applied once to the source, followed by the independent
+    /// slider values. The vivid preset has its own fixed boost so choosing a
+    /// different preset cannot accidentally keep its contrast and saturation.
+    static func applyEffects(_ image: CGImage, using options: Effects) throws -> CGImage {
+        guard !options.isIdentity else { return image }
+        var output = CIImage(cgImage: image)
+        if options.preset == .vivid {
+            let vivid = CIFilter.colorControls()
+            vivid.inputImage = output
+            vivid.contrast = 1.2
+            vivid.saturation = 1.5
+            output = vivid.outputImage ?? output
+        } else if let preset = options.preset.makeFilter() {
+            preset.setValue(output, forKey: kCIInputImageKey)
+            output = preset.outputImage ?? output
+        }
+        let values = options.adjustments
+        if values.brightness != 0 || values.contrast != 1 || values.saturation != 1 {
+            let controls = CIFilter.colorControls()
+            controls.inputImage = output
+            controls.brightness = values.brightness
+            controls.contrast = values.contrast
+            controls.saturation = values.saturation
+            output = controls.outputImage ?? output
+        }
+        if values.sharpness > 0 {
+            let sharpen = CIFilter.sharpenLuminance()
+            sharpen.inputImage = output
+            sharpen.sharpness = values.sharpness
+            output = sharpen.outputImage ?? output
+        }
+        guard let rendered = makeContext().createCGImage(output, from: CIImage(cgImage: image).extent) else {
+            throw ImageError.renderingFailed
+        }
+        return rendered
+    }
+
+    static func invertColors(_ image: CGImage) throws -> CGImage {
+        let input = CIImage(cgImage: image)
+        let filter = CIFilter.colorInvert()
+        filter.inputImage = input
+        guard let output = filter.outputImage,
+              let rendered = makeContext().createCGImage(output, from: input.extent) else {
+            throw ImageError.renderingFailed
+        }
+        return rendered
+    }
+
+    @available(macOS 14.0, *)
+    static func removeBackground(_ image: CGImage) throws -> CGImage {
+        let request = VNGenerateForegroundInstanceMaskRequest()
+        let handler = VNImageRequestHandler(cgImage: image)
+        try handler.perform([request])
+        guard let observation = request.results?.first,
+              !observation.allInstances.isEmpty else {
+            throw ImageError.noForegroundSubject
+        }
+        let mask = try observation.generateScaledMaskForImage(
+            forInstances: observation.allInstances, from: handler)
+        let input = CIImage(cgImage: image)
+        let background = CIImage(color: .clear).cropped(to: input.extent)
+        let filter = CIFilter.blendWithMask()
+        filter.inputImage = input
+        filter.backgroundImage = background
+        filter.maskImage = CIImage(cvPixelBuffer: mask)
+        guard let output = filter.outputImage,
               let rendered = makeContext().createCGImage(output, from: input.extent) else {
             throw ImageError.renderingFailed
         }

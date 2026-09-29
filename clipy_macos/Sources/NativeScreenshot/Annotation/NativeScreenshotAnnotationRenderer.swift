@@ -157,6 +157,9 @@ enum NativeScreenshotAnnotationRenderer {
             strokePolyline(points, in: context, height: height)
 
         case let .richText(rect, runs):
+            if style.fillsTextBox, let box = cgRect(rect, height: height) {
+                context.fill(box)
+            }
             drawRichText(runs, in: rect, context: context, height: height)
 
         case let .number(center, value):
