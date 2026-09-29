@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      full_matrix:
+        description: Run every platform when another workflow calls CI
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -15,6 +20,77 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Select affected platforms
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      macos: ${{ steps.platforms.outputs.macos }}
+      android: ${{ steps.platforms.outputs.android }}
+      windows: ${{ steps.platforms.outputs.windows }}
+      ios: ${{ steps.platforms.outputs.ios }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: github.event_name == 'pull_request' && !inputs.full_matrix
+        with:
+          persist-credentials: false
+          # The PR merge commit has the base and head commits as its parents.
+          fetch-depth: 2
+      - name: Detect changed paths
+        id: platforms
+        shell: bash
+        env:
+          FORCE_ALL: ${{ inputs.full_matrix || github.event_name != 'pull_request' }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          macos=false android=false windows=false ios=false
+          if [[ "$FORCE_ALL" == true ]]; then
+            macos=true android=true windows=true ios=true
+          elif [[ -z "$PR_BASE_SHA" || -z "$PR_HEAD_SHA" ]] ||
+               ! git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null ||
+               ! git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
+            # A shallow checkout must never turn a missing comparison into skipped CI.
+            macos=true android=true windows=true ios=true
+          else
+            changed_files="$RUNNER_TEMP/clipy-pr-changed-files"
+            if ! git diff --name-only --no-renames -z "$PR_BASE_SHA" "$PR_HEAD_SHA" > "$changed_files"; then
+              macos=true android=true windows=true ios=true
+            else
+              all=false
+              while IFS= read -r -d '' path; do
+                case "$path" in
+                  .github/workflows/*|scripts/check.sh|scripts/lib/build_common.sh|LICENSE|THIRD_PARTY_NOTICES.md)
+                    all=true ;;
+                  clipy_android/lib/*|clipy_android/assets/*|clipy_android/pubspec.*|clipy_android/analysis_options.yaml|clipy_android/devtools_options.yaml|.fvmrc)
+                    android=true windows=true ios=true ;;
+                  clipy_android/android/*|clipy_android/test/*|clipy_android/tool/*|build_android_apk.sh)
+                    android=true ;;
+                  clipy_android/windows/*|scripts/package_windows.ps1)
+                    windows=true ;;
+                  clipy_android/ios/*)
+                    ios=true ;;
+                  clipy_macos/*|third_party/libwebp/*|Clipy/*|build_macos_app.sh|scripts/lib/build_webp.sh|scripts/test_macos_core.sh|scripts/test_native_screenshot.sh|scripts/check_screenshot_provenance.sh|docs/MACOS_INSTALL.md)
+                    macos=true ;;
+                  docs/*|README*|clipy_android/README*|res/*|.github/PULL_REQUEST_TEMPLATE.md)
+                    ;; # Repository checks still run for documentation-only changes.
+                  *)
+                    all=true ;; # Unknown build input: fail open and run every platform.
+                esac
+              done < "$changed_files"
+              if [[ "$all" == true ]]; then
+                macos=true android=true windows=true ios=true
+              fi
+            fi
+          fi
+          {
+            printf 'macos=%s\n' "$macos"
+            printf 'android=%s\n' "$android"
+            printf 'windows=%s\n' "$windows"
+            printf 'ios=%s\n' "$ios"
+          } >> "$GITHUB_OUTPUT"
+
   repository:
     name: Repository checks
     runs-on: ubuntu-latest
@@ -27,6 +103,8 @@ jobs:
 
   android:
     name: Flutter checks and Android build
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -54,10 +132,14 @@ jobs:
 
   macos:
     name: macOS compile and bundle validation
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
     uses: ./.github/workflows/macos.yml
 
   windows:
     name: Windows x64 compile
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
@@ -101,6 +183,8 @@ jobs:
 
   ios:
     name: iOS unsigned build and simulator compile
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     runs-on: macos-26
     timeout-minutes: 35
     steps:
