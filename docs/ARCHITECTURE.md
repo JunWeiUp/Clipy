@@ -66,7 +66,9 @@ over a method channel, then Dart copies the image and persists it through the
 same local image-history path as clipboard images. The overlay and full-screen
 bitmap are released after confirmation or cancellation; no capture loop runs
 while the app is idle. A window that refuses `PrintWindow` returns a visible
-failure rather than saving pixels from a different window.
+failure rather than saving pixels from a different window. Some protected or
+GPU-rendered windows can still return a blank frame despite `PrintWindow`
+reporting success; Windows device acceptance must cover representative apps.
 
 iOS attaches its Flutter UI after core bootstrap (Android's Activity still owns
 `ui.attach`). Native `UIPasteControl` sends user-pasted text to history; there is
