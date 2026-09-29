@@ -11,6 +11,9 @@ struct MenuBarPanelView: View {
         let _ = language.revision
         VStack(spacing: 0) {
             topBar.padding(.bottom, 12)
+            if model.recording.active {
+                recordingControls.padding(.bottom, 12)
+            }
             overflowStrip.padding(.bottom, 12)
             if model.page == .home && !model.isSearching {
                 TokenUsagePanelSummary(manager: .shared) { model.onAction?(.tokenUsage) }
@@ -46,6 +49,59 @@ struct MenuBarPanelView: View {
                 .foregroundStyle(model.pinned ? AppColor.accent : Color.primary)
             iconButton(.preferences, symbol: "gearshape") { model.navigate(model.page == .settings ? .home : .settings) }
         }
+    }
+    private var recordingControls: some View {
+        HStack(spacing: 8) {
+            Image(systemName: model.recording.paused ? "pause.circle.fill" : "record.circle.fill")
+                .font(.system(size: 19))
+                .foregroundStyle(Color.red)
+            Text(NativeScreenshotUserText.string(
+                model.recording.finalizing ? "正在保存录屏…" : model.recording.paused ? "录屏已暂停" : model.recording.started ? "正在录屏" : "录屏准备中",
+                model.recording.finalizing ? "Saving recording…" : model.recording.paused ? "Recording paused" : model.recording.started ? "Recording" : "Preparing recording"))
+                .font(AppFont.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if model.recording.started && !model.recording.finalizing {
+                recordingButton(
+                    NativeScreenshotUserText.string(model.recording.paused ? "继续" : "暂停",
+                                                    model.recording.paused ? "Resume" : "Pause"),
+                    symbol: model.recording.paused ? "play.fill" : "pause.fill",
+                    color: AppColor.accent) {
+                    model.onAction?(.recordingPauseToggle)
+                }
+                recordingButton(NativeScreenshotUserText.string("停止", "Stop"),
+                                symbol: "stop.fill", color: .red) {
+                    model.onAction?(.recordingStop)
+                }
+            }
+            if !model.recording.finalizing {
+                recordingButton(NativeScreenshotUserText.string("取消", "Cancel"),
+                                symbol: "xmark", color: .secondary) {
+                    model.onAction?(.recordingCancel)
+                }
+            }
+        }
+        .padding(.horizontal, 11)
+        .frame(height: 52)
+        .background(Color.red.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.red.opacity(0.20)))
+        .accessibilityElement(children: .contain)
+    }
+    private func recordingButton(_ title: String, symbol: String, color: Color,
+                                 action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(AppFont.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .foregroundStyle(color)
+                .padding(.horizontal, 9)
+                .frame(height: 32)
+                .contentShape(Rectangle())
+                .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
     }
     private var search: some View {
         HStack(spacing: 9) {

@@ -41,6 +41,7 @@ jobs:
           echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "build=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
       - run: bash scripts/test_macos_core.sh
+      - run: bash scripts/test_native_screenshot.sh
       - name: Build with ad-hoc signing
         run: bash scripts/check.sh macos
       - name: Package and verify download

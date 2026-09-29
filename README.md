@@ -13,7 +13,7 @@
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=1262f3)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
-[![License review](https://img.shields.io/badge/license-review_required-orange)](THIRD_PARTY_NOTICES.md)
+[![Code license: MIT](https://img.shields.io/badge/code_license-MIT-blue)](LICENSE)
 
 **[A closer look](#a-closer-look)** · **[Android](#at-home-on-android)** · **[Get started](#get-started-in-three-steps)** · **[All features](#feature-reference)**
 
@@ -115,12 +115,12 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 
 **[Installation & troubleshooting](docs/GETTING_STARTED.md)** · **[Report a problem](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[Suggest a feature](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
 
-> **Before sharing:** sync is designed for trusted networks; set a strong private pairing secret. Read the [security boundaries](SECURITY.md). The macshot-derived screenshot module still needs a [third-party license review](THIRD_PARTY_NOTICES.md); the combined application must not be assumed to be MIT-only.
+> **Before sharing:** sync is designed for trusted networks; set a strong private pairing secret. Read the [security boundaries](SECURITY.md) and [third-party notices](THIRD_PARTY_NOTICES.md).
 
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.23** · Default local build **10136** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.24** · Default local build **10148** · [Build metadata](clipy_android/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version above may be ahead of published packages while a release is being prepared. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
@@ -146,12 +146,12 @@ Download installers from the [latest published release](https://github.com/JunWe
 
 ### 📸 Screenshot & annotation (macOS)
 - Capture modes: **region / window / fullscreen / scrolling long-screenshot / screen recording (MP4 + GIF)**.
-- **18-tool annotation engine** (ported from [macshot](https://github.com/sw33tLie/macshot)) on a single unified overlay: pencil (pressure + smoothing), line, **6 arrow styles** (curved/dashed/sketchy), rectangle, filled rectangle, ellipse, **marker (multiply blend)**, rich text (bold/italic/outline/background), auto-incrementing **number**, emoji/image **stamp**, **pixelate/blur/solid/erase censor**, **loupe magnifier**, **pixel ruler**, **color sampler**, **spotlight highlight**.
+- **Independently implemented 18-tool annotation engine** with a native selection overlay and editor: pencil (pressure + smoothing), line, **6 arrow styles** (curved/dashed/sketchy), rectangle, filled rectangle, ellipse, **marker (multiply blend)**, rich text (bold/italic/outline/background), auto-incrementing **number**, emoji/image **stamp**, **pixelate/blur/solid/erase censor**, **loupe magnifier**, **pixel ruler**, **color sampler**, **spotlight highlight**.
 - Per-tool **secondary options bar** + glass primary toolbar + color/emoji/font/effects popovers.
 - **Beautify** gradient wrapping + **image effects** (brightness/contrast/saturation/sharpness).
-- **Scrolling capture** with live side preview (Vision-based frame-stitch).
+- **Scrolling capture** with live side preview and checked frame-overlap stitching.
 - **Recording** with system-audio + microphone, webcam overlay, mouse-click highlight, keystroke display.
-- **On-device OCR** + **QR** via Apple Vision; **auto-redact** PII; **Apple Translation** overlay.
+- **On-device OCR** + **QR** via Apple Vision; reviewed **auto-redact** suggestions; user-triggered **Apple Translation** on macOS 15+.
 - **Pin to screen** (zoom/opacity/rotate/edit), **floating thumbnail** feedback, **standalone editor** window (crop/flip/zoom), save-as, copy.
 - Configurable save directory, single-key tool shortcuts, and a global hotkey.
 - Fully localized (English + Simplified Chinese).
@@ -286,10 +286,10 @@ cd clipy_android
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.23
+./scripts/package_windows.ps1 -Version 1.0.24
 ```
 
-The package is `dist/ClipyClone-Windows-x64-v1.0.23.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Current source builds add a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
+The package is `dist/ClipyClone-Windows-x64-v1.0.24.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Windows History includes a Screenshot menu for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
 
 ### iOS (Flutter + Swift)
 
@@ -311,7 +311,7 @@ Run `bash scripts/check.sh all` from the root for local quality checks. On macOS
 - `ClipboardManager` — pasteboard polling, history persistence, dedup, sync dispatch.
 - `SnippetManager` — folders, snippets, hotkeys, import/export.
 - `SyncManager` — subnet/manual discovery, length-prefixed TCP sync (protocol v2), AES-GCM encryption, reliable history + notification delivery.
-- `Sources/Screenshot/` — the full screenshot/recording engine (ported from macshot): unified `OverlayView`, 18-tool annotation engine, scroll capture, recording, beautify/effects, OCR, pin, floating thumbnail, editor window. Driven by `ScreenshotSessionCoordinator`.
+- `Sources/NativeScreenshot/` — independently implemented screenshot/recording engine: capture, 18-tool annotation model, long capture, MP4/GIF, image effects, recognition, pin, thumbnail and editor. Driven by `NativeScreenshotCoordinator`; WebP export statically links BSD-licensed libwebp.
 - `SearchWindow` — global search with filters and ranking.
 - `NotificationManager` — phone-notification mirror.
 - `PreferencesManager`, `SettingsWindow`, `SnippetEditorWindow`, `LogWindow` — config & editing surfaces.
@@ -377,7 +377,7 @@ Use the [release notes template](docs/RELEASE_NOTES_TEMPLATE.md) to explain user
 
 ## 📄 License
 
-The repository currently contains an [MIT License](LICENSE), but the macshot-derived screenshot module needs a separate license/provenance review. Do not assume the combined application is MIT-only. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Current Clipy source code is available under the [MIT License](LICENSE). The bundled WebP encoder uses BSD-3-Clause. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for its notice and the distinction between this source tree and historical revisions.
 
 ## ⭐ Star History
 

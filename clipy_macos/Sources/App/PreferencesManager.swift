@@ -45,7 +45,7 @@ class PreferencesManager {
     private let screenshotTextItalicKey = "screenshotTextItalic"
     private let screenshotTextUnderlineKey = "screenshotTextUnderline"
     private let screenshotTextBackgroundEnabledKey = "screenshotTextBackgroundEnabled"
-    
+
     /// `Host.current().localizedName` can hit mDNS/DNS resolution and block for
     /// seconds. The device name is read on hot paths (every sync handshake and
     /// menu build), so resolve it at most once per launch.
@@ -524,6 +524,16 @@ class PreferencesManager {
         set { defaults.set(newValue, forKey: screenshotTextBackgroundEnabledKey) }
     }
 
+    /// Screenshot toolbar layout, colors and shortcuts remain local to this Mac.
+    var nativeScreenshotToolbarConfiguration: NativeScreenshotToolbarConfiguration {
+        get { NativeScreenshotToolbarConfiguration.load(from: defaults) }
+        set {
+            newValue.save(to: defaults)
+            NotificationCenter.default.post(name: .nativeScreenshotToolbarConfigurationDidChange,
+                                            object: nil)
+        }
+    }
+
     // MARK: - Recording
 
     /// Action when a recording finishes: "editor" (default), "finder", "clipboard".
@@ -741,4 +751,9 @@ class PreferencesManager {
     }
     
     private init() {}
+}
+
+extension Notification.Name {
+    static let nativeScreenshotToolbarConfigurationDidChange = Notification.Name(
+        "nativeScreenshotToolbarConfigurationDidChange")
 }

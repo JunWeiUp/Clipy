@@ -11,14 +11,14 @@ enum ScreenshotGlobalHotKeyManager {
         }
 
         HotKeyManager.shared.register(keyCode: combo.keyCode, modifiers: combo.modifierFlags, id: hotKeyID) {
-            DispatchQueue.main.async {
-                let mode: ScreenshotSessionCoordinator.Mode
+            Task { @MainActor in
+                let mode: NativeScreenshotSelectionMode
                 switch PreferencesManager.shared.screenshotDefaultMode {
                 case .region: mode = .region
                 case .window: mode = .window
                 case .fullscreen: mode = .fullscreen
                 }
-                ScreenshotSessionCoordinator.shared.startCapture(mode: mode)
+                NativeScreenshotCoordinator.shared.startCapture(mode: mode)
             }
         }
     }

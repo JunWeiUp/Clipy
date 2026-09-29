@@ -207,12 +207,12 @@ test-only default otherwise, which a real device will reject at handshake) and
 
 ## Release checklist
 
-1. Resolve the **blocking macshot license/provenance review** in
-   [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md). Do not describe the whole
-   macOS binary as MIT-only until the applicable terms are established.
-2. Run CI and device checks before triggering Release; document any
-   unsupported/experimental platforms. The workflow publishes automatically
-   once its jobs pass.
+1. Run `scripts/check_screenshot_provenance.sh`, inspect the macOS build
+   inputs and bundled [third-party notices](../THIRD_PARTY_NOTICES.md), and
+   confirm the pinned BSD-licensed libwebp source checksum. Historical tags
+   and binaries retain their own license obligations.
+2. Complete the [native screenshot acceptance matrix](SCREENSHOT_CLEAN_REWRITE.md)
+   and the other CI/device checks; document any unsupported/experimental platforms.
    iOS has unsigned CI and Simulator coverage but no signed-device or public
    distribution validation. Windows needs a clean-machine ZIP and tray check.
 3. Review dependency changes, data migrations, privacy permissions and logs.

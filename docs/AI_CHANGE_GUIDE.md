@@ -14,7 +14,7 @@ The source is authoritative when a guide and implementation disagree.
 | Hidden menu-bar icons | `Sources/MenuBarOverflow/` | AX scan, image capture and AXPress have separate phases. Stale identity or an unconfirmed press must not trigger a guessed click. | `MenuBarOverflowRegression`, opt-in live tests |
 | Clipboard and history | `Sources/Clipboard/`, `Sources/History/` | `ClipboardManager` orchestrates; repositories own SQL; media paths live in `HistoryMediaStore`. Search pages and cancellations precede UI display. | search/history regressions |
 | Snippets and hotkeys | `Sources/Snippets/`, `App/HotKeyManager.swift` | Persist snippets through `SnippetManager`; unregister keys before reuse. | core regressions, keyboard check |
-| Screenshot, pin, recording | `Sources/Screenshot/`, `App/ScreenshotImageProcessor.swift` | `ScreenshotSessionCoordinator` is the integration point; capture/overlay/editor own their temporary images and monitors. | screenshot flow and settled footprint |
+| Screenshot, pin, recording | `Sources/NativeScreenshot/`, `App/ScreenshotImageProcessor.swift` | `NativeScreenshotCoordinator` owns the session; capture/overlay/editor own temporary images and monitors. | native screenshot regressions, live flow and settled footprint |
 | Token usage | `Sources/TokenUsage/` | Sources parse metadata; store owns SQLite/cursors; manager scans only on open/refresh; view prices from catalog. Do not persist prompts or sync usage. | `TokenUsageRegression`, empty/unpriced UI |
 | Notifications | `Sources/Notifications/`, `UI/NotificationView.swift` | Repository persists; manager routes; view model pages and clears data on close. | notification UI and sync checks |
 | Sync | `Sources/Sync/`, `clipy_android/lib/sync/` | Wire changes require both implementations and `PROTOCOL.md`. Persist remote history before ACK. | socket/protocol tests on both sides |
@@ -25,28 +25,28 @@ The source is authoritative when a guide and implementation disagree.
 
 `Sources/` in macOS rows means `clipy_macos/Sources/`. `build_macos_app.sh`
 collects Swift files recursively, so adding a source file needs no project-file edit.
-The screenshot port includes a very large `OverlayView.swift`; locate its `MARK`
-section and handler first. Move behavior through its existing tool protocols or a
-small helper instead of adding another cross-feature singleton.
+The independent screenshot module uses small capture, annotation, recording,
+recognition, editor and delivery components. Keep a change in its owning component
+and retain the one-session boundary in `NativeScreenshotCoordinator`.
 
 For a screenshot change, follow this chain instead of editing the overlay first:
 
 | Step | Owner |
 | --- | --- |
-| Screen/window/frame acquisition | `Screenshot/Capture/` and `ScreenCaptureManager` |
-| Session, focus return, history/sync handoff | `ScreenshotSessionCoordinator.swift` |
-| Annotation data, geometry and rendering | `Screenshot/Model/Annotation.swift` |
-| Pointer/keyboard behavior for one tool | `Screenshot/UI/Tools/` handler |
-| Selection and shared canvas state | `Screenshot/UI/Overlay/OverlayView.swift` |
-| Tool controls and options | `Screenshot/UI/Toolbar/` and `UI/Popover/` |
-| Detached editing, pins and thumbnails | `Screenshot/UI/Editor/`, `UI/Windows/`, `Services/` |
+| Screen/window/frame acquisition and long capture | `NativeScreenshot/Capture/` |
+| Session, focus return, history and recording handoff | `NativeScreenshot/Coordinator/` |
+| Annotation data, geometry and rendering | `NativeScreenshot/Annotation/` |
+| Selection and editor controls | `NativeScreenshot/UI/` |
+| OCR, QR, redaction and translation | `NativeScreenshot/Recognition/` |
+| Image transforms, formats, pins and thumbnails | `NativeScreenshot/Editor/`, `Encoding/`, `Delivery/` |
+| MP4/GIF, audio, camera and input overlays | `NativeScreenshot/Recording/` |
 
 ## Follow the data and lifetime
 
 ```text
 macOS: status item → MenuController → panel/model or feature window
        clipboard → ClipboardManager → HistoryRepository → AppDatabase
-       screenshot → ScreenshotSessionCoordinator → clipboard/history + optional sync
+       screenshot → NativeScreenshotCoordinator → delivery → clipboard/history
        local Agent logs → TokenUsageSource → TokenUsageStore → report/pricing → UI
 
 Android: Application → one FlutterEngine → platform channels → managers/repositories

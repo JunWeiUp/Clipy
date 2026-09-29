@@ -3,6 +3,7 @@ import Foundation
 import CoreGraphics
 import ApplicationServices
 import CryptoKit
+import ImageIO
 
 class ClipboardManager {
     static let shared = ClipboardManager()
@@ -596,25 +597,57 @@ class ClipboardManager {
         recentSummaries.insert(updated, at: 0)
     }
 
-    func ingestCapturedImage(_ pngData: Data, copyToPasteboard: Bool = true) {
+    enum CapturedImageError: LocalizedError {
+        case unreadableImage
+        case historyWriteFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .unreadableImage: return "截图数据无法读取，历史与剪贴板未更改。"
+            case .historyWriteFailed: return "截图历史写入失败，剪贴板未更改。"
+            }
+        }
+    }
+
+    func ingestCapturedImage(_ pngData: Data, copyToPasteboard: Bool = true) throws {
+        guard Self.canDecodeCapturedPNG(pngData) else {
+            throw CapturedImageError.unreadableImage
+        }
         let store = HistoryMediaStore.shared
         let path = store.store(data: pngData, kind: .image)
+        guard let persisted = store.data(at: path), Self.canDecodeCapturedPNG(persisted) else {
+            throw CapturedImageError.historyWriteFailed
+        }
         let item = HistoryItem.image(path)
         if let hash = contentHash(for: item) {
             lastSyncHash = hash
         }
-        addToHistory(item, sourceApp: "Clipy Screenshot", sourceBundleId: Bundle.main.bundleIdentifier)
-        if copyToPasteboard {
-            writeToPasteboard(item)
+        guard addToHistory(item, sourceApp: "Clipy Screenshot",
+                           sourceBundleId: Bundle.main.bundleIdentifier) else {
+            throw CapturedImageError.historyWriteFailed
         }
+        if copyToPasteboard {
+            // Use the already validated bytes. Reading a failed media path
+            // after clearing the pasteboard would destroy the user's previous copy.
+            pasteboard.clearContents()
+            pasteboard.setData(pngData, forType: .png)
+            changeCount = pasteboard.changeCount
+        }
+    }
+
+    private static func canDecodeCapturedPNG(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil) != nil
     }
 
     private struct PreparedHistoryInsert {
         let entry: HistoryEntry
         let hash: String?
+        let persisted: Bool
     }
 
-    private func addToHistory(_ item: HistoryItem, sourceApp: String?, sourceBundleId: String? = nil, date: Date? = nil) {
+    @discardableResult
+    private func addToHistory(_ item: HistoryItem, sourceApp: String?, sourceBundleId: String? = nil, date: Date? = nil) -> Bool {
         let prepared = prepareHistoryInsert(
             item,
             sourceApp: sourceApp,
@@ -625,6 +658,7 @@ class ClipboardManager {
             date: date
         )
         finalizeHistoryInsert(prepared)
+        return prepared.persisted
     }
 
     /// Heavy half of the insert (hashing, index build, DB write). Safe on any thread:
@@ -667,16 +701,19 @@ class ClipboardManager {
             useCount: existing?.useCount ?? 0
         )
 
-        _ = repository.insertOrReplace(entry)
-        repository.trimToLimit(maxHistoryItems)
-        if trimExpiredHistory() > 0 {
-            DispatchQueue.main.async { [weak self] in self?.schedulePruneUnreferencedMediaFiles() }
+        let persisted = repository.insertOrReplace(entry)
+        if persisted {
+            repository.trimToLimit(maxHistoryItems)
+            if trimExpiredHistory() > 0 {
+                DispatchQueue.main.async { [weak self] in self?.schedulePruneUnreferencedMediaFiles() }
+            }
         }
-        return PreparedHistoryInsert(entry: entry, hash: hash)
+        return PreparedHistoryInsert(entry: entry, hash: hash, persisted: persisted)
     }
 
     /// Main-thread half: updates in-memory summaries and notifies the UI.
     private func finalizeHistoryInsert(_ prepared: PreparedHistoryInsert) {
+        guard prepared.persisted else { return }
         reloadLoadedSummaries()
 
         scheduleImageOCRIfNeeded(for: prepared.entry)

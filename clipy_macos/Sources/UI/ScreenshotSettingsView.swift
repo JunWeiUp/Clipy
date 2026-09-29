@@ -21,6 +21,9 @@ struct ScreenshotSettingsView: View {
   @State private var inputMonitoringGranted: Bool
   @State private var microphoneGranted: Bool
   @State private var cameraGranted: Bool
+  @State private var toolbarConfiguration: NativeScreenshotToolbarConfiguration
+  @State private var toolbarShortcutDrafts: [String: String]
+  @State private var toolbarShortcutErrors: [String: String] = [:]
 
   // 录屏
   @State private var recordingOnStop: String
@@ -91,6 +94,9 @@ struct ScreenshotSettingsView: View {
       initialValue: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
     _cameraGranted = State(
       initialValue: AVCaptureDevice.authorizationStatus(for: .video) == .authorized)
+    let toolbar = prefs.nativeScreenshotToolbarConfiguration
+    _toolbarConfiguration = State(initialValue: toolbar)
+    _toolbarShortcutDrafts = State(initialValue: toolbar.shortcuts)
 
     _recordingOnStop = State(initialValue: prefs.recordingOnStop)
     _recordingFPS = State(initialValue: prefs.recordingFPS)
@@ -146,6 +152,9 @@ struct ScreenshotSettingsView: View {
   static var settingsPages: [AppSettingsPage] {
     [
       .init(id: pagePrefix + "capture", title: L10n.t(.screenshot), symbol: "viewfinder"),
+      .init(id: pagePrefix + "toolbar",
+            title: NativeScreenshotUserText.string("工具栏", "Toolbar"),
+            symbol: "paintbrush.pointed"),
       .init(id: pagePrefix + "recording", title: L("Recording"), symbol: "record.circle"),
       .init(id: pagePrefix + "output", title: L10n.t(.designOutput), symbol: "square.and.arrow.down"),
       .init(id: pagePrefix + "scroll", title: L10n.t(.designDrawing), symbol: "pencil.tip.crop.circle"),
@@ -246,6 +255,12 @@ struct ScreenshotSettingsView: View {
           .onChange(of: screenshotResolution) { newValue in
             PreferencesManager.shared.screenshotResolution = newValue
           }
+          if screenshotResolution == .auto {
+            Toggle(L("Downscale Retina Screenshots to 1×"), isOn: $downscaleRetina)
+              .onChange(of: downscaleRetina) { newValue in
+                PreferencesManager.shared.downscaleRetina = newValue
+              }
+          }
 
           Picker(L10n.t(.screenshotOCRLanguage), selection: $screenshotOCRLanguage) {
             ForEach(ScreenshotOCRLanguage.allCases) { language in
@@ -289,8 +304,6 @@ struct ScreenshotSettingsView: View {
             }
             .buttonStyle(.bordered)
           }
-          .disabled(!screenshotAutoSaveEnabled)
-          .opacity(screenshotAutoSaveEnabled ? 1 : 0.55)
         } header: {
           Text(L("Screenshot"))
         } footer: {
@@ -303,6 +316,71 @@ struct ScreenshotSettingsView: View {
           .font(AppFont.caption)
         }
 
+      }
+      if pageID == "toolbar" {
+        Section(NativeScreenshotUserText.string("工具栏颜色", "Toolbar Colors")) {
+          ColorPicker(NativeScreenshotUserText.string("强调色", "Accent color"),
+                      selection: toolbarColorBinding(.accent), supportsOpacity: true)
+          ColorPicker(NativeScreenshotUserText.string("图标色", "Icon color"),
+                      selection: toolbarColorBinding(.icon), supportsOpacity: true)
+          ColorPicker(NativeScreenshotUserText.string("背景色", "Background color"),
+                      selection: toolbarColorBinding(.background), supportsOpacity: true)
+        }
+        Section {
+          ForEach(NativeScreenshotToolbarConfiguration.tools.filter { $0.id != "select" }) { item in
+            Toggle(item.title, isOn: toolbarVisibilityBinding(item.id, isTool: true))
+          }
+        } header: {
+          Text(NativeScreenshotUserText.string("主工具栏入口", "Main Toolbar Icons"))
+        } footer: {
+          Text(NativeScreenshotUserText.string(
+            "按 Esc 返回选择；矩形填充及遮挡样式也可从对应工具的二级栏切换。",
+            "Press Esc to return to selection; rectangle fill and censor modes are also available in their tool options."))
+        }
+        Section {
+          ForEach(NativeScreenshotToolbarConfiguration.actions) { item in
+            Toggle(item.title, isOn: toolbarVisibilityBinding(item.id, isTool: false))
+              .disabled(item.id == "cancel")
+          }
+        } header: {
+          Text(NativeScreenshotUserText.string("选区动作", "Selection Actions"))
+        } footer: {
+          Text(NativeScreenshotUserText.string(
+            "取消动作始终保留，确保可以退出截图。",
+            "Cancel stays available so the screenshot can always be dismissed."))
+        }
+        Section {
+          ForEach(NativeScreenshotToolbarConfiguration.tools) { item in
+            VStack(alignment: .leading, spacing: 4) {
+              HStack {
+                Text(item.title)
+                Spacer(minLength: 16)
+                TextField(NativeScreenshotUserText.string("无", "None"),
+                          text: toolbarShortcutBinding(item.id))
+                  .textFieldStyle(.roundedBorder)
+                  .frame(width: 72)
+                  .accessibilityLabel(NativeScreenshotUserText.string(
+                    "\(item.chinese)快捷键", "\(item.english) shortcut"))
+              }
+              if let error = toolbarShortcutErrors[item.id] {
+                Text(error).font(AppFont.caption).foregroundStyle(.red)
+              }
+            }
+          }
+          Button(NativeScreenshotUserText.string("恢复工具栏默认设置", "Restore Toolbar Defaults")) {
+            let defaults = NativeScreenshotToolbarConfiguration.default
+            toolbarConfiguration = defaults
+            toolbarShortcutDrafts = defaults.shortcuts
+            toolbarShortcutErrors = [:]
+            PreferencesManager.shared.nativeScreenshotToolbarConfiguration = defaults
+          }
+        } header: {
+          Text(NativeScreenshotUserText.string("工具快捷键", "Tool Shortcuts"))
+        } footer: {
+          Text(NativeScreenshotUserText.string(
+            "输入一个英文字母或数字；F 在选区内默认用于贴图，在未框选且窗口吸附开启时用于全屏。清空可取消快捷键，重复按键会提示冲突。",
+            "Use one letter or digit. F pins a selected capture and selects the full screen before selection when window snap is on. Clear to disable; duplicate keys are rejected."))
+        }
       }
       if pageID == "recording" {
         // MARK: - 录屏
@@ -323,7 +401,7 @@ struct ScreenshotSettingsView: View {
           .onChange(of: recordingFPS) { newValue in
             PreferencesManager.shared.recordingFPS = newValue
           }
-          Toggle(L("Hide Recording Timer HUD"), isOn: $hideRecordingHUD)
+          Toggle(L("Hide Recording Controls"), isOn: $hideRecordingHUD)
             .onChange(of: hideRecordingHUD) { newValue in
               PreferencesManager.shared.hideRecordingHUD = newValue
             }
@@ -433,10 +511,6 @@ struct ScreenshotSettingsView: View {
           Toggle(L("Capture Mouse Cursor"), isOn: $captureCursor)
             .onChange(of: captureCursor) { newValue in
               PreferencesManager.shared.captureCursor = newValue
-            }
-          Toggle(L("Downscale Retina Screenshots to 1×"), isOn: $downscaleRetina)
-            .onChange(of: downscaleRetina) { newValue in
-              PreferencesManager.shared.downscaleRetina = newValue
             }
           Toggle(L("Play Sound After Capture"), isOn: $playCopySound)
             .onChange(of: playCopySound) { newValue in
@@ -685,6 +759,87 @@ struct ScreenshotSettingsView: View {
     .contentShape(Rectangle())
     .onTapGesture { granted ? onOpenSettings() : onRequest() }
     .help(granted ? L10n.t(.openSystemSettings) : L("Request Permission"))
+  }
+
+  private func toolbarColorBinding(
+    _ role: NativeScreenshotToolbarConfiguration.ColorRole
+  ) -> Binding<Color> {
+    Binding(
+      get: {
+        switch role {
+        case .accent: return Color(nsColor: toolbarConfiguration.accentColor)
+        case .icon: return Color(nsColor: toolbarConfiguration.iconColor)
+        case .background: return Color(nsColor: toolbarConfiguration.backgroundColor)
+        }
+      },
+      set: { color in
+        updateToolbarConfiguration { $0.setColor(NSColor(color), for: role) }
+      }
+    )
+  }
+
+  private func toolbarVisibilityBinding(_ id: String, isTool: Bool) -> Binding<Bool> {
+    Binding(
+      get: {
+        isTool ? toolbarConfiguration.isToolEnabled(id)
+               : toolbarConfiguration.isActionEnabled(id)
+      },
+      set: { enabled in
+        updateToolbarConfiguration { configuration in
+          if isTool { configuration.setToolEnabled(enabled, id: id) }
+          else { configuration.setActionEnabled(enabled, id: id) }
+        }
+      }
+    )
+  }
+
+  private func toolbarShortcutBinding(_ id: String) -> Binding<String> {
+    Binding(
+      get: { toolbarShortcutDrafts[id] ?? "" },
+      set: { value in
+        toolbarShortcutDrafts[id] = value
+        var updated = toolbarConfiguration
+        do {
+          try updated.setShortcut(value, forToolID: id)
+          toolbarShortcutErrors.removeValue(forKey: id)
+          toolbarConfiguration = updated
+          PreferencesManager.shared.nativeScreenshotToolbarConfiguration = updated
+        } catch let error as NativeScreenshotToolbarConfiguration.ShortcutError {
+          toolbarShortcutErrors[id] = toolbarShortcutErrorMessage(error)
+        } catch {
+          toolbarShortcutErrors[id] = NativeScreenshotUserText.string(
+            "快捷键无法保存。", "Shortcut could not be saved.")
+        }
+      }
+    )
+  }
+
+  private func toolbarShortcutErrorMessage(
+    _ error: NativeScreenshotToolbarConfiguration.ShortcutError
+  ) -> String {
+    switch error {
+    case .unknownTool:
+      return NativeScreenshotUserText.string("未知工具。", "Unknown tool.")
+    case .invalidKey:
+      return NativeScreenshotUserText.string("请输入单个英文字母或数字。", "Enter one letter or digit.")
+    case .reservedKey:
+      return NativeScreenshotUserText.string("此按键已由截图操作使用。", "This key is used by a capture action.")
+    case .duplicateKey(let owner):
+      let item = NativeScreenshotToolbarConfiguration.tools.first { $0.id == owner }
+        ?? NativeScreenshotToolbarConfiguration.actions.first { $0.id == owner }
+      return NativeScreenshotUserText.string(
+        "与\(item?.chinese ?? owner)的快捷键重复。",
+        "Already used by \(item?.english ?? owner).")
+    }
+  }
+
+  private func updateToolbarConfiguration(
+    _ mutate: (inout NativeScreenshotToolbarConfiguration) -> Void
+  ) {
+    var updated = toolbarConfiguration
+    mutate(&updated)
+    toolbarConfiguration = updated
+    PreferencesManager.shared.nativeScreenshotToolbarConfiguration = updated
   }
 
   private func chooseScreenshotSaveDirectory() {

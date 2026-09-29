@@ -185,6 +185,9 @@ class MenuController: NSObject {
         case .window: startScreenshotWindow()
         case .fullscreen: startScreenshotFullscreen()
         case .screenshotSettings: openScreenshotPreferences()
+        case .recordingPauseToggle: toggleScreenshotRecordingPause()
+        case .recordingStop: stopScreenshotRecording()
+        case .recordingCancel: cancelScreenshotRecording()
         case .permission: grantOverflowPermission()
         case .quit: NSApp.terminate(nil)
         case .sendText(let peerID):
@@ -244,6 +247,35 @@ class MenuController: NSObject {
         capture.addItem(actionItem(L10n.t(.screenshotRegion), symbol: "viewfinder", action: #selector(startScreenshotRegion)))
         capture.addItem(actionItem(L10n.t(.screenshotWindow), symbol: "macwindow", action: #selector(startScreenshotWindow)))
         capture.addItem(actionItem(L10n.t(.screenshotFullscreen), symbol: "rectangle.inset.filled", action: #selector(startScreenshotFullscreen)))
+        let recordingState = MainActor.assumeIsolated {
+            let coordinator = NativeScreenshotCoordinator.shared
+            return (active: coordinator.hasActiveRecording,
+                    started: coordinator.hasStartedRecording,
+                    paused: coordinator.isRecordingPaused,
+                    finalizing: coordinator.isRecordingFinalizing)
+        }
+        if recordingState.active {
+            capture.addItem(.separator())
+            if recordingState.finalizing {
+                let saving = NSMenuItem(title: NativeScreenshotUserText.string(
+                    "正在保存录屏…", "Saving recording…"), action: nil, keyEquivalent: "")
+                saving.isEnabled = false
+                capture.addItem(saving)
+            } else if recordingState.started {
+                capture.addItem(actionItem(
+                    NativeScreenshotUserText.string(
+                        recordingState.paused ? "继续录屏" : "暂停录屏",
+                        recordingState.paused ? "Resume recording" : "Pause recording"),
+                    symbol: recordingState.paused ? "play.fill" : "pause.fill",
+                    action: #selector(toggleScreenshotRecordingPause)))
+                capture.addItem(actionItem(NativeScreenshotUserText.string("结束并保存录屏", "Stop and save recording"),
+                                           symbol: "stop.fill", action: #selector(stopScreenshotRecording)))
+            }
+            if !recordingState.finalizing {
+                capture.addItem(actionItem(NativeScreenshotUserText.string("取消录屏", "Cancel recording"),
+                                           symbol: "xmark", action: #selector(cancelScreenshotRecording)))
+            }
+        }
         capture.addItem(.separator())
         capture.addItem(actionItem(L10n.t(.screenshotPreferences), symbol: "slider.horizontal.3", action: #selector(openScreenshotPreferences)))
         menu.addItem(submenuItem(L10n.t(.screenshot), symbol: "camera", submenu: capture))
@@ -904,15 +936,33 @@ class MenuController: NSObject {
     }
 
     @objc private func startScreenshotRegion() {
-        ScreenshotSessionCoordinator.shared.startCapture(mode: .region, fromMenu: true)
+        Task { @MainActor in
+            NativeScreenshotCoordinator.shared.startCapture(mode: .region, fromMenu: true)
+        }
     }
 
     @objc private func startScreenshotWindow() {
-        ScreenshotSessionCoordinator.shared.startCapture(mode: .window, fromMenu: true)
+        Task { @MainActor in
+            NativeScreenshotCoordinator.shared.startCapture(mode: .window, fromMenu: true)
+        }
     }
 
     @objc private func startScreenshotFullscreen() {
-        ScreenshotSessionCoordinator.shared.startCapture(mode: .fullscreen, fromMenu: true)
+        Task { @MainActor in
+            NativeScreenshotCoordinator.shared.startCapture(mode: .fullscreen, fromMenu: true)
+        }
+    }
+
+    @objc private func toggleScreenshotRecordingPause() {
+        Task { @MainActor in NativeScreenshotCoordinator.shared.toggleRecordingPauseFromMenu() }
+    }
+
+    @objc private func stopScreenshotRecording() {
+        Task { @MainActor in NativeScreenshotCoordinator.shared.stopRecordingFromMenu() }
+    }
+
+    @objc private func cancelScreenshotRecording() {
+        Task { @MainActor in NativeScreenshotCoordinator.shared.cancelRecordingFromMenu() }
     }
 
     @objc private func languageDidChange() {

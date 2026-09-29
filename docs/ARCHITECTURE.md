@@ -20,7 +20,7 @@ clipy_macos/
   Sources/MenuBarPanel/       native control panel, asynchronous queries and focus handoff
   Sources/MenuBarOverflow/    hidden status-item discovery, previews and AX actions
   Sources/TokenUsage/         on-demand local agent usage import, pricing and macOS UI
-  Sources/Screenshot/         capture/annotation/recording engine and adapters
+  Sources/NativeScreenshot/   independent capture, annotation, recording and delivery
   Sources/UI/                 shared SwiftUI views and window layouts
   Resources/Info.plist        reviewed bundle/permission metadata template
   Resources/token-prices-*.json  bundled offline model-price snapshot and overrides
@@ -99,10 +99,24 @@ to authorized sync peers. Remote history must be persisted **before** ACK.
 The UI reads repository summaries/pages rather than owning the entire database.
 Receiving remote content must not create an infinite rebroadcast loop.
 
-Snippets have their own macOS manager and persistence. Screenshot confirmation
-passes through `ScreenshotSessionCoordinator` into clipboard history, optional
-save/sync and thumbnail presentation; screenshot internals should use the app
-integration protocol instead of reaching directly into unrelated controllers.
+Snippets have their own macOS manager and persistence. Screenshot entry points
+call `NativeScreenshotCoordinator`, which owns one temporary selection, long
+capture or recording session. The selection overlay owns its inline annotation
+canvas and attached tool/action strips; an explicit editor action opens the
+detached image editor. It returns one flattened captured image to delivery,
+which encodes it, adds it to clipboard history once, and applies the selected
+copy/save/pin/OCR action. Recording choices live beside the still-visible
+selection, then the coordinator removes every selection window before starting
+ScreenCaptureKit. Long-capture and recording HUDs release their windows,
+timers and monitors when stopped or cancelled. Recognition, translation and
+redaction require an explicit user action. The capture, annotation, recording
+and WebP encoding modules stay independent from clipboard, sync and application
+windows.
+Floating thumbnails retain bounded compressed PNG data; save, Quick Look,
+transform and batch export run on demand. The video editor stores effect
+segments on a source-time timeline and applies cuts, speed changes and visual
+effects on export. Hidden recording controls remain available from both status
+item surfaces, while input warnings briefly reveal the excluded recording HUD.
 
 ## Menu-bar control panel (macOS)
 
@@ -114,6 +128,8 @@ updates must not force its initialization.
 `MenuBarPanelModel` owns ephemeral tab, search and selection state; a serial cancellable
 worker uses the existing history search service. `MenuBarPanelView` renders the approved
 compact panel with shared typography, SF Symbols, language observation and semantic colors.
+While recording is active, the open panel reads coordinator state and shows
+pause, stop and cancel controls without polling.
 Existing manager callbacks refresh only the open panel; there is no new idle polling.
 Native menu tracking defers those refreshes. Dismissal cancels queries and releases the view.
 
@@ -170,8 +186,9 @@ refresh metadata while idle without starting a polling timer.
   and closed-window models need explicit idle release paths.
 - Idle reclaim skips every visible content window or panel, including capture
   overlays and pinned images. Reclaim observer registration is idempotent.
-- Screenshot scratch/cache directories are Clipy-owned; never sweep macshot's
-  or another application's directories.
+- Screenshot sessions release capture streams, event taps, camera/microphone
+  sessions, overlays and bounded image slices on finish or cancel. Do not sweep
+  another application's temporary directories.
 
 ## Where to change behavior
 
@@ -188,4 +205,5 @@ refresh metadata while idle without starting a polling timer.
 See [Development](DEVELOPMENT.md) for verification boundaries and
 [the AI change guide](AI_CHANGE_GUIDE.md) for ownership, lifecycle and memory
 checks. See also
-[third-party notices](../THIRD_PARTY_NOTICES.md) before updating the screenshot port.
+[third-party notices](../THIRD_PARTY_NOTICES.md) before updating the screenshot
+module or its statically linked WebP encoder.
