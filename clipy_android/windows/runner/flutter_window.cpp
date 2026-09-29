@@ -69,12 +69,17 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (screenshot_capture_) screenshot_capture_->Cancel();
+  screenshot_capture_.reset();
   if (GetHandle()) RemoveClipboardFormatListener(GetHandle());
   RemoveTrayIcon();
   if (clipboard_channel_) clipboard_channel_->SetMethodCallHandler(nullptr);
+  if (screenshot_channel_) screenshot_channel_->SetMethodCallHandler(nullptr);
   if (storage_channel_) storage_channel_->SetMethodCallHandler(nullptr);
   if (open_folder_channel_) open_folder_channel_->SetMethodCallHandler(nullptr);
   clipboard_channel_.reset();
+  screenshot_channel_.reset();
+  screenshot_result_.reset();
   storage_channel_.reset();
   open_folder_channel_.reset();
   if (flutter_controller_) {
@@ -178,6 +183,55 @@ void FlutterWindow::InstallPlatformChannels() {
           return;
         }
         result->NotImplemented();
+      });
+
+  screenshot_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          messenger, "com.clipyclone.clipy_android/screenshot", codec);
+  screenshot_channel_->SetMethodCallHandler(
+      [this](const auto& call, auto result) {
+        if (call.method_name() != "capture") {
+          result->NotImplemented();
+          return;
+        }
+        if (screenshot_result_) {
+          result->Error("CAPTURE_BUSY", "A screenshot selection is already active.");
+          return;
+        }
+        const auto* value = MapValue(call.arguments(), "mode");
+        const auto* requested = value ? std::get_if<std::string>(value) : nullptr;
+        ScreenshotMode mode;
+        if (requested && *requested == "region") {
+          mode = ScreenshotMode::kRegion;
+        } else if (requested && *requested == "window") {
+          mode = ScreenshotMode::kWindow;
+        } else if (requested && *requested == "fullscreen") {
+          mode = ScreenshotMode::kFullscreen;
+        } else {
+          result->Error("INVALID_MODE", "Unknown screenshot mode.");
+          return;
+        }
+        screenshot_capture_.reset();
+        screenshot_result_ = std::move(result);
+        screenshot_capture_ = std::make_unique<ScreenshotCapture>(
+            GetHandle(),
+            [this](std::vector<uint8_t> png, std::string error) {
+              auto pending = std::move(screenshot_result_);
+              if (!pending) return;
+              if (!error.empty()) {
+                pending->Error(error, "The selected content could not be captured.");
+              } else if (png.empty()) {
+                pending->Success();  // Esc/right-click cancellation.
+              } else {
+                pending->Success(flutter::EncodableValue(std::move(png)));
+              }
+            });
+        if (!screenshot_capture_->Start(mode)) {
+          screenshot_capture_.reset();
+          auto pending = std::move(screenshot_result_);
+          pending->Error("CAPTURE_UNAVAILABLE",
+                         "The desktop could not be captured on this display setup.");
+        }
       });
 
   storage_channel_ =

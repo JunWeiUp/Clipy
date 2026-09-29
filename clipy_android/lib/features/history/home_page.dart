@@ -37,6 +37,10 @@ class _HomePageState extends State<HomePage>
   bool _pairingPromptOpen = false;
   final Map<String, FileProgress> _activeTransfers = {};
   bool _clearing = false;
+  bool _capturingScreenshot = false;
+  static const _screenshotChannel = MethodChannel(
+    'com.clipyclone.clipy_android/screenshot',
+  );
 
   @override
   void initState() {
@@ -158,6 +162,34 @@ class _HomePageState extends State<HomePage>
       if (mounted) showClipyMessage(context, context.l10n.operationFailed);
     } finally {
       if (mounted) setState(() => _clearing = false);
+    }
+  }
+
+  Future<void> _takeWindowsScreenshot(String mode) async {
+    if (!Platform.isWindows || _capturingScreenshot) return;
+    setState(() => _capturingScreenshot = true);
+    try {
+      // Let the Flutter popup close before the native runner freezes the screen.
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final png = await _screenshotChannel.invokeMethod<Uint8List>('capture', {
+        'mode': mode,
+      });
+      if (png == null || png.isEmpty) return; // Esc or right-click cancelled.
+      final copied = await ClipboardManager.instance.ingestWindowsScreenshot(
+        png,
+      );
+      if (mounted) {
+        showClipyMessage(
+          context,
+          copied
+              ? context.l10n.screenshotSaved
+              : context.l10n.screenshotCopyFailed,
+        );
+      }
+    } catch (_) {
+      if (mounted) showClipyMessage(context, context.l10n.screenshotFailed);
+    } finally {
+      if (mounted) setState(() => _capturingScreenshot = false);
     }
   }
 
@@ -372,6 +404,27 @@ class _HomePageState extends State<HomePage>
             ],
           ),
           actions: [
+            if (Platform.isWindows && _selectedIndex == 0)
+              PopupMenuButton<String>(
+                tooltip: l10n.screenshot,
+                icon: const Icon(Icons.crop_free_rounded),
+                enabled: !_capturingScreenshot,
+                onSelected: (mode) => unawaited(_takeWindowsScreenshot(mode)),
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: 'region',
+                    child: Text(l10n.screenshotRegion),
+                  ),
+                  PopupMenuItem(
+                    value: 'window',
+                    child: Text(l10n.screenshotWindow),
+                  ),
+                  PopupMenuItem(
+                    value: 'fullscreen',
+                    child: Text(l10n.screenshotFullscreen),
+                  ),
+                ],
+              ),
             IconButton(
               onPressed: _openFiles,
               tooltip: l10n.receivedFiles,
