@@ -38,7 +38,7 @@ clipy_android/
   tool/                      explicitly invoked integration probes
 scripts/                     shared build configuration and local checks
 docs/                        architecture, development, wire protocol
-.github/                     CI, release drafts, contribution templates
+.github/                     CI, public releases, contribution templates
 ```
 
 Existing managers, models, localization and notification UI remain directly under

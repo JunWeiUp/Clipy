@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version X.Y.Z or vX.Y.Z; creates a draft for review"
+        description: "Version X.Y.Z or vX.Y.Z; publishes a release after checks pass"
         required: true
         type: string
 
@@ -32,6 +32,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Resolve and validate build metadata
         id: version
         env:
@@ -46,6 +47,13 @@ jobs:
             echo "Requested version $APP_VERSION does not match source $SOURCE_VERSION" >&2
             exit 1
           }
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            TAG_COMMIT="$(git rev-list -n 1 "refs/tags/v${APP_VERSION}" 2>/dev/null || true)"
+            if [[ -n "$TAG_COMMIT" && "$TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+              echo "Existing v${APP_VERSION} tag points to $TAG_COMMIT, not this workflow commit $GITHUB_SHA" >&2
+              exit 1
+            fi
+          fi
           BASE_BUILD="$(awk '/^version:/ {split($2, v, "+"); print v[2]; exit}' clipy_android/pubspec.yaml)"
           BUILD_NUMBER="$((BASE_BUILD + GITHUB_RUN_NUMBER))"
           resolve_build_version
@@ -108,14 +116,16 @@ jobs:
         env:
           APP_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
+          test -s clipy_macos/ClipyClone.app/Contents/Resources/LICENSE
+          test -s clipy_macos/ClipyClone.app/Contents/Resources/THIRD_PARTY_NOTICES.md
           ditto -c -k --keepParent clipy_macos/ClipyClone.app "dist/ClipyClone-macOS-v${APP_VERSION}.zip"
-          ditto -c -k --keepParent clipy_macos/ClipyClone.app.dSYM "dist/ClipyClone-macOS-symbols-v${APP_VERSION}.zip"
-          cp LICENSE THIRD_PARTY_NOTICES.md dist/
       - name: Upload macOS and Android release files
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-mac-android
-          path: dist/*
+          path: |
+            dist/ClipyClone-macOS-v${{ needs.metadata.outputs.version }}.zip
+            dist/ClipyClone-Android-arm64-v8a-v${{ needs.metadata.outputs.version }}.apk
           if-no-files-found: error
           retention-days: 7
       - name: Remove temporary signing material
@@ -181,7 +191,7 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Create three-platform release draft
+    name: Publish three-platform release
     needs: [metadata, mac_android, windows]
     runs-on: ubuntu-latest
     permissions:
@@ -192,7 +202,7 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
-      - name: Verify assets and create checksums
+      - name: Verify exactly three release assets
         env:
           APP_VERSION: ${{ needs.metadata.outputs.version }}
         shell: bash
@@ -200,16 +210,22 @@ jobs:
           test -s "dist/ClipyClone-macOS-v${APP_VERSION}.zip"
           test -s "dist/ClipyClone-Android-arm64-v8a-v${APP_VERSION}.apk"
           test -s "dist/ClipyClone-Windows-x64-v${APP_VERSION}.zip"
-          cd dist
-          sha256sum ./*.apk ./*.zip > SHA256SUMS.txt
-          sha256sum -c SHA256SUMS.txt
-      - name: Create draft for licensing and signing review
+          test "$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 3
+          sha256sum dist/*
+      - name: Publish release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ needs.metadata.outputs.tag }}
           name: Clipy ${{ needs.metadata.outputs.tag }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
-          draft: true
+          body: |
+            License and third-party notices for this version: [LICENSE](https://github.com/${{ github.repository }}/blob/${{ needs.metadata.outputs.tag }}/LICENSE) · [THIRD_PARTY_NOTICES.md](https://github.com/${{ github.repository }}/blob/${{ needs.metadata.outputs.tag }}/THIRD_PARTY_NOTICES.md).
+          draft: false
+          prerelease: false
+          make_latest: true
           fail_on_unmatched_files: true
-          files: dist/*
+          files: |
+            dist/ClipyClone-macOS-v${{ needs.metadata.outputs.version }}.zip
+            dist/ClipyClone-Android-arm64-v8a-v${{ needs.metadata.outputs.version }}.apk
+            dist/ClipyClone-Windows-x64-v${{ needs.metadata.outputs.version }}.zip

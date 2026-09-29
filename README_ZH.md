@@ -7,7 +7,7 @@
   <img src="res/readme/connected-hero.webp" alt="Clipy 概念插画：文字、图片与链接在 Mac 和 Android 手机之间流动" width="1120" />
   <br /><br />
 
-**[下载 macOS 版 ↗](https://github.com/JunWeiUp/Clipy/releases/latest)** &nbsp;&nbsp; · &nbsp;&nbsp; **[下载 Android 版 ↗](https://github.com/JunWeiUp/Clipy/releases/latest)**
+**[下载 macOS 版 ↗](https://github.com/JunWeiUp/Clipy/releases/latest)** &nbsp;&nbsp; · &nbsp;&nbsp; **[下载 Android 版 ↗](https://github.com/JunWeiUp/Clipy/releases/latest)** &nbsp;&nbsp; · &nbsp;&nbsp; **[下载 Windows 版 ↗](https://github.com/JunWeiUp/Clipy/releases/latest)**
 
 <sub>上方下载入口指向最新正式版 · macOS 13+ / Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED_ZH.md#下载与版本">其他安装包与安装说明</a></sub>
 
@@ -251,7 +251,7 @@ INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh
 
 Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留 30 天），内含 **Apple Silicon / macOS 13+** 应用 ZIP、调试符号 ZIP、SHA-256 校验文件和安装说明。
 
-这些是临时签名的开发构建，不代表已正式发布；首次打开的「**隐私与安全 → 仍要打开**」操作和更新后授权说明见[安装指南](docs/MACOS_INSTALL.md)。版本标签会创建待审核的多平台 Release 草稿。
+这些是临时签名的开发构建，不代表已正式发布；首次打开的「**隐私与安全 → 仍要打开**」操作和更新后授权说明见[安装指南](docs/MACOS_INSTALL.md)。完成发布清单后，版本标签会触发三个平台的正式发布。
 
 ### Android（Flutter）
 
@@ -263,7 +263,7 @@ Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留
 ./build_android_apk.sh
 ```
 
-产物为 `dist/ClipyClone-Android-arm64-v8a-v<version>.apk` 和 `dist/ClipyClone-Android-armeabi-v7a-v<version>.apk`。脚本会解析锁定的依赖并使用已配置的密钥签名两个 Release APK。后续升级须保留同一份密钥，切勿提交签名文件或密码。
+产物为 `dist/ClipyClone-Android-arm64-v8a-v<version>.apk` 和 `dist/ClipyClone-Android-armeabi-v7a-v<version>.apk`。脚本会解析锁定的依赖并使用已配置的密钥签名两个 Release APK；GitHub Release 只提供 arm64 APK。后续升级须保留同一份密钥，切勿提交签名文件或密码。
 
 如果只需调试包，无需配置发布签名：
 
@@ -289,7 +289,7 @@ cd ..
 ./scripts/package_windows.ps1 -Version 1.0.23
 ```
 
-产物为 `dist/ClipyClone-Windows-x64-v1.0.23.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。Windows 源码构建及下一版 Release 草稿中的 ZIP 未签名，是否已公开发布以发布页为准。
+产物为 `dist/ClipyClone-Windows-x64-v1.0.23.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。Windows 源码构建与正式版 ZIP 均未签名；公开版本以发布页为准。
 
 ### iOS（Flutter + Swift）
 
@@ -346,7 +346,7 @@ clipy_macos/Sources/      # macOS Swift/AppKit 源码
 clipy_android/lib/        # Android 与 iOS 的 Flutter/Dart 源码
 build_macos_app.sh        # macOS 应用包构建脚本
 build_android_apk.sh      # Android 分 ABI APK 构建脚本
-.github/workflows/        # CI + reviewed release drafts
+.github/workflows/        # CI + 三平台正式发布
 res/                      # README 图片资源
 assets/                   # Logo 与应用图标
 ```
@@ -363,7 +363,7 @@ assets/                   # Logo 与应用图标
 
 ## 📦 发布
 
-配置发布签名后，先更新 `clipy_android/pubspec.yaml` 和中英文 README 并提交改动，再推送与源码版本一致的**全新、未使用过的版本标签**。这会执行 CI 并创建待人工审核的 **Release 草稿**：
+完成[发布清单](docs/DEVELOPMENT.md#release-checklist)、配置发布签名并更新 `clipy_android/pubspec.yaml` 和中英文 README 后提交改动，再推送与源码版本一致的**全新、未使用过的版本标签**。所有检查通过后，工作流会直接发布正式版：
 
 ```bash
 VERSION="$(awk '/^version:/ {split($2, v, "+"); print v[1]; exit}' clipy_android/pubspec.yaml)"
@@ -371,9 +371,9 @@ git tag "v${VERSION}"
 git push origin "v${VERSION}"
 ```
 
-也可以手动触发 `Release` workflow，并输入与源码一致的 `X.Y.Z` 版本号。不要移动或覆盖已有版本标签。发布草稿前请完成[发布清单](docs/DEVELOPMENT.md#release-checklist)，尤其是许可与签名核对。
+也可以手动触发 `Release` workflow，并输入与源码一致的 `X.Y.Z` 版本号。两种触发方式都会直接公开发布，请提前完成清单；不要移动或覆盖已有版本标签。
 
-工作流明确设置了 `draft: true`，所以构建成功不会自动公开发布，也不会自动成为 Latest。审核完成后，在 GitHub 编辑草稿，不勾选 **This is a pre-release**，勾选 **Set as latest release**，再点击 **Publish release**，无需重新构建或覆盖标签。正式发布后，再同步更新中英文 README 和两份入门指南中的已发布版本及下载链接。详见 [GitHub 发布说明](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)。
+工作流发布正式最新版，只上传三个安装包：macOS ZIP、Android arm64 APK 和 Windows x64 ZIP。GitHub 在每个附件旁显示 SHA-256 摘要，不再单独上传校验清单、符号包、许可或声明文件；macOS 应用与 Windows ZIP 内已有项目许可和声明。GitHub 另行自动生成源码压缩包。发布后检查附件链接，并同步更新中英文 README 和两份入门指南中的已发布版本。详见 [GitHub 发布说明](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)。
 
 可使用[更新说明模板](docs/RELEASE_NOTES_TEMPLATE.md)，说明用户可见的变化、升级步骤与实际提供的平台版本。
 
