@@ -162,6 +162,17 @@ func runCoreRegressionTests() {
 private func runHistoryCopyRegressionTests() {
     let pasteboard = NSPasteboard.withUniqueName()
     let manager = ClipboardManager(testPasteboard: pasteboard)
+    pasteboard.clearContents()
+    pasteboard.setString("previous clipboard", forType: .string)
+    do {
+        try manager.ingestCapturedImage(Data("invalid PNG".utf8))
+        fatalError("invalid capture entered history")
+    } catch ClipboardManager.CapturedImageError.unreadableImage {
+        check(pasteboard.string(forType: .string) == "previous clipboard",
+              "failed capture cleared the prior clipboard")
+    } catch {
+        fatalError("unexpected capture validation error: \(error)")
+    }
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer {

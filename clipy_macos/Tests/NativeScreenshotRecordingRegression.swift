@@ -127,12 +127,43 @@ enum NativeScreenshotRecordingRegression {
             url: staticURL, size: CGSize(width: 320, height: 240),
             systemAudio: false, microphone: false, maxDuration: 10
         )
-        staticWriter.appendVideo(staticSample!)
+        let sampleQueue = DispatchQueue(label: "native-recording-test.samples")
+        sampleQueue.sync { staticWriter.appendVideo(staticSample!) }
         try await Task.sleep(nanoseconds: 250_000_000)
-        precondition(staticWriter.appendCleanFrameAtCurrentTime())
-        try await staticWriter.finish()
+        var lateTiming = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: 30),
+            presentationTimeStamp: CMTime(seconds: 1, preferredTimescale: 600),
+            decodeTimeStamp: .invalid
+        )
+        var lateSample: CMSampleBuffer?
+        precondition(CMSampleBufferCreateCopyWithNewTiming(
+            allocator: kCFAllocatorDefault, sampleBuffer: staticSample!,
+            sampleTimingEntryCount: 1, sampleTimingArray: &lateTiming,
+            sampleBufferOut: &lateSample) == noErr)
+        try sampleQueue.sync {
+            precondition(staticWriter.appendCleanFrameAtCurrentTime())
+            try staticWriter.prepareToFinish()
+            let finalTime = staticWriter.lastVideoTime
+            // A callback queued after stop must not write into finished inputs.
+            staticWriter.appendVideo(lateSample!)
+            precondition(staticWriter.lastVideoTime == finalTime)
+        }
+        try await staticWriter.completeFinish()
         let staticDuration = try await AVURLAsset(url: staticURL).load(.duration)
-        precondition(staticDuration.seconds >= 0.15)
+        precondition(staticDuration.seconds >= 0.15 && staticDuration.seconds < 0.8)
+
+        let cancelledWriter = try NativeScreenshotMovieWriter(
+            url: directory.appendingPathComponent("cancelled.mp4"),
+            size: CGSize(width: 320, height: 240),
+            systemAudio: false, microphone: false, maxDuration: 10
+        )
+        sampleQueue.sync {
+            cancelledWriter.appendVideo(staticSample!)
+            let lastTime = cancelledWriter.lastVideoTime
+            cancelledWriter.cancel()
+            cancelledWriter.appendVideo(lateSample!)
+            precondition(cancelledWriter.lastVideoTime == lastTime)
+        }
 
         let gifURL = directory.appendingPathComponent("synthetic.gif")
         try await NativeScreenshotGIFExporter.export(

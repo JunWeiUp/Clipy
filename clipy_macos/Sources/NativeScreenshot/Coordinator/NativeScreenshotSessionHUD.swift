@@ -3,11 +3,13 @@ import CoreGraphics
 
 @MainActor
 final class NativeScreenshotLongCaptureHUD: NSObject {
+    private static let escapeHotKeyID: UInt32 = 0x5343_5245 // SCRE
     let window: NSPanel
     var onStop: (() -> Void)?
     var onCancel: (() -> Void)?
     private var localEscapeMonitor: Any?
     private var globalEscapeMonitor: Any?
+    private var registeredEscapeHotKey = false
 
     private let preview = NSImageView()
     private let status = NSTextField(labelWithString:
@@ -57,6 +59,13 @@ final class NativeScreenshotLongCaptureHUD: NSObject {
             ))
         }
         window.orderFrontRegardless()
+        // Carbon hotkeys work without Input Monitoring or Accessibility access.
+        // Keep event monitors as a fallback when another app reserves Escape.
+        registeredEscapeHotKey = HotKeyManager.shared.register(
+            keyCode: 53, modifiers: 0, id: Self.escapeHotKeyID
+        ) { [weak self] in
+            Task { @MainActor [weak self] in self?.onCancel?() }
+        }
         localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event }
             Task { @MainActor [weak self] in self?.onCancel?() }
@@ -71,6 +80,10 @@ final class NativeScreenshotLongCaptureHUD: NSObject {
     func hideForFrame() { window.orderOut(nil) }
     func restoreAfterFrame() { window.orderFrontRegardless() }
     func close() {
+        if registeredEscapeHotKey {
+            HotKeyManager.shared.unregister(id: Self.escapeHotKeyID)
+            registeredEscapeHotKey = false
+        }
         if let localEscapeMonitor { NSEvent.removeMonitor(localEscapeMonitor) }
         if let globalEscapeMonitor { NSEvent.removeMonitor(globalEscapeMonitor) }
         localEscapeMonitor = nil
