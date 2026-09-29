@@ -13,7 +13,7 @@
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=1262f3)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
-[![License review](https://img.shields.io/badge/license-review_required-orange)](THIRD_PARTY_NOTICES.md)
+[![macOS 许可 GPLv3](https://img.shields.io/badge/macOS-GPLv3-blue)](LICENSE.GPL-3.0) [![Clipy 代码 MIT](https://img.shields.io/badge/Clipy_代码-MIT-green)](LICENSE)
 
 **[看看界面](#从菜单栏开始)** · **[Android](#在-android-上也很顺手)** · **[开始使用](#三步开始使用)** · **[完整功能](#完整功能说明)**
 
@@ -115,7 +115,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今�
 
 **[安装与常见问题](docs/GETTING_STARTED_ZH.md)** · **[反馈问题](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[建议新功能](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
 
-> **开始共享前：** 同步面向可信局域网，请设置足够强的私有配对密钥，并了解[安全边界](SECURITY.md)。macshot 截图移植模块仍需完成[第三方许可核对](THIRD_PARTY_NOTICES.md)，不能将整个组合应用直接视为仅受 MIT 许可约束。
+> **开始共享前：** 同步面向可信局域网，请设置足够强的私有配对密钥，并了解[安全边界](SECURITY.md)。macOS 应用包含修改过的 macshot 截图模块，按 [GPLv3](LICENSE.GPL-3.0) 分发；[来源与源码获取方式](THIRD_PARTY_NOTICES.md)另见声明。
 
 <details>
 <summary><b>版本、下载与源码构建</b></summary>
@@ -374,13 +374,13 @@ git push origin "v${VERSION}"
 
 也可以手动触发 `Release` workflow，并输入与源码一致的 `X.Y.Z` 版本号。两种触发方式都会直接公开发布，请提前完成清单；不要移动或覆盖已有版本标签。
 
-工作流发布正式最新版，只上传三个安装包：macOS ZIP、Android arm64 APK 和 Windows x64 ZIP。GitHub 在每个附件旁显示 SHA-256 摘要，不再单独上传校验清单、符号包、许可或声明文件；macOS 应用与 Windows ZIP 内已有项目许可和声明。GitHub 另行自动生成源码压缩包。发布后检查附件链接，并同步更新中英文 README 和两份入门指南中的已发布版本。详见 [GitHub 发布说明](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)。
+工作流发布正式最新版，只上传三个安装包：macOS ZIP、Android arm64 APK 和 Windows x64 ZIP。GitHub 在每个附件旁显示 SHA-256 摘要，不再单独上传校验清单、符号包、许可或声明文件；macOS 应用内附 MIT、GPLv3 全文与第三方声明，Windows ZIP 内附适用的 MIT 文本与声明。GitHub 另行自动生成源码压缩包。发布后检查附件链接，并同步更新中英文 README 和两份入门指南中的已发布版本。详见 [GitHub 发布说明](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)。
 
 可使用[更新说明模板](docs/RELEASE_NOTES_TEMPLATE.md)，说明用户可见的变化、升级步骤与实际提供的平台版本。
 
 ## 📄 许可证
 
-仓库目前保留 [MIT License](LICENSE) 文本，但 macshot 移植模块仍需单独核对许可与来源，不能将整个组合应用直接视为仅受 MIT 许可约束。详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+Clipy 自有代码仍采用 [MIT](LICENSE)。macOS 组合应用包含修改过的 macshot 代码，按 [GNU GPLv3](LICENSE.GPL-3.0) 分发；Android 与 Windows 不包含 macshot。详见[来源、修改说明与源码获取方式](THIRD_PARTY_NOTICES.md)。
 
 ## ⭐ Star History
 

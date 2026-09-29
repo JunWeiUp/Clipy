@@ -1,3 +1,8 @@
+Scope: This MIT license applies to Clipy-authored code. The macshot-derived
+screenshot code retains its GNU GPL version 3 terms, and the combined macOS
+application is distributed under GNU GPL version 3. See LICENSE.GPL-3.0 and
+THIRD_PARTY_NOTICES.md for provenance, modifications, and source access.
+
 MIT License
 
 Copyright (c) 2026 JunWeiUp

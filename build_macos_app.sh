@@ -83,7 +83,8 @@ for size in 16 32 128 256 512; do
   sips -z "${retina_size}" "${retina_size}" "${ICON_SOURCE}" --out "${ICONSET}/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "${ICONSET}" -o "${STAGED_APP}/Contents/Resources/AppIcon.icns"
-cp "${REPO_ROOT}/LICENSE" "${REPO_ROOT}/THIRD_PARTY_NOTICES.md" "${STAGED_APP}/Contents/Resources/"
+cp "${REPO_ROOT}/LICENSE" "${REPO_ROOT}/LICENSE.GPL-3.0" \
+   "${REPO_ROOT}/THIRD_PARTY_NOTICES.md" "${STAGED_APP}/Contents/Resources/"
 cp "${MACOS_PROJECT_DIR}/Resources/token-prices-seed.json" \
    "${MACOS_PROJECT_DIR}/Resources/token-prices-overrides.json" \
    "${STAGED_APP}/Contents/Resources/"

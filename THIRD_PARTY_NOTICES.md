@@ -1,34 +1,39 @@
-# Third-party provenance and release review
+# Third-party provenance and licenses
 
-## Release-blocking license review
+## macOS application: GNU GPL version 3
 
-The repository currently contains an MIT `LICENSE`. This does **not** establish
-that the complete macOS application can be distributed under MIT alone.
+The macOS application combines Clipy-authored MIT-licensed code with a modified
+port of [sw33tLie/macshot](https://github.com/sw33tLie/macshot). The combined
+macOS application is distributed under GNU GPL version 3; it is **not** an
+MIT-only application. The complete GPLv3 text is in `LICENSE.GPL-3.0`, both in
+this repository and in `ClipyClone.app/Contents/Resources/`. Clipy-authored
+code retains its MIT terms in `LICENSE`. The Android and Windows applications
+do not include this macshot port.
 
-`clipy_macos/Sources/Screenshot/` contains a modified port of
-[sw33tLie/macshot](https://github.com/sw33tLie/macshot). The upstream
-[LICENSE](https://github.com/sw33tLie/macshot/blob/main/LICENSE), checked on
-2026-09-03, is GNU GPL version 3. The exact upstream revision and license at
-the time of the import have not yet been recorded in this repository.
+The upstream reference is [macshot revision
+`baae5487e0c3fb46350c38a8052a81f00a8497d2`](https://github.com/sw33tLie/macshot/tree/baae5487e0c3fb46350c38a8052a81f00a8497d2),
+the latest upstream commit before Clipy's import commit
+`736ba8fd51e1703b3d89563404cbb7267a4a89c4`. At import, 77 of 85 files
+with matching relative paths had identical Git blobs; eight were locally
+adapted, and nine integration files were added. The original local checkout's
+Git HEAD was not retained, so this is the identified reference revision, not
+an assertion that every imported file was byte-for-byte identical. Its
+[`LICENSE`](https://github.com/sw33tLie/macshot/blob/baae5487e0c3fb46350c38a8052a81f00a8497d2/LICENSE)
+is GPLv3 and matches the bundled `LICENSE.GPL-3.0` exactly. Upstream authors
+recorded in Git history include sw33tLie, Maciej Chojnacki, anten-ka, fxzer,
+vo1x, Oleksandr Honcharov, PINKIIILQWQ, Ted G. Freitas, Tony Xu and
+lubabs770; their authorship is preserved by the upstream history.
 
-Before publishing a new combined macOS binary, the maintainer must:
+**Modification notice (2026-09-29):** Clipy adapted capture, annotation,
+recording, editing and related services into `clipy_macos/Sources/Screenshot/`.
+Changes include `ScreenshotSessionCoordinator`, app integration shims, Chinese
+localization, clipboard/history integration, the offline build configuration,
+and subsequent fixes recorded in this repository's Git history. Clipy does not
+claim authorship of the imported upstream code.
 
-- Identify and record the imported revision and its applicable license.
-- Preserve the applicable license text, copyright notices and modification notices.
-- Resolve the combined distribution terms and corresponding-source obligations,
-  or obtain suitable separate permission, or remove/replace the port.
-- Update `LICENSE`, the README and distributed notices to reflect that decision.
-
-The current MIT text has deliberately **not** been replaced without a maintainer
-decision. This notice records an unresolved provenance issue; it does not grant
-permission, complete a license audit, or relicense anyone else's code.
-
-## macshot adaptation
-
-The port covers capture, annotation, recording, editing and related UI/services.
-Local adaptations include `ScreenshotSessionCoordinator`, app integration
-protocols/shims, Chinese localization, clipboard/history integration, and offline
-build configuration. Keep these boundaries explicit when updating upstream code.
+The corresponding source for a release is this repository at that release's
+`vX.Y.Z` tag, including the screenshot sources, build scripts and notices.
+GitHub's release page provides source ZIP and tar archives at the tag.
 
 ## Other dependencies
 

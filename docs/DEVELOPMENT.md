@@ -207,9 +207,10 @@ test-only default otherwise, which a real device will reject at handshake) and
 
 ## Release checklist
 
-1. Resolve the **blocking macshot license/provenance review** in
-   [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md). Do not describe the whole
-   macOS binary as MIT-only until the applicable terms are established.
+1. Verify the macOS package contains `LICENSE`, `LICENSE.GPL-3.0` and
+   `THIRD_PARTY_NOTICES.md`, and that the release notes link the exact-tag
+   corresponding source. The combined macOS binary is GPLv3; see the
+   [macshot provenance and modifications](../THIRD_PARTY_NOTICES.md).
 2. Run CI and device checks before triggering Release; document any
    unsupported/experimental platforms. The workflow publishes automatically
    once its jobs pass.

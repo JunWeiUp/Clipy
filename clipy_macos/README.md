@@ -18,5 +18,5 @@ metadata template. See [Architecture](../docs/ARCHITECTURE.md) and
 [Development](../docs/DEVELOPMENT.md) for module boundaries, build options,
 signing and device verification.
 
-Before distribution, resolve the screenshot port's
-[third-party license review](../THIRD_PARTY_NOTICES.md).
+The distributed macOS application includes the screenshot port under
+[GNU GPLv3](../LICENSE.GPL-3.0); see [provenance and source access](../THIRD_PARTY_NOTICES.md).

@@ -118,6 +118,7 @@ jobs:
           APP_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           test -s clipy_macos/ClipyClone.app/Contents/Resources/LICENSE
+          test -s clipy_macos/ClipyClone.app/Contents/Resources/LICENSE.GPL-3.0
           test -s clipy_macos/ClipyClone.app/Contents/Resources/THIRD_PARTY_NOTICES.md
           ditto -c -k --keepParent clipy_macos/ClipyClone.app "dist/ClipyClone-macOS-v${APP_VERSION}.zip"
       - name: Upload macOS and Android release files
@@ -221,7 +222,9 @@ jobs:
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           body: |
-            License and third-party notices for this version: [LICENSE](https://github.com/${{ github.repository }}/blob/${{ needs.metadata.outputs.tag }}/LICENSE) · [THIRD_PARTY_NOTICES.md](https://github.com/${{ github.repository }}/blob/${{ needs.metadata.outputs.tag }}/THIRD_PARTY_NOTICES.md).
+            The macOS application includes a modified macshot screenshot module and is distributed under GNU GPLv3. Clipy-authored code retains its MIT license; the Android and Windows packages do not include macshot.
+
+            Licenses and provenance: [MIT scope](https://github.com/${{ github.repository }}/blob/${{ needs.metadata.outputs.tag }}/LICENSE) · [GPLv3 text](https://github.com/${{ github.repository }}/blob/${{ needs.metadata.outputs.tag }}/LICENSE.GPL-3.0) · [third-party notices and modifications](https://github.com/${{ github.repository }}/blob/${{ needs.metadata.outputs.tag }}/THIRD_PARTY_NOTICES.md). The [corresponding source archive](https://github.com/${{ github.repository }}/archive/refs/tags/${{ needs.metadata.outputs.tag }}.zip) is available for this exact release tag.
           draft: false
           prerelease: false
           make_latest: true

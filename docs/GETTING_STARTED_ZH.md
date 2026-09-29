@@ -38,7 +38,7 @@ macOS ZIP 中是 **arm64** 应用，不是 Intel 或通用架构版本。Android
 
 同步面向可信局域网。如果仍使用 v1.0.15，请只使用无敏感信息的示例文字，不要同步密码等秘密。v1.0.18 及后续版本的私有密钥也不等于经过认证的设备身份，无法消除所有协议限制。启用前请阅读[安全说明](../SECURITY.md)。
 
-已有的[第三方许可核对](../THIRD_PARTY_NOTICES.md)仍未完成，版本已公开发布不代表许可核对已经完成。
+macOS 包含修改过的 macshot 代码，按 [GPLv3](../LICENSE.GPL-3.0) 分发；Clipy 自有代码仍采用 [MIT](../LICENSE)。详见[来源与源码获取方式](../THIRD_PARTY_NOTICES.md)。
 
 ## 连接 Mac 与 Android
 

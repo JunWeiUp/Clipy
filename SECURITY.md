@@ -65,4 +65,4 @@ debug-signed builds are for local validation only. The macOS build is ad-hoc sig
 unless a signing identity is supplied and is **not notarized** by this workflow.
 
 Before publishing, complete the [release checklist](docs/DEVELOPMENT.md#release-checklist),
-including the unresolved [third-party license review](THIRD_PARTY_NOTICES.md).
+including the [macOS GPLv3 license and source checks](THIRD_PARTY_NOTICES.md).

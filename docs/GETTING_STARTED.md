@@ -38,7 +38,7 @@ Published versions from v1.0.18 onward and current `main` source provide pairing
 
 The intended environment is a trusted local network. If you still use v1.0.15, use only non-sensitive sample text; do not use that release to synchronize secrets. A private secret in v1.0.18+ does not add authenticated device identity or remove all protocol limitations. Read [Security](../SECURITY.md) before enabling sync.
 
-The existing [third-party license review](../THIRD_PARTY_NOTICES.md) remains open. Published release status does not mean that review has been completed.
+The macOS package includes modified macshot code and is distributed under [GPLv3](../LICENSE.GPL-3.0). Clipy-authored code remains under [MIT](../LICENSE); see [provenance and source access](../THIRD_PARTY_NOTICES.md).
 
 ## Connect Mac and Android
 

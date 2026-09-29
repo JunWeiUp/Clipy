@@ -1,6 +1,6 @@
 # Release notes template
 
-Prepare this before triggering the **public Release** workflow. The existing [release checklist](DEVELOPMENT.md#release-checklist), signing requirements, and [license review](../THIRD_PARTY_NOTICES.md) still apply.
+Prepare this before triggering the **public Release** workflow. Follow the [release checklist](DEVELOPMENT.md#release-checklist), signing requirements and [macOS GPLv3 distribution terms](../THIRD_PARTY_NOTICES.md).
 
 Replace every placeholder with verified information before publishing. Describe changes present in the tagged version, not changes that only exist on the development branch.
 
@@ -25,6 +25,10 @@ Replace every placeholder with verified information before publishing. Describe 
 ## Known limitations
 
 [Limitations relevant to this version, with links to the applicable documentation.]
+
+## Licenses and source
+
+The macOS package includes modified macshot code and is distributed under [GPLv3](../LICENSE.GPL-3.0). Clipy-authored code retains [MIT](../LICENSE). Link the corresponding source archive for this exact release tag and the [third-party notices](../THIRD_PARTY_NOTICES.md).
 
 ## 中文更新说明
 
