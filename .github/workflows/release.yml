@@ -213,7 +213,7 @@ jobs:
           test "$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 3
           sha256sum dist/*
       - name: Publish release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.metadata.outputs.tag }}
           name: Clipy ${{ needs.metadata.outputs.tag }}
