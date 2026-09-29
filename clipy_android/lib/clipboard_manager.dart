@@ -177,38 +177,7 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
       } else if (data['type'] == 'image') {
         final bytes = data['bytes'] as Uint8List?;
         if (bytes == null || bytes.isEmpty) return;
-        final hash = sha256.convert(bytes).toString();
-        final root = Directory(
-          p.join(
-            (await StoragePaths.appStorageDirectory()).path,
-            'clipboard-images',
-          ),
-        );
-        await root.create(recursive: true);
-        final file = File(p.join(root.path, '$hash.png'));
-        if (!await file.exists()) {
-          final temporary = File(
-            '${file.path}.${DateTime.now().microsecondsSinceEpoch}.tmp',
-          );
-          await temporary.writeAsBytes(bytes, flush: true);
-          try {
-            if (!await file.exists()) {
-              await temporary.rename(file.path);
-            }
-          } finally {
-            if (await temporary.exists()) {
-              await temporary.delete();
-            }
-          }
-        }
-        await _addToHistory(
-          HistoryEntry(
-            item: HistoryItem(type: 'image', value: file.path),
-            date: DateTime.now(),
-            sourceApp: sourceApp,
-            contentHash: hash,
-          ),
-        );
+        await _storeWindowsImage(bytes, sourceApp: sourceApp);
       } else if (data['type'] == 'files') {
         final paths = (data['paths'] as List?)?.cast<String>() ?? [];
         if (paths.isEmpty) return;
@@ -227,6 +196,62 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     } catch (e) {
       appLog('Windows clipboard read failed: $e', level: 'warning');
     }
+  }
+
+  /// An app-initiated capture bypasses the clipboard owner check, then writes
+  /// to the clipboard. The native listener ignores our own clipboard write.
+  Future<bool> ingestWindowsScreenshot(Uint8List png) async {
+    if (!Platform.isWindows || png.isEmpty) return false;
+    bool copied = false;
+    try {
+      copied =
+          await _clipboardChannel.invokeMethod<bool>('setImage', {
+            'bytes': png,
+          }) ??
+          false;
+    } catch (error) {
+      appLog('Windows screenshot copy failed: $error', level: 'warning');
+    }
+    await _storeWindowsImage(png, sourceApp: 'Clipy Screenshot');
+    return copied;
+  }
+
+  Future<void> _storeWindowsImage(
+    Uint8List bytes, {
+    required String sourceApp,
+  }) async {
+    final hash = sha256.convert(bytes).toString();
+    final root = Directory(
+      p.join(
+        (await StoragePaths.appStorageDirectory()).path,
+        'clipboard-images',
+      ),
+    );
+    await root.create(recursive: true);
+    final file = File(p.join(root.path, '$hash.png'));
+    if (!await file.exists()) {
+      final temporary = File(
+        '${file.path}.${DateTime.now().microsecondsSinceEpoch}.tmp',
+      );
+      await temporary.writeAsBytes(bytes, flush: true);
+      try {
+        if (!await file.exists()) {
+          await temporary.rename(file.path);
+        }
+      } finally {
+        if (await temporary.exists()) {
+          await temporary.delete();
+        }
+      }
+    }
+    await _addToHistory(
+      HistoryEntry(
+        item: HistoryItem(type: 'image', value: file.path),
+        date: DateTime.now(),
+        sourceApp: sourceApp,
+        contentHash: hash,
+      ),
+    );
   }
 
   Future<void> startMonitoring() async {

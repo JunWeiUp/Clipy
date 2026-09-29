@@ -143,6 +143,10 @@ std::vector<uint8_t> EncodeDib(HANDLE dib) {
 
 }  // namespace
 
+std::vector<uint8_t> EncodeBitmapToPng(HBITMAP bitmap) {
+  return EncodeBitmap(bitmap);
+}
+
 flutter::EncodableMap ReadClipboardSnapshot(HWND owner) {
   flutter::EncodableMap snapshot{{flutter::EncodableValue("type"),
                                   flutter::EncodableValue("none")}};
