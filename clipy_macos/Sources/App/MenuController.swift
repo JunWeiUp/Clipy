@@ -904,15 +904,21 @@ class MenuController: NSObject {
     }
 
     @objc private func startScreenshotRegion() {
-        ScreenshotSessionCoordinator.shared.startCapture(mode: .region, fromMenu: true)
+        Task { @MainActor in
+            NativeScreenshotCoordinator.shared.startCapture(mode: .region, fromMenu: true)
+        }
     }
 
     @objc private func startScreenshotWindow() {
-        ScreenshotSessionCoordinator.shared.startCapture(mode: .window, fromMenu: true)
+        Task { @MainActor in
+            NativeScreenshotCoordinator.shared.startCapture(mode: .window, fromMenu: true)
+        }
     }
 
     @objc private func startScreenshotFullscreen() {
-        ScreenshotSessionCoordinator.shared.startCapture(mode: .fullscreen, fromMenu: true)
+        Task { @MainActor in
+            NativeScreenshotCoordinator.shared.startCapture(mode: .fullscreen, fromMenu: true)
+        }
     }
 
     @objc private func languageDidChange() {

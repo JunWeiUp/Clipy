@@ -7,3 +7,4 @@
 *.icns binary
 *.pdf binary
 *.pen binary
+third_party/libwebp/COPYING whitespace=-blank-at-eof

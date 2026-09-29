@@ -69,8 +69,7 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
     private var currentImage: NSImage
 
     // MARK: Edit mode state
-    // Editing opens macshot's DetachedEditorWindowController (see enterEditMode);
-    // the in-pin canvas/toolbar machinery has been removed.
+    // Editing opens the native screenshot editor; the pin itself stays light.
 
     init(image: NSImage, screenRect: NSRect? = nil, id: UUID, onClose: @escaping (UUID) -> Void) {
         self.panelID = id
@@ -309,12 +308,8 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
 
     // MARK: Edit mode
 
-    /// Open the pinned image in macshot's full detached editor (18 tools,
-    /// secondary options row, beautify/effects, crop/flip, undo/redo). This
-    /// matches macshot's pin → edit behavior: the floating pin closes and the
-    /// image opens in a standalone editor window. Saving in the editor ingests
-    /// the edited image back into clipy1's history (see AppDelegate's
-    /// ScreenshotAppIntegration conformance), where it can be re-pinned.
+    /// Open the current pinned image in the independent screenshot editor.
+    /// Closing the pin releases its display buffer before the editor opens.
     @objc private func enterEditMode() {
         // Capture the current (possibly rotated/zoomed) image as the editor input.
         // The detached editor works in image-relative coordinates, so we hand it
@@ -326,7 +321,9 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
 
         // Activate the app so the editor window can become key (.regular policy).
         NSApp.activate(ignoringOtherApps: true)
-        DetachedEditorWindowController.open(image: editorImage, fromCapture: false)
+        Task { @MainActor in
+            NativeScreenshotCoordinator.shared.openEditor(image: editorImage)
+        }
     }
 
 

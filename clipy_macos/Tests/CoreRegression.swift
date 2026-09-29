@@ -7,6 +7,19 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
 }
 
 func runCoreRegressionTests() {
+    check(ScreenshotResolution.auto.shouldDownscaleRetina(true), "Auto ignored the Retina 1× option")
+    check(!ScreenshotResolution.auto.shouldDownscaleRetina(false), "Auto downscaled when 1× was off")
+    check(!ScreenshotResolution.native.shouldDownscaleRetina(true), "Native downscaled with 1× enabled")
+    check(ScreenshotResolution.auto.pixelScale(for: nil, displayNativeScale: 2,
+                                               downscaleRetina: true) == 1, "Auto did not export at 1×")
+    check(ScreenshotResolution.auto.pixelScale(for: nil, displayNativeScale: 2,
+                                               downscaleRetina: false) == 2, "Auto lost native pixels")
+    check(ScreenshotResolution.native.pixelScale(for: nil, displayNativeScale: 2,
+                                                 downscaleRetina: true) == 2, "Native lost native pixels")
+    check(ScreenshotResolution.fromLegacyDPI(144) == .native, "Legacy DPI no longer preserves native pixels")
+    runNativeScreenshotScrollRegressionTests()
+    runNativeScreenshotProcessingRegressionTests()
+    runNativeScreenshotWebPRegressionTests()
     runTokenUsageRegressionTests()
     runMenuBarPanelRegressionTests()
     runMenuBarOverflowRegressionTests()

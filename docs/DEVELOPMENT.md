@@ -200,10 +200,12 @@ test-only default otherwise, which a real device will reject at handshake) and
 
 ## Release checklist
 
-1. Resolve the **blocking macshot license/provenance review** in
-   [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md). Do not describe the whole
-   macOS binary as MIT-only until the applicable terms are established.
-2. Run CI and device checks; document any unsupported/experimental platforms.
+1. Run `scripts/check_screenshot_provenance.sh`, inspect the macOS build
+   inputs and bundled [third-party notices](../THIRD_PARTY_NOTICES.md), and
+   confirm the pinned BSD-licensed libwebp source checksum. Historical tags
+   and binaries retain their own license obligations.
+2. Complete the [native screenshot acceptance matrix](SCREENSHOT_CLEAN_REWRITE.md)
+   and the other CI/device checks; document any unsupported/experimental platforms.
    iOS has unsigned CI and Simulator coverage but no signed-device or public
    distribution validation. Windows needs a clean-machine ZIP and tray check.
 3. Review dependency changes, data migrations, privacy permissions and logs.
@@ -219,9 +221,11 @@ test-only default otherwise, which a real device will reject at handshake) and
    numbers use the checked-in build number plus the workflow run number. Keep
    them monotonically increasing across releases and any workflow/build-number
    policy changes.
-6. A version tag or manual Release workflow runs checks and creates a **draft**.
-   Inspect APK signing/upgrade compatibility, the macOS signing/notarization status,
-   `SHA256SUMS.txt`, symbols and notices before manually publishing.
+6. A version tag or manual Release workflow runs checks and creates a **draft**
+   in the current workflow. Inspect APK signing/upgrade compatibility, the macOS
+   signing/notarization status, uploaded assets and notices before publication.
+   Do not switch to automatic public publication until the three-platform
+   workflow and screenshot acceptance gates pass.
 
 This setup does not retroactively audit old releases, Git history or third-party
 licenses, nor does a draft automatically resolve distribution obligations.

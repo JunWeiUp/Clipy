@@ -246,6 +246,12 @@ struct ScreenshotSettingsView: View {
           .onChange(of: screenshotResolution) { newValue in
             PreferencesManager.shared.screenshotResolution = newValue
           }
+          if screenshotResolution == .auto {
+            Toggle(L("Downscale Retina Screenshots to 1×"), isOn: $downscaleRetina)
+              .onChange(of: downscaleRetina) { newValue in
+                PreferencesManager.shared.downscaleRetina = newValue
+              }
+          }
 
           Picker(L10n.t(.screenshotOCRLanguage), selection: $screenshotOCRLanguage) {
             ForEach(ScreenshotOCRLanguage.allCases) { language in
@@ -289,8 +295,6 @@ struct ScreenshotSettingsView: View {
             }
             .buttonStyle(.bordered)
           }
-          .disabled(!screenshotAutoSaveEnabled)
-          .opacity(screenshotAutoSaveEnabled ? 1 : 0.55)
         } header: {
           Text(L("Screenshot"))
         } footer: {
@@ -433,10 +437,6 @@ struct ScreenshotSettingsView: View {
           Toggle(L("Capture Mouse Cursor"), isOn: $captureCursor)
             .onChange(of: captureCursor) { newValue in
               PreferencesManager.shared.captureCursor = newValue
-            }
-          Toggle(L("Downscale Retina Screenshots to 1×"), isOn: $downscaleRetina)
-            .onChange(of: downscaleRetina) { newValue in
-              PreferencesManager.shared.downscaleRetina = newValue
             }
           Toggle(L("Play Sound After Capture"), isOn: $playCopySound)
             .onChange(of: playCopySound) { newValue in
