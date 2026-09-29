@@ -27,7 +27,7 @@ case "${MACOS_ARCH}" in
   *) fail "MACOS_ARCH must be arm64 or x86_64" ;;
 esac
 [ "$(uname -s)" = Darwin ] || fail "The macOS app must be built on macOS"
-for tool in swiftc codesign plutil sips iconutil ditto; do require_command "${tool}"; done
+for tool in swiftc codesign plutil sips iconutil ditto cmake shasum tar; do require_command "${tool}"; done
 if [ "${GENERATE_DSYM}" = 1 ]; then require_command dsymutil; fi
 if [ "${INSTALL_APP}" = 1 ] && pgrep -x "${APP_NAME}" >/dev/null; then
   fail "Quit ${APP_NAME} before installing; the build never terminates a running app"
@@ -39,6 +39,12 @@ trap 'rm -rf "${BUILD_DIR}"' EXIT
 STAGED_APP="${BUILD_DIR}/${APP_BUNDLE}"
 mkdir -p "${STAGED_APP}/Contents/MacOS" "${STAGED_APP}/Contents/Resources"
 cp -R "${MACOS_PROJECT_DIR}/Sources" "${BUILD_DIR}/Sources"
+
+# Build the bundled BSD-3-Clause WebP encoder from pinned source. Link static
+# archives into the app so distributed bundles need no Homebrew installation.
+# shellcheck source=scripts/lib/build_webp.sh
+source "${REPO_ROOT}/scripts/lib/build_webp.sh"
+build_webp_static
 
 SWIFT_SOURCES=()
 while IFS= read -r -d '' source_path; do
@@ -59,11 +65,13 @@ swiftc "${SWIFT_SOURCES[@]}" ${DEBUG_FLAGS[@]+"${DEBUG_FLAGS[@]}"} \
 # objects otherwise disappear before debug symbols can be extracted.
 swiftc "${BUILD_DIR}/${APP_NAME}.o" -target "${MACOS_ARCH}-apple-macos13.0" \
   -o "${STAGED_APP}/Contents/MacOS/${APP_NAME}" \
+  "${WEBP_STATIC_LIBRARY}" "${SHARPYUV_STATIC_LIBRARY}" \
   -framework AppKit -framework SwiftUI -framework CoreGraphics -framework Carbon \
   -framework UserNotifications -framework ServiceManagement -framework ApplicationServices \
   -framework Security -framework Vision -framework CoreImage -framework ScreenCaptureKit \
   -framework UniformTypeIdentifiers -framework PDFKit -framework WebKit -framework Quartz \
   -framework AVFoundation -framework VideoToolbox -framework CoreVideo -framework CoreMedia \
+  -Xlinker -weak_framework -Xlinker Translation \
   -lcompression
 
 PLIST="${STAGED_APP}/Contents/Info.plist"

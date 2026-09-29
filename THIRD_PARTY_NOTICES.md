@@ -1,34 +1,51 @@
-# Third-party provenance and release review
+# Third-party provenance and notices
 
-## Release-blocking license review
+Screenshot module provenance: independently implemented by Clipy contributors.
 
-The repository currently contains an MIT `LICENSE`. This does **not** establish
-that the complete macOS application can be distributed under MIT alone.
+The current `clipy_macos/Sources/NativeScreenshot/` uses Apple system APIs and
+the separately listed BSD-licensed WebP encoder. The former
+`clipy_macos/Sources/Screenshot/` tree is absent from current build inputs and
+source releases. Historical commits and tags can still contain the earlier
+[macshot](https://github.com/sw33tLie/macshot) GPLv3 code; distribution of
+those historical revisions or binaries remains subject to their own licenses.
+This notice concerns the current source tree and does not relicense history.
 
-`clipy_macos/Sources/Screenshot/` contains a modified port of
-[sw33tLie/macshot](https://github.com/sw33tLie/macshot). The upstream
-[LICENSE](https://github.com/sw33tLie/macshot/blob/main/LICENSE), checked on
-2026-09-03, is GNU GPL version 3. The exact upstream revision and license at
-the time of the import have not yet been recorded in this repository.
+## libwebp (WebP screenshot export)
 
-Before publishing a new combined macOS binary, the maintainer must:
+The macOS build statically links Google's libwebp 1.6.0 from the pinned archive
+in `third_party/libwebp/`. Source URL, SHA-256, patent grant and build details
+are recorded in that directory. Its BSD-3-Clause notice follows and is included
+with the macOS application:
 
-- Identify and record the imported revision and its applicable license.
-- Preserve the applicable license text, copyright notices and modification notices.
-- Resolve the combined distribution terms and corresponding-source obligations,
-  or obtain suitable separate permission, or remove/replace the port.
-- Update `LICENSE`, the README and distributed notices to reflect that decision.
-
-The current MIT text has deliberately **not** been replaced without a maintainer
-decision. This notice records an unresolved provenance issue; it does not grant
-permission, complete a license audit, or relicense anyone else's code.
-
-## macshot adaptation
-
-The port covers capture, annotation, recording, editing and related UI/services.
-Local adaptations include `ScreenshotSessionCoordinator`, app integration
-protocols/shims, Chinese localization, clipboard/history integration, and offline
-build configuration. Keep these boundaries explicit when updating upstream code.
+> Copyright (c) 2010, Google Inc. All rights reserved.
+>
+> Redistribution and use in source and binary forms, with or without
+> modification, are permitted provided that the following conditions are
+> met:
+>
+>   * Redistributions of source code must retain the above copyright
+>     notice, this list of conditions and the following disclaimer.
+>
+>   * Redistributions in binary form must reproduce the above copyright
+>     notice, this list of conditions and the following disclaimer in
+>     the documentation and/or other materials provided with the
+>     distribution.
+>
+>   * Neither the name of Google nor the names of its contributors may
+>     be used to endorse or promote products derived from this software
+>     without specific prior written permission.
+>
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+> "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+> LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+> A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+> HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+> SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+> LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+> DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+> THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+> (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+> OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Other dependencies
 
@@ -84,9 +101,6 @@ build configuration. Keep these boundaries explicit when updating upstream code.
   license data in distributed applications.
 - AndroidX dependencies are declared in the Android Gradle files. Include their
   required notices when distributing Android builds.
-- `GifskiExporter.swift` optionally invokes a separately installed
-  [gifski](https://github.com/ImageOptim/gifski) executable. This repository's
-  build script does not bundle that executable. Review its license before doing so.
 - Apple system frameworks are linked from the developer's SDK, not vendored here.
 
 This is a provenance inventory, not a claim that every dependency has been audited.

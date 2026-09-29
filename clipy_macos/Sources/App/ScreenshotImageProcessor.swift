@@ -54,8 +54,8 @@ enum ScreenshotImageProcessor {
         resolution: ScreenshotResolution = PreferencesManager.shared.screenshotResolution,
         displayNativeScale: CGFloat? = nil
     ) -> NSImage {
-        // All resolution modes now resolve to native pixels, so simply wrap the capture
-        // without resampling. Avoids both downsampling blur and upsampling softness.
+        // Keep the captured pixels intact here. The screenshot delivery path applies
+        // the optional Auto-mode 1× export after editing, while Native keeps them.
         _ = resolution
         _ = displayNativeScale
         // wrapWithBitmapRep attaches an explicit NSBitmapImageRep so downstream

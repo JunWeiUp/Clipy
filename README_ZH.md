@@ -13,7 +13,7 @@
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=1262f3)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
-[![License review](https://img.shields.io/badge/license-review_required-orange)](THIRD_PARTY_NOTICES.md)
+[![代码许可：MIT](https://img.shields.io/badge/code_license-MIT-blue)](LICENSE)
 
 **[看看界面](#从菜单栏开始)** · **[Android](#在-android-上也很顺手)** · **[开始使用](#三步开始使用)** · **[完整功能](#完整功能说明)**
 
@@ -115,7 +115,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今�
 
 **[安装与常见问题](docs/GETTING_STARTED_ZH.md)** · **[反馈问题](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[建议新功能](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
 
-> **开始共享前：** 同步面向可信局域网，请设置足够强的私有配对密钥，并了解[安全边界](SECURITY.md)。macshot 截图移植模块仍需完成[第三方许可核对](THIRD_PARTY_NOTICES.md)，不能将整个组合应用直接视为仅受 MIT 许可约束。
+> **开始共享前：** 同步面向可信局域网，请设置足够强的私有配对密钥，并了解[安全边界](SECURITY.md)与[第三方声明](THIRD_PARTY_NOTICES.md)。
 
 <details>
 <summary><b>版本、下载与源码构建</b></summary>
@@ -146,12 +146,12 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今�
 
 ### 📸 截图与标注（macOS）
 - 捕获模式：**区域 / 窗口 / 全屏 / 滚动长截图 / 屏幕录制（MP4 + GIF）**。
-- **18 工具标注引擎**（移植自 [macshot](https://github.com/sw33tLie/macshot)），统一单全屏 OverlayView：画笔（压感 + 平滑）、直线、**6 种箭头**（曲线/虚线/手绘）、矩形、填充矩形、椭圆、**正片叠底荧光笔**、富文本（粗体/斜体/描边/背景）、自增**编号**、emoji/图片**图章**、**马赛克/模糊/纯色/擦除**遮挡、**放大镜**、**像素标尺**、**取色器**、**聚光灯**。
+- **独立实现的 18 工具标注引擎**，配原生选区浮层与编辑器：画笔（压感 + 平滑）、直线、**6 种箭头**（曲线/虚线/手绘）、矩形、填充矩形、椭圆、**正片叠底荧光笔**、富文本（粗体/斜体/描边/背景）、自增**编号**、emoji/图片**图章**、**马赛克/模糊/纯色/擦除**遮挡、**放大镜**、**像素标尺**、**取色器**、**聚光灯**。
 - 每工具**二级选项条** + 玻璃主工具条 + 颜色/emoji/字体/特效弹层。
 - **美化**渐变包裹 + **图像特效**（亮度/对比度/饱和度/锐度）。
-- **滚动长截图**带侧边实时预览（基于 Vision 的帧拼接）。
+- **滚动长截图**带侧边实时预览及重叠校验拼接。
 - **录屏**含系统音频 + 麦克风双轨、摄像头悬浮窗、鼠标点击高亮、按键显示。
-- 基于 Apple Vision 的**端侧 OCR** + **二维码**；**自动遮挡**敏感信息；**Apple Translation** 翻译覆盖。
+- 基于 Apple Vision 的**端侧 OCR** + **二维码**；需确认的**自动遮挡**建议；macOS 15+ 用户主动触发的 **Apple Translation**。
 - **贴图到屏幕**（缩放/透明度/旋转/编辑）、**右下角浮动缩略图**反馈、**独立编辑器**窗口（裁剪/翻转/缩放）、另存为、复制。
 - 保存目录可配、单键工具快捷键、全局快捷键。
 - 完整本地化（英文 + 简体中文）。
@@ -313,7 +313,7 @@ Release 构建号为源码构建号加 Release 工作流运行序号。如需用
 - `ClipboardManager` —— 剪贴板轮询、历史持久化、去重、同步分发。
 - `SnippetManager` —— 文件夹、片段、快捷键、导入导出。
 - `SyncManager` —— 子网/手动发现、带长度前缀的 TCP 同步（协议 v2）、AES-GCM 加密、可靠历史与通知投递。
-- `Sources/Screenshot/` —— 完整的截图/录屏引擎（移植自 macshot）：统一 OverlayView、18 工具标注引擎、滚动长截图、录屏、美化/特效、OCR、贴图、浮动缩略图、编辑器窗口。由 `ScreenshotSessionCoordinator` 编排。
+- `Sources/NativeScreenshot/` —— 独立实现的截图/录屏引擎：捕获、18 工具标注模型、长图、MP4/GIF、图像特效、识别、贴图、缩略图及编辑器。由 `NativeScreenshotCoordinator` 编排；WebP 导出静态链接 BSD 许可的 libwebp。
 - `SearchWindow` —— 带筛选与排序的全局搜索。
 - `NotificationManager` —— 手机通知镜像。
 - `PreferencesManager`、`SettingsWindow`、`SnippetEditorWindow`、`LogWindow` —— 配置与编辑界面。
@@ -379,7 +379,7 @@ git push origin "v${VERSION}"
 
 ## 📄 许可证
 
-仓库目前保留 [MIT License](LICENSE) 文本，但 macshot 移植模块仍需单独核对许可与来源，不能将整个组合应用直接视为仅受 MIT 许可约束。详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+当前 Clipy 源码采用 [MIT License](LICENSE)；内置 WebP 编码器采用 BSD-3-Clause。相关声明及当前源码与历史版本的区别见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## ⭐ Star History
 

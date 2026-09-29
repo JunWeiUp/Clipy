@@ -69,17 +69,9 @@ enum MemoryFootprintReclaimer {
         guard !hasVisibleInteractiveWindows(),
               MenuController.active?.isMenuBarMenuOpen != true else { return }
         ClipboardManager.shared.releaseMenuMemory()
-        releaseOverlayPool()
-        // The CIContext pools can grow large after a screenshot and never shrink
-        // on their own; release them while the app is idle so the footprint
-        // recovers. ScreenshotImageProcessor, ImageEffects and Annotation each
-        // hold their own CIContext (30-80MB of IOSurface/texture pool per
-        // context after a 4K render).
+        // Release the shared image-processing context while screenshot sessions
+        // own and release their temporary buffers directly.
         ScreenshotImageProcessor.releaseCIContext()
-        ImageEffects.releaseContext()
-        Annotation.releaseContext()
-        OverlayView.releaseOutlineGlowContext()
-        ScreenCaptureManager.releaseCachedContent()
         applyMallocPressure()
     }
 
@@ -97,10 +89,7 @@ enum MemoryFootprintReclaimer {
         schedulerQueue.async {
             pendingDelayedReclaim?.cancel()
             let item = DispatchWorkItem {
-                // The capture session has been quiet for `seconds`: the warm
-                // overlay pool (fullscreen layer backing per screen) is now
-                // pure overhead, not a fast-next-capture win.
-                releaseOverlayPool()
+                // Run after the new session has dropped its temporary buffers.
                 reclaimAfterScreenshot()
             }
             pendingDelayedReclaim = item
@@ -109,7 +98,6 @@ enum MemoryFootprintReclaimer {
 
             pendingFinalReclaim?.cancel()
             let final = DispatchWorkItem {
-                releaseOverlayPool()
                 reclaimAfterScreenshot()
                 logMemoryBreakdown(tag: "settled")
             }
@@ -132,10 +120,6 @@ enum MemoryFootprintReclaimer {
             // drain before we measure/compact.
             let before = currentFootprintBytes()
             ScreenshotImageProcessor.releaseCIContext()
-            ImageEffects.releaseContext()
-            Annotation.releaseContext()
-            OverlayView.releaseOutlineGlowContext()
-            ScreenCaptureManager.releaseCachedContent()
             applyMallocPressure()
             if let before, let after = currentFootprintBytes() {
                 // Always log, including the freed == 0 case: a silent zero is
@@ -169,17 +153,6 @@ enum MemoryFootprintReclaimer {
             }
             line += " | zones: " + topMallocZones().joined(separator: ", ")
             appLog(line, level: .info)
-        }
-    }
-
-    /// Each pooled overlay controller keeps a fullscreen layer-backed panel +
-    /// the whole overlay view tree alive (its backing store still holds the
-    /// last captured frame, ~33-70MB per Retina screen). The pool only exists
-    /// to make the *next* capture instant; releasing it while idle trades a
-    /// few ms of panel re-creation for the memory.
-    private static func releaseOverlayPool() {
-        Task { @MainActor in
-            ScreenshotSessionCoordinator.shared.releaseIdleOverlayPool()
         }
     }
 

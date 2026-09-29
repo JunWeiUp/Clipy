@@ -4,11 +4,8 @@ import Foundation
 
 /// Screenshot-related preference enums.
 ///
-/// These describe user-facing screenshot settings (capture mode, post-capture
-/// action, OCR language, resolution) consumed by `PreferencesManager` and the
-/// screenshot settings UI. They were extracted from the legacy `ScreenshotTypes`
-/// file (now deleted along with the old capture pipeline); the new screenshot
-/// module under `Sources/Screenshot/` carries its own tool/coordinate types.
+/// User-facing capture, delivery, OCR and resolution settings shared by
+/// `PreferencesManager`, the settings UI and `Sources/NativeScreenshot/`.
 
 enum ScreenshotCaptureMode: String, Codable, CaseIterable, Identifiable {
     case region
@@ -75,10 +72,9 @@ enum ScreenshotOCRLanguage: String, CaseIterable, Identifiable, Codable {
 }
 
 enum ScreenshotResolution: String, CaseIterable, Identifiable, Codable {
-    /// Match the current screen's native backing scale (Retina-aware).
+    /// Honor the separate 1× Retina option. With that option off, keep native pixels.
     case auto
-    /// Always capture at native display pixels. Identical to `.auto` in practice, but
-    /// exposed so users can explicitly lock to "no resampling ever".
+    /// Always keep native display pixels, regardless of the 1× Retina option.
     case native
 
     var id: String { rawValue }
@@ -101,11 +97,22 @@ enum ScreenshotResolution: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    /// Both modes resolve to the display's native backing scale, so captures are never
-    /// downsampled below real pixels or artificially upsampled above them.
-    func pixelScale(for screen: NSScreen?, displayNativeScale: CGFloat? = nil) -> CGFloat {
-        displayNativeScale ?? screen?.backingScaleFactor ?? 1
+    /// Apply an explicitly requested 1× export only in Auto mode. Capture itself
+    /// remains at native pixels, so the overlay and selection stay sharp.
+    func shouldDownscaleRetina(_ requested: Bool) -> Bool {
+        self == .auto && requested
     }
 
-    var prefersNominalCapture: Bool { false }
+    func pixelScale(
+        for screen: NSScreen?,
+        displayNativeScale: CGFloat? = nil,
+        downscaleRetina: Bool = PreferencesManager.shared.downscaleRetina
+    ) -> CGFloat {
+        if shouldDownscaleRetina(downscaleRetina) { return 1 }
+        return displayNativeScale ?? screen?.backingScaleFactor ?? 1
+    }
+
+    var prefersNominalCapture: Bool {
+        shouldDownscaleRetina(PreferencesManager.shared.downscaleRetina)
+    }
 }
