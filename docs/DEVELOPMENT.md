@@ -26,8 +26,11 @@ bash scripts/check.sh all
 
 `all` runs repository checks, Dart formatting verification, static analysis and
 Flutter tests. It does not connect to peers, install packages on a device or start
-the app. CI also builds a debug APK, native macOS bundle, Windows runner and
-unsigned iOS application.
+the app. CI always runs repository checks. Pull requests
+build and test only affected platforms; shared Flutter source or configuration
+changes run Android, Windows and iOS checks. Main/master pushes, manual CI runs
+and Release calls run the full matrix, including the debug APK, native macOS
+bundle, Windows runner and unsigned iOS application.
 
 ```bash
 bash scripts/check.sh repo      # shell syntax, metadata tests, hygiene
@@ -72,19 +75,21 @@ it does not import certificates or use signing secrets.
 
 `.github/workflows/macos.yml` is both a reusable workflow and the standalone
 **macOS Build** manual entry point. `ci.yml` calls it for main/master pushes,
-pull requests and CI runs; the existing Release checks reuse it too. Run
+pull requests that affect macOS, manual CI runs and Release checks. Run
 **Actions → macOS Build → Run workflow** to build independently of Flutter,
 Android checks and Android signing credentials. The manual entry point becomes
 available once the workflow is on the repository's default branch.
 
-The job runs repository and native regression checks, builds with
-`SIGN_IDENTITY=-`, validates version metadata and arm64 architecture, then checks
+CI runs repository checks in a separate job; standalone macOS runs check the
+repository directly. The macOS job runs native
+regression checks, builds with `SIGN_IDENTITY=-`, validates version metadata
+and arm64 architecture, then checks
 the signature both before packaging and after extracting the app ZIP. The app
 is zipped with `ditto` before upload to preserve its executable permissions.
 `INSTALL_APP=0` and `LAUNCH_APP=0` prevent installation or launch on the runner.
 
-The run summary links to an artifact containing the app ZIP, dSYM ZIP,
-`SHA256SUMS.txt`, `BUILD.txt`, license notices and the bilingual
+The run summary links to an artifact containing only the app ZIP. License
+notices are inside the app bundle, and the summary links to the bilingual
 [installation guide](MACOS_INSTALL.md). Sign in to GitHub to download it within
 30 days. These builds target Apple Silicon / macOS 13+; they are not Intel or
 universal binaries, and are not public GitHub Releases.
@@ -94,14 +99,14 @@ source build number plus the caller's `GITHUB_RUN_NUMBER`, matching the Release
 formula. Run numbers are scoped to each workflow, so build numbers across manual
 Mac, CI and Release runs are not a global sequence; reruns keep the same build
 number. Artifact names also include run ID and attempt to distinguish them.
-Check `BUILD.txt` when switching between build channels and use a higher
+Check the run summary or app's `Info.plist` when switching build channels and use a higher
 `BUILD_NUMBER` for a local replacement of a newer installed build.
 
-Version tags and the combined manual **Release** workflow retain their existing
-draft behavior and macOS/Android asset names. The release assembly job waits
-for both the macOS/Android and Windows artifacts before creating a draft.
-Neither Mac CI nor the standalone manual workflow publishes a release or
-requires Developer ID signing.
+Version tags and the combined manual **Release** workflow publish a normal,
+latest release after checks and all three platform builds succeed. It uploads
+only the macOS ZIP, Android arm64 APK and Windows x64 ZIP. Standalone Mac CI
+still produces a development artifact and does not publish a release or require
+Developer ID signing.
 
 ## Android
 
@@ -126,6 +131,8 @@ CLIPY_ALLOW_DEBUG_SIGNING=1 ./build_android_apk.sh
 
 Output: `dist/ClipyClone-Android-{armeabi-v7a,arm64-v8a}-v<version>.apk`.
 `SPLIT_PER_ABI=0` creates one APK; the default split packaging targets ARM32/ARM64.
+The Release workflow uploads only the arm64 APK; the ARM32 build remains a local
+output of the shared script.
 Build numbers now come directly from Flutter metadata, with no device-specific
 minimum hidden in Gradle. The current source version and build number are recorded
 in `clipy_android/pubspec.yaml`; keep them aligned with the current-version text in
@@ -217,15 +224,18 @@ test-only default otherwise, which a real device will reject at handshake) and
 5. Update `clipy_android/pubspec.yaml`, `README.md` and `README_ZH.md` in the same
    change. Version tags must use `vX.Y.Z`, match the source version and never
    overwrite an existing tag. README source-version text is separate from the
-   Release badge, which only tracks published releases, not drafts. CI build
+   Release badge, which only tracks published releases. CI build
    numbers use the checked-in build number plus the workflow run number. Keep
    them monotonically increasing across releases and any workflow/build-number
    policy changes.
-6. A version tag or manual Release workflow runs checks and creates a **draft**
-   in the current workflow. Inspect APK signing/upgrade compatibility, the macOS
-   signing/notarization status, uploaded assets and notices before publication.
-   Do not switch to automatic public publication until the three-platform
-   workflow and screenshot acceptance gates pass.
+6. Before pushing a version tag or starting the manual Release workflow,
+   inspect APK signing/upgrade compatibility, macOS signing/notarization and
+   the bundled license notices. These triggers publish a **normal release**
+   once checks pass. Verify the three uploaded package names and GitHub's
+   per-asset SHA-256 digests after publication. The macOS app and Windows ZIP
+   include `LICENSE` and `THIRD_PARTY_NOTICES.md`; Flutter's Android build
+   includes generated dependency notices, while the repository's legal files
+   remain available at the release tag.
 
 This setup does not retroactively audit old releases, Git history or third-party
-licenses, nor does a draft automatically resolve distribution obligations.
+licenses; an automated public release does not resolve distribution obligations.

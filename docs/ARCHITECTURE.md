@@ -32,13 +32,13 @@ clipy_android/
   lib/sync/                  protocol, crypto, sessions, discovery, reliability
   lib/ui/                    shared theme, components and history widgets
   android/app/src/main/      Kotlin services, platform channels, timer widget
-  windows/runner/            Win32 clipboard, tray and system path channels
+  windows/runner/            Win32 clipboard, screenshot, tray and system path channels
   ios/Runner/                Swift storage, file and paste-control channels
   test/                      deterministic Flutter/protocol tests
   tool/                      explicitly invoked integration probes
 scripts/                     shared build configuration and local checks
 docs/                        architecture, development, wire protocol
-.github/                     CI, release drafts, contribution templates
+.github/                     CI, public releases, contribution templates
 ```
 
 Existing managers, models, localization and notification UI remain directly under
@@ -58,6 +58,17 @@ history sync, while file transfer remains an explicit device action. The runner
 reports the clipboard-owner executable name when available so history can
 apply the user-configured app exclusion list. A session-local mutex redirects a
 second launch to the existing window so two listeners never write the same DB.
+Windows screenshot actions are user-initiated from the History toolbar. The C++
+runner freezes the virtual desktop before showing a temporary native selection
+overlay. Region and display modes crop that snapshot; window mode selects a
+top-level HWND and uses `PrintWindow` after hiding the overlay. PNG bytes return
+over a method channel, then Dart copies the image and persists it through the
+same local image-history path as clipboard images. The overlay and full-screen
+bitmap are released after confirmation or cancellation; no capture loop runs
+while the app is idle. A window that refuses `PrintWindow` returns a visible
+failure rather than saving pixels from a different window. Some protected or
+GPU-rendered windows can still return a blank frame despite `PrintWindow`
+reporting success; Windows device acceptance must cover representative apps.
 
 iOS attaches its Flutter UI after core bootstrap (Android's Activity still owns
 `ui.attach`). Native `UIPasteControl` sends user-pasted text to history; there is

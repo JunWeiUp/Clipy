@@ -42,7 +42,7 @@ Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $archive -Compres
 $verify = Join-Path $temporaryRoot "clipy-windows-verify"
 if (Test-Path $verify) { Remove-Item -Recurse -Force $verify }
 Expand-Archive -Path $archive -DestinationPath $verify
-foreach ($required in @("ClipyClone.exe", "flutter_windows.dll", "data/flutter_assets", "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
+foreach ($required in @("ClipyClone.exe", "flutter_windows.dll", "data/flutter_assets", "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "LICENSE", "THIRD_PARTY_NOTICES.md")) {
   if (-not (Test-Path (Join-Path $verify $required))) {
     throw "Archive verification failed: $required"
   }

@@ -1,6 +1,6 @@
 # Release notes template
 
-Use this for a **reviewed release draft**. The existing [release checklist](DEVELOPMENT.md#release-checklist), signing requirements, and [license review](../THIRD_PARTY_NOTICES.md) still apply.
+Prepare this before triggering the **public Release** workflow. The existing [release checklist](DEVELOPMENT.md#release-checklist), signing requirements, and [license review](../THIRD_PARTY_NOTICES.md) still apply.
 
 Replace every placeholder with verified information before publishing. Describe changes present in the tagged version, not changes that only exist on the development branch.
 
@@ -15,7 +15,8 @@ Replace every placeholder with verified information before publishing. Describe 
 | Platform | File | Requirements |
 | --- | --- | --- |
 | macOS | [Link to the actual release asset] | [Verified OS minimum and architectures] |
-| Android | [Link to the actual release asset] | [Verified ABI] |
+| Android arm64 | [Link to the actual release asset] | [Verified ABI] |
+| Windows x64 | [Link to the actual release asset] | Windows 10/11 |
 
 ## Upgrading
 
@@ -33,4 +34,4 @@ Replace every placeholder with verified information before publishing. Describe 
 **Full changelog:** [Previous tag...this tag]
 ```
 
-After publishing a reviewed release, update the pinned download URLs and version labels in both READMEs and both `GETTING_STARTED` guides. Confirm that each link matches a real release asset. Keep older release notes scoped to their own version.
+After publication, update the pinned download URLs and version labels in both READMEs and both `GETTING_STARTED` guides. Confirm that each link matches one of the three uploaded packages. GitHub also provides two automatic source-code archives. Keep older release notes scoped to their own version.
