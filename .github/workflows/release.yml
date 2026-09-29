@@ -72,6 +72,7 @@ jobs:
       INSTALL_APP: "0"
       LAUNCH_APP: "0"
       SIGN_IDENTITY: "-"
+      GENERATE_DSYM: "0"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
