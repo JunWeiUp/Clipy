@@ -65,7 +65,7 @@ jobs:
 
   mac_android:
     name: Build macOS and Android release files
-    needs: [checks, metadata]
+    needs: [metadata]
     runs-on: macos-26
     timeout-minutes: 45
     env:
@@ -135,7 +135,7 @@ jobs:
 
   windows:
     name: Build Windows x64 release file
-    needs: [checks, metadata]
+    needs: [metadata]
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
@@ -193,7 +193,7 @@ jobs:
 
   publish:
     name: Publish three-platform release
-    needs: [metadata, mac_android, windows]
+    needs: [checks, metadata, mac_android, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
