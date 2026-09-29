@@ -84,6 +84,9 @@ final class MenuBarPanelModel: ObservableObject {
     }
 
     var isSearching: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var visibleTools: [Tool] {
+        isSearching ? matchingTools : matchingTools.filter { $0 == .wordBook || $0 == .password }
+    }
     var visibleSnippets: [Snippet] {
         folders.filter { isSearching || folderID == nil || $0.id == folderID }
             .flatMap(\.snippets).filter { matches($0.title + " " + $0.content) }
@@ -128,7 +131,7 @@ final class MenuBarPanelModel: ObservableObject {
         switch tab {
         case .clipboard: return history.map { "h:" + $0.id }
         case .snippets: return visibleSnippets.map { "s:" + $0.id.uuidString }
-        case .tools: return matchingTools.map { "t:" + $0.rawValue }
+        case .tools: return visibleTools.map { "t:" + $0.rawValue }
         }
     }
     func moveSelection(_ delta: Int) {
@@ -138,7 +141,7 @@ final class MenuBarPanelModel: ObservableObject {
         guard let id = selectedID ?? selectableIDs.first else { return }
         if let entry = history.first(where: { "h:" + $0.id == id }) { onHistory?(entry, .use) }
         else if let snippet = visibleSnippets.first(where: { "s:" + $0.id.uuidString == id }) { onSnippet?(snippet.id) }
-        else if let tool = matchingTools.first(where: { "t:" + $0.rawValue == id }) { useTool(tool) }
+        else if let tool = visibleTools.first(where: { "t:" + $0.rawValue == id }) { useTool(tool) }
     }
     func useHistoryShortcut(_ index: Int) {
         guard page == .home, tab == .clipboard, history.indices.contains(index) else { return }
@@ -172,6 +175,18 @@ final class MenuBarPanelModel: ObservableObject {
 
 /// Pure policies used by the window and by the core regression harness.
 enum MenuBarPanelPolicy {
+    static func preferredSize(page: MenuBarPanelModel.Page, tab: MenuBarPanelModel.Tab, deviceCount: Int = 0) -> CGSize {
+        switch page {
+        case .home:
+            return CGSize(width: 520, height: tab == .tools ? 430 : 640)
+        case .capture: return CGSize(width: 520, height: 350)
+        case .devices:
+            let height = deviceCount == 0 ? 240 : min(500, max(200, 150 + deviceCount * 48))
+            return CGSize(width: 520, height: CGFloat(height))
+        case .notifications: return CGSize(width: 520, height: 560)
+        case .settings: return CGSize(width: 520, height: 440)
+        }
+    }
     static func nextSelection(ids: [String], selected: String?, delta: Int) -> String? {
         guard !ids.isEmpty else { return nil }
         guard let selected, let index = ids.firstIndex(of: selected) else { return delta < 0 ? ids.last : ids.first }

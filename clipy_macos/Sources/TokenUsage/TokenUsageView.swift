@@ -7,6 +7,21 @@ enum TokenUsageFormat {
         return String(format: "$%.4f", value)
     }
     static func tokens(_ value: Int) -> String { value.formatted() }
+    static func compactTokens(_ value: Int) -> String {
+        let amount = Double(value)
+        if PreferencesManager.shared.appLanguage == .zh {
+            if value >= 100_000_000 { return String(format: "%.2f亿", amount / 100_000_000) }
+            if value >= 10_000 { return String(format: "%.1f万", amount / 10_000) }
+        } else {
+            if value >= 1_000_000 { return String(format: "%.1fM", amount / 1_000_000) }
+            if value >= 1_000 { return String(format: "%.1fK", amount / 1_000) }
+        }
+        return tokens(value)
+    }
+    static func compactMoney(_ value: Double) -> String {
+        if value > 0 && value < 0.01 { return "<$0.01" }
+        return String(format: "≈$%.2f", value)
+    }
     static func day(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -43,30 +58,37 @@ struct TokenUsagePanelSummary: View {
         let _ = language.revision
         let today = manager.report.days.first { $0.day == TokenUsageFormat.day(Date()) }
         Button(action: open) {
-            HStack(spacing: 10) {
-                Image(systemName: "chart.bar.xaxis").font(.system(size: 18)).foregroundStyle(AppColor.accent)
-                    .frame(width: 30)
+            HStack(spacing: 8) {
+                Image(systemName: "chart.bar.xaxis").font(.system(size: 16)).foregroundStyle(AppColor.accent)
+                    .frame(width: 24)
                 Text(L10n.t(.tokenUsageToday)).font(.system(size: 13, weight: .medium))
-                Spacer(minLength: 8)
+                Spacer(minLength: 4)
                 if manager.isScanning { ProgressView().controlSize(.small) }
-                VStack(alignment: .trailing, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(L10n.t(.tokenUsageTokens)).foregroundStyle(.secondary)
-                        Text(today.map { TokenUsageFormat.tokens($0.counts.total) } ?? "—")
-                            .fontWeight(.semibold).monospacedDigit()
-                    }
-                    HStack(spacing: 6) {
-                        Text(L10n.t(.tokenUsageEstimate)).foregroundStyle(.secondary)
-                        Text(today.map { $0.estimatedUSD == 0 && $0.unpricedEvents > 0 ? "—" : TokenUsageFormat.money($0.estimatedUSD) } ?? "—")
-                            .fontWeight(.semibold).monospacedDigit()
-                    }
-                }.font(AppFont.caption)
+                if let today {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        HStack(spacing: 5) {
+                            Text(L10n.t(.tokenUsageTokens)).foregroundStyle(.secondary)
+                            Text(TokenUsageFormat.compactTokens(today.counts.total)).fontWeight(.semibold).monospacedDigit()
+                        }
+                        HStack(spacing: 5) {
+                            Text(L10n.t(.tokenUsageEstimate)).foregroundStyle(.secondary)
+                            Text(today.estimatedUSD == 0 && today.unpricedEvents > 0 ? "—" : TokenUsageFormat.compactMoney(today.estimatedUSD))
+                                .fontWeight(.semibold).monospacedDigit()
+                            if today.unpricedEvents > 0 {
+                                Image(systemName: "questionmark.circle").foregroundStyle(.secondary)
+                                    .help(L10n.format(.tokenUsageUnpriced, today.unpricedEvents))
+                            }
+                        }
+                    }.font(AppFont.caption)
+                } else if !manager.isScanning {
+                    Text(L10n.t(.tokenUsageNoData)).font(AppFont.secondary).foregroundStyle(.secondary)
+                }
                 Image(systemName: "chevron.right").font(AppFont.caption).foregroundStyle(.secondary)
-            }.padding(.horizontal, 10).frame(height: 62).contentShape(Rectangle())
+            }.padding(.horizontal, 9).frame(height: 50).contentShape(Rectangle())
                 .background(AppColor.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain)
             .accessibilityLabel("\(L10n.t(.tokenUsageToday)), \(L10n.t(.tokenUsageTokens)) \(today.map { TokenUsageFormat.tokens($0.counts.total) } ?? "—"), \(L10n.t(.tokenUsageEstimate)) \(today.map { $0.estimatedUSD == 0 && $0.unpricedEvents > 0 ? "—" : TokenUsageFormat.money($0.estimatedUSD) } ?? "—")")
-            .help(L10n.t(.tokenUsageHint))
+            .help(L10n.t(.tokenUsageHint) + "\n" + L10n.t(.tokenUsagePriceNote))
     }
 }
 

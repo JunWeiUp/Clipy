@@ -4,7 +4,14 @@ import SwiftUI
 func runMenuBarPanelRegressionTests() {
     func check(_ value: @autoclosure () -> Bool, _ message: String) { if !value() { fatalError(message) } }
     _ = NSApplication.shared
-    let window = MenuBarControlPanel(contentRect: CGRect(x: 0, y: 0, width: 560, height: 716), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    let homeSize = MenuBarPanelPolicy.preferredSize(page: .home, tab: .clipboard)
+    let toolsSize = MenuBarPanelPolicy.preferredSize(page: .home, tab: .tools)
+    let devicesSize = MenuBarPanelPolicy.preferredSize(page: .devices, tab: .clipboard)
+    check(homeSize == CGSize(width: 520, height: 640), "home panel grew beyond compact size")
+    check(toolsSize.height < homeSize.height && devicesSize.height < homeSize.height, "sparse pages did not shrink")
+    check(MenuBarPanelPolicy.preferredSize(page: .devices, tab: .clipboard, deviceCount: 1).height == 200,
+          "one-device panel retains excessive empty space")
+    let window = MenuBarControlPanel(contentRect: CGRect(origin: .zero, size: homeSize), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     check(window.styleMask.contains(.nonactivatingPanel) && !window.canBecomeMain && window.canBecomeKey, "panel steals main-window ownership")
     window.menuDepth = 1
     check(!window.canBecomeKey, "panel fights native menu key ownership")
@@ -15,9 +22,9 @@ func runMenuBarPanelRegressionTests() {
     check(MenuBarPanelPolicy.nextSelection(ids: [], selected: nil, delta: 1) == nil, "empty selection")
     for scale in [1.0, 2.0] {
         for bounds in [CGRect(x: 0, y: 0, width: 1512, height: 945), CGRect(x: -1280, y: 50, width: 1280, height: 650), CGRect(x: 0, y: 0, width: 420, height: 580)] {
-            let frame = MenuBarPanelPolicy.frame(anchor: CGRect(x: bounds.minX + 8, y: bounds.maxY, width: 26, height: 24), visible: bounds, preferred: CGSize(width: 560, height: 716))
+            let frame = MenuBarPanelPolicy.frame(anchor: CGRect(x: bounds.minX + 8, y: bounds.maxY, width: 26, height: 24), visible: bounds, preferred: homeSize)
             check(bounds.contains(frame), "panel escapes screen at scale \(scale)")
-            check(frame.width <= 560 && frame.height <= 716, "logical size multiplied by backing scale")
+            check(frame.width <= homeSize.width && frame.height <= homeSize.height, "logical size multiplied by backing scale")
         }
     }
     func canPaste(ticket: UInt64 = 2, version: Int = 9, target: pid_t? = 42, front: pid_t? = 42, visible: Bool = false, key: Bool = false) -> Bool {
@@ -67,10 +74,15 @@ func runMenuBarPanelRegressionTests() {
     model.query = "Find"
     check(model.visibleSnippets.count == 1, "global search is limited by old folder")
     model.query = ""; model.selectTab(.tools)
+    check(model.visibleTools == [.wordBook, .password], "tools tab repeats persistent quick actions")
     model.moveSelection(1)
-    check(model.selectedID == "t:capture", "tools are not keyboard selectable")
+    check(model.selectedID == "t:wordBook", "tools are not keyboard selectable")
+    var openedWordBook = false
+    model.onAction = { if case .wordBook = $0 { openedWordBook = true } }
     model.useSelection()
-    check(model.page == .capture, "Enter did not open selected tool")
+    check(openedWordBook, "Enter did not open selected tool")
+    model.useTool(.capture)
+    check(model.page == .capture, "capture shortcut did not open detail page")
     model.escape(); check(model.page == .home, "Escape did not leave detail page")
     model.end()
     print("Menu bar panel regressions passed (geometry, keyboard, focus/clipboard guards, stale searches, close/reopen, global snippet search).")
@@ -93,10 +105,17 @@ func runMenuBarPanelSnapshot() -> Never {
     ]
     final class Provider: MenuBarOverflowProviding {
         func scan(_ context: MenuBarOverflowContext, cancellation: MenuBarOverflowCancellation) -> MenuBarOverflowScan {
-            .init(items: ["Tailscale", "Dropbox", "Docker"].enumerated().map { index, name in
+            let examples = [
+                ("Tailscale", "/Applications/Tailscale.app"),
+                ("Dropbox", "/Applications/Dropbox.app"),
+                ("Docker", "/Applications/Docker.app"),
+                ("Calendar", "/System/Applications/Calendar.app"),
+                ("Preview", "/System/Applications/Preview.app")
+            ]
+            return .init(items: examples.enumerated().map { index, example in
                 .init(id: .init(pid: 1, launchDate: Date(timeIntervalSince1970: 1), windowID: UInt32(index + 1), ordinal: index),
-                      title: name, frame: CGRect(x: 0, y: 0, width: 24, height: 24), element: AXUIElementCreateApplication(1), canPress: true,
-                      image: NSWorkspace.shared.icon(forFile: "/Applications/\(name).app"))
+                      title: example.0, frame: CGRect(x: 0, y: 0, width: 24, height: 24), element: AXUIElementCreateApplication(1), canPress: true,
+                      image: NSWorkspace.shared.icon(forFile: example.1))
             }, isComplete: true)
         }
         func press(_ item: MenuBarOverflowItem, cancellation: MenuBarOverflowCancellation) -> MenuBarOverflowActivationResult { .unavailable }
@@ -128,24 +147,27 @@ func runMenuBarPanelSnapshot() -> Never {
         statuses: [:])
     overflow.refresh()
     let root = MenuBarPanelView(model: model, overflow: overflow, activateIcon: { _ in }).environmentObject(AppLanguageObserver.shared)
-    let window = NSPanel(contentRect: CGRect(x: 0, y: 0, width: 560, height: 716), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    let window = NSPanel(contentRect: CGRect(origin: .zero, size: MenuBarPanelPolicy.preferredSize(page: .home, tab: .clipboard)), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     window.backgroundColor = .windowBackgroundColor
     let controller = NSHostingController(rootView: root)
     controller.sizingOptions = []
     window.contentViewController = controller
-    window.setContentSize(CGSize(width: 560, height: 716))
+    window.setContentSize(MenuBarPanelPolicy.preferredSize(page: .home, tab: .clipboard))
     window.center(); window.orderFrontRegardless()
     var step = 0
-    let steps = ["light-history", "light-tools", "dark-history", "dark-devices", "english-history", "dark-notifications", "short-notifications"]
+    let steps = ["light-history", "light-tools", "dark-history", "dark-devices", "english-history", "dark-notifications", "short-notifications", "narrow-history"]
     func prepare() {
         UserDefaults.standard.setVolatileDomain(["appLanguage": step == 4 ? "en" : "zh"], forName: UserDefaults.argumentDomain)
         NotificationCenter.default.post(name: .appLanguageDidChange, object: nil)
-        let dark = step == 2 || step == 3 || step >= 5
+        let dark = step == 2 || step == 3 || step == 5 || step == 6
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        window.setContentSize(CGSize(width: 560, height: step == 6 ? 580 : 716))
-        model.page = step >= 5 ? .notifications : step == 3 ? .devices : .home
+        model.page = step == 3 ? .devices : (step == 5 || step == 6 ? .notifications : .home)
         model.tab = step == 1 ? .tools : .clipboard
+        var size = MenuBarPanelPolicy.preferredSize(page: model.page, tab: model.tab, deviceCount: model.devices.count)
+        if step == 6 { size.height = 420 }
+        if step == 7 { size = CGSize(width: 420, height: 560) }
+        window.setContentSize(size)
         model.selectedID = step == 0 || step == 2 ? "h:" + samples[0].id : nil
     }
     prepare()

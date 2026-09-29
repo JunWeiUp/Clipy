@@ -101,6 +101,8 @@ enum L10nKey: String {
     case overflowEmpty
     case overflowUnavailable
     case overflowClickHint
+    case overflowMoreIcons
+    case overflowEarlierIcons
 
     case smartVoiceTitle
     case smartVoiceEnabled
@@ -663,6 +665,8 @@ struct L10n {
             .overflowEmpty: "未发现可识别的溢出图标",
             .overflowUnavailable: "此项目无法打开原菜单，可能已退出、状态已变化或不支持辅助功能操作。请刷新后重试；不会自动启动应用。",
             .overflowClickHint: "尝试打开原菜单；部分应用可能不响应。",
+            .overflowMoreIcons: "查看后面的隐藏图标",
+            .overflowEarlierIcons: "返回前面的隐藏图标",
             .smartVoiceTitle: "语音自动入口",
             .smartVoiceEnabled: "确认非输入控件时，接入智能切换",
             .smartVoiceTrigger: "豆包的长按语音键",
@@ -1213,6 +1217,8 @@ struct L10n {
             .overflowEmpty: "No identifiable overflowing icons",
             .overflowUnavailable: "This item cannot open its original menu. The app may have exited, the item may have changed, or Accessibility actions may be unsupported. Refresh before retrying; the app will not be launched automatically.",
             .overflowClickHint: "Request the original menu; some apps may not respond.",
+            .overflowMoreIcons: "Show more hidden icons",
+            .overflowEarlierIcons: "Show earlier hidden icons",
             .smartVoiceTitle: "Automatic voice entry",
             .smartVoiceEnabled: "Open Smart Switch only for confirmed non-text focus",
             .smartVoiceTrigger: "Doubao hold-to-talk key",
