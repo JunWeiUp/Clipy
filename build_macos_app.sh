@@ -59,7 +59,7 @@ swiftc "${SWIFT_SOURCES[@]}" ${DEBUG_FLAGS[@]+"${DEBUG_FLAGS[@]}"} \
 # objects otherwise disappear before debug symbols can be extracted.
 swiftc "${BUILD_DIR}/${APP_NAME}.o" -target "${MACOS_ARCH}-apple-macos13.0" \
   -o "${STAGED_APP}/Contents/MacOS/${APP_NAME}" \
-  -framework AppKit -framework SwiftUI -framework CoreGraphics -framework Carbon \
+  -framework AppKit -framework SwiftUI -framework CoreGraphics -framework Carbon -framework IOKit \
   -framework UserNotifications -framework ServiceManagement -framework ApplicationServices \
   -framework Security -framework Vision -framework CoreImage -framework ScreenCaptureKit \
   -framework UniformTypeIdentifiers -framework PDFKit -framework WebKit -framework Quartz \
