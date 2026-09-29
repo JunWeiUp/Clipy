@@ -120,9 +120,9 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今�
 <details>
 <summary><b>版本、下载与源码构建</b></summary>
 
-当前源码版本：**1.0.24** · 默认本地构建号 **10149** · [构建版本配置](clipy_android/pubspec.yaml)
+当前源码版本：**1.0.24** · 默认本地构建号 **10149** · 最新正式版：**[v1.0.24](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.24)** · [构建版本配置](clipy_android/pubspec.yaml)
 
-安装包请前往[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，具体应用版本和构建号以发布说明为准。Android 改版已在 v1.0.19 发布；准备新版期间，上方源码版本可能领先于公开安装包。Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
+安装包请前往[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，具体应用版本和构建号以发布说明为准。Android 改版已在 v1.0.19 发布；后续开发期间，源码版本可能领先于公开安装包。Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
 
 </details>
 

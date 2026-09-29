@@ -4,7 +4,7 @@
 
 ## 下载与版本
 
-打开[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，按设备选择对应附件。该入口随公开发布自动更新，不包含草稿；具体应用版本和构建号以发布说明为准。
+打开[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)（当前为 [v1.0.24](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.24)），按设备选择对应附件。最新正式版入口随公开发布自动更新，不包含草稿；具体应用版本和构建号以发布说明为准。
 
 | 设备 | 发布页中的附件名称 |
 | --- | --- |
