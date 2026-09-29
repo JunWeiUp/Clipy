@@ -69,9 +69,11 @@ final class NativeScreenshotOverlayController {
     private var orderedWindows: [SCWindow] = []
     private var selectedRect: CGRect?
     private var selectedWindowID: CGWindowID?
+    private var selectionInputState = NativeScreenshotSelectionInputState()
     private var regionDrag: RegionDrag?
     private var dragMoved = false
     private var startedNewSelection = false
+    private var ignoredPointerGesture = false
     private var lastDragPoint: CGPoint?
     private var spacePressed = false
     private var snapSuspended = false
@@ -278,8 +280,28 @@ final class NativeScreenshotOverlayController {
 
     private func pointerDown(at point: CGPoint, display: SCDisplay) {
         guard !recordingHandoffPending else { return }
-        guard inlineCanvas?.hasUnsavedEdits != true else { NSSound.beep(); return }
+        let edges: NativeScreenshotResizeEdges
+        if mode == .region, selectionInputState.isCommitted,
+           movingAnnotations == nil, let selectedRect {
+            edges = NativeScreenshotResizeEdges.near(point, rect: selectedRect)
+        } else {
+            edges = []
+        }
+        let hit: NativeScreenshotSelectionInputState.Hit = !edges.isEmpty
+            ? .resizeHandle : (selectedRect?.contains(point) == true ? .body : .outside)
+        let intent = selectionInputState.pointerIntent(regionMode: mode == .region, hit: hit)
+        if case .ignore = intent {
+            ignoredPointerGesture = true
+            return
+        }
+        ignoredPointerGesture = false
+        guard inlineCanvas?.hasUnsavedEdits != true else {
+            ignoredPointerGesture = true
+            NSSound.beep()
+            return
+        }
         if movingAnnotations != nil, selectedRect?.contains(point) != true {
+            ignoredPointerGesture = true
             NSSound.beep()
             return
         }
@@ -298,6 +320,13 @@ final class NativeScreenshotOverlayController {
                 self.anchoredCorner = nil
                 regionDrag = nil
                 ignoreNextMouseUp = true
+                guard let selectedRect, selectedRect.width >= 4,
+                      selectedRect.height >= 4 else {
+                    self.selectedRect = nil
+                    updateSelectionViews()
+                    return
+                }
+                selectionInputState.commit()
                 updateSelectionViews()
                 showActionPanel()
                 if activeTool != nil || !effects.isIdentity || beautifyEnabled {
@@ -308,24 +337,23 @@ final class NativeScreenshotOverlayController {
             }
             dragMoved = false
             lastDragPoint = point
-            if let selectedRect {
-                let edges = movingAnnotations == nil
-                    ? NativeScreenshotResizeEdges.near(point, rect: selectedRect) : []
-                if !edges.isEmpty {
+            switch intent {
+            case .resizeSelection:
+                if let selectedRect {
                     regionDrag = .resize(original: selectedRect, start: point, edges: edges)
                     startedNewSelection = false
-                } else if selectedRect.contains(point) {
+                }
+            case .moveSelection:
+                if let selectedRect {
                     regionDrag = .move(original: selectedRect, start: point)
                     startedNewSelection = false
-                } else {
-                    regionDrag = .create(start: point)
-                    startedNewSelection = true
-                    selectedWindowID = nil
                 }
-            } else {
+            case .beginSelection:
                 regionDrag = .create(start: point)
                 startedNewSelection = true
                 selectedWindowID = nil
+            case .ignore:
+                return
             }
         case .window:
             let window = window(at: point)
@@ -338,7 +366,7 @@ final class NativeScreenshotOverlayController {
     }
 
     private func pointerDragged(to point: CGPoint, modifiers: NSEvent.ModifierFlags = []) {
-        guard !recordingHandoffPending else { return }
+        guard !recordingHandoffPending, !ignoredPointerGesture else { return }
         guard mode == .region, let regionDrag else { return }
         hoveredPoint = point
         snapSuspended = modifiers.contains(.option)
@@ -410,6 +438,10 @@ final class NativeScreenshotOverlayController {
 
     private func pointerUp(at point: CGPoint, display: SCDisplay) {
         guard !recordingHandoffPending else { return }
+        if ignoredPointerGesture {
+            ignoredPointerGesture = false
+            return
+        }
         if ignoreNextMouseUp {
             ignoreNextMouseUp = false
             return
@@ -442,6 +474,7 @@ final class NativeScreenshotOverlayController {
         case .fullscreen:
             selectedRect = display.frame
         }
+        selectionInputState.commit()
         guideX = nil
         guideY = nil
         updateSelectionViews()
@@ -464,7 +497,10 @@ final class NativeScreenshotOverlayController {
         hoveredPoint = point
         hoveredElement = snapSuspended ? nil
             : elementRect(at: point) ?? (windowSnapEnabled ? window(at: point)?.frame : nil)
-        if actionPanel != nil || toolPanel != nil { updateSelectionViews(); return }
+        if selectionInputState.isCommitted || actionPanel != nil || toolPanel != nil {
+            updateSelectionViews()
+            return
+        }
         switch mode {
         case .region: break
         case .window:
@@ -536,12 +572,27 @@ final class NativeScreenshotOverlayController {
     }
 
     private func updateSelectionViews() {
+        let chromePhase: NativeScreenshotSelectionChrome.Phase
+        if selectionInputState.isCommitted {
+            chromePhase = .selected
+        } else if mode == .window, selectedRect != nil {
+            chromePhase = .hoveringWindow
+        } else if selectedRect != nil {
+            chromePhase = .selecting
+        } else {
+            chromePhase = .idle
+        }
+        let hoveredWindow = mode == .region && selectedRect == nil && windowSnapEnabled
+            ? hoveredPoint.flatMap { window(at: $0)?.frame } : nil
         for panel in panels {
             guard let view = panel.contentView as? NativeScreenshotSelectionView else { continue }
             view.selection = selectedRect
+            view.selectionPhase = chromePhase
             view.showsPreselectionPreset = mode == .region && selectedRect == nil
             view.preselectionPresetActive = selectionStore.activePreselection != .freeform
-            view.hoveredElement = mode == .region ? hoveredElement : nil
+            view.hoveredWindow = hoveredWindow
+            view.hoveredElement = mode == .region && !selectionInputState.isCommitted
+                && regionDrag == nil ? hoveredElement : nil
             view.guideX = guideX
             view.guideY = guideY
             view.pointer = hoveredPoint
@@ -600,6 +651,7 @@ final class NativeScreenshotOverlayController {
         showSizePanel(for: selectedRect, above: false)
         tool.makeKeyAndOrderFront(nil)
         if activeTool != nil { showToolOptions() }
+        updateSelectionViews()
     }
 
     private func configureChrome(_ panel: NativeScreenshotSelectionPanel) {
@@ -822,7 +874,7 @@ final class NativeScreenshotOverlayController {
     }
 
     private func anchorCorner(at point: CGPoint) {
-        guard mode == .region else { return }
+        guard mode == .region, !selectionInputState.isCommitted else { return }
         guard inlineCanvas?.hasUnsavedEdits != true,
               movingAnnotations == nil, !inlineCanvasBuildInProgress else {
             NSSound.beep()
@@ -832,12 +884,16 @@ final class NativeScreenshotOverlayController {
             anchoredCorner = nil
             selectedRect = Self.rect(between: first, and: point)
             if selectedRect?.width ?? 0 >= 4, selectedRect?.height ?? 0 >= 4 {
+                selectionInputState.commit()
                 updateSelectionViews()
                 showActionPanel()
                 if activeTool != nil || !effects.isIdentity || beautifyEnabled {
                     let tool = activeTool
                     Task { await makeInlineCanvasIfNeeded(tool: tool) }
                 }
+            } else {
+                selectedRect = nil
+                updateSelectionViews()
             }
         } else {
             anchoredCorner = point
@@ -1425,6 +1481,7 @@ final class NativeScreenshotOverlayController {
                 self.inlineCanvas = nil
                 self.selectedRect = snapshot.display.frame
                 self.selectedWindowID = nil
+                self.selectionInputState.commit()
                 self.updateSelectionViews()
                 self.showActionPanel()
                 if let tool = self.activeTool {
@@ -1478,6 +1535,13 @@ final class NativeScreenshotOverlayController {
             sizePanel?.makeKeyAndOrderFront(nil)
             return
         }
+        if anchoredCorner != nil {
+            anchoredCorner = nil
+            selectionInputState.clear()
+            selectedRect = nil
+            updateSelectionViews()
+            return
+        }
         if inlineCanvas?.hasSelectedAnnotation == true {
             inlineCanvas?.clearSelection()
             return
@@ -1497,6 +1561,9 @@ final class NativeScreenshotOverlayController {
         } else if activeTool != nil {
             activateTool(nil)
         } else if selectedRect != nil {
+            selectionInputState.clear()
+            ignoredPointerGesture = false
+            regionDrag = nil
             selectedRect = nil
             selectedWindowID = nil
             hoveredElement = nil
@@ -3480,6 +3547,13 @@ private final class NativeScreenshotSelectionView: NSView {
             window?.invalidateCursorRects(for: self)
         }
     }
+    var selectionPhase: NativeScreenshotSelectionChrome.Phase = .idle {
+        didSet {
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+    var hoveredWindow: CGRect? { didSet { needsDisplay = true } }
     var hoveredElement: CGRect? { didSet { needsDisplay = true } }
     var guideX: CGFloat? { didSet { needsDisplay = true } }
     var guideY: CGFloat? { didSet { needsDisplay = true } }
@@ -3540,6 +3614,7 @@ private final class NativeScreenshotSelectionView: NSView {
 
     override func resetCursorRects() {
         super.resetCursorRects()
+        guard case .selected = selectionPhase else { return }
         guard let selection,
               NativeScreenshotCaptureGeometry.intersection(
                   selection, displayFrame: displayFrame) != nil else { return }
@@ -3569,6 +3644,15 @@ private final class NativeScreenshotSelectionView: NSView {
               let visible = NativeScreenshotCaptureGeometry.intersection(selection, displayFrame: displayFrame) else {
             NSColor.black.withAlphaComponent(0.42).setFill()
             bounds.fill()
+            if let hoveredWindow,
+               let visible = NativeScreenshotCaptureGeometry.intersection(
+                hoveredWindow, displayFrame: displayFrame) {
+                NativeScreenshotSelectionChrome.draw(
+                    in: NSGraphicsContext.current!.cgContext,
+                    rect: visible.offsetBy(dx: -displayFrame.minX, dy: -displayFrame.minY),
+                    style: NativeScreenshotSelectionChrome.style(
+                        for: .hoveringWindow, accent: selectionAccent))
+            }
             drawAids()
             if showsPreselectionPreset {
                 let prompt = nativeScreenshotLabel("拖动框选区域", "Drag to select an area")
@@ -3595,33 +3679,13 @@ private final class NativeScreenshotSelectionView: NSView {
         CGRect(x: 0, y: cut.maxY, width: bounds.width, height: max(0, bounds.maxY - cut.maxY)).fill()
         CGRect(x: 0, y: cut.minY, width: max(0, cut.minX), height: cut.height).fill()
         CGRect(x: cut.maxX, y: cut.minY, width: max(0, bounds.maxX - cut.maxX), height: cut.height).fill()
-        selectionAccent.setStroke()
-        let border = NSBezierPath(rect: cut)
-        border.lineWidth = 2
-        border.stroke()
-        drawResizeHandles(for: selection)
+        NativeScreenshotSelectionChrome.draw(
+            in: NSGraphicsContext.current!.cgContext,
+            rect: cut,
+            style: NativeScreenshotSelectionChrome.style(
+                for: selectionPhase, accent: selectionAccent))
         drawDimensions(for: selection, in: cut)
         drawAids()
-    }
-
-    private func drawResizeHandles(for selection: CGRect) {
-        let rect = selection.offsetBy(dx: -displayFrame.minX, dy: -displayFrame.minY)
-        let anchors = [
-            CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.midX, y: rect.minY),
-            CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.midY),
-            CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.midX, y: rect.maxY),
-            CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.midY)
-        ]
-        for anchor in anchors {
-            guard bounds.insetBy(dx: -5, dy: -5).contains(anchor) else { continue }
-            let handle = CGRect(x: anchor.x - 5, y: anchor.y - 5, width: 10, height: 10)
-            selectionAccent.setFill()
-            NSBezierPath(ovalIn: handle).fill()
-            NSColor.white.setStroke()
-            let stroke = NSBezierPath(ovalIn: handle)
-            stroke.lineWidth = 1.25
-            stroke.stroke()
-        }
     }
 
     private func drawDimensions(for selection: CGRect, in visible: CGRect) {
@@ -3646,6 +3710,7 @@ private final class NativeScreenshotSelectionView: NSView {
 
     private func drawAids() {
         if let hoveredElement,
+           hoveredElement != hoveredWindow,
            let visible = NativeScreenshotCaptureGeometry.intersection(hoveredElement, displayFrame: displayFrame) {
             let rect = visible.offsetBy(dx: -displayFrame.minX, dy: -displayFrame.minY)
             let path = NSBezierPath(rect: rect)

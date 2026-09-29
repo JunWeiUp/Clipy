@@ -1,8 +1,25 @@
+import AppKit
 import AVFoundation
 import CoreGraphics
 import CoreMedia
 import Foundation
 import ScreenCaptureKit
+
+enum NativeScreenshotRecordingResolution {
+    static func displayScale(
+        frame: CGRect,
+        modePixels: NativeScreenshotPixelSize?,
+        backingScaleFactor: CGFloat?
+    ) -> CGFloat? {
+        guard let pixels = NativeScreenshotCaptureResolution.displayPixels(
+            frame: frame, modePixels: modePixels,
+            backingScaleFactor: backingScaleFactor
+        ) else { return nil }
+        let scale = max(CGFloat(pixels.width) / frame.width,
+                        CGFloat(pixels.height) / frame.height)
+        return scale.isFinite && scale > 0 ? scale : nil
+    }
+}
 
 /// Region MP4 capture for macOS 13+. Each instance is single-use.
 final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
@@ -69,7 +86,28 @@ final class NativeScreenshotRecorder: NSObject, SCStreamOutput, SCStreamDelegate
             guard localBounds.contains(options.sourceRect) else {
                 throw NativeScreenshotRecordingError.invalidRegion
             }
-            let scale = CGFloat(CGDisplayPixelsWide(display.displayID)) / display.frame.width
+            let modePixels = CGDisplayCopyDisplayMode(display.displayID).flatMap { mode -> NativeScreenshotPixelSize? in
+                guard mode.pixelWidth > 0, mode.pixelHeight > 0 else { return nil }
+                return NativeScreenshotPixelSize(width: mode.pixelWidth, height: mode.pixelHeight)
+            }
+            let fallbackScale: CGFloat?
+            if modePixels == nil {
+                let displayID = display.displayID
+                fallbackScale = await MainActor.run {
+                    NSScreen.screens.first { screen in
+                        let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+                            as? NSNumber
+                        return number?.uint32Value == displayID
+                    }?.backingScaleFactor
+                }
+            } else {
+                fallbackScale = nil
+            }
+            guard let scale = NativeScreenshotRecordingResolution.displayScale(
+                frame: display.frame,
+                modePixels: modePixels,
+                backingScaleFactor: fallbackScale
+            ) else { throw NativeScreenshotRecordingError.displayUnavailable }
             let size = options.outputSize(displayScale: scale)
             let directory = options.outputURL.deletingLastPathComponent()
             guard FileManager.default.fileExists(atPath: directory.path),

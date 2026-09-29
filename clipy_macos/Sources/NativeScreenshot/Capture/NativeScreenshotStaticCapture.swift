@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import CoreImage
 import CoreMedia
@@ -13,6 +14,8 @@ enum NativeScreenshotCaptureError: LocalizedError {
     case imageTooLarge
     case noFrame
     case frameConversionFailed
+    case nativeResolutionUnavailable
+    case frameSizeMismatch(expected: NativeScreenshotPixelSize, actual: NativeScreenshotPixelSize)
     case timedOut
     case captureAlreadyRunning
 
@@ -25,8 +28,86 @@ enum NativeScreenshotCaptureError: LocalizedError {
         case .imageTooLarge: return "The capture exceeds the image size limit."
         case .noFrame: return "Screen Capture did not provide an image frame."
         case .frameConversionFailed: return "The captured frame could not be converted to an image."
+        case .nativeResolutionUnavailable:
+            return NativeScreenshotUserText.string(
+                "无法确定显示器的原生像素分辨率，请重试。",
+                "The display's native pixel resolution is unavailable. Please retry.")
+        case let .frameSizeMismatch(expected, actual):
+            return NativeScreenshotUserText.string(
+                "截图帧分辨率异常：实际 \(actual.width)×\(actual.height)，预期 \(expected.width)×\(expected.height)。请重试。",
+                "Screen Capture returned \(actual.width)×\(actual.height) pixels instead of the requested \(expected.width)×\(expected.height). Please retry.")
         case .timedOut: return "Screen Capture timed out."
         case .captureAlreadyRunning: return "A screenshot is already in progress."
+        }
+    }
+}
+
+struct NativeScreenshotPixelSize: Equatable {
+    let width: Int
+    let height: Int
+}
+
+struct NativeScreenshotDisplayResolution {
+    let frame: CGRect
+    let pixels: NativeScreenshotPixelSize
+}
+
+/// Keep the requested stream size in device pixels. `CGDisplayPixelsWide`
+/// reports the 1× logical size on some HiDPI display modes, so it cannot be
+/// used to size a Retina preview.
+enum NativeScreenshotCaptureResolution {
+    static func displayPixels(
+        frame: CGRect,
+        modePixels: NativeScreenshotPixelSize?,
+        backingScaleFactor: CGFloat?
+    ) -> NativeScreenshotPixelSize? {
+        guard NativeScreenshotCaptureGeometry.intersection(frame, displayFrame: frame) != nil else {
+            return nil
+        }
+        if let modePixels, modePixels.width > 0, modePixels.height > 0 {
+            return modePixels
+        }
+        guard let backingScaleFactor, backingScaleFactor.isFinite,
+              backingScaleFactor > 0,
+              let size = NativeScreenshotCaptureGeometry.outputSize(
+                region: frame, scale: backingScaleFactor, maxPixels: Int.max
+              ) else { return nil }
+        return NativeScreenshotPixelSize(width: size.width, height: size.height)
+    }
+
+    static func fitsOutputLimit(_ size: NativeScreenshotPixelSize, maxPixels: Int) -> Bool {
+        size.width > 0 && size.height > 0 &&
+            size.width <= 32_768 && size.height <= 32_768 &&
+            maxPixels > 0 && size.width <= maxPixels / size.height
+    }
+
+    static func windowPixels(
+        frame: CGRect,
+        displays: [NativeScreenshotDisplayResolution],
+        maxPixels: Int
+    ) -> NativeScreenshotPixelSize? {
+        let scales = displays.compactMap { display -> CGFloat? in
+            guard NativeScreenshotCaptureGeometry.intersection(
+                frame, displayFrame: display.frame) != nil else { return nil }
+            let x = CGFloat(display.pixels.width) / display.frame.width
+            let y = CGFloat(display.pixels.height) / display.frame.height
+            let scale = max(x, y)
+            return scale.isFinite && scale > 0 ? scale : nil
+        }
+        guard let scale = scales.max(),
+              let size = NativeScreenshotCaptureGeometry.outputSize(
+                region: frame, scale: scale, maxPixels: maxPixels
+              ) else { return nil }
+        return NativeScreenshotPixelSize(width: size.width, height: size.height)
+    }
+
+    static func validateFrame(
+        actual: NativeScreenshotPixelSize,
+        expected: NativeScreenshotPixelSize
+    ) throws {
+        guard actual == expected else {
+            throw NativeScreenshotCaptureError.frameSizeMismatch(
+                expected: expected, actual: actual)
         }
     }
 }
@@ -86,17 +167,21 @@ final class NativeScreenshotStaticCapture {
             throw NativeScreenshotCaptureError.invalidRegion
         }
 
-        let scale = content.displays
-            .filter { !$0.frame.intersection(frame).isEmpty }
-            .map { CGFloat(CGDisplayPixelsWide($0.displayID)) / $0.frame.width }
-            .filter { $0.isFinite && $0 > 0 }
-            .max() ?? 2
-        guard let size = NativeScreenshotCaptureGeometry.outputSize(
-            region: frame, scale: scale, maxPixels: maxOutputPixels
+        let intersecting = content.displays.filter {
+            NativeScreenshotCaptureGeometry.intersection(frame, displayFrame: $0.frame) != nil
+        }
+        guard !intersecting.isEmpty else { throw NativeScreenshotCaptureError.displayNotFound }
+        var resolutions: [NativeScreenshotDisplayResolution] = []
+        for display in intersecting {
+            resolutions.append(NativeScreenshotDisplayResolution(
+                frame: display.frame, pixels: try await nativePixels(for: display)))
+        }
+        guard let size = NativeScreenshotCaptureResolution.windowPixels(
+            frame: frame, displays: resolutions, maxPixels: maxOutputPixels
         ) else { throw NativeScreenshotCaptureError.imageTooLarge }
 
         let filter = SCContentFilter(desktopIndependentWindow: window)
-        let image = try await firstFrame(filter: filter, width: size.width, height: size.height, showsCursor: showsCursor)
+        let image = try await firstFrame(filter: filter, size: size, showsCursor: showsCursor)
         return NativeScreenshotCapturedImage(
             image: image,
             sourceRect: frame,
@@ -142,19 +227,14 @@ final class NativeScreenshotStaticCapture {
         guard NativeScreenshotCaptureGeometry.intersection(frame, displayFrame: frame) != nil else {
             throw NativeScreenshotCaptureError.invalidRegion
         }
-        // SCDisplay.width/height are screen points; the stream configuration
-        // expects output pixels. Core Graphics supplies each display's backing
-        // pixel dimensions, including mixed Retina/1× arrangements.
-        let pixelWidth = CGDisplayPixelsWide(display.displayID)
-        let pixelHeight = CGDisplayPixelsHigh(display.displayID)
-        guard pixelWidth > 0, pixelHeight > 0,
-              pixelWidth <= 32_768, pixelHeight <= 32_768,
-              Double(pixelWidth) * Double(pixelHeight) <= Double(maxOutputPixels) else {
+        let size = try await nativePixels(for: display)
+        guard NativeScreenshotCaptureResolution.fitsOutputLimit(
+            size, maxPixels: maxOutputPixels) else {
             throw NativeScreenshotCaptureError.imageTooLarge
         }
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let image = try await firstFrame(
-            filter: filter, width: pixelWidth, height: pixelHeight, showsCursor: showsCursor
+            filter: filter, size: size, showsCursor: showsCursor
         )
         return NativeScreenshotCapturedImage(
             image: image,
@@ -163,22 +243,47 @@ final class NativeScreenshotStaticCapture {
         )
     }
 
+    private func nativePixels(for display: SCDisplay) async throws -> NativeScreenshotPixelSize {
+        let modePixels = CGDisplayCopyDisplayMode(display.displayID).flatMap { mode -> NativeScreenshotPixelSize? in
+            guard mode.pixelWidth > 0, mode.pixelHeight > 0 else { return nil }
+            return NativeScreenshotPixelSize(width: mode.pixelWidth, height: mode.pixelHeight)
+        }
+        let fallbackScale: CGFloat?
+        if modePixels == nil {
+            let displayID = display.displayID
+            fallbackScale = await MainActor.run {
+                NSScreen.screens.first { screen in
+                    let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+                        as? NSNumber
+                    return number?.uint32Value == displayID
+                }?.backingScaleFactor
+            }
+        } else {
+            fallbackScale = nil
+        }
+        guard let size = NativeScreenshotCaptureResolution.displayPixels(
+            frame: display.frame,
+            modePixels: modePixels,
+            backingScaleFactor: fallbackScale
+        ) else { throw NativeScreenshotCaptureError.nativeResolutionUnavailable }
+        return size
+    }
+
     private func firstFrame(
         filter: SCContentFilter,
-        width: Int,
-        height: Int,
+        size: NativeScreenshotPixelSize,
         showsCursor: Bool
     ) async throws -> CGImage {
         try checkCancellation()
         let configuration = SCStreamConfiguration()
-        configuration.width = width
-        configuration.height = height
+        configuration.width = size.width
+        configuration.height = size.height
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
         configuration.showsCursor = showsCursor
         configuration.queueDepth = 2
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
 
-        let output = NativeScreenshotFirstFrameOutput()
+        let output = NativeScreenshotFirstFrameOutput(expectedSize: size)
         let stream = SCStream(filter: filter, configuration: configuration, delegate: output)
         try begin(output, stream: stream)
         defer { end(output) }
@@ -231,11 +336,16 @@ final class NativeScreenshotStaticCapture {
 
 private final class NativeScreenshotFirstFrameOutput: NSObject, SCStreamOutput, SCStreamDelegate {
     let queue = DispatchQueue(label: "clipy.native-screenshot.first-frame", qos: .userInitiated)
+    private let expectedSize: NativeScreenshotPixelSize
 
     private let lock = NSLock()
     private var continuation: CheckedContinuation<CGImage, Error>?
     private var completed: Result<CGImage, Error>?
     private var timeout: DispatchWorkItem?
+
+    init(expectedSize: NativeScreenshotPixelSize) {
+        self.expectedSize = expectedSize
+    }
 
     func waitForFrame(_ continuation: CheckedContinuation<CGImage, Error>) {
         lock.lock()
@@ -285,10 +395,27 @@ private final class NativeScreenshotFirstFrameOutput: NSObject, SCStreamOutput, 
             finish(.failure(NativeScreenshotCaptureError.noFrame))
             return
         }
+        do {
+            try NativeScreenshotCaptureResolution.validateFrame(
+                actual: NativeScreenshotPixelSize(
+                    width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer)),
+                expected: expectedSize)
+        } catch {
+            finish(.failure(error))
+            return
+        }
         let image = CIImage(cvPixelBuffer: buffer)
         let context = CIContext()
         guard let cgImage = context.createCGImage(image, from: image.extent) else {
             finish(.failure(NativeScreenshotCaptureError.frameConversionFailed))
+            return
+        }
+        do {
+            try NativeScreenshotCaptureResolution.validateFrame(
+                actual: NativeScreenshotPixelSize(width: cgImage.width, height: cgImage.height),
+                expected: expectedSize)
+        } catch {
+            finish(.failure(error))
             return
         }
         finish(.success(cgImage))

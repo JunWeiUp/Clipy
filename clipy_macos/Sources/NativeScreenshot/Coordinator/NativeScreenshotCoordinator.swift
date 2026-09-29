@@ -740,10 +740,21 @@ final class NativeScreenshotCoordinator {
                 false, onScreenWindowsOnly: false
             )
             guard recordingSessionID == sessionID else { return }
-            let excluded = refreshed.windows.filter {
-                $0.windowID == CGWindowID(hud.window.windowNumber)
+            let listedWindowNumbers = Set(refreshed.windows.map { Int($0.windowID) })
+            if let borderNumber = hud.visibleSelectionBorderWindowNumber,
+               !listedWindowNumbers.contains(borderNumber) {
+                // A transparent border may not be listed as shareable content.
+                // Hide it before starting the stream; keep recording available.
+                hud.hideSelectionBorder()
             }
-            guard !excluded.isEmpty else {
+            let excludedWindowNumbers = hud.captureExcludedWindowNumbers
+            let excluded = refreshed.windows.filter {
+                excludedWindowNumbers.contains(Int($0.windowID))
+            }
+            // Every visible recording control must be excluded. If the border
+            // is missing from the shareable-content list, fail closed so it
+            // cannot be painted into the captured video.
+            guard excluded.count == excludedWindowNumbers.count else {
                 throw NativeScreenshotRecordingError.captureUnavailable
             }
             let options = NativeScreenshotRecordingOptions(

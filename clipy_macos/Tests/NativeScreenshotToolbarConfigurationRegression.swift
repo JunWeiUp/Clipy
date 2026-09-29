@@ -10,6 +10,12 @@ enum NativeScreenshotToolbarConfigurationRegression {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let initial = Configuration.load(from: defaults)
+        let systemAccent = NSColor.controlAccentColor.usingColorSpace(.deviceRGB)!
+        let defaultAccent = initial.accentColor.usingColorSpace(.deviceRGB)!
+        precondition(abs(defaultAccent.redComponent - systemAccent.redComponent) < 0.01
+                     && abs(defaultAccent.greenComponent - systemAccent.greenComponent) < 0.01
+                     && abs(defaultAccent.blueComponent - systemAccent.blueComponent) < 0.01,
+                     "default screenshot accent must follow the macOS setting")
         precondition(Set(initial.enabledToolIDs) == Set(["select"] + Configuration.legacyMainToolIDs))
         precondition(initial.enabledActionIDs
             == Configuration.actionIDs.filter {
@@ -196,6 +202,8 @@ enum NativeScreenshotToolbarConfigurationRegression {
         precondition(legacyColors.backgroundHex == "#334D66FF")
         precondition(legacyColors.iconHex == "#E6CCB3FF")
         precondition(legacyColors.accentHex == "#1A99E6FF")
+        precondition(legacyColors.accentColor.blueComponent > legacyColors.accentColor.redComponent,
+                     "migrated user accent must override the system accent")
         var customColors = legacyColors
         customColors.backgroundHex = "#112233FF"
         customColors.save(to: colorDefaults)
