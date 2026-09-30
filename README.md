@@ -1,55 +1,68 @@
 <div align="center">
   <img src="Logo.png" alt="Clipy" width="72" height="72" />
   <h1>Clipy</h1>
-  <h3>Copy here. Continue there.</h3>
-  <p>A clipboard with a memory. A bridge between your Mac and Android.</p>
+  <h3>Clipboard history, encrypted LAN sync, screenshots and OCR.</h3>
+  <p>An open-source clipboard manager for macOS, Windows and Android.</p>
   <p><strong>English</strong> · <a href="README_ZH.md">简体中文</a></p>
   <img src="res/readme/connected-hero.webp" alt="Clipy concept illustration: text, images and links flowing between a Mac and an Android phone" width="1120" />
   <br /><br />
 
 **[Download for macOS ↗](https://github.com/JunWeiUp/Clipy/releases/latest)** &nbsp;&nbsp; · &nbsp;&nbsp; **[Download for Android ↗](https://github.com/JunWeiUp/Clipy/releases/latest)** &nbsp;&nbsp; · &nbsp;&nbsp; **[Download for Windows ↗](https://github.com/JunWeiUp/Clipy/releases/latest)**
 
-<sub>Latest published release linked above · macOS 13+ / Apple Silicon · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Other builds & installation</a></sub>
+<sub>Latest published release linked above · macOS 13+ / Apple Silicon · Windows 10/11 x64 · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Installation guide</a></sub>
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=1262f3)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
 [![macOS license GPLv3](https://img.shields.io/badge/macOS-GPLv3-blue)](LICENSE.GPL-3.0) [![Clipy code MIT](https://img.shields.io/badge/Clipy_code-MIT-green)](LICENSE)
 
-**[A closer look](#a-closer-look)** · **[Android](#at-home-on-android)** · **[Get started](#get-started-in-three-steps)** · **[All features](#feature-reference)**
+**[Platforms](#platform-support)** · **[Screenshots](#a-closer-look)** · **[Android](#at-home-on-android)** · **[Get started](#get-started-in-three-steps)** · **[All features](#feature-reference)**
 
 </div>
 
 <br />
 
+**Clipy (ClipyClone)** keeps clipboard history on your device and provides **cross-device clipboard sync** and **LAN file transfer** between paired computers and phones. Automatic history sync shares text; images and file clipboard entries stay local, and file sending is explicit. Sync uses AES-GCM encryption on your trusted local network, without a cloud relay or account.
+
+The native Mac menu bar app also brings together a **screenshot and annotation tool, OCR text recognition, screen recorder, text snippet manager, AI token usage tracker, dictionary and Keep Awake switch**. The Windows app uses the system tray; Android includes notification mirroring and a countdown home-screen widget. Platform availability is listed below.
+
 <table>
 <tr>
 <td width="33%" valign="top">
 
-### Find it again.
+### Clipboard history & search
 
-That link. That paragraph. That thing you copied yesterday. Keep it in your history and bring it back with a search.
-
-</td>
-<td width="33%" valign="top">
-
-### Take it with you.
-
-Share clipboard content and send files between Mac and Android on your trusted local network. No account required.
+Save copied text, links, images and file references in a searchable clipboard history. On Mac, use global search, content-type filters and source-app filters to find an item again.
 
 </td>
 <td width="33%" valign="top">
 
-### Make it a shortcut.
+### Clipboard sync & file transfer
 
-Keep reusable replies and code in your Mac snippet library. Add a hotkey. Save yourself the next round of typing.
+Sync text between macOS, Windows and Android, or explicitly send a file to a paired device. Configure a private pairing secret and outgoing sharing permissions on your trusted LAN.
+
+</td>
+<td width="33%" valign="top">
+
+### Text snippets & global hotkeys
+
+Organize reusable replies and code snippets in folders on Mac. Assign keyboard shortcuts, search your snippet library and import or export it as XML.
 
 </td>
 </tr>
 </table>
 
+## Platform support
+
+| Platform | Distribution | Available features |
+| --- | --- | --- |
+| **macOS 13+ · Apple Silicon** | ZIP · native Swift/AppKit app | Clipboard history, snippets, LAN sync, file/folder transfer, screenshots, annotation, OCR, screen recording, Android notification mirroring, AI token statistics and Keep Awake. |
+| **Windows 10/11 · x64** | Portable ZIP · Flutter + Win32 | Text/image/file history, search, system tray, text sync, explicit file transfer, region/window/display screenshots and Android notification viewing. |
+| **Android · arm64-v8a** | APK · Flutter + Kotlin | Clipboard history and search, text sync, file transfer, notification forwarding and a native countdown widget. Clipboard capture is limited by Android's foreground-access rules. |
+| **iOS 15+** | Development target · no IPA/TestFlight release | History viewing, user-initiated paste, foreground LAN sync, file transfer and Android notification viewing; unsigned builds and simulator checks run in CI. |
+
 ## A closer look
 
-### Search from the menu bar.
+### A native Mac menu bar clipboard manager
 
 The compact Mac panel puts search at the top, hidden menu bar icons below it, then today's Token usage and recent copies. Open snippets, tools and connected devices without keeping a Dock window open.
 
@@ -78,9 +91,9 @@ Folders on the left, snippets in the middle, your writing on the right. Find, ed
 </tr>
 </table>
 
-### See daily Agent usage.
+### Track AI token usage and estimated cost
 
-Open the native Token Usage window from today's summary to inspect daily and model totals. Costs are estimates based on model prices, with unknown models kept visible as unpriced.
+View **Codex, Claude Code, Gemini CLI and ZCode** token usage from local activity metadata. Open Token Usage from the menu bar summary to inspect daily totals, model breakdowns and 1/7/30-day ranges. Costs are estimates based on model prices; unknown models remain visible as unpriced.
 
 <p align="center"><a href="res/screenshots/macos-token-usage-en.png"><img src="res/screenshots/macos-token-usage-en.png" alt="Mac Token Usage window showing the 30-day view, Agent status and daily estimated costs" width="860" /></a></p>
 
@@ -88,7 +101,7 @@ Open the native Token Usage window from today's summary to inspect daily and mod
 
 ## At home on Android
 
-A fresh four-tab layout for **History · Devices · Notifications · Settings**. Search saved content, choose where to share, and switch between light, dark and system appearance. Short transitions preserve your place; copy feedback tells you when an action has finished.
+A four-tab layout for **History · Devices · Notifications · Settings**. Search clipboard history, configure LAN sharing, send files and forward permitted Android notifications to your desktop. Add the native **countdown timer widget** from Settings. Light, dark and system appearance are supported; short transitions preserve your place and copy feedback confirms each action.
 
 <p align="center">
   <a href="res/screenshots/android-history-en.png"><img src="res/screenshots/android-history-en.png" alt="Android clipboard history with search, type filters and grouped content cards" width="30%" /></a>&nbsp;
@@ -109,7 +122,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 
 ## Get started in three steps
 
-1. **Install Clipy.** Move the Mac app to Applications, or install the Android APK. The Mac app lives in your menu bar. See the [installation guide](docs/GETTING_STARTED.md), including [first launch on macOS](docs/MACOS_INSTALL.md).
+1. **Install Clipy.** Move the Mac app to Applications, extract the full Windows ZIP, or install the Android APK. Mac uses the menu bar; Windows stays in the system tray when its window closes. See the [installation guide](docs/GETTING_STARTED.md), including [first launch on macOS](docs/MACOS_INSTALL.md).
 2. **Copy something worth keeping.** Keep Clipy open on Android for your first test. On Mac, press <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> to search your history.
 3. **Connect your devices.** Use the same trusted Wi-Fi and matching private pairing secrets, then enable outgoing sharing for your chosen device. [Follow the connection steps](docs/GETTING_STARTED.md#connect-mac-and-android).
 
@@ -131,20 +144,21 @@ Download installers from the [latest published release](https://github.com/JunWe
 <details>
 <summary><b>Explore clipboard, screenshots, sync, and notifications</b></summary>
 
-### 📋 Clipboard history
-- Captures **text, RTF, HTML, PDF, images, and files** automatically.
+### 📋 Clipboard history & copy-paste management
+
+- macOS captures **text, RTF, HTML, PDF, images and files**; Windows records **text, images and file paths** in local history. Android clipboard capture follows foreground-access restrictions.
 - **SHA-256 dedup** — re-copying an item moves it back to the top instead of duplicating.
 - **File-aware** — shows the source file path and can reveal it in Finder.
 - **Exclude apps** by bundle id (password managers, Keychain, etc.).
-- Configurable history limit and lazy-loaded menu for a tiny memory footprint.
+- Configurable history limits and lazy-loaded menus bound the history kept in memory.
 - Optional **at-rest encryption** of history media (key stored in a local file with owner-only permissions; see [Security](SECURITY.md)).
 
-### ✂️ Snippets (macOS)
+### ✂️ Text snippets & code snippet manager (macOS)
 - Organize reusable text/code in **folders**, drag-to-reorder.
 - **Global hotkeys** per snippet/folder with a built-in shortcut recorder.
 - **XML import/export** of your snippet library.
 
-### 📸 Screenshot & annotation (macOS)
+### 📸 Screenshots, annotation, OCR & screen recording (macOS)
 - Capture modes: **region / window / fullscreen / scrolling long-screenshot / screen recording (MP4 + GIF)**.
 - **18-tool annotation engine** (ported from [macshot](https://github.com/sw33tLie/macshot)) on a single unified overlay: pencil (pressure + smoothing), line, **6 arrow styles** (curved/dashed/sketchy), rectangle, filled rectangle, ellipse, **marker (multiply blend)**, rich text (bold/italic/outline/background), auto-incrementing **number**, emoji/image **stamp**, **pixelate/blur/solid/erase censor**, **loupe magnifier**, **pixel ruler**, **color sampler**, **spotlight highlight**.
 - Per-tool **secondary options bar** + glass primary toolbar + color/emoji/font/effects popovers.
@@ -156,7 +170,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 - Configurable save directory, single-key tool shortcuts, and a global hotkey.
 - Fully localized (English + Simplified Chinese).
 
-### 🔍 Global search (macOS)
+### 🔍 Global clipboard search (macOS)
 - Summon with <kbd>⇧</kbd><kbd>⌘</kbd><kbd>F</kbd> from anywhere.
 - **Regex** support, plus filters by **type, source app, and date**.
 - Ranked results, multi-select, copy/paste, and pin straight from results.
@@ -176,7 +190,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 - The input uses a nonactivating panel: it accepts typing and dictation while the original application stays frontmost, avoiding an intermediate Clipy app-preset switch in peripheral tools. The panel releases keyboard focus before an app action; Escape still pastes back to the original application.
 - Once a voice hold has requested the input window, an early release, peripheral preset change or input-readiness failure stops only voice forwarding. The window remains available for another hold or typing; Escape, close and successful actions still dismiss it normally.
 
-### 📖 Word lookup (macOS)
+### 📖 Dictionary, translation & vocabulary book (macOS)
 - Open from the clipboard menu or press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>D</kbd>; change or disable the shortcut in Preferences.
 - Search in Chinese, English or with partial text. Chinese queries list English translations; bilingual suggestions and English spelling corrections open complete entries on selection. English entries include Chinese definitions, parts of speech, American IPA, word forms, phrases and bilingual examples. Click a phrase to look it up.
 - Translate English phrases and full sentences into Chinese, or Chinese sentences into English, including punctuation and numbers (up to 500 characters). Unlisted phrases such as `Fine-grained personal` show a separate machine translation with copy and English read-aloud actions. Paste text into the input, then click **Look up** or press <kbd>⌘</kbd> + <kbd>Return</kbd>. Sentence translations are not added to Vocabulary.
@@ -186,29 +200,35 @@ Download installers from the [latest published release](https://github.com/JunWe
 - Show or hide Chinese meanings in Vocabulary, including list summaries, definitions, phrase translations and example translations. The choice persists across window reopening and app restarts. The separate lookup window continues to show complete definitions.
 - Uses Youdao's web dictionary endpoints without an API key; these are not a versioned public API and may change or become unavailable. Each result links to its source.
 
-### 💰 Daily Token usage (macOS source builds)
+### 💰 AI token usage & cost tracking (macOS)
 - Clicking the menu-bar icon shows today's token count and estimated cost directly below the hidden-icons strip. Click the summary to open **Token Usage** for daily and model details, 1/7/30-day ranges and an agent filter; the classic right-click menu also has an entry.
 - Reads existing local usage metadata from Codex, Claude Code, Gemini CLI and ZCode when the panel or window opens, then incrementally on later opens or manual refresh. The first scan imports available history. Clipy stores usage fields and hashed file cursors locally; it does not install hooks, keep a background polling timer, save prompts/responses or raw source paths, or sync usage to Android. Cursor is not included in this first version.
 - USD amounts use bundled model prices and are **estimates, not subscription bills or actual charges**. Unknown models retain their token counts and appear as unpriced rather than $0. **Update model prices** is an explicit action that downloads [LiteLLM's pricing data](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json); normal viewing works offline.
 
-### 🔄 Encrypted LAN sync
-- **AES-GCM 256-bit** encrypted transport between macOS and Android.
-- Devices discover each other via **/24 subnet scan** and **manual IP:port** (works across 2.4G/5G subnets) — no cloud, no account.
-- Reliable **clipboard history** delivery with ack + offline queue.
+### 🔄 Encrypted clipboard sync & LAN file transfer
+
+- **AES-GCM 256-bit** encrypted transport between macOS, Windows and Android; the iOS development target syncs while foregrounded.
+- Devices discover each other via **/24 subnet scan** and **manual IP:port**. Cross-subnet connections require network routing and firewall access; no cloud relay or account is needed.
+- Automatic **text clipboard sync** uses acknowledgements and an offline queue. Images and file clipboard entries remain local; send files explicitly from the device page or menu.
 - **Mac-to-Mac folder transfer:** choose **Send File or Folder…** for a device. Updated Macs restore the folder in `~/Downloads/Clipy/`, preserving nested/empty folders and hidden files; name collisions create a new folder. Both Macs need this folder-transfer update for automatic restoration; older Macs and Android receive a regular ZIP instead. Each folder, including archive overhead, is limited to **512 MiB / 10,000 entries**; symbolic links and special files are rejected.
 - Resilient: a bounded **offline-peer queue** re-delivers to devices that briefly drop off Wi-Fi.
 - **Loop prevention** via content hashes, so copies never bounce between devices forever.
 
-### 🔔 Phone-notification mirror (Android → macOS)
-- See your Android phone's notifications right on your Mac.
-- **Two-way** dismiss and clear-all; per-app **allow-list** filter.
+### 🔔 Android notification mirroring on desktop
+
+- View notifications from your Android phone on macOS or Windows; the iOS development target also supports read-only viewing.
+- macOS supports **two-way** dismiss and clear-all; use the per-app **allow-list** to choose which Android notifications are forwarded.
+
+### ☀️ Keep Awake / prevent idle sleep (macOS)
+
+- In **Tools → Keep Awake**, prevent idle display and system sleep while Clipy is running. The control panel shows whether the switch is on; the classic Tools menu offers the same action.
+- Turning it off or quitting Clipy releases the request. Closing the laptop lid and choosing Sleep manually still work; restarting Clipy starts with Keep Awake off.
 
 ### macOS interface
-- **Hidden menu bar icons (source builds):** opt in under Preferences → General or the panel’s settings. On a single built-in display, overflowing items appear in a visible row below the panel search field with their original icon when capture succeeds, or an application icon and name otherwise. Clicking requests the original menu through Accessibility; some apps do not support this. Icons are never moved. Accessibility is required; Screen Recording is optional for original previews (macOS 14+). Dynamic status images are not guaranteed. External displays pause the feature.
+- **Hidden menu bar icons:** opt in under Preferences → General or the panel’s settings. On a single built-in display, overflowing items appear in a visible row below the panel search field with their original icon when capture succeeds, or an application icon and name otherwise. Clicking requests the original menu through Accessibility; some apps do not support this. Icons are never moved. Accessibility is required; Screen Recording is optional for original previews (macOS 14+). Dynamic status images are not guaranteed. External displays pause the feature.
 - Native title bars, readable light/dark content surfaces, consistent SF Symbols, spacing and controls.
 - Press <kbd>Esc</kbd> to close the focused window, including settings, search, word lookup, vocabulary, snippet and image/video editors, OCR results and pinned images. Existing save prompts still apply; input-method composition, shortcut recording and modal dialogs handle cancellation first.
-- **Control panel (source builds):** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, a compact estimate of today's Token usage below them, Clipboard / Snippets / Tools tabs, and device/notification pages. Detail pages use a smaller Back/title layout; Tools omits actions already in the persistent footer. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-click the menu-bar icon for the classic native menu. The gallery above shows the current source build; published packages may differ.
-- **Keep Awake (source builds):** use the Tools tab or the classic menu's Tools submenu to prevent idle display and system sleep. The switch stays on only until you turn it off or quit Clipy; closing the laptop lid and manual Sleep still work.
+- **Control panel:** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, a compact estimate of today's Token usage below them, Clipboard / Snippets / Tools tabs, and device/notification pages. Detail pages use a smaller Back/title layout; Tools omits actions already in the persistent footer. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-click the menu-bar icon for the classic native menu.
 - Preferences and screenshot settings scroll continuously across categories; the sidebar follows the visible section and supports click-to-jump. See the [macOS design standard](docs/MACOS_DESIGN.md) for UI development guidance.
 
 ### ⌨️ Global hotkeys & 🌍 i18n
@@ -290,7 +310,7 @@ cd ..
 ./scripts/package_windows.ps1 -Version 1.0.24
 ```
 
-The package is `dist/ClipyClone-Windows-x64-v1.0.24.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Current source builds add a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
+The package is `dist/ClipyClone-Windows-x64-v1.0.24.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
 
 ### iOS (Flutter + Swift)
 
@@ -317,7 +337,7 @@ Run `bash scripts/check.sh all` from the root for local quality checks. On macOS
 - `NotificationManager` — phone-notification mirror.
 - `PreferencesManager`, `SettingsWindow`, `SnippetEditorWindow`, `LogWindow` — config & editing surfaces.
 
-**Android/iOS app** — Flutter/Dart:
+**Android, Windows and iOS apps** — Flutter/Dart:
 - `lib/main.dart` — default entrypoint; `lib/app/` owns bootstrap and the headless bridge.
 - `lib/features/` — device, history, settings, log and transfer pages.
 - `lib/clipboard_manager.dart` — clipboard monitoring, history, sync coordination.
@@ -342,7 +362,7 @@ Full wire notes, headless Android channel rules, and code map: [`docs/PROTOCOL.m
 
 ```
 clipy_macos/Sources/      # macOS Swift/AppKit source
-clipy_android/lib/        # Android & iOS Flutter/Dart source
+clipy_android/lib/        # Android, Windows & iOS Flutter/Dart source
 build_macos_app.sh        # macOS app bundle build script
 build_android_apk.sh      # Android split-APK build script
 .github/workflows/        # CI + public three-platform releases
