@@ -201,3 +201,7 @@ See [Development](DEVELOPMENT.md) for verification boundaries and
 [the AI change guide](AI_CHANGE_GUIDE.md) for ownership, lifecycle and memory
 checks. See also
 [third-party notices](../THIRD_PARTY_NOTICES.md) before updating the screenshot port.
+
+## Smart Switch paste-back target
+
+`SmartSwitchWindowFocusSession` captures a metadata-only `SmartSwitchDeliveryTarget` before presentation and validates it after closing. The bounded focus worker reads process launch identity, window and editable element identity; mismatches and unresolved targets retain copied text with a nonactivating hint. Clipboard versions and session generations also gate the final PID-addressed key pair. `keySent` records dispatch only, never verified insertion. The target is transient and cleared on close or handoff; no editor contents, persistent observer or polling is added.
