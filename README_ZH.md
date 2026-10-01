@@ -95,7 +95,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今�
 
 从本地用量元数据统计 **Codex、Claude Code、Gemini CLI 与 ZCode** 的 Token 使用量。点击菜单栏的今日摘要打开「Token 费用」窗口，按天、模型和近 1／7／30 天查看明细。费用按模型标价估算；未知模型保留 Token 数并标明未定价。
 
-<p align="center"><a href="res/screenshots/macos-token-usage-zh.png"><img src="res/screenshots/macos-token-usage-zh.png" alt="Mac Token 费用窗口：近 30 天、Agent 状态与每日估算费用" width="860" /></a></p>
+<p align="center"><a href="res/screenshots/macos-token-usage-zh.png"><img src="res/screenshots/macos-token-usage-zh.png" alt="Mac Token 费用窗口：365 天用量热力图、Agent 筛选与每日估算费用" width="860" /></a></p>
 
 **看到的灵感，也能留下。** 在 Mac 上截图、标注、OCR 提取文字，或直接贴到屏幕上。还有滚动长截图、录屏和单词查询。[看看这些工具 ↓](#完整功能说明)
 
@@ -202,6 +202,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今�
 
 ### 💰 AI Token 用量统计与费用估算（macOS）
 - 点击菜单栏图标后，悬浮面板在隐藏菜单栏图标下方直接显示今日 Token 数与估算费用；点击摘要可打开「Token 费用」窗口，按天、模型、近 1／7／30 天和 Agent 查看明细。右键经典菜单也提供入口。
+- 源码构建新增 **365 天 Token 用量热力图**，按星期和月份排列，以四档绿色展示用量。热力图随 Agent 筛选，独立于近 1／7／30 天明细；悬停查看当天准确 Token 数与估算费用，点击保留详情，窄窗口支持横向滚动。
 - 打开浮层或统计窗口时读取 Codex、Claude Code、Gemini CLI 与 ZCode 已有的本地用量元数据，首次导入现有历史，之后增量刷新；也可手动刷新。本机只保存用量字段和文件路径哈希游标，不安装 hook、不常驻轮询、不保存提示词、回复或原始来源路径，也不将用量同步到 Android。首版暂不包含 Cursor。
 - 美元金额按内置模型标价**估算，不是订阅账单或实际扣费**。未知模型保留 Token 数并标为未定价，不显示成 0 美元。「更新模型价格」仅在用户点击时下载 [LiteLLM 价格数据](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)；平时可离线查看。
 

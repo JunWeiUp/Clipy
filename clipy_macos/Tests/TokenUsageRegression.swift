@@ -168,7 +168,60 @@ func runTokenUsageRegressionTests() {
     let mixed = TokenUsageAggregator.report(events: [example, unknown], catalog: catalog, calendar: shanghai)
     check(mixed.unpricedEvents == 1 && mixed.estimatedUSD == summary.estimatedUSD && mixed.counts.total == 101,
           "unknown model was treated as zero-priced or its tokens disappeared")
-    print("Token usage regressions passed (four sources, cursor/rewrite, dedup, timezone, pricing rollback).")
+
+    var losAngeles = Calendar(identifier: .gregorian)
+    losAngeles.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+    let spring = ISO8601DateFormatter().date(from: "2024-03-10T18:00:00Z")!
+    let yearRange = TokenUsageCalendar.yearRange(endingAt: spring, calendar: losAngeles)
+    let yearStore = try! TokenUsageStore(databaseURL: root.appendingPathComponent("year.db"))
+    let boundaryEvents = [
+        TokenUsageEvent(agent: .codex, eventID: "before", sourceFile: "fixture",
+                        timestamp: yearRange.start.addingTimeInterval(-1), model: "gpt-5.6-sol", counts: TokenCounts(input: 999)),
+        TokenUsageEvent(agent: .codex, eventID: "oldest", sourceFile: "fixture",
+                        timestamp: yearRange.start, model: "gpt-5.6-sol", counts: TokenCounts(input: 10, cacheRead: 20)),
+        TokenUsageEvent(agent: .codex, eventID: "today", sourceFile: "fixture",
+                        timestamp: yearRange.end.addingTimeInterval(-1), model: "gpt-5.6-sol", counts: TokenCounts(output: 30)),
+        TokenUsageEvent(agent: .zcode, eventID: "unpriced", sourceFile: "fixture",
+                        timestamp: spring, model: "unknown", counts: TokenCounts(input: 90, reasoning: 30)),
+        TokenUsageEvent(agent: .codex, eventID: "future", sourceFile: "fixture",
+                        timestamp: yearRange.end, model: "gpt-5.6-sol", counts: TokenCounts(input: 999)),
+    ]
+    try! yearStore.save(agent: .codex, file: "fixture", events: boundaryEvents,
+                        cursor: TokenFileCursor(), replacingFile: false)
+    let annual = try! TokenUsageAggregator.report(catalog: catalog, calendar: losAngeles) { visit in
+        try yearStore.visitEvents(from: yearRange.start, through: yearRange.end, visit)
+    }
+    check(annual.counts.total == 180 && annual.unpricedEvents == 1,
+          "annual streaming query dropped old usage or included an out-of-range event")
+    let heatmap = TokenUsageHeatmap(lines: annual.lines, endingAt: spring, calendar: losAngeles)
+    check(heatmap.days.count == 365 && heatmap.days.first?.id == "2023-03-12" && heatmap.days.last?.id == "2024-03-10",
+          "heatmap should include exactly 365 local dates including today")
+    check(Set(heatmap.days.map(\.id)).count == 365 && heatmap.days.contains { $0.id == "2024-02-29" },
+          "leap day or DST changed the date grid")
+    check(heatmap.totalTokens == 180 && heatmap.activeDays == 2 && heatmap.days.last?.usage.unpricedEvents == 1,
+          "multiple models/agents must sum by day without losing unpriced tokens")
+    check(heatmap.weeks.count == 53 && heatmap.weeks.last?.dropFirst().allSatisfy { $0 == nil } == true,
+          "future cells in the final week should be blank")
+    for week in heatmap.weeks {
+        for (row, day) in week.enumerated() {
+            if let day { check(losAngeles.component(.weekday, from: day.date) == row + 1, "weekday row mismatch") }
+        }
+    }
+    let codexHeatmap = TokenUsageHeatmap(lines: annual.lines, agent: .codex, endingAt: spring, calendar: losAngeles)
+    check(codexHeatmap.totalTokens == 60 && codexHeatmap.days.last?.usage.unpricedEvents == 0,
+          "agent filter mixed another agent's tokens or price status")
+    check(heatmap.intensity(for: heatmap.days[0]) == 1 && heatmap.intensity(for: heatmap.days[1]) == 0
+          && heatmap.intensity(for: heatmap.days.last!) == 4, "intensity must represent zero and relative daily volume")
+    let emptyHeatmap = TokenUsageHeatmap(lines: annual.lines, agent: .claude, endingAt: spring, calendar: losAngeles)
+    check(emptyHeatmap.totalTokens == 0 && emptyHeatmap.activeDays == 0
+          && emptyHeatmap.days.allSatisfy { emptyHeatmap.intensity(for: $0) == 0 }, "empty agent must keep a zero-use grid")
+    let fall = ISO8601DateFormatter().date(from: "2024-11-03T20:00:00Z")!
+    let fallHeatmap = TokenUsageHeatmap(lines: [], endingAt: fall, calendar: losAngeles)
+    check(Set(fallHeatmap.days.map(\.id)).count == 365 && fallHeatmap.days.last?.id == "2024-11-03",
+          "fall DST repeated a calendar day")
+    check(TokenUsageCalendar.yearRange(endingAt: fall, calendar: losAngeles).end.timeIntervalSince(fallHeatmap.days.last!.date) == 25 * 3600,
+          "calendar range must use local midnight, not a fixed 24-hour duration")
+    print("Token usage regressions passed (sources, privacy, pricing, annual streaming, heatmap/calendar/filter).")
 }
 
 /// Uses fictional metadata and an isolated price catalog; never scans user logs.
@@ -183,13 +236,14 @@ func runTokenUsageSnapshot() -> Never {
                                      zcode: temporary.appendingPathComponent("none.db"))
     let manager = TokenUsageManager(paths: emptyPaths, directory: temporary, seedURL: nil, overridesURL: nil)
     var entries: [TokenUsageLine] = []
-    for offset in 0..<24 {
+    for offset in 0..<365 {
+        if offset > 24 && (offset % 5 == 0 || offset > 240 && offset % 3 != 0) { continue }
         let date = Calendar.current.date(byAdding: .day, value: -offset, to: Date())!
         let day = TokenUsageFormat.day(date)
         let agent = TokenAgent.allCases[offset % TokenAgent.allCases.count]
         entries.append(TokenUsageLine(id: "fixture-\(offset)", day: day, agent: agent,
                                       model: offset % 6 == 0 ? "preview-unknown-model" : "sample-model-\(offset % 4)",
-                                      counts: TokenCounts(input: 300_000 + offset * 2000,
+                                      counts: TokenCounts(input: 30_000 + ((365 - offset) * (offset % 7 + 1) * 900),
                                                           output: 25_000, cacheRead: 70_000,
                                                           cacheWrite: 0, reasoning: 3000),
                                       estimatedUSD: offset % 6 == 0 ? nil : 2.75 + Double(offset) * 0.18,
@@ -205,15 +259,21 @@ func runTokenUsageSnapshot() -> Never {
     let root = TokenUsageView(manager: manager).environmentObject(AppLanguageObserver.shared)
     let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 860, height: 700),
                           styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+    window.title = "Clipy Token Usage · Fictional Preview"
+    let closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
+                                                               object: window, queue: .main) { _ in
+        try? FileManager.default.removeItem(at: temporary)
+        exit(0)
+    }
     window.contentViewController = NSHostingController(rootView: root)
     window.center(); window.orderFrontRegardless()
-    let names = ["light-populated", "dark-populated", "light-empty", "dark-narrow", "light-populated-en"]
+    let names = ["light-populated", "dark-populated", "light-empty", "dark-narrow", "light-populated-en", "dark-narrow-en"]
     var step = 0
     func prepare() {
-        UserDefaults.standard.setVolatileDomain(["appLanguage": step == 4 ? "en" : "zh"], forName: UserDefaults.argumentDomain)
+        UserDefaults.standard.setVolatileDomain(["appLanguage": step >= 4 ? "en" : "zh"], forName: UserDefaults.argumentDomain)
         NotificationCenter.default.post(name: .appLanguageDidChange, object: nil)
         window.appearance = NSAppearance(named: step % 2 == 0 ? .aqua : .darkAqua)
-        window.setContentSize(CGSize(width: step == 3 ? 600 : 860, height: step == 3 ? 480 : 700))
+        window.setContentSize(CGSize(width: step == 3 || step == 5 ? 600 : 860, height: step == 3 || step == 5 ? 480 : 700))
         manager.setPreview(report: step == 2 ? TokenUsageReport() : sample, statuses: statuses)
     }
     prepare()
@@ -225,13 +285,20 @@ func runTokenUsageSnapshot() -> Never {
         try? data.write(to: URL(fileURLWithPath: directory).appendingPathComponent(names[step] + ".png"))
         step += 1
         if step == names.count {
-            timer.invalidate(); window.orderOut(nil)
+            timer.invalidate()
+            if ProcessInfo.processInfo.environment["CLIPY_TOKEN_SNAPSHOT_HOLD"] == "1" {
+                step = 0
+                prepare()
+                print("Token usage snapshots saved; close the fictional preview to finish.")
+                return
+            }
+            window.orderOut(nil)
             try? FileManager.default.removeItem(at: temporary)
             print("Token usage snapshots saved.")
             exit(0)
         }
         prepare()
     }
-    withExtendedLifetime((window, manager, timer)) { app.run() }
+    withExtendedLifetime((window, manager, timer, closeObserver)) { app.run() }
     exit(0)
 }

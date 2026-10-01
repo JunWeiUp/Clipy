@@ -46,6 +46,13 @@ enum L10nKey: String {
     case tokenUsageStatusReady
     case tokenUsageScanning
     case tokenUsageUpdating
+    case tokenUsageActivity
+    case tokenUsageYear
+    case tokenUsageActiveDays
+    case tokenUsageHeatmapHint
+    case tokenUsageHeatmapScale
+    case tokenUsageLess
+    case tokenUsageMore
     case panelLookupShortcut
     case panelSwitchShortcut
     case panelCaptureShortcut
@@ -616,6 +623,13 @@ struct L10n {
             .tokenUsageStatusReady: "已就绪",
             .tokenUsageScanning: "正在读取用量…",
             .tokenUsageUpdating: "正在更新价格…",
+            .tokenUsageActivity: "Token 用量热力图",
+            .tokenUsageYear: "近 365 天",
+            .tokenUsageActiveDays: "%d 天有用量 · 共 %@ Token",
+            .tokenUsageHeatmapHint: "悬停查看每日用量，点击保留详情；随 Agent 筛选。",
+            .tokenUsageHeatmapScale: "按每日 Token 总量分为四档，以当前 Agent 筛选下近 365 天的最高日用量为上限。灰色表示无用量记录。",
+            .tokenUsageLess: "少",
+            .tokenUsageMore: "多",
             .panelLookupShortcut: "查词",
             .panelSwitchShortcut: "智能切换",
             .panelCaptureShortcut: "截图",
@@ -1173,6 +1187,13 @@ struct L10n {
             .tokenUsageStatusReady: "Ready",
             .tokenUsageScanning: "Reading usage…",
             .tokenUsageUpdating: "Updating prices…",
+            .tokenUsageActivity: "Token activity",
+            .tokenUsageYear: "Last 365 days",
+            .tokenUsageActiveDays: "%d active days · %@ tokens in total",
+            .tokenUsageHeatmapHint: "Hover for daily usage; click to keep details. Follows the agent filter.",
+            .tokenUsageHeatmapScale: "Four levels of daily tokens, relative to the current agent selection’s peak over 365 days. Gray means no usage records.",
+            .tokenUsageLess: "Less",
+            .tokenUsageMore: "More",
             .panelLookupShortcut: "Lookup",
             .panelSwitchShortcut: "Switch",
             .panelCaptureShortcut: "Capture",

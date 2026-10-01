@@ -95,7 +95,7 @@ Folders on the left, snippets in the middle, your writing on the right. Find, ed
 
 View **Codex, Claude Code, Gemini CLI and ZCode** token usage from local activity metadata. Open Token Usage from the menu bar summary to inspect daily totals, model breakdowns and 1/7/30-day ranges. Costs are estimates based on model prices; unknown models remain visible as unpriced.
 
-<p align="center"><a href="res/screenshots/macos-token-usage-en.png"><img src="res/screenshots/macos-token-usage-en.png" alt="Mac Token Usage window showing the 30-day view, Agent status and daily estimated costs" width="860" /></a></p>
+<p align="center"><a href="res/screenshots/macos-token-usage-en.png"><img src="res/screenshots/macos-token-usage-en.png" alt="Mac Token Usage window with a 365-day activity heatmap, Agent filter and daily estimated costs" width="860" /></a></p>
 
 **Capture an idea, too.** On Mac, take a screenshot, annotate it, extract text with OCR or pin it to your screen. Scrolling capture, screen recording and word lookup are also included. [Explore the tools ↓](#feature-reference)
 
@@ -202,6 +202,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 
 ### 💰 AI token usage & cost tracking (macOS)
 - Clicking the menu-bar icon shows today's token count and estimated cost directly below the hidden-icons strip. Click the summary to open **Token Usage** for daily and model details, 1/7/30-day ranges and an agent filter; the classic right-click menu also has an entry.
+- Source builds also include a **365-day token activity heatmap**, with weekday/month labels and four green intensity levels. It follows the agent filter independently of the 1/7/30-day details. Hover over a day for exact tokens and estimated cost, or click to keep its details visible; narrower windows scroll horizontally.
 - Reads existing local usage metadata from Codex, Claude Code, Gemini CLI and ZCode when the panel or window opens, then incrementally on later opens or manual refresh. The first scan imports available history. Clipy stores usage fields and hashed file cursors locally; it does not install hooks, keep a background polling timer, save prompts/responses or raw source paths, or sync usage to Android. Cursor is not included in this first version.
 - USD amounts use bundled model prices and are **estimates, not subscription bills or actual charges**. Unknown models retain their token counts and appear as unpriced rather than $0. **Update model prices** is an explicit action that downloads [LiteLLM's pricing data](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json); normal viewing works offline.
 
