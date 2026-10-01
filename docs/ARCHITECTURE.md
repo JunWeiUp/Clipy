@@ -161,6 +161,13 @@ refresh metadata while idle without starting a polling timer.
 
 ## Critical lifecycle contracts
 
+Token usage refreshes stream up to 365 local calendar days from SQLite into daily
+agent/model aggregates on the existing worker. Individual events are released as
+they are read; the published report retains aggregates only. The detail view builds
+a bounded 365-day heatmap from that report, with at most 53 week columns and no
+additional log scans, timers or persisted chart state. Hover/click state belongs to
+the view and resets when the agent filter changes or the hosting view is released.
+
 - Android owns one cached Flutter engine. `PlatformChannels.registerAll` is
   Application-owned so storage/notification processing works without an Activity.
 - `lib/app/bootstrap.dart` mounts a minimal root immediately using the default

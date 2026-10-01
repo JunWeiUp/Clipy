@@ -23,12 +23,7 @@ enum TokenUsageFormat {
         return String(format: "≈$%.2f", value)
     }
     static func day(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = .current
-        formatter.timeZone = .current
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+        TokenUsageCalendar.dayFormatter().string(from: date)
     }
 }
 
@@ -99,8 +94,9 @@ struct TokenUsageView: View {
     @State private var selectedAgent: TokenAgent?
 
     private var cutoff: String {
-        let today = Calendar.current.startOfDay(for: Date())
-        return TokenUsageFormat.day(Calendar.current.date(byAdding: .day, value: 1 - days, to: today) ?? today)
+        let calendar = TokenUsageCalendar.local
+        let today = calendar.startOfDay(for: Date())
+        return TokenUsageFormat.day(calendar.date(byAdding: .day, value: 1 - days, to: today) ?? today)
     }
     private var lines: [TokenUsageLine] {
         manager.report.lines.filter { $0.day >= cutoff && (selectedAgent == nil || $0.agent == selectedAgent) }
@@ -131,6 +127,8 @@ struct TokenUsageView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     filters
                     summary
+                    TokenUsageHeatmapView(heatmap: TokenUsageHeatmap(lines: manager.report.lines, agent: selectedAgent))
+                        .id(selectedAgent?.rawValue ?? "all")
                     sourceStatuses
                     if daily.isEmpty {
                         EmptyStateView(message: L10n.t(.tokenUsageNoData), symbol: "chart.bar.xaxis")
