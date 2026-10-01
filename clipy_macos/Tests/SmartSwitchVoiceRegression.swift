@@ -2,6 +2,7 @@ import Foundation
 import CoreGraphics
 import AppKit
 import SwiftUI
+import ApplicationServices
 
 @MainActor
 func runSmartSwitchInputPanelTests() {
@@ -281,11 +282,24 @@ func runSmartSwitchEscapePasteTests() {
     var pastes: [(pid_t, String)] = []
     var closing: [() -> Void] = []
     var activationTicks: [() -> Void] = []
+    let originalTarget = SmartSwitchDeliveryTarget(pid: caller, launchedAt: Date(timeIntervalSince1970: 0),
+        focus: SmartSwitchFocusTarget(element: AXUIElementCreateApplication(101), window: AXUIElementCreateApplication(102)))
+    var target: SmartSwitchDeliveryTarget? = originalTarget
+    var outcomes: [SmartSwitchDeliveryOutcome] = []
+    var targetReads: [() -> Void] = []
+    var delayTargetReads = false
+    var dispatchSucceeds = true
     let session = SmartSwitchWindowFocusSession(ownPID: clipy, frontmostPID: { front },
         hasOtherKeyWindow: { otherWindow }, activate: { _ in activationRequests += 1; return activationSucceeds },
         refreshFocus: {}, enqueue: { closing.append($0) },
         copyText: { text in clipboard = text; version += 1; return version },
-        clipboardVersion: { version }, pasteCopiedText: { pastes.append(($0, clipboard)) },
+        clipboardVersion: { version }, pasteCopiedText: { pid in
+            if dispatchSucceeds { pastes.append((pid, clipboard)) }
+            return dispatchSucceeds
+        }, readTarget: { _, completion in
+            if delayTargetReads { targetReads.append { completion(target) } }
+            else { completion(target) }
+        }, reportDelivery: { outcomes.append($0) },
         afterActivation: { activationTicks.append($0) })
     func finishClose() {
         let work = closing; closing.removeAll(); work.forEach { $0() }
@@ -294,6 +308,7 @@ func runSmartSwitchEscapePasteTests() {
         let work = activationTicks; activationTicks.removeAll(); work.forEach { $0() }
     }
     func escape(_ text: String?) {
+        front = caller
         session.begin(previousPID: caller)
         front = clipy
         session.close(pasteText: text)
@@ -331,6 +346,7 @@ func runSmartSwitchEscapePasteTests() {
 
     escape("new popup")
     finishClose()
+    front = caller
     session.begin(previousPID: caller)
     tick()
     precondition(pastes.count == 1, "A previous Escape pasted into a reopened popup")
@@ -369,12 +385,14 @@ func runSmartSwitchEscapePasteTests() {
 
     // A key panel can accept text while its original app stays frontmost.
     let beforeActivation = activationRequests
+    front = caller
     session.begin(previousPID: caller)
     front = caller
     session.close(pasteText: "nonactivating panel text")
     finishClose(); tick()
     precondition(pastes.count == 2 && pastes.last?.1 == "nonactivating panel text" && activationRequests == beforeActivation,
                  "Nonactivating panel did not paste back or unnecessarily reactivated its caller")
+    front = caller
     session.begin(previousPID: caller)
     session.close(pasteText: "another key panel appeared")
     finishClose()
@@ -383,7 +401,86 @@ func runSmartSwitchEscapePasteTests() {
     precondition(pastes.count == 2 && activationTicks.isEmpty,
                  "Paste leaked into another key panel while the original app remained frontmost")
     otherWindow = false
-    print("Smart Switch Escape paste regressions passed (exact text, activating/nonactivating callers, clipboard/focus races, timeout).")
+    let baseline = pastes.count
+    let mismatches: [SmartSwitchDeliveryTarget?] = [
+        SmartSwitchDeliveryTarget(pid: caller, launchedAt: originalTarget.launchedAt,
+            focus: SmartSwitchFocusTarget(element: originalTarget.focus.element, window: AXUIElementCreateApplication(103))),
+        SmartSwitchDeliveryTarget(pid: caller, launchedAt: originalTarget.launchedAt,
+            focus: SmartSwitchFocusTarget(element: AXUIElementCreateApplication(104), window: originalTarget.focus.window)),
+        SmartSwitchDeliveryTarget(pid: caller, launchedAt: Date(timeIntervalSince1970: 1), focus: originalTarget.focus),
+        nil, // destroyed element, permission revoked or bounded probe timeout
+    ]
+    for changed in mismatches {
+        target = originalTarget
+        escape("retain changed target")
+        finishClose()
+        target = changed
+        front = caller
+        tick()
+        precondition(pastes.count == baseline && clipboard == "retain changed target" && outcomes.last == .copiedOnly,
+                     "Same PID with a changed window/editor/process or missing AX target received text")
+    }
+    target = nil
+    escape("unknown origin")
+    finishClose(); front = caller; target = originalTarget; tick()
+    precondition(pastes.count == baseline && outcomes.last == .copiedOnly, "Missing origin was replaced by a later editor")
+
+    target = originalTarget
+    front = caller
+    session.begin(previousPID: caller)
+    // Repeated shortcut in the panel must retain the original editor identity.
+    target = mismatches[1]
+    session.begin(previousPID: caller)
+    session.close(pasteText: "repeat shortcut")
+    finishClose(); tick()
+    precondition(pastes.count == baseline, "Reinvocation replaced the original input target")
+
+    target = originalTarget
+    escape("delayed validation")
+    finishClose(); front = caller
+    delayTargetReads = true
+    tick()
+    precondition(targetReads.count == 1, "Paste validation did not inspect asynchronously")
+    clipboard = "user copied during AX validation"; version += 1
+    targetReads.removeFirst()()
+    precondition(pastes.count == baseline, "Delayed AX validation pasted a changed clipboard")
+    delayTargetReads = false
+
+    escape("late validation after reopen")
+    finishClose(); front = caller; delayTargetReads = true; tick()
+    session.begin(previousPID: caller)
+    precondition(targetReads.count == 2, "Missing pending validation/capture")
+    targetReads.removeFirst()()
+    precondition(pastes.count == baseline, "Old AX validation survived reopening")
+    session.handOff()
+    targetReads.removeFirst()()
+    delayTargetReads = false
+
+    dispatchSucceeds = false
+    escape("event creation failed")
+    finishClose(); front = caller; tick()
+    precondition(pastes.count == baseline && outcomes.last == .copiedOnly, "Failed key dispatch reported insertion")
+    dispatchSucceeds = true
+
+    // Presentation must wait for the origin snapshot and abandon a switched app.
+    delayTargetReads = true
+    front = caller
+    var readyResults: [Bool] = []
+    session.begin(previousPID: caller, ready: { readyResults.append($0) })
+    precondition(readyResults.isEmpty, "Panel took focus before capturing the origin")
+    front = otherApp
+    targetReads.removeFirst()()
+    precondition(readyResults == [false], "Delayed capture stole focus after the user switched apps")
+    front = caller
+    session.begin(previousPID: caller, ready: { readyResults.append($0) })
+    session.begin(previousPID: caller, ready: { readyResults.append($0) })
+    precondition(targetReads.count == 1, "Repeated pending show launched duplicate AX reads")
+    targetReads.removeFirst()()
+    precondition(readyResults == [false, true], "Repeated pending show presented twice or lost completion")
+    session.handOff()
+    delayTargetReads = false
+    precondition(outcomes.contains(.keySent), "Successful dispatch was never distinguished from copied-only")
+    print("Smart Switch Escape paste regressions passed (target/window/process identity, bounded async validation, clipboard races, cancellation, dispatch outcomes).")
 }
 
 @MainActor
@@ -405,6 +502,7 @@ func runSmartSwitchWindowFocusTests() {
         copyText: { _ in preconditionFailure("Ordinary close changed the clipboard") },
         clipboardVersion: { preconditionFailure("Ordinary close inspected the clipboard") },
         pasteCopiedText: { _ in preconditionFailure("Ordinary close pasted content") },
+        readTarget: { _, completion in completion(nil) },
         afterActivation: { _ in preconditionFailure("Ordinary close scheduled a paste") })
     func finishClosing() {
         let work = deferred
@@ -429,6 +527,7 @@ func runSmartSwitchWindowFocusTests() {
     }
     expect(activations == [caller, caller, caller] && refreshes == 3, "Close did not restore the caller and refresh AX focus")
 
+    front = caller
     session.begin(previousPID: caller)
     front = clipy
     session.begin(previousPID: clipy) // manual shortcut while already open
@@ -439,6 +538,7 @@ func runSmartSwitchWindowFocusTests() {
     // Both success and opening preferences explicitly transfer focus ownership.
     // The destination app's activation can still be pending when close fires.
     for _ in 0..<2 {
+        front = caller
         session.begin(previousPID: caller)
         front = clipy
         let count = activations.count
@@ -448,6 +548,7 @@ func runSmartSwitchWindowFocusTests() {
         expect(front == clipy && activations.count == count, "Close overrode the destination/settings activation")
     }
 
+    front = caller
     session.begin(previousPID: caller)
     front = clipy
     session.close()
@@ -455,6 +556,7 @@ func runSmartSwitchWindowFocusTests() {
     finishClosing()
     expect(front == destination, "Deferred restore stole focus from another app")
 
+    front = caller
     session.begin(previousPID: caller)
     front = destination // user had already switched away before closing
     session.close()
@@ -463,6 +565,7 @@ func runSmartSwitchWindowFocusTests() {
     finishClosing()
     expect(activations.count == count, "Background dismissal restored an unowned app")
 
+    front = caller
     session.begin(previousPID: caller)
     front = clipy
     session.close()
@@ -473,6 +576,7 @@ func runSmartSwitchWindowFocusTests() {
     finishClosing()
     expect(front == caller, "Reopened popup lost its caller")
 
+    front = caller
     session.begin(previousPID: caller)
     front = clipy
     session.close()
@@ -482,6 +586,7 @@ func runSmartSwitchWindowFocusTests() {
     otherWindow = false
 
     activationSucceeds = false
+    front = caller
     session.begin(previousPID: caller)
     front = clipy
     let beforeFailure = refreshes

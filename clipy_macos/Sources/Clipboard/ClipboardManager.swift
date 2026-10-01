@@ -1104,6 +1104,22 @@ class ClipboardManager {
         guard AccessibilityManager.ensureTrustedForPaste() else { return }
         paste()
     }
+
+    /// A validated Smart Switch target receives one key pair addressed to its PID.
+    /// Returning true confirms dispatch only, not insertion in the remote editor.
+    func simulatePasteIfTrusted(to pid: pid_t) -> Bool {
+        guard AccessibilityManager.isTrusted,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+              let source = CGEventSource(stateID: .combinedSessionState),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else { return false }
+        startPasteUsageMonitoringIfNeeded()
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+        down.postToPid(pid)
+        up.postToPid(pid)
+        return true
+    }
     
     private func paste() {
         let source = CGEventSource(stateID: .combinedSessionState)
