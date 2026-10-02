@@ -66,6 +66,23 @@ func runSmartSwitchFocusWarmupTests() async {
         }
     }
     let warming = SmartSwitchFocusMonitor.Inspection(kind: .unknown, detail: "electronAXWarmingUp", retryAfterWarmup: true)
+    let ownPID = ProcessInfo.processInfo.processIdentifier
+    let noLocalReads = VoiceFocusReaderFixture([.init(kind: .nonText, detail: "mustNotReadSelf")])
+    let localMonitor = SmartSwitchFocusMonitor(reader: noLocalReads.read)
+    for pid in [ownPID, 0, -1] as [pid_t] {
+        let local = await withCheckedContinuation { continuation in
+            localMonitor.inspect(pid: pid, bundleID: "test.any-bundle") { continuation.resume(returning: $0) }
+        }
+        precondition(local.kind == .unknown && local.target == nil && !local.shouldOpenSwitch
+                     && noLocalReads.callCount == 0,
+                     "Local/invalid process entered the AX worker or enabled voice takeover")
+    }
+    let directLocal = SmartSwitchFocusProbe(deadline: ProcessInfo.processInfo.systemUptime + 1)
+        .read(pid: ownPID, bundleID: "test.any-bundle")
+    precondition(directLocal.kind == .unknown && directLocal.detail == "localProcessExcluded",
+                 "Direct focus probe bypassed same-process AX protection")
+    precondition(BackgroundAccessibilityPolicy.canRead(pid: 2, ownPID: 1),
+                 "Process exclusion became an application/bundle blacklist")
     let page = VoiceFocusReaderFixture([warming, .init(kind: .nonText, detail: "role=AXButton")])
     let pageResult = await inspect(page)
     precondition(pageResult.kind == .nonText && page.callCount == 2, "Electron warmup cached an unknown focus instead of reading the ready page")

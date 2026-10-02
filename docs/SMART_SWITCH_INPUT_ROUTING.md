@@ -170,3 +170,9 @@ Apple 的 [NSTextInputClient](https://developer.apple.com/documentation/appkit/n
 - 核心回归覆盖同 PID 换窗口／输入框、进程身份变化、AX 无结果、剪贴板在异步核验期间变化、重新打开与动作交接取消、预捕获期间切应用、重复快捷键和按键发送失败。
 - 原目标已销毁、权限被撤销或探测超时均按无法确认处理；不读取外部正文，不重复发送。
 - 真实应用输入法、网页富文本和终端矩阵仍需实测；自动化只能证明目标核验与取消逻辑，不代表已证明远端插入或物理语音落字。
+
+### 自进程 AX 死锁防护
+
+实机采样发现，焦点后台队列对 Clipy 自身调用 `AXUIElementCopyMultipleAttributeValues` 时，系统直接进入本进程 `NSHostingView.accessibilityChildren()`。后台持有 SwiftUI 更新锁并等待 AppKit 视图层级锁；主线程布局持有层级锁并等待 SwiftUI 更新锁，形成锁反转。150ms 回调截止时间不能中断这些本地 getter，因此不能仅靠 AX messaging timeout 防止此类死锁。
+
+`BackgroundAccessibilityPolicy` 按 PID 排除当前进程和无效 PID，焦点监视器在创建观察者／进入后台 reader 前检查，底层 probe 再检查。Clipy 面板的键盘焦点继续使用现有 AppKit 状态，不通过自身 AX 树推断。菜单栏隐藏图标扫描也排除自身窗口与元素，外部应用行为不变。核心回归断言自身／无效 PID 不调用 reader、不产生自动接管证据，且直接 probe 不能绕过保护。
