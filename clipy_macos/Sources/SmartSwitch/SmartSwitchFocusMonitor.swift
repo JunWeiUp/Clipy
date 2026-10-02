@@ -75,7 +75,7 @@ final class SmartSwitchFocusMonitor {
         removeAXObserver()
         guard let app = NSWorkspace.shared.frontmostApplication else { invalidate(); return }
         var created: AXObserver?
-        if AXObserverCreate(app.processIdentifier, { _, _, _, context in
+        if BackgroundAccessibilityPolicy.canRead(pid: app.processIdentifier), AXObserverCreate(app.processIdentifier, { _, _, _, context in
             guard let context else { return }
             Unmanaged<SmartSwitchFocusMonitor>.fromOpaque(context).takeUnretainedValue().invalidate()
         }, &created) == .success, let created {
@@ -133,6 +133,16 @@ final class SmartSwitchFocusMonitor {
     }
 
     func inspect(pid: pid_t, bundleID: String, completion: @escaping (Snapshot) -> Void) {
+        // Exclude self before entering the worker, acquiring slots or issuing AX.
+        // Our input panel's keyboard focus is tracked directly by AppKit.
+        guard BackgroundAccessibilityPolicy.canRead(pid: pid) else {
+            DispatchQueue.main.async {
+                completion(Snapshot(pid: pid, kind: .unknown,
+                    observedAt: ProcessInfo.processInfo.systemUptime,
+                    detail: "localProcessExcluded", bundleID: bundleID))
+            }
+            return
+        }
         let deadline = ProcessInfo.processInfo.systemUptime + requestTimeout
         let request = SmartSwitchFocusRequest(deadline: deadline)
         func deliver(_ result: Inspection) {

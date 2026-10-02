@@ -79,6 +79,9 @@ final class SmartSwitchFocusProbe {
     }
 
     func read(pid: pid_t, bundleID: String) -> Inspection {
+        guard BackgroundAccessibilityPolicy.canRead(pid: pid) else {
+            return Inspection(kind: .unknown, detail: "localProcessExcluded")
+        }
         guard AXIsProcessTrusted() else { return Inspection(kind: .unknown, detail: "accessibilityDenied") }
         guard hasTime else { return Inspection(kind: .unknown, detail: "deadline") }
         let application = AXUIElementCreateApplication(pid)

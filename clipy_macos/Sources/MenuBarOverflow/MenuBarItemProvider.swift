@@ -16,6 +16,9 @@ final class MenuBarItemProvider: MenuBarOverflowProviding {
         var available: Bool { !cancellation.isCancelled && ProcessInfo.processInfo.systemUptime < deadline }
         func value(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
             guard available else { return nil }
+            var pid: pid_t = 0
+            guard AXUIElementGetPid(element, &pid) == .success,
+                  BackgroundAccessibilityPolicy.canRead(pid: pid) else { return nil }
             AXUIElementSetMessagingTimeout(element, 0.04)
             var value: CFTypeRef?
             let result = AXUIElementCopyAttributeValue(element, key as CFString, &value)
@@ -46,7 +49,7 @@ final class MenuBarItemProvider: MenuBarOverflowProviding {
         let reader = Reader(cancellation, seconds: 2)
         let windows = bridge.windows()
         var applicationMenuMaxX: CGFloat?
-        if let pid = context.frontPID,
+        if let pid = context.frontPID, BackgroundAccessibilityPolicy.canRead(pid: pid),
            let bar = reader.element(AXUIElementCreateApplication(pid), kAXMenuBarAttribute) {
             let edges = reader.children(bar).compactMap { reader.frame($0) }.filter {
                 abs($0.minY - context.geometry.screen.minY) <= context.geometry.barHeight
@@ -57,6 +60,7 @@ final class MenuBarItemProvider: MenuBarOverflowProviding {
         // Prefer real source applications over the duplicate hosted Control Center elements.
         for application in context.applications.sorted(by: { !$0.isControlCenter && $1.isControlCenter }) {
             guard reader.available else { break }
+            guard BackgroundAccessibilityPolicy.canRead(pid: application.pid) else { continue }
             let app = AXUIElementCreateApplication(application.pid)
             guard let bar = reader.element(app, "AXExtrasMenuBar") else { continue }
             for (ordinal, element) in reader.children(bar).enumerated() {
@@ -89,6 +93,7 @@ final class MenuBarItemProvider: MenuBarOverflowProviding {
     func press(_ item: MenuBarOverflowItem, cancellation: MenuBarOverflowCancellation) -> MenuBarOverflowActivationResult {
         guard !cancellation.isCancelled else { return .cancelled }
         guard item.canPress, AXIsProcessTrusted(), !IsSecureEventInputEnabled(),
+              BackgroundAccessibilityPolicy.canRead(pid: item.id.pid),
               let application = NSRunningApplication(processIdentifier: item.id.pid),
               !application.isTerminated, MenuBarOverflowProcessIdentity.launchDate(for: item.id.pid) == item.id.launchDate else { return .unavailable }
         let reader = Reader(cancellation, seconds: 0.5)

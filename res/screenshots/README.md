@@ -19,6 +19,10 @@ The older showcase images use AI-assisted presentation styling: a shared ivory, 
 
 Regenerate panel and Token Usage fixtures with `CLIPY_PANEL_SNAPSHOT_DIR=/tmp/clipy-panel-snapshots CLIPY_TOKEN_SNAPSHOT_DIR=/tmp/clipy-token-snapshots bash scripts/test_macos_core.sh`. Copy `english-history.png` and `light-history.png` from the panel directory, and `light-populated-en.png` and `light-populated.png` from the Token directory, to the respective README assets. Keep both README files in sync when replacing images. Screenshots describe the source build and may include changes not yet in a published release.
 
+Panel fixtures localize both the interface and fictional clipboard contents/file names. The English README panel must contain English examples throughout; the Chinese README keeps its Chinese examples. Reload the fixture history after switching languages before rendering.
+
+Token fixtures include a full year of fictional daily usage and light/dark, empty and narrow-window variants. Add `CLIPY_TOKEN_SNAPSHOT_HOLD=1` to keep the isolated Token window open after rendering for hover, click, scrolling and Agent-filter checks; close that preview window to finish the test process. No user activity logs are scanned.
+
 ## Android source previews
 
 `android-history-en.png`, `android-devices-en.png` and `android-settings-dark-en.png` are direct, unretouched emulator screenshots of the redesigned Flutter application, at 1080 × 2340. The history contains fictional sample text and a sample file; sync remains off, and no personal clipboard, contacts, notifications or credentials are used.

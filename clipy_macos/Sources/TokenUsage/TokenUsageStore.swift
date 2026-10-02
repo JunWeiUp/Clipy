@@ -106,6 +106,12 @@ final class TokenUsageStore {
     }
 
     func events(from start: Date, through end: Date) throws -> [TokenUsageEvent] {
+        var result: [TokenUsageEvent] = []
+        try visitEvents(from: start, through: end) { result.append($0) }
+        return result
+    }
+
+    func visitEvents(from start: Date, through end: Date, _ visit: (TokenUsageEvent) -> Void) throws {
         let stmt = try prepare("""
             SELECT agent,event_id,source_file,timestamp,model,input_tokens,output_tokens,
                    cache_read_tokens,cache_write_tokens,reasoning_tokens
@@ -114,8 +120,9 @@ final class TokenUsageStore {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_double(stmt, 1, start.timeIntervalSince1970)
         sqlite3_bind_double(stmt, 2, end.timeIntervalSince1970)
-        var result: [TokenUsageEvent] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
+        var code = sqlite3_step(stmt)
+        while code == SQLITE_ROW {
+            defer { code = sqlite3_step(stmt) }
             guard let name = optionalString(stmt, 0), let agent = TokenAgent(rawValue: name),
                   let eventID = optionalString(stmt, 1), let file = optionalString(stmt, 2),
                   let model = optionalString(stmt, 4) else { continue }
@@ -124,11 +131,11 @@ final class TokenUsageStore {
                                      cacheRead: Int(sqlite3_column_int64(stmt, 7)),
                                      cacheWrite: Int(sqlite3_column_int64(stmt, 8)),
                                      reasoning: Int(sqlite3_column_int64(stmt, 9)))
-            result.append(TokenUsageEvent(agent: agent, eventID: eventID, sourceFile: file,
-                                          timestamp: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3)),
-                                          model: model, counts: counts))
+            visit(TokenUsageEvent(agent: agent, eventID: eventID, sourceFile: file,
+                                  timestamp: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3)),
+                                  model: model, counts: counts))
         }
-        return result
+        guard code == SQLITE_DONE else { throw failure("read events") }
     }
 
     private func prepare(_ sql: String) throws -> OpaquePointer? {

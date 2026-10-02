@@ -4,7 +4,13 @@ import Combine
 enum TokenUsageAggregator {
     static func report(events: [TokenUsageEvent], catalog: TokenPriceCatalog,
                        calendar: Calendar = .current) -> TokenUsageReport {
-        var formatter = DateFormatter()
+        report(catalog: catalog, calendar: calendar) { visit in events.forEach(visit) }
+    }
+
+    /// Fold database rows on the worker without retaining a year's individual events.
+    static func report(catalog: TokenPriceCatalog, calendar: Calendar,
+                       readEvents: ((TokenUsageEvent) -> Void) throws -> Void) rethrows -> TokenUsageReport {
+        let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.timeZone = calendar.timeZone
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -17,7 +23,7 @@ enum TokenUsageAggregator {
         }
         var buckets: [String: Bucket] = [:]
         var dimensions: [String: (String, TokenAgent, String)] = [:]
-        for event in events {
+        try readEvents { event in
             let day = formatter.string(from: event.timestamp)
             let key = "\(day)\u{1f}\(event.agent.rawValue)\u{1f}\(event.model)"
             var bucket = buckets[key] ?? Bucket()
@@ -175,12 +181,11 @@ final class TokenUsageManager: ObservableObject {
     }
 
     private func currentReport(store: TokenUsageStore) throws -> TokenUsageReport {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let start = calendar.date(byAdding: .day, value: -89, to: today) ?? today
-        let end = calendar.date(byAdding: .day, value: 1, to: today) ?? Date()
-        return TokenUsageAggregator.report(events: try store.events(from: start, through: end),
-                                           catalog: catalog, calendar: calendar)
+        let calendar = TokenUsageCalendar.local
+        let range = TokenUsageCalendar.yearRange(endingAt: Date(), calendar: calendar)
+        return try TokenUsageAggregator.report(catalog: catalog, calendar: calendar) { visit in
+            try store.visitEvents(from: range.start, through: range.end, visit)
+        }
     }
 
     #if CLIPY_CORE_TESTS
