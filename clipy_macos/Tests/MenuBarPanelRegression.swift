@@ -103,6 +103,14 @@ func runMenuBarPanelSnapshot() -> Never {
         .init(item: .files([URL(fileURLWithPath: "/tmp/Example/项目说明.pdf")]), date: Date(), sourceApp: "Finder", contentHash: "fixture-5"),
         .init(item: .text("hello@example.com"), date: Date(), sourceApp: "Mail", contentHash: "fixture-6")
     ]
+    let englishSamples: [HistoryEntry] = [
+        .init(item: .text("Keep the idea. Keep the work moving."), date: Date(), sourceApp: "Notes", contentHash: "fixture-en-1"),
+        .init(item: .text("developer.apple.com"), date: Date(), sourceApp: "Safari", contentHash: "fixture-en-2"),
+        .init(item: .text("Design review: clearer navigation, simpler actions."), date: Date(), sourceApp: "Mail", contentHash: "fixture-en-3"),
+        .init(item: .text("A small detail can make a big difference."), date: Date(), sourceApp: "Notes", contentHash: "fixture-en-4"),
+        .init(item: .files([URL(fileURLWithPath: "/tmp/Example/Project brief.pdf")]), date: Date(), sourceApp: "Finder", contentHash: "fixture-en-5"),
+        .init(item: .text("hello@example.com"), date: Date(), sourceApp: "Mail", contentHash: "fixture-en-6")
+    ]
     final class Provider: MenuBarOverflowProviding {
         func scan(_ context: MenuBarOverflowContext, cancellation: MenuBarOverflowCancellation) -> MenuBarOverflowScan {
             let examples = [
@@ -123,7 +131,9 @@ func runMenuBarPanelSnapshot() -> Never {
     let overflow = MenuBarOverflowManager(provider: Provider(), environment: .init(loadEnabled: { true }, saveEnabled: { _ in }, availability: { nil }, context: {
         .init(geometry: .init(screen: CGRect(x: 0, y: 0, width: 1512, height: 945), barHeight: 24, rightAreaMinX: 800), applications: [], frontPID: nil)
     }, monitorInput: { _ in nil }))
-    let model = MenuBarPanelModel(search: { _, _ in samples })
+    let model = MenuBarPanelModel(search: { _, _ in
+        PreferencesManager.shared.appLanguage == .en ? englishSamples : samples
+    })
     model.begin()
     model.folders = [.init(id: UUID(), title: "工作", snippets: [.init(id: UUID(), title: "邮件落款", content: "谢谢，祝工作顺利！", shortcut: nil)])]
     model.devices = [.init(displayName: "Pixel 9", peerId: "fixture", originalName: "Pixel 9")]
@@ -160,6 +170,9 @@ func runMenuBarPanelSnapshot() -> Never {
     func prepare() {
         UserDefaults.standard.setVolatileDomain(["appLanguage": step == 4 ? "en" : "zh"], forName: UserDefaults.argumentDomain)
         NotificationCenter.default.post(name: .appLanguageDidChange, object: nil)
+        // UI localization alone does not translate example clipboard contents.
+        // Reload the locale-specific fixture before the next native capture.
+        model.refreshHistory()
         let dark = step == 2 || step == 3 || step == 5 || step == 6
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         model.page = step == 3 ? .devices : (step == 5 || step == 6 ? .notifications : .home)
