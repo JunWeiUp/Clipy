@@ -12,24 +12,43 @@ final class SmartSwitchWindow {
     private var voiceReady: ((Bool) -> Void)?
     private var escapePasteText: String?
     private var handoffOriginPID: pid_t?
+    private var presentationGeneration = 0
     var hasKeyboardFocus: Bool { session.keyWindow?.firstResponder is SmartSwitchCommandTextView }
 
     func show() {
-        focusSession.begin(previousPID: NSWorkspace.shared.frontmostApplication?.processIdentifier)
+        presentationGeneration += 1
+        let revision = presentationGeneration
         voiceTicket = nil
         voiceReady = nil
-        present()
+        focusSession.begin(previousPID: NSWorkspace.shared.frontmostApplication?.processIdentifier) { [weak self] ready in
+            guard let self, self.presentationGeneration == revision else { return }
+            if ready { self.present() }
+        }
     }
 
     func showForVoiceRouting(ticket: UUID, previousPID: pid_t, ready: @escaping (Bool) -> Void) {
-        focusSession.begin(previousPID: previousPID)
+        presentationGeneration += 1
+        let revision = presentationGeneration
         voiceTicket = ticket
         voiceReady = ready
-        present()
+        focusSession.begin(previousPID: previousPID) { [weak self] canPresent in
+            guard let self, self.presentationGeneration == revision else { return }
+            if canPresent { self.present() }
+            else {
+                self.voiceReady = nil
+                self.voiceTicket = nil
+                ready(false)
+            }
+        }
     }
 
     func cancelVoiceRouting(ticket: UUID) {
         guard voiceTicket == ticket else { return }
+        presentationGeneration += 1
+        focusSession.handOff()
+        voiceReady?(false)
+        voiceReady = nil
+        voiceTicket = nil
         session.close()
     }
 
@@ -79,6 +98,7 @@ final class SmartSwitchWindow {
             }
             return window
         }, onPrepareForClose: { [weak self] in
+            self?.presentationGeneration += 1
             let pasteText = self?.escapePasteText
             self?.escapePasteText = nil
             let ready = self?.voiceReady
@@ -114,6 +134,7 @@ final class SmartSwitchWindow {
     }
 
     func showSettings() {
+        presentationGeneration += 1
         focusSession.handOff()
         session.close()
         SettingsWindow.shared.show(page: "smartSwitch")
