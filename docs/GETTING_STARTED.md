@@ -4,7 +4,7 @@
 
 ## Downloads
 
-Open the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest) (currently [v1.0.25](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.25)) and choose the asset matching your device. The latest link follows new public releases and excludes drafts; the release notes give the exact version and build number.
+Open the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest) (currently [v1.0.26](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.26)) and choose the asset matching your device. The latest link follows new public releases and excludes drafts; the release notes give the exact version and build number.
 
 | Device | Asset to download from the release page |
 | --- | --- |
@@ -28,7 +28,7 @@ The project's current build workflow does not notarize the app. Verify the downl
 
 ## Sync version notes
 
-Current source uses pairing-free protocol v3; published v1.0.25 packages still use v2. Upgrade both endpoints to v3 builds together; old peers report a version mismatch. AES-GCM uses a built-in default key and ignores old pairing codes. See [Security](../SECURITY.md) for the boundaries.
+Current source uses pairing-free protocol v3; versions through v1.0.25 use v2. Upgrade both endpoints to v3 builds together; old peers report a version mismatch. AES-GCM uses a built-in default key and ignores old pairing codes. See [Security](../SECURITY.md) for the boundaries.
 
 The macOS package includes modified macshot code and is distributed under [GPLv3](../LICENSE.GPL-3.0). Clipy-authored code remains under [MIT](../LICENSE); see [provenance and source access](../THIRD_PARTY_NOTICES.md).
 

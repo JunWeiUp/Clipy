@@ -133,7 +133,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.26** · Default local build **10156** · Latest published release: **[v1.0.25](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.25)** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.26** · Default local build **10156** · Latest published release: **[v1.0.26](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.26)** · [Build metadata](clipy_android/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
@@ -239,7 +239,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 <details>
 <summary><b>🔐 A note on security</b></summary>
 
-Current source uses pairing-free protocol v3 with a built-in AES-GCM key. Enable LAN sync, refresh devices and explicitly send text/files; only automatic sharing needs a sending-device toggle. Both endpoints must use v3 builds; published v1.0.25 packages still use v2. The default key does not authenticate devices or hide content from LAN participants who know it. See [SECURITY.md](SECURITY.md).
+Current source uses pairing-free protocol v3 with a built-in AES-GCM key. Enable LAN sync, refresh devices and explicitly send text/files; only automatic sharing needs a sending-device toggle. Both endpoints must use v3 builds; versions through v1.0.25 use v2. The default key does not authenticate devices or hide content from LAN participants who know it. See [SECURITY.md](SECURITY.md).
 </details>
 
 </details>

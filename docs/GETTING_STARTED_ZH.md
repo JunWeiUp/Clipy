@@ -4,7 +4,7 @@
 
 ## 下载与版本
 
-打开[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)（当前为 [v1.0.25](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.25)），按设备选择对应附件。最新正式版入口随公开发布自动更新，不包含草稿；具体应用版本和构建号以发布说明为准。
+打开[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)（当前为 [v1.0.26](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.26)），按设备选择对应附件。最新正式版入口随公开发布自动更新，不包含草稿；具体应用版本和构建号以发布说明为准。
 
 | 设备 | 发布页中的附件名称 |
 | --- | --- |
@@ -28,7 +28,7 @@ macOS ZIP 中是 **arm64** 应用，不是 Intel 或通用架构版本。Android
 
 ## 同步版本差异
 
-当前源码使用无需配对的协议 v3；已发布的 v1.0.25 包仍使用 v2。两端须一起升级到 v3 构建，旧版会显示版本不兼容。默认 AES-GCM 密钥内置于应用，旧配对码不再使用；安全边界见[安全说明](../SECURITY.md)。
+当前源码使用无需配对的协议 v3；v1.0.25 及更早版本使用 v2。两端须一起升级到 v3 构建，旧版会显示版本不兼容。默认 AES-GCM 密钥内置于应用，旧配对码不再使用；安全边界见[安全说明](../SECURITY.md)。
 
 macOS 包含修改过的 macshot 代码，按 [GPLv3](../LICENSE.GPL-3.0) 分发；Clipy 自有代码仍采用 [MIT](../LICENSE)。详见[来源与源码获取方式](../THIRD_PARTY_NOTICES.md)。
 
