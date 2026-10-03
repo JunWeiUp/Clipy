@@ -133,7 +133,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.27** · Default local build **10158** · Latest published release: **[v1.0.26](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.26)** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.27** · Default local build **10158** · Latest published release: **[v1.0.27](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.27)** · [Build metadata](clipy_android/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
