@@ -6,26 +6,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:clipy_android/sync/crypto.dart';
 
 void main() {
-  final crypto = SyncCrypto()..pairingSecret = 'test-pairing-secret';
+  final crypto = SyncCrypto();
 
-  test('refuses to encrypt or decrypt while unpaired', () async {
-    final unpaired = SyncCrypto();
-    expect(unpaired.isPaired, isFalse);
-    expect(unpaired.key(), isNull);
-    expect(unpaired.encryptText('x'), isNull);
-    expect(unpaired.decryptText(crypto.encryptText('x')!), isNull);
-    expect(await unpaired.encryptBytes([1, 2, 3]), isNull);
-    expect(unpaired.pairingProof('peer'), isNull);
-  });
-
-  test('pairing proof verifies only for the same secret and peer', () {
-    final proof = crypto.pairingProof('peer-a')!;
-    expect(crypto.verifyPairingProof(proof, 'peer-a'), isTrue);
-    expect(crypto.verifyPairingProof(proof, 'peer-b'), isFalse);
-    final other = SyncCrypto()..pairingSecret = 'other-pairing-secret';
-    expect(other.verifyPairingProof(proof, 'peer-a'), isFalse);
-    // Pre-proof builds send no payload in hello; accepted for compatibility.
-    expect(other.verifyPairingProof(null, 'peer-a'), isTrue);
+  test('independent installations use the same default key', () async {
+    final other = SyncCrypto();
+    expect(other.decryptText(crypto.encryptText('hello 世界')!), 'hello 世界');
+    expect(
+      await other.decryptToBytes((await crypto.encryptBytes([1, 2, 3]))!),
+      [1, 2, 3],
+    );
+    expect(
+      other.decryptText(
+        'AAECAwQFBgcICQoLhdUwCui4zMJDC8GLd3CsDGCvgcc2/Zua+hgmwEW4aNreepO2aYY99Q==',
+      ),
+      'default transport 世界',
+    );
   });
 
   test('round-trips a payload', () {
@@ -40,12 +35,6 @@ void main() {
     final first = base64Decode(crypto.encryptText(plaintext)!).sublist(0, 12);
     final second = base64Decode(crypto.encryptText(plaintext)!).sublist(0, 12);
     expect(first, isNot(equals(second)));
-  });
-
-  test('rejects a payload encrypted under a different secret', () {
-    final other = SyncCrypto()..pairingSecret = 'other-pairing-secret';
-    final payload = other.encryptText('secret')!;
-    expect(crypto.decryptText(payload), isNull);
   });
 
   test('rejects a tampered ciphertext', () {

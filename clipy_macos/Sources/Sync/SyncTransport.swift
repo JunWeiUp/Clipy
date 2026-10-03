@@ -24,11 +24,9 @@ extension SyncManager {
     }
 
     enum HandshakeFailure {
-        case writeFail, readTimeout, versionMismatch, selfHandshake, badType, notPaired, pairingMismatch
+        case writeFail, readTimeout, versionMismatch, selfHandshake, badType
         var label: String {
             switch self {
-            case .notPaired: return "notPaired"
-            case .pairingMismatch: return "pairingMismatch"
             case .writeFail: return "writeFail"
             case .readTimeout: return "readTimeout"
             case .versionMismatch: return "versionMismatch"
@@ -123,8 +121,7 @@ extension SyncManager {
             if reason == "scan" { stats?.recordHandshakeFailure(handshakeFailure) }
             else {
                 appLog("Dial \(reason) \(host):\(port) failed: handshake(\(handshakeFailure.label))", level: .warning)
-                // pairingMismatch already recorded with the peer's reported name.
-                if let resolvedPeerId, handshakeFailure != .pairingMismatch {
+                if let resolvedPeerId {
                     self.diagnostics.noteError(peerId: resolvedPeerId, host: host, "handshake(\(handshakeFailure.label))")
                 }
             }
@@ -133,8 +130,7 @@ extension SyncManager {
 
     func performHandshake(fd: Int32, host: String, port: UInt16, inbound: Bool, onFailure: ((HandshakeFailure) -> Void)? = nil) {
         let generation = currentGeneration
-        guard let proof = pairingProof() else { onFailure?(.notPaired); Darwin.close(fd); return }
-        let hello = SyncEnvelope.make(type: SyncType.hello, peerId: peerId, name: displayName, port: Int(syncPort), payload: proof)
+        let hello = SyncEnvelope.make(type: SyncType.hello, peerId: peerId, name: displayName, port: Int(syncPort))
         guard let helloData = encodeFrame(hello), writeAll(fd, helloData) else {
             onFailure?(.writeFail); Darwin.close(fd); return
         }
@@ -145,15 +141,8 @@ extension SyncManager {
         guard env.type == SyncType.welcome || env.type == SyncType.hello, env.peerId != peerId, !env.peerId.isEmpty else {
             onFailure?(env.peerId == peerId ? .selfHandshake : .badType); Darwin.close(fd); return
         }
-        guard verifyPairingProof(env.payload, peerId: env.peerId) else {
-            // Logged regardless of dial reason: a peer that answers with a
-            // different secret is exactly what the user needs to see.
-            appLog("Handshake with \(env.name ?? env.peerId.prefix(8).description) @ \(host) rejected: pairing secret mismatch", level: .warning)
-            notePairingMismatch(peerId: env.peerId, name: env.name, host: host)
-            onFailure?(.pairingMismatch); Darwin.close(fd); return
-        }
         if env.type == SyncType.hello {
-            let welcome = SyncEnvelope.make(type: SyncType.welcome, peerId: peerId, name: displayName, port: Int(syncPort), payload: proof)
+            let welcome = SyncEnvelope.make(type: SyncType.welcome, peerId: peerId, name: displayName, port: Int(syncPort))
             if let data = encodeFrame(welcome), !writeAll(fd, data) {
                 appLog("welcome send failed (\(inbound ? "inbound" : "outbound")) to \(env.peerId.prefix(8))", level: .warning)
             }

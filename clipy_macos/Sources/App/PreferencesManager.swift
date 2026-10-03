@@ -14,8 +14,6 @@ class PreferencesManager {
     /// New key on purpose: the old `syncSecret` slot could hold a per-install
     /// random value that was never used for anything, and reading it as a
     /// pairing secret would derive a key no other device shares.
-    private let syncPairingSecretKey = "syncPairingSecret"
-    private let legacySyncSecretKey = "syncSecret"
     private let authorizedDevicesKey = "authorizedDevices"
     private let authorizedPeerIdsKey = "authorizedPeerIds"
     private let clipboardSyncPeerIdsKey = "clipboardSyncPeerIds"
@@ -122,28 +120,6 @@ class PreferencesManager {
         }
         set { defaults.set(newValue, forKey: syncPortKey) }
     }
-
-    /// Pairing secret shared by every device in one sync group. Empty means the
-    /// device is unpaired and sync stays off — there is no shipped fallback key.
-    /// Change it through `SyncManager.applyPairingSecret` so sessions restart.
-    var syncPairingSecret: String {
-        get {
-            if defaults.object(forKey: legacySyncSecretKey) != nil {
-                defaults.removeObject(forKey: legacySyncSecretKey)
-            }
-            return defaults.string(forKey: syncPairingSecretKey) ?? ""
-        }
-        set {
-            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                defaults.removeObject(forKey: syncPairingSecretKey)
-            } else {
-                defaults.set(trimmed, forKey: syncPairingSecretKey)
-            }
-            SyncManager.shared.invalidateKeyCache()
-        }
-    }
-
 
     var syncPeerId: String {
         get {

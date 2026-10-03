@@ -3,9 +3,9 @@ import 'dart:typed_data';
 
 import 'package:uuid/uuid.dart';
 
-/// Length-prefixed JSON envelope (v2). See docs/PROTOCOL.md.
+/// Length-prefixed JSON envelope (v3). See docs/PROTOCOL.md.
 class SyncEnvelope {
-  static const int version = 2;
+  static const int version = 3;
 
   final int v;
   final String type;

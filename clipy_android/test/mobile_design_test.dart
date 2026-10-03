@@ -52,7 +52,7 @@ void main() {
     (tester) async {
       final original = SyncManager.instance.port;
       await mount(tester, const ConnectionEditor());
-      await tester.enterText(find.byType(TextFormField).at(2), '70000');
+      await tester.enterText(find.widgetWithText(TextFormField, 'Sync Port'), '70000');
       await tester.ensureVisible(find.widgetWithText(FilledButton, 'Save'));
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();

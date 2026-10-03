@@ -32,6 +32,10 @@ class PendingSyncRepository {
   static const int maxPerPeer = 500;
   static const Duration defaultTtl = Duration(hours: 24);
 
+  /// Clear encoded frames after a transport-key/protocol migration.
+  /// Clipboard history and plaintext legacy queues are independent.
+  Future<void> clearAll() async => (await _db).delete(_table);
+
   /// Insert or replace a pending frame. Returns false if per-peer cap exceeded
   /// for a *new* hash (replace of existing always succeeds).
   Future<bool> enqueue({

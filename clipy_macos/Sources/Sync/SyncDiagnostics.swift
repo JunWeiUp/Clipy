@@ -92,7 +92,4 @@ extension SyncManager {
         }
     }
 
-    func notePairingMismatch(peerId: String, name: String?, host: String) {
-        diagnostics.noteError(peerId: peerId, name: name, host: host, "pairingMismatch")
-    }
 }

@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../app_localizations.dart';
 import '../../notification_manager.dart';
 import '../../sync_manager.dart';
-import '../../sync/pairing.dart';
 import '../../ui/app_components.dart';
 import 'device_widgets.dart';
 import 'sync_diagnostics_page.dart';
@@ -29,11 +28,6 @@ class _DevicesPageState extends State<DevicesPage> {
   Future<void> _toggle(bool enabled) async {
     if (_busy) return;
     final manager = SyncManager.instance;
-    if (enabled && !manager.isPaired) {
-      showClipyMessage(context, context.l10n.syncPairingRequired);
-      await _editConnection();
-      if (!manager.isPaired) return;
-    }
     setState(() => _busy = true);
     final previous = manager.isEnabled;
     try {
@@ -123,15 +117,6 @@ class _DevicesPageState extends State<DevicesPage> {
           title: l10n.localNetwork,
           child: Column(
             children: [
-              if (!manager.isPaired)
-                ListTile(
-                  leading: Icon(Icons.link_off_rounded, color: colors.error),
-                  title: Text(
-                    l10n.syncPairingRequired,
-                    style: TextStyle(color: colors.error),
-                  ),
-                  onTap: _busy ? null : _editConnection,
-                ),
               SwitchListTile(
                 secondary: _busy
                     ? const SizedBox(
@@ -212,17 +197,12 @@ class _ConnectionEditorState extends State<ConnectionEditor> {
   late final _port = TextEditingController(
     text: '${SyncManager.instance.port}',
   );
-  late final _secret = TextEditingController(
-    text: SyncManager.instance.pairingSecret,
-  );
   bool _saving = false;
-  bool _obscure = true;
 
   @override
   void dispose() {
     _name.dispose();
     _port.dispose();
-    _secret.dispose();
     super.dispose();
   }
 
@@ -233,7 +213,6 @@ class _ConnectionEditorState extends State<ConnectionEditor> {
       await SyncManager.instance.updateConnectionSettings(
         name: _name.text,
         listeningPort: int.parse(_port.text.trim()),
-        secret: _secret.text,
       );
       if (!mounted) return;
       showClipyMessage(
@@ -286,43 +265,6 @@ class _ConnectionEditorState extends State<ConnectionEditor> {
                       : null,
                 ),
                 const SizedBox(height: 16),
-                TextFormField(
-                  controller: _secret,
-                  enabled: !_saving,
-                  obscureText: _obscure,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                  decoration: InputDecoration(
-                    labelText: l10n.syncPairingSecret,
-                    suffixIcon: IconButton(
-                      onPressed: () => setState(() => _obscure = !_obscure),
-                      tooltip: _obscure ? l10n.showSecret : l10n.hideSecret,
-                      icon: Icon(
-                        _obscure
-                            ? Icons.visibility_outlined
-                            : Icons.visibility_off_outlined,
-                      ),
-                    ),
-                  ),
-                ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: _saving
-                        ? null
-                        : () => setState(() {
-                            _secret.text = SyncPairing.generateCode();
-                            _obscure = false;
-                          }),
-                    icon: const Icon(Icons.key_rounded),
-                    label: Text(l10n.syncPairingGenerate),
-                  ),
-                ),
-                Text(
-                  l10n.syncPairingSecretHint,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 20),
                 TextFormField(
                   controller: _port,
                   enabled: !_saving,

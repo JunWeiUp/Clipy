@@ -1,4 +1,4 @@
-# Clipy LAN Sync Protocol v2
+# Clipy LAN Sync Protocol v3
 
 Canonical wire + reliability notes for macOS (`Sources/Sync/`) and Android Dart (`lib/sync/` + `sync_manager.dart`).  
 Do **not** change framing/crypto without bumping `v` and updating both ends plus this doc.
@@ -8,11 +8,11 @@ Do **not** change framing/crypto without bumping `v` and updating both ends plus
 - Transport: raw TCP, default port **5566**.
 - Each frame: **4-byte big-endian length** + UTF-8 JSON body.
 - Max frame: **2 MiB**. Handshake frames should stay ≤ **64 KiB**.
-- Envelope fields (`v: 2`):
+- Envelope fields (`v: 3`):
 
 | Field | Type | Notes |
 |-------|------|--------|
-| `v` | int | Must be `2` |
+| `v` | int | Must be `3` |
 | `type` | string | See message types |
 | `msgId` | string | UUID |
 | `peerId` | string | Stable device id |
@@ -41,29 +41,15 @@ Do **not** change framing/crypto without bumping `v` and updating both ends plus
 
 API-layer aliases on Android (`notification/post`, …) map to `notif.*` before send.
 
-## Crypto
+## Crypto and migration
 
-Security boundaries, including the retired empty-secret compatibility key and the
-difference between device allow-lists and authenticated identity, are documented
-in [SECURITY.md](../SECURITY.md). This is a trusted-LAN protocol, not an
-Internet-facing authenticated transport.
-
-- Payload ciphertext: **AES-GCM-256**, wire form `base64(nonce12 ‖ ciphertext ‖ tag)`.
-- **No fallback key.** An empty pairing secret means unpaired: encrypt/decrypt return nil, sync `start()` refuses to run and handshakes fail with `notPaired`. (The earlier empty-secret key `SHA256("ClipySyncSecret2026")` is retired.)
-- Pairing secret → **HKDF-SHA256**:
-  - salt: `clipy.sync.v2.hkdf`
-  - info: `aes-256-gcm`
-  - length: 32
-- Parity tests: `clipy_android/test/hkdf_parity_test.dart`, `sync_crypto_test.dart`.
-- Framing regression tests: `clipy_android/test/sync_protocol_test.dart`.
-- Loopback file-probe tests: `clipy_android/test/e2e_file_send_test.dart` (no real peers).
-
-## Pairing
-
-- Pairing code: 20 Crockford base32 symbols (`0-9A-Z` minus `I L O U`, 100 bits, CSPRNG), shown as `XXXX-XXXX-XXXX-XXXX-XXXX`. Any non-empty string is still a valid secret; the code is only the generated default.
-- Link / QR: `clipy://pair?code=<secret>&port=<listenPort>[&host=<ipv4>][&name=<deviceName>]`. The Mac renders it with `CIQRCodeGenerator`; Android registers the scheme, **always asks for confirmation**, then saves the secret and adds `host:port` to `manualSyncPeers`.
-- **Handshake proof:** hello and welcome carry `payload = encrypt("clipy.pair.v1:" + senderPeerId)`. The receiver decrypts and compares with the envelope `peerId`; a mismatch closes the socket with `pairingMismatch` and records it in sync diagnostics. A missing proof (older builds) is accepted — such a peer still cannot decrypt anything unless it shares the secret.
-- Changing the secret clears diagnostics and restarts the service so every session re-handshakes with the new key.
+- Payload ciphertext is **AES-GCM-256**, `base64(nonce12 ‖ ciphertext ‖ tag)`, with a fresh random nonce per message.
+- Every current client uses the same default key: `SHA256("ClipySyncSecret2026")`.
+  Previous pairing settings are ignored and removed; no code, QR import, or pairing proof is needed.
+- hello/welcome only exchange protocol version and device metadata. A v2 peer is rejected with `versionMismatch`; both endpoints must run v3 source builds.
+- The default key is public and built into the application. Encryption does not authenticate devices or provide confidentiality against other LAN participants who know the key. See [SECURITY.md](../SECURITY.md).
+- On the first v3 startup, old encoded pending frames are discarded because their ciphertext cannot be replayed under the new key. Local history, received files and outgoing sharing choices are retained. Subsequent v3 restarts preserve pending delivery.
+- Regression vectors: `clipy_android/test/default_key_parity_test.dart`, `sync_crypto_test.dart`, and `clipy_macos/Tests/SyncTransportRegression.swift`. Binary chunks retain the native Android AES-GCM fast path.
 
 ## Discovery
 
@@ -94,7 +80,7 @@ Internet-facing authenticated transport.
 4. Delivery: Android saves into public `Download/Clipy/` (writability-probed; fallback app-private `<appStorage>/Clipy/`) + `file_transfers` row (20-row trim also deletes managed files); macOS moves into `~/Downloads/Clipy/`, inserts a `.files` history entry (no clipboard write), posts a system notification.
 5. macOS chunk writes are pipelined through `syncQueue.async` (bounded: 2 frames in flight), retaining the session writer identity; session sockets carry 4 MiB `SO_SNDBUF`/`SO_RCVBUF` and the read loop drains until EAGAIN. Receive finalization has its own serial queue, so simultaneous bidirectional sends can receive and ACK while their send queues wait.
 6. Throughput notes: pure-Dart AES-GCM measured ~2 MB/s (desktop) / <1 MB/s (phone) — Android routes file-chunk crypto through the native `sync_crypto` MethodChannel (javax.crypto, ARMv8 crypto extensions) with a pure-Dart fallback; Mac uses CryptoKit. Both senders pipeline encrypt + network I/O (Android: bounded 4 MiB in-flight instead of per-chunk flush). Wire cost is base64 (+33%); text/history frames are unaffected.
-7. **macOS folders:** the sender makes a private streaming ZIP snapshot, sets `name = folderName + ".zip"`, `folderFormat = "zip-store-v1"` and `folderName` to the sanitized root name. Ordinary files omit both optional fields. This keeps protocol v2 compatible: older receivers (including Android) save a normal ZIP; updated Macs restore only explicitly marked folders. Unknown formats or incomplete folder metadata are rejected. A `.zip` extension alone never triggers extraction.
+7. **macOS folders:** the sender makes a private streaming ZIP snapshot, sets `name = folderName + ".zip"`, `folderFormat = "zip-store-v1"` and `folderName` to the sanitized root name. Ordinary files omit both optional fields. This keeps the protocol compatible: older receivers (including Android) save a normal ZIP; updated Macs restore only explicitly marked folders. Unknown formats or incomplete folder metadata are rejected. A `.zip` extension alone never triggers extraction.
 8. **Folder archive contract:** classic single-disk ZIP, stored entries (method 0), UTF-8 names (flag `0x800`), Unix creator/version `0x0314`, version-needed 20, no extra fields, comments or data descriptors. Root directory first, then parent-before-child entries; central directory follows in the same order. Only regular files/directories, up to 10,000 entries including the root and 512 MiB including ZIP overhead. Paths are relative to the root, at most 4096 UTF-8 bytes and 128 components; reject empty/`.`/`..` components, backslashes, colons and NUL. Source links/special files are rejected, not followed or silently omitted. File content, hidden entries, empty directories and executable permission bits are preserved; ACLs, extended attributes, resource forks and timestamps are not copied.
 9. **Folder publication:** verify the transfer SHA-256 first, validate central/local ZIP headers and contiguous bounded data ranges, then stream into a new private staging directory with exclusive file creation. Verify each CRC; reject links, path traversal, duplicate/aliased destinations, unsupported compression and truncation. Move the complete root into the receive directory only on success (`name (2)` for collisions), then ACK and publish history/notification with the final folder path. Failure removes staging and the archive; sender removes its snapshot after either success or failure. macOS `.part` paths use locally generated UUIDs, and chunks must have sequential indexes and the declared size.
 
@@ -182,7 +168,7 @@ after testing with `adb forward --remove tcp:15566`.
 | Concern | Android | macOS |
 |---------|---------|-------|
 | Envelope / types / framing | `lib/sync/protocol.dart` | `Sync/SyncProtocol.swift` |
-| AES-GCM / HKDF | `lib/sync/crypto.dart` | `Sync/SyncCrypto.swift` |
+| Default AES-GCM key | `lib/sync/crypto.dart` | `Sync/SyncCrypto.swift` |
 | Subnet / manual / cache | `lib/sync/discovery.dart` | `Sync/SyncDiscovery.swift` |
 | Dial / listen / handshake / read loop | `lib/sync/session.dart` | `Sync/SyncTransport.swift` |
 | Fanout / pending / ack | `lib/sync/reliability.dart` + `database/pending_sync_repository.dart` | `Sync/SyncReliability.swift` + `PendingSyncRepository.swift` |

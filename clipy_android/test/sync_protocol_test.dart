@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   SyncEnvelope envelope({String? payload}) => SyncEnvelope(
-    v: 2,
+    v: SyncEnvelope.version,
     type: SyncType.history,
     msgId: 'fixture-message',
     peerId: 'fixture-peer',
@@ -74,7 +74,7 @@ void main() {
       isNull,
     );
     final invalid = SyncEnvelope(
-      v: 2,
+      v: SyncEnvelope.version,
       type: 'ping',
       msgId: 'id',
       peerId: 'peer',

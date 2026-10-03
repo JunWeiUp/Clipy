@@ -17,9 +17,9 @@ struct DeviceEntry {
     let originalName: String
 }
 
-// MARK: - Protocol v2
+// MARK: - Protocol v3
 
-/// Length-prefixed JSON envelope (v2). Not compatible with the legacy SyncMessage format.
+/// Length-prefixed JSON envelope (v3). Not compatible with the legacy SyncMessage format.
 struct SyncEnvelope: Codable {
     var v: Int
     var type: String
@@ -31,7 +31,7 @@ struct SyncEnvelope: Codable {
     var hash: String?
     var payload: String?
 
-    static let version = 2
+    static let version = 3
 
     static func make(
         type: String,

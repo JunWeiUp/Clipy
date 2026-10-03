@@ -24,10 +24,7 @@ void main() {
         await source.writeAsBytes(original);
         final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
         final received = BytesBuilder(copy: false);
-        final crypto = SyncCrypto()
-          ..pairingSecret =
-              Platform.environment['CLIPY_PAIRING_SECRET'] ??
-              'e2e-pairing-secret';
+        final crypto = SyncCrypto();
         final receiver = () async {
           final client = await server.first;
           final buffer = BytesBuilder(copy: false);
