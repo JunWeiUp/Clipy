@@ -51,4 +51,50 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
+  for (final delta in [-180.0, 180.0]) {
+    testWidgets('short history hides intro for vertical drag $delta', (
+      tester,
+    ) async {
+      final controller = ScrollController();
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ScrollCollapsingHeader(
+              enabled: true,
+              header: const SizedBox(height: 100, child: Text('History intro')),
+              child: Column(
+                children: [
+                  const Text('Search and filters'),
+                  Expanded(
+                    child: ListView(
+                      controller: controller,
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        SizedBox(height: 60, child: Text('Only row')),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(controller.position.maxScrollExtent, 0);
+      await tester.drag(find.byType(ListView), Offset(0, delta));
+      await tester.pumpAndSettle();
+      expect(find.text('History intro'), findsNothing);
+      expect(find.text('Search and filters'), findsOneWidget);
+      expect(find.text('Only row'), findsOneWidget);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 120);
+      await tester.pumpAndSettle();
+      expect(find.text('History intro'), findsNothing);
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
 }

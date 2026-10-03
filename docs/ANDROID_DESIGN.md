@@ -15,7 +15,7 @@ The mobile Flutter UI uses Clipy blue, semantic light/dark surfaces, generous ty
 
 Copy feedback uses a short checkmark transition and selection haptics. Confirmation is shown only after the clipboard write finishes. File-transfer progress remains visible across tabs. Avoid looping decorative animations or discovery polling for visual effects.
 
-On History, the page title/intro collapses after scrolling 48 logical pixels and returns at the top, leaving more room for rows while search, filters and the app bar remain available. Header motion respects reduced animations. Other tabs retain their page headings; viewport changes alone do not collapse them.
+On History, the page title/intro collapses after scrolling 48 logical pixels and returns at the top for long lists. Lists whose maximum scroll extent is at most 48 pixels also collapse after 24 pixels of user drag in either direction, so a short history can reclaim the intro space without reaching an impossible scroll offset. Short-list collapse stays stable at zero offset and resets when leaving History. Search, filters and the app bar remain available. Header motion respects reduced animations. Other tabs retain their page headings; viewport changes alone do not collapse them.
 
 ## Feature ownership
 
