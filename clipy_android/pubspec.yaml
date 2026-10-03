@@ -16,7 +16,7 @@ dependencies:
   uuid: ^3.0.7
   crypto: ^3.0.3
   encrypt: ^5.0.3
-  file_picker: ^11.0.2
+  file_picker: ^13.1.0
   sqflite: ^2.4.2+1
   sqflite_common_ffi: ^2.3.6
   path: ^1.9.1
