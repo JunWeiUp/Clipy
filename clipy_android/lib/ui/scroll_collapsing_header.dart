@@ -20,6 +20,7 @@ class ScrollCollapsingHeader extends StatefulWidget {
 
 class _ScrollCollapsingHeaderState extends State<ScrollCollapsingHeader> {
   bool _collapsed = false;
+  double _shortListDrag = 0;
 
   @override
   void didUpdateWidget(ScrollCollapsingHeader oldWidget) {
@@ -33,8 +34,29 @@ class _ScrollCollapsingHeaderState extends State<ScrollCollapsingHeader> {
         notification.metrics.axis != Axis.vertical) {
       return false;
     }
-    // Ignore viewport changes (including keyboard resizing). Only scrolling
-    // and its settling at the top may change header visibility.
+    // Short lists still report drag overscroll with AlwaysScrollable physics.
+    // They cannot reach a 48px scroll offset, so measure the user's gesture.
+    // Ignore programmatic viewport changes and keep the header collapsed when
+    // its animation enlarges the short list's viewport.
+    if (notification is ScrollStartNotification) {
+      _shortListDrag = 0;
+      return false;
+    }
+    if (notification.metrics.maxScrollExtent <= 48) {
+      double? dragDelta;
+      if (notification is ScrollUpdateNotification) {
+        dragDelta = notification.dragDetails?.primaryDelta;
+      } else if (notification is OverscrollNotification) {
+        dragDelta = notification.dragDetails?.primaryDelta;
+      }
+      if (dragDelta != null) {
+        _shortListDrag += dragDelta.abs();
+        if (!_collapsed && _shortListDrag >= 24) {
+          setState(() => _collapsed = true);
+        }
+      }
+      return false;
+    }
     if (notification is! ScrollUpdateNotification &&
         notification is! ScrollEndNotification) {
       return false;

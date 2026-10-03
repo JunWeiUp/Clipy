@@ -425,8 +425,8 @@ class AppStrings {
   String get syncReady => _t('同步已开启', 'Sync is on');
   String get syncPaused => _t('同步已关闭', 'Sync is off');
   String get connectionHint => _t(
-    '连接同一 Wi-Fi，设置相同配对密钥，再选择共享的设备。',
-    'Join the same Wi-Fi, use a matching pairing secret, then choose a device to share with.',
+    '开启局域网同步并刷新设备列表，即可主动发送或开启自动共享。',
+    'Enable LAN sync and refresh devices to send directly or turn on automatic sharing.',
   );
   String get connectionSettings => _t('连接设置', 'Connection settings');
   String get advancedConnection => _t('高级连接设置', 'Advanced connection');
