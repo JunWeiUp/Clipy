@@ -4,12 +4,13 @@ import 'package:flutter/services.dart';
 import 'dart:io';
 import '../../clipboard_manager.dart';
 import '../../sync_manager.dart';
-import '../../sync/pairing.dart';
 import '../../notification_sync_page.dart';
 import 'remote_notifications_page.dart';
 import '../../app_localizations.dart';
 import '../../ui/clipboard_history_list.dart';
 import '../../ui/app_components.dart';
+import '../../ui/active_page_stack.dart';
+import '../../ui/scroll_collapsing_header.dart';
 import '../devices/devices_page.dart';
 import '../transfers/received_files_page.dart';
 import '../logs/log_page.dart';
@@ -32,9 +33,6 @@ class _HomePageState extends State<HomePage>
   );
   StreamSubscription? _fileSubscription;
   StreamSubscription? _progressSubscription;
-  StreamSubscription? _pairingSubscription;
-  int _devicesGeneration = 0;
-  bool _pairingPromptOpen = false;
   final Map<String, FileProgress> _activeTransfers = {};
   bool _clearing = false;
   bool _capturingScreenshot = false;
@@ -45,12 +43,6 @@ class _HomePageState extends State<HomePage>
   @override
   void initState() {
     super.initState();
-    _pairingSubscription = PairingLinkChannel.instance.links.listen(
-      _confirmPairingLink,
-    );
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => PairingLinkChannel.instance.attach(),
-    );
     _progressSubscription = SyncManager.instance.onFileProgress.listen((
       progress,
     ) {
@@ -81,46 +73,8 @@ class _HomePageState extends State<HomePage>
   void dispose() {
     _fileSubscription?.cancel();
     _progressSubscription?.cancel();
-    _pairingSubscription?.cancel();
     _transition.dispose();
     super.dispose();
-  }
-
-  /// Deep links can come from any app, so a pairing link is only applied
-  /// after the user confirms it.
-  Future<void> _confirmPairingLink(PairingLink link) async {
-    if (!mounted || _pairingPromptOpen) return;
-    _pairingPromptOpen = true;
-    final l10n = context.l10n;
-    final device = link.name.isNotEmpty ? link.name : (link.host ?? '?');
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.syncPairingLinkTitle),
-        content: Text(l10n.syncPairingLinkMessage(device)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(l10n.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(l10n.syncPairingImport),
-          ),
-        ],
-      ),
-    );
-    _pairingPromptOpen = false;
-    if (confirmed != true || !mounted) return;
-    try {
-      await SyncPairing.apply(link);
-      if (!mounted) return;
-      setState(() => _devicesGeneration++);
-      _select(1);
-      showClipyMessage(context, context.l10n.syncPairingLinkApplied);
-    } catch (_) {
-      if (mounted) showClipyMessage(context, context.l10n.operationFailed);
-    }
   }
 
   void _select(int index) {
@@ -323,7 +277,7 @@ class _HomePageState extends State<HomePage>
     ];
     final pages = <Widget Function()>[
       _history,
-      () => DevicesPage(key: ValueKey(_devicesGeneration)),
+      () => const DevicesPage(),
       () => Platform.isAndroid
           ? const NotificationSyncPage(embedded: true)
           : const RemoteNotificationsPage(),
@@ -333,54 +287,54 @@ class _HomePageState extends State<HomePage>
     final colors = Theme.of(context).colorScheme;
     final content = SafeArea(
       top: false,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  titles[_selectedIndex],
-                  style: Theme.of(context).textTheme.headlineLarge,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  subtitles[_selectedIndex],
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (_activeTransfers.isNotEmpty)
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 140),
-              child: SingleChildScrollView(child: _transfers()),
-            ),
-          Expanded(
-            child: FadeTransition(
-              opacity: CurvedAnimation(
-                parent: _transition,
-                curve: Curves.easeOutCubic,
+      child: ScrollCollapsingHeader(
+        enabled: _selectedIndex == 0,
+        header: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                titles[_selectedIndex],
+                style: Theme.of(context).textTheme.headlineLarge,
               ),
-              child: IndexedStack(
-                index: _selectedIndex,
-                children: [
-                  for (var i = 0; i < pages.length; i++)
-                    TickerMode(
-                      enabled: i == _selectedIndex,
-                      child: _visited.contains(i)
+              const SizedBox(height: 6),
+              Text(
+                subtitles[_selectedIndex],
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_activeTransfers.isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 140),
+                child: SingleChildScrollView(child: _transfers()),
+              ),
+            Expanded(
+              child: FadeTransition(
+                opacity: CurvedAnimation(
+                  parent: _transition,
+                  curve: Curves.easeOutCubic,
+                ),
+                child: ActivePageStack(
+                  index: _selectedIndex,
+                  children: [
+                    for (var i = 0; i < pages.length; i++)
+                      _visited.contains(i)
                           ? pages[i]()
                           : const SizedBox.shrink(),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
     return PopScope(

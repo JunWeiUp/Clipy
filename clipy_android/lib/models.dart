@@ -20,7 +20,18 @@ class HistoryItem {
   String get title {
     switch (type) {
       case 'text':
-        return (value as String).trim().replaceAll('\n', ' ');
+        // Bound both string processing and paragraph shaping for list cards.
+        // Copy, search and the full preview continue to use the original value.
+        final text = value as String;
+        var end = text.length > 600 ? 600 : text.length;
+        if (end < text.length &&
+            end > 0 &&
+            text.codeUnitAt(end - 1) >= 0xD800 &&
+            text.codeUnitAt(end - 1) <= 0xDBFF) {
+          end--;
+        }
+        final preview = text.substring(0, end).trim().replaceAll('\n', ' ');
+        return end < text.length ? '$preview…' : preview;
       case 'image':
         return '[Image]';
       case 'fileURL':

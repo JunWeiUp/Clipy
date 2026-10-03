@@ -177,8 +177,7 @@ extension SyncSessionMethods on SyncManager {
                 'Dial $reason $host:$peerPort failed: handshake($f)',
                 level: 'warning',
               );
-              // pairingMismatch is already recorded with the peer's name.
-              if (resolved != null && f != 'pairingMismatch') {
+              if (resolved != null) {
                 diagnostics.noteError(resolved, 'handshake($f)', host: host);
               }
             },
@@ -203,18 +202,11 @@ extension SyncSessionMethods on SyncManager {
         onError: (Object _) => _handshakeSockets.remove(socket),
       ),
     );
-    final proof = _crypto.pairingProof(peerId);
-    if (proof == null) {
-      onHandshakeFailure?.call('notPaired');
-      await socket.close();
-      return;
-    }
     final hello = SyncEnvelope.make(
       type: SyncType.hello,
       peerId: peerId,
       name: displayName,
       port: port,
-      payload: proof,
     );
     final helloData = syncEncodeFrame(hello);
     if (helloData == null) {
@@ -344,34 +336,12 @@ extension SyncSessionMethods on SyncManager {
       return;
     }
 
-    if (!_crypto.verifyPairingProof(env.payload, env.peerId)) {
-      // Logged for every dial reason: a peer answering with a different
-      // secret is exactly what the user needs to see.
-      appLog(
-        'Handshake with ${env.name ?? env.peerId} @ $host rejected: pairing secret mismatch',
-        level: 'warning',
-      );
-      diagnostics.noteError(
-        env.peerId,
-        'pairingMismatch',
-        name: env.name,
-        host: host,
-      );
-      onHandshakeFailure?.call('pairingMismatch');
-      await subscription.cancel();
-      try {
-        await socket.close();
-      } catch (_) {}
-      return;
-    }
-
     if (env.type == SyncType.hello) {
       final welcome = SyncEnvelope.make(
         type: SyncType.welcome,
         peerId: peerId,
         name: displayName,
         port: port,
-        payload: proof,
       );
       final data = syncEncodeFrame(welcome);
       if (data != null) {

@@ -11,9 +11,11 @@ The mobile Flutter UI uses Clipy blue, semantic light/dark surfaces, generous ty
 
 ## Navigation and motion
 
-`HomePage` provides History, Devices, Notifications and Settings. It creates each page on first visit and keeps it in an `IndexedStack`, preserving searches, scroll offsets and local state. Inactive pages use `TickerMode`; tab transitions fade over 220 ms and respect the platform's disable-animations preference. A navigation rail replaces the bottom bar from 720 logical pixels. Android Back returns to History before leaving the app.
+`HomePage` provides History, Devices, Notifications and Settings. It creates each page on first visit and keeps it in an `ActivePageStack`, preserving searches, scroll offsets and local state. Only the visible page is laid out when keyboard insets resize the body; hidden pages are excluded from focus, painting and semantics and use `TickerMode`. This stack requires bounded full-page constraints. Tab transitions fade over 220 ms and respect the platform's disable-animations preference. A navigation rail replaces the bottom bar from 720 logical pixels. Android Back returns to History before leaving the app.
 
 Copy feedback uses a short checkmark transition and selection haptics. Confirmation is shown only after the clipboard write finishes. File-transfer progress remains visible across tabs. Avoid looping decorative animations or discovery polling for visual effects.
+
+On History, the page title/intro collapses after scrolling 48 logical pixels and returns at the top, leaving more room for rows while search, filters and the app bar remain available. Header motion respects reduced animations. Other tabs retain their page headings; viewport changes alone do not collapse them.
 
 ## Feature ownership
 
@@ -30,8 +32,9 @@ The existing native Android countdown widget and its hour/minute/second setup sc
 ## State and data rules
 
 - Apply history filters in SQL before LIMIT/OFFSET. Bind search text and escape LIKE metacharacters. Sort by timestamp and row ID for deterministic pagination.
+- History card text summaries process at most 600 UTF-16 code units, without cutting a surrogate pair. Full text remains available for search, copy and preview; a three-line visual limit alone does not bound paragraph input.
 - Serialize history loads. Replay a refresh that arrives during pagination, discard superseded searches, preserve the loaded extent when refreshing, and ignore results after disposal. Do not compare history as an unordered set: repeated copies can legitimately change the ordering.
-- Validate the whole connection form before saving. Persist name, port and pairing secret together, then restart sync once. Do not save partial port values on each keystroke. Prevent duplicate saves/toggles while work is in flight.
+- Validate the whole connection form before saving. Persist name and port together, then restart sync once. Do not save partial port values on each keystroke. Prevent duplicate saves/toggles while work is in flight.
 - Do not silently erase a received-file record if deleting the file fails. Keep the record and show an actionable error.
 - Keep sync and notification permission separate. Do not imply a discovered device is cryptographically authenticated, or that enabling the LAN server guarantees a live peer session.
 

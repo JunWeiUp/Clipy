@@ -20,9 +20,6 @@ final class SyncManager: NSObject {
 
     static let maxFrameLength = 2 * 1024 * 1024
     static let maxHandshakeFrameLength = 64 * 1024
-    static let pairingProofPrefix = "clipy.pair.v1:"
-    static let keyDerivationSalt = Data("clipy.sync.v2.hkdf".utf8)
-    static let keyDerivationInfo = Data("aes-256-gcm".utf8)
     static let defaultPort: UInt16 = 5566
     static let discoveryDebounce: TimeInterval = 0.6
     static let handshakeTimeout: TimeInterval = 2.0
@@ -49,9 +46,7 @@ final class SyncManager: NSObject {
 
     let diagnostics = SyncDiagnostics()
 
-    let keyLock = NSLock()
-    var cachedKeySecret: String?
-    var cachedKey: SymmetricKey?
+    static let defaultEncryptionKey = SymmetricKey(data: SHA256.hash(data: Data("ClipySyncSecret2026".utf8)))
 
     var discoveredPeers: [String: DiscoveredPeer] = [:]
     let peersLock = NSLock()
@@ -146,14 +141,19 @@ final class SyncManager: NSObject {
     // MARK: - Lifecycle
 
     func start() {
-        appLog("SyncManager v2 starting...")
+        appLog("SyncManager v3 starting...")
         guard PreferencesManager.shared.isSyncEnabled || NotificationManager.shared.notificationSyncEnabled else { return }
-        guard isPaired else {
-            appLog("Sync not started: no pairing secret set (pair devices in Settings → Sync)", level: .warning)
-            return
-        }
         syncQueue.async { [weak self] in
             guard let self else { return }
+            let defaults = UserDefaults.standard
+            if defaults.integer(forKey: "syncTransportVersion") != SyncEnvelope.version {
+                // Stored v2 ciphertext cannot be replayed with the default v3 key.
+                // Local history and device sharing choices remain intact.
+                PendingSyncRepository.shared.clearAll()
+                defaults.removeObject(forKey: "syncPairingSecret")
+                defaults.removeObject(forKey: "syncSecret")
+                defaults.set(SyncEnvelope.version, forKey: "syncTransportVersion")
+            }
             PendingSyncRepository.shared.cleanOld(ttl: Self.pendingQueueTTL)
             self.startListening()
             self.startPingTimer()
@@ -167,7 +167,7 @@ final class SyncManager: NSObject {
     }
 
     func stop() {
-        appLog("SyncManager v2 stopping...")
+        appLog("SyncManager v3 stopping...")
         scanStateLock.lock(); serviceGeneration &+= 1; scanStateLock.unlock()
         syncQueue.async { [weak self] in
             guard let self else { return }

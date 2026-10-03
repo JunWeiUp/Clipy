@@ -186,7 +186,7 @@ background execution, OEM power management, capture or recording work correctly.
 
 - Clipboard: text/image/file history, dedup, search, app exclusions and restart.
 - Sync: both directions; denied/authorized peers; reconnect; persistence before ACK;
-  custom pairing secret; zero-byte and multi-chunk files; receiver hash mismatch.
+  default-key interoperability; zero-byte and multi-chunk files; receiver hash mismatch.
 - Android: cold launch, cached-engine UI attach, background/force-stop/boot behavior,
   notification grants/listener, timer start/pause/finish/stop.
 - macOS: menu open/close, capture/recording permissions, all capture paths,
@@ -201,9 +201,8 @@ cd clipy_android
 dart run tool/e2e_file_send.dart <host> <existing-test-file>
 ```
 
-Set `CLIPY_PAIRING_SECRET` to the receiver's pairing secret (the probe uses a
-test-only default otherwise, which a real device will reject at handshake) and
-`CLIPY_SYNC_PORT` for non-default ports. See [SECURITY.md](../SECURITY.md).
+The probe uses the same built-in default AES-GCM key as the application. Both
+endpoints must run protocol v3. Set `CLIPY_SYNC_PORT` for non-default ports. See [SECURITY.md](../SECURITY.md).
 
 ## Release checklist
 

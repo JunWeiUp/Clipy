@@ -21,7 +21,7 @@
 
 <br />
 
-**Clipy（ClipyClone）**是一款开源 **Clipboard Manager（剪贴板管理器）**，在本机保存复制历史，并为已配对的电脑与手机提供**跨设备剪贴板同步（Clipboard Sync）**和**局域网文件传输（LAN File Transfer）**。自动历史同步仅传输文本；图片和文件剪贴板条目保留在本机，发送文件需主动操作。同步使用 AES-GCM 加密，在可信局域网中完成，无需云端中转或注册账号。
+**Clipy（ClipyClone）**是一款开源 **Clipboard Manager（剪贴板管理器）**，在本机保存复制历史，并为已连接的电脑与手机提供**跨设备剪贴板同步（Clipboard Sync）**和**局域网文件传输（LAN File Transfer）**。自动历史同步仅传输文本；图片和文件剪贴板条目保留在本机，发送文件需主动操作。同步使用 AES-GCM 加密，在可信局域网中完成，无需云端中转或注册账号。
 
 Mac 原生菜单栏应用还集成了**截图标注、OCR 文字识别、屏幕录制、文本片段管理、AI Token 用量统计、词典与保持唤醒开关**；Windows 提供系统托盘入口，Android 支持通知镜像与倒计时桌面小部件。各平台可用功能如下。
 
@@ -38,7 +38,7 @@ Mac 原生菜单栏应用还集成了**截图标注、OCR 文字识别、屏幕�
 
 ### 跨设备同步与文件传输
 
-在 macOS、Windows 与 Android 之间同步文本，或主动向已配对设备发送文件。在可信局域网中配置私有配对密钥，并为目标设备开启发送权限。
+在 macOS、Windows 与 Android 之间同步文本，或主动向已发现设备发送文件。当前源码采用默认加密，无需配对；自动同步由发送端共享开关控制。
 
 </td>
 <td width="33%" valign="top">
@@ -124,16 +124,16 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今�
 
 1. **安装 Clipy。** Mac 解压后移入「应用程序」，Windows 完整解压 ZIP，Android 安装 APK。Mac 端入口在菜单栏；Windows 关闭窗口后仍保留系统托盘入口。详见[安装指南](docs/GETTING_STARTED_ZH.md)与 [macOS 首次启动说明](docs/MACOS_INSTALL.md)。
 2. **复制一段想留下的内容。** Android 首次测试时保持 Clipy 打开；在 Mac 上按 <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> 搜索历史。
-3. **连接你的设备。** 连到同一个可信 Wi-Fi，设置相同的私有配对密钥，再开启向目标设备的共享。[按步骤连接](docs/GETTING_STARTED_ZH.md#连接-mac-与-android)。
+3. **连接你的设备。** 连到同一个可信 Wi-Fi，刷新设备列表后直接发送，或开启自动共享。[按步骤连接](docs/GETTING_STARTED_ZH.md#连接-mac-与-android)。
 
 **[安装与常见问题](docs/GETTING_STARTED_ZH.md)** · **[反馈问题](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[建议新功能](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
 
-> **开始共享前：** 同步面向可信局域网，请设置足够强的私有配对密钥，并了解[安全边界](SECURITY.md)。macOS 应用包含修改过的 macshot 截图模块，按 [GPLv3](LICENSE.GPL-3.0) 分发；[来源与源码获取方式](THIRD_PARTY_NOTICES.md)另见声明。
+> **开始共享前：** 当前源码同步采用内置默认加密密钥，无需配对；适用于可信局域网，请了解[安全边界](SECURITY.md)。macOS 应用包含修改过的 macshot 截图模块，按 [GPLv3](LICENSE.GPL-3.0) 分发；[来源与源码获取方式](THIRD_PARTY_NOTICES.md)另见声明。
 
 <details>
 <summary><b>版本、下载与源码构建</b></summary>
 
-当前源码版本：**1.0.25** · 默认本地构建号 **10154** · 最新正式版：**[v1.0.25](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.25)** · [构建版本配置](clipy_android/pubspec.yaml)
+当前源码版本：**1.0.26** · 默认本地构建号 **10156** · 最新正式版：**[v1.0.25](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.25)** · [构建版本配置](clipy_android/pubspec.yaml)
 
 安装包请前往[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，具体应用版本和构建号以发布说明为准。Android 改版已在 v1.0.19 发布；后续开发期间，源码版本可能领先于公开安装包。Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
 
@@ -239,7 +239,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标、今�
 <details>
 <summary><b>🔐 关于安全的说明</b></summary>
 
-请只在可信网络中启用同步，并配置足够强的私有配对密钥。未设置配对密钥时同步保持暂停，不再有内置兜底密钥；可在 Mac 上生成配对码，用 Android 相机扫描二维码导入，或在各设备手动输入。授权设备列表不是密码学身份认证，单次文本与文件发送也有不同的授权规则。完整说明见 [SECURITY.md](SECURITY.md)。
+当前源码采用无需配对的协议 v3 和内置 AES-GCM 密钥。开启局域网同步、刷新设备即可主动发送文本和文件；只有自动共享需要开启发送端开关。两端都须使用 v3 构建；已发布的 v1.0.25 安装包仍使用 v2。默认密钥不验证设备身份，也不能对已知密钥的局域网参与者提供保密性。完整说明见 [SECURITY.md](SECURITY.md)。
 </details>
 
 </details>
@@ -308,10 +308,10 @@ cd clipy_android
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.25
+./scripts/package_windows.ps1 -Version 1.0.26
 ```
 
-产物为 `dist/ClipyClone-Windows-x64-v1.0.25.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。v1.0.24 在「历史记录」提供「截图」菜单，支持区域、窗口和显示器截图；完成后复制 PNG 并保存到本机历史。窗口截图使用 Windows `PrintWindow`：目标应用可能拒绝捕获，也可能返回空白画面，受保护或使用 GPU 绘制的内容尤其需要实机检查。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。Windows 源码构建与正式版 ZIP 均未签名；公开版本以发布页为准。
+产物为 `dist/ClipyClone-Windows-x64-v1.0.26.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。v1.0.24 在「历史记录」提供「截图」菜单，支持区域、窗口和显示器截图；完成后复制 PNG 并保存到本机历史。窗口截图使用 Windows `PrintWindow`：目标应用可能拒绝捕获，也可能返回空白画面，受保护或使用 GPU 绘制的内容尤其需要实机检查。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。Windows 源码构建与正式版 ZIP 均未签名；公开版本以发布页为准。
 
 ### iOS（Flutter + Swift）
 
@@ -334,7 +334,7 @@ Release 构建号为源码构建号加 Release 工作流运行序号。如需用
 - `Sources/MenuBarOverflow/` —— 可选的隐藏菜单栏项目发现、图标预览和辅助功能操作；仅本机使用，不调整图标顺序。
 - `ClipboardManager` —— 剪贴板轮询、历史持久化、去重、同步分发。
 - `SnippetManager` —— 文件夹、片段、快捷键、导入导出。
-- `SyncManager` —— 子网/手动发现、带长度前缀的 TCP 同步（协议 v2）、AES-GCM 加密、可靠历史与通知投递。
+- `SyncManager` —— 子网/手动发现、带长度前缀的 TCP 同步（协议 v3）、AES-GCM 加密、可靠历史与通知投递。
 - `Sources/Screenshot/` —— 完整的截图/录屏引擎（移植自 macshot）：统一 OverlayView、18 工具标注引擎、滚动长截图、录屏、美化/特效、OCR、贴图、浮动缩略图、编辑器窗口。由 `ScreenshotSessionCoordinator` 编排。
 - `SearchWindow` —— 带筛选与排序的全局搜索。
 - `NotificationManager` —— 手机通知镜像。
@@ -344,17 +344,17 @@ Release 构建号为源码构建号加 Release 工作流运行序号。如需用
 - `lib/main.dart` —— 默认入口；`lib/app/` 负责初始化与无界面引擎桥接。
 - `lib/features/` —— 设备、历史、设置、日志与文件页面。
 - `lib/clipboard_manager.dart` —— 剪贴板监听、历史、同步协调。
-- `lib/sync_manager.dart` —— 子网/手动发现、TCP 同步 v2、加密、历史与通知投递。
+- `lib/sync_manager.dart` —— 子网/手动发现、TCP 同步 v3、加密、历史与通知投递。
 - `lib/notification_manager.dart` —— `NotificationListenerService` 集成。
 
 ## 🔁 同步协议
 
-Clipy 使用面向局域网的协议 v2 处理剪贴板历史与通知：
+Clipy 使用面向局域网的协议 v3 处理剪贴板历史与通知：
 
 - **设备发现** —— `/24` TCP 端口扫描 + 手动 `IP:端口`（可跨子网 / 双频段）。
 - **传输方式** —— 原生 TCP，每条 JSON 信封带 4 字节大端长度前缀（`v: 2`，单帧上限 2 MB）。
 - **消息类型** —— `history`、`history.fetch`、`notif.post` / `dismiss` / `clear` / `ack`、`hello` / `welcome`、`ping` / `pong`、`ack`。
-- **加密** —— AES-GCM 256 位（配置配对密钥时走 HKDF）。
+- **加密** —— AES-GCM 256 位（当前源码使用内置默认密钥）。
 - **授权** —— 仅向本机授权列表中的设备推送剪贴板/通知。
 - **可靠投递** —— 历史帧需在落库成功后 `ack`；有界离线队列 + 端点缓存用于重连。
 - **环路防止** —— 内容哈希避免重复广播。

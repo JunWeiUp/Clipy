@@ -174,7 +174,6 @@ class SyncManager with WidgetsBindingObserver {
     'com.clipyclone.clipy_android/sync_crypto',
   );
 
-  static const String _pairingSecretKey = 'clipy.sync.pairingSecret';
   static const String _endpointCacheKey = 'clipy.peerEndpoints.v2';
   static const Duration _endpointCacheTtl = Duration(hours: 24);
   static const Duration _discoveryDebounce = Duration(milliseconds: 600);
@@ -258,8 +257,6 @@ class SyncManager with WidgetsBindingObserver {
   String displayName = 'Android';
   final SyncCrypto _crypto = SyncCrypto();
   final SyncDiagnostics diagnostics = SyncDiagnostics();
-  String get pairingSecret => _crypto.pairingSecret;
-  set pairingSecret(String v) => _crypto.pairingSecret = v;
 
   final _lastHistoryFetchAt = <String, DateTime>{};
 
@@ -346,7 +343,11 @@ class SyncManager with WidgetsBindingObserver {
             : Platform.isWindows
             ? 'Windows'
             : 'Device');
-    pairingSecret = prefs.getString(_pairingSecretKey) ?? '';
+    if (prefs.getInt('clipy.sync.transportVersion') != SyncEnvelope.version) {
+      await PendingSyncRepository.instance.clearAll();
+      await prefs.remove('clipy.sync.pairingSecret');
+      await prefs.setInt('clipy.sync.transportVersion', SyncEnvelope.version);
+    }
     _receiveDirPath = (await StoragePaths.receiveRootDirectory()).path;
     await _migrateAuthorizedPeerIds(prefs);
     await _migrateDualSyncAuth(prefs);
@@ -539,18 +540,9 @@ class SyncManager with WidgetsBindingObserver {
     return next;
   }
 
-  bool get isPaired => _crypto.isPaired;
-
   Future<void> start() async {
     if (_runLifecycle.isActive && _server != null) return;
-    appLog('SyncManager v2 starting...');
-    if (!isPaired) {
-      appLog(
-        'Sync not started: no pairing secret set (pair devices on the Devices page)',
-        level: 'warning',
-      );
-      return;
-    }
+    appLog('SyncManager v3 starting...');
     final epoch = _runLifecycle.begin();
     unawaited(PendingSyncRepository.instance.cleanOld());
     unawaited(PendingTextSyncRepository.instance.cleanOld());
@@ -580,7 +572,7 @@ class SyncManager with WidgetsBindingObserver {
   /// `syncTick` Result is still pending, risking a deadlocked tick loop.
   /// `start()` is still used for user/init paths where FGS may not be up yet.
   Future<void> _rebindServer() async {
-    if (!isEnabled || !isPaired) return;
+    if (!isEnabled) return;
     final epoch = _runLifecycle.isActive
         ? _runLifecycle.epoch
         : _runLifecycle.begin();
@@ -1171,28 +1163,19 @@ class SyncManager with WidgetsBindingObserver {
   Future<void> updateConnectionSettings({
     required String name,
     required int listeningPort,
-    required String secret,
   }) async {
     final nextName = name.trim();
-    final nextSecret = secret.trim();
     if (nextName.isEmpty || listeningPort < 1 || listeningPort > 65535) {
       throw ArgumentError('Invalid connection settings');
     }
-    if (displayName == nextName &&
-        port == listeningPort &&
-        pairingSecret == nextSecret) {
+    if (displayName == nextName && port == listeningPort) {
       return;
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('deviceName', nextName);
     await prefs.setInt('syncPort', listeningPort);
-    await prefs.setString(_pairingSecretKey, nextSecret);
     displayName = nextName;
     port = listeningPort;
-    final secretChanged = pairingSecret != nextSecret;
-    pairingSecret = nextSecret;
-    _crypto.clearKeyCache();
-    if (secretChanged) diagnostics.reset();
     if (isEnabled) {
       await stop();
       await start();
@@ -1202,8 +1185,7 @@ class SyncManager with WidgetsBindingObserver {
   String? _encrypt(String text) => _crypto.encryptText(text);
   String? _decrypt(String text) => _crypto.decryptText(text);
 
-  /// Business-payload decrypt: after a verified handshake a failure means
-  /// corrupted data or a peer that changed secrets mid-session.
+  /// Record payload corruption independently of the connection handshake.
   String? _decryptFrom(String payload, String from, String type) {
     final text = _decrypt(payload);
     if (text == null) {
@@ -1214,21 +1196,6 @@ class SyncManager with WidgetsBindingObserver {
       diagnostics.noteError(from, 'decryptFailed');
     }
     return text;
-  }
-
-  Future<void> updatePairingSecret(String secret) async {
-    final next = secret.trim();
-    if (next == pairingSecret) return;
-    pairingSecret = next;
-    _crypto.clearKeyCache();
-    diagnostics.reset();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_pairingSecretKey, next);
-    if (isEnabled) {
-      await stop();
-      await Future.delayed(const Duration(seconds: 1));
-      await start();
-    }
   }
 
   static String? encryptStatic(String text) => instance._encrypt(text);

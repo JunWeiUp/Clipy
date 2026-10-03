@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 
-/// Transport-layer regression: AES-GCM payload crypto, pairing proof,
+/// Transport-layer regression: default AES-GCM payload crypto,
 /// length-prefixed framing, and the hello/welcome handshake over a real
 /// socketpair. The remote side is scripted by hand because two managers in
 /// one process share the same peerId (they would trip selfHandshake).
@@ -29,7 +29,6 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
 }
 
 private func runCryptoChecks(_ m: SyncManager, useSecret: (String) -> Void) {
-    check(m.isPaired, "secret not picked up")
     let text = "剪贴板 clipboard 😀 " + String(repeating: "x", count: 4096)
     guard let sealed = m.encrypt(text) else { preconditionFailure("encrypt failed") }
     check(m.decrypt(sealed) == text, "text round-trip")
@@ -44,23 +43,13 @@ private func runCryptoChecks(_ m: SyncManager, useSecret: (String) -> Void) {
     check(m.decrypt("not base64!") == nil, "garbage accepted")
     check(m.decrypt(Data(count: 28).base64EncodedString()) == nil, "short input accepted")
 
-    // Pairing proof binds the sender's peerId under the shared key.
-    guard let proof = m.pairingProof() else { preconditionFailure("proof missing while paired") }
-    check(m.verifyPairingProof(proof, peerId: m.peerId), "own proof rejected")
-    check(!m.verifyPairingProof(proof, peerId: "someone-else"), "proof replayable for another peer")
-    check(!m.verifyPairingProof("garbage", peerId: m.peerId), "garbage proof accepted")
-    check(m.verifyPairingProof(nil, peerId: m.peerId), "pre-proof peers must stay compatible")
-
-    // A different secret cannot read anything sealed under the old one.
-    useSecret("transport-test-secret-B")
-    check(m.decrypt(sealed) == nil, "stale key cache: other secret decrypted")
-    check(!m.verifyPairingProof(proof, peerId: m.peerId), "proof from another secret accepted")
-
-    // Unpaired: no fallback key, nothing encrypts or proves.
-    useSecret("")
-    check(!m.isPaired, "empty secret counted as paired")
-    check(m.encrypt("x") == nil && m.encryptBytes(Data([1])) == nil, "unpaired device encrypted")
-    check(m.pairingProof() == nil, "unpaired device produced a proof")
+    for legacy in ["", "different-previous-code"] {
+        useSecret(legacy)
+        check(m.decrypt(sealed) == text, "legacy pairing preference changed default key")
+        check(m.decryptToBytes(sealedBytes) == bytes, "legacy preference changed binary key")
+    }
+    let fixture = "AAECAwQFBgcICQoLhdUwCui4zMJDC8GLd3CsDGCvgcc2/Zua+hgmwEW4aNreepO2aYY99Q=="
+    check(m.decrypt(fixture) == "default transport 世界", "default-key interoperability vector")
 }
 
 private func makePair() -> (Int32, Int32) {
@@ -148,7 +137,7 @@ private func handshake(_ m: SyncManager, script: (Int32) -> Void) -> SyncManager
     return failure
 }
 
-private func sendHello(_ fd: Int32, _ m: SyncManager, peerId: String, payload: String?, version: Int = SyncEnvelope.version) {
+private func sendHello(_ fd: Int32, _ m: SyncManager, peerId: String, payload: String? = nil, version: Int = SyncEnvelope.version) {
     var hello = SyncEnvelope.make(type: SyncType.hello, peerId: peerId, name: "Fixture", port: 5566, payload: payload)
     hello.v = version
     rawWrite(fd, m.encodeFrame(hello)!)
@@ -156,47 +145,32 @@ private func sendHello(_ fd: Int32, _ m: SyncManager, peerId: String, payload: S
 
 private func runHandshakeChecks(_ m: SyncManager, useSecret: (String) -> Void) {
     let remoteId = "transport-fixture-peer"
-    useSecret("transport-test-secret-B")
-    let foreignProof = m.encrypt(SyncManager.pairingProofPrefix + remoteId)!
-    useSecret("transport-test-secret-A")
-    let validProof = m.encrypt(SyncManager.pairingProofPrefix + remoteId)!
-    let otherPeersProof = m.encrypt(SyncManager.pairingProofPrefix + "another-peer")!
-
-    // Matching secret: our hello carries a valid proof, a hello gets a welcome.
-    for payload in [validProof, nil] as [String?] {
+    for legacy in ["", "old-code-A", "old-code-B"] {
+        useSecret(legacy)
         var welcome: SyncEnvelope?
         let failure = handshake(m) { fd in
             guard let frame = m.readOneFrame(fd: fd, timeout: 2), let hello = m.decodeEnvelope(frame) else {
                 preconditionFailure("no hello from manager")
             }
-            check(hello.type == SyncType.hello && hello.peerId == m.peerId, "unexpected opening frame")
-            check(m.verifyPairingProof(hello.payload, peerId: m.peerId) && hello.payload != nil, "hello proof invalid")
-            sendHello(fd, m, peerId: remoteId, payload: payload)
+            check(hello.type == SyncType.hello && hello.payload == nil, "hello requires pairing")
+            sendHello(fd, m, peerId: remoteId)
             welcome = m.readOneFrame(fd: fd, timeout: 2).flatMap(m.decodeEnvelope)
         }
-        check(failure == nil, "valid handshake failed: \(String(describing: failure))")
-        check(welcome?.type == SyncType.welcome && m.verifyPairingProof(welcome?.payload, peerId: m.peerId),
-              "no valid welcome (payload \(payload == nil ? "nil" : "proof"))")
+        check(failure == nil && welcome?.type == SyncType.welcome && welcome?.payload == nil,
+              "default handshake failed with old preference")
     }
-
-    // Rejections: each closes the socket without sending a welcome.
-    m.diagnostics.reset()
-    let cases: [(String, String?, Int, SyncManager.HandshakeFailure)] = [
-        (remoteId, foreignProof, SyncEnvelope.version, .pairingMismatch),
-        (remoteId, otherPeersProof, SyncEnvelope.version, .pairingMismatch),
-        (remoteId, "garbage", SyncEnvelope.version, .pairingMismatch),
-        (m.peerId, m.pairingProof(), SyncEnvelope.version, .selfHandshake),
-        (remoteId, validProof, 1, .versionMismatch),
+    let cases: [(String, Int, SyncManager.HandshakeFailure)] = [
+        (m.peerId, SyncEnvelope.version, .selfHandshake),
+        (remoteId, 2, .versionMismatch),
     ]
-    for (sender, payload, version, expected) in cases {
+    for (sender, version, expected) in cases {
         let failure = handshake(m) { fd in
             _ = m.readOneFrame(fd: fd, timeout: 2)
-            sendHello(fd, m, peerId: sender, payload: payload, version: version)
-            check(m.readOneFrame(fd: fd, timeout: 2) == nil, "\(expected.label): got a reply")
+            sendHello(fd, m, peerId: sender, version: version)
+            check(m.readOneFrame(fd: fd, timeout: 2) == nil, "invalid handshake got reply")
         }
-        check(failure == expected, "expected \(expected.label), got \(String(describing: failure?.label))")
+        check(failure == expected, "incorrect handshake rejection")
     }
-    check(m.diagnostics.snapshot()[remoteId]?.lastError == "pairingMismatch", "mismatch missing from diagnostics")
     m.diagnostics.reset()
 
     check(handshake(m) { fd in
@@ -208,11 +182,6 @@ private func runHandshakeChecks(_ m: SyncManager, useSecret: (String) -> Void) {
     check(handshake(m) { fd in _ = m.readOneFrame(fd: fd, timeout: 2) } == .readTimeout, "silent peer not timed out")
     check(Date().timeIntervalSince(started) < SyncManager.handshakeTimeout + 2, "handshake timeout not honoured")
 
-    // Unpaired devices refuse before writing anything.
-    useSecret("")
-    check(handshake(m) { fd in
-        check(m.readOneFrame(fd: fd, timeout: 1) == nil, "unpaired device sent a hello")
-    } == .notPaired, "unpaired handshake not refused")
 }
 
 /// Session read path: fragmented frames are reassembled, a bad length prefix

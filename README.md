@@ -21,7 +21,7 @@
 
 <br />
 
-**Clipy (ClipyClone)** keeps clipboard history on your device and provides **cross-device clipboard sync** and **LAN file transfer** between paired computers and phones. Automatic history sync shares text; images and file clipboard entries stay local, and file sending is explicit. Sync uses AES-GCM encryption on your trusted local network, without a cloud relay or account.
+**Clipy (ClipyClone)** keeps clipboard history on your device and provides **cross-device clipboard sync** and **LAN file transfer** between connected computers and phones. Automatic history sync shares text; images and file clipboard entries stay local, and file sending is explicit. Sync uses AES-GCM encryption on your trusted local network, without a cloud relay or account.
 
 The native Mac menu bar app also brings together a **screenshot and annotation tool, OCR text recognition, screen recorder, text snippet manager, AI token usage tracker, dictionary and Keep Awake switch**. The Windows app uses the system tray; Android includes notification mirroring and a countdown home-screen widget. Platform availability is listed below.
 
@@ -38,7 +38,7 @@ Save copied text, links, images and file references in a searchable clipboard hi
 
 ### Clipboard sync & file transfer
 
-Sync text between macOS, Windows and Android, or explicitly send a file to a paired device. Configure a private pairing secret and outgoing sharing permissions on your trusted LAN.
+Sync text between macOS, Windows and Android, or explicitly send a file to a discovered device. Current source uses default encryption without pairing; automatic sync uses outgoing sharing switches.
 
 </td>
 <td width="33%" valign="top">
@@ -124,16 +124,16 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 
 1. **Install Clipy.** Move the Mac app to Applications, extract the full Windows ZIP, or install the Android APK. Mac uses the menu bar; Windows stays in the system tray when its window closes. See the [installation guide](docs/GETTING_STARTED.md), including [first launch on macOS](docs/MACOS_INSTALL.md).
 2. **Copy something worth keeping.** Keep Clipy open on Android for your first test. On Mac, press <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> to search your history.
-3. **Connect your devices.** Use the same trusted Wi-Fi and matching private pairing secrets, then enable outgoing sharing for your chosen device. [Follow the connection steps](docs/GETTING_STARTED.md#connect-mac-and-android).
+3. **Connect your devices.** Use the same trusted Wi-Fi, refresh the device list, then send directly or enable automatic outgoing sharing. [Follow the connection steps](docs/GETTING_STARTED.md#connect-mac-and-android).
 
 **[Installation & troubleshooting](docs/GETTING_STARTED.md)** · **[Report a problem](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[Suggest a feature](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
 
-> **Before sharing:** sync is designed for trusted networks; set a strong private pairing secret. Read the [security boundaries](SECURITY.md). The macOS application includes a modified macshot screenshot module and is distributed under [GPLv3](LICENSE.GPL-3.0); see [provenance and source access](THIRD_PARTY_NOTICES.md).
+> **Before sharing:** sync is designed for trusted networks and uses a built-in default encryption key in current source. Read the [security boundaries](SECURITY.md). The macOS application includes a modified macshot screenshot module and is distributed under [GPLv3](LICENSE.GPL-3.0); see [provenance and source access](THIRD_PARTY_NOTICES.md).
 
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.25** · Default local build **10154** · Latest published release: **[v1.0.25](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.25)** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.26** · Default local build **10156** · Latest published release: **[v1.0.25](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.25)** · [Build metadata](clipy_android/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
@@ -239,7 +239,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 <details>
 <summary><b>🔐 A note on security</b></summary>
 
-Use sync only on trusted networks and configure a strong private pairing secret. Sync stays paused until a pairing secret is set; generate one on the Mac and scan its QR code with the Android camera, or type it on each device. There is no built-in fallback key. The authorized-devices list is not cryptographic identity verification; one-shot text/file transfers have different authorization rules. See [SECURITY.md](SECURITY.md) for the full limitations.
+Current source uses pairing-free protocol v3 with a built-in AES-GCM key. Enable LAN sync, refresh devices and explicitly send text/files; only automatic sharing needs a sending-device toggle. Both endpoints must use v3 builds; published v1.0.25 packages still use v2. The default key does not authenticate devices or hide content from LAN participants who know it. See [SECURITY.md](SECURITY.md).
 </details>
 
 </details>
@@ -308,10 +308,10 @@ cd clipy_android
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.25
+./scripts/package_windows.ps1 -Version 1.0.26
 ```
 
-The package is `dist/ClipyClone-Windows-x64-v1.0.25.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
+The package is `dist/ClipyClone-Windows-x64-v1.0.26.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
 
 ### iOS (Flutter + Swift)
 
@@ -332,7 +332,7 @@ Run `bash scripts/check.sh all` from the root for local quality checks. On macOS
 - `Sources/MenuBarOverflow/` — opt-in hidden status-item discovery, icon previews and direct Accessibility actions; local-only, without reordering.
 - `ClipboardManager` — pasteboard polling, history persistence, dedup, sync dispatch.
 - `SnippetManager` — folders, snippets, hotkeys, import/export.
-- `SyncManager` — subnet/manual discovery, length-prefixed TCP sync (protocol v2), AES-GCM encryption, reliable history + notification delivery.
+- `SyncManager` — subnet/manual discovery, length-prefixed TCP sync (protocol v3), AES-GCM encryption, reliable history + notification delivery.
 - `Sources/Screenshot/` — the full screenshot/recording engine (ported from macshot): unified `OverlayView`, 18-tool annotation engine, scroll capture, recording, beautify/effects, OCR, pin, floating thumbnail, editor window. Driven by `ScreenshotSessionCoordinator`.
 - `SearchWindow` — global search with filters and ranking.
 - `NotificationManager` — phone-notification mirror.
@@ -342,17 +342,17 @@ Run `bash scripts/check.sh all` from the root for local quality checks. On macOS
 - `lib/main.dart` — default entrypoint; `lib/app/` owns bootstrap and the headless bridge.
 - `lib/features/` — device, history, settings, log and transfer pages.
 - `lib/clipboard_manager.dart` — clipboard monitoring, history, sync coordination.
-- `lib/sync_manager.dart` — subnet/manual discovery, TCP sync v2, encryption, history + notification delivery.
+- `lib/sync_manager.dart` — subnet/manual discovery, TCP sync v3, encryption, history + notification delivery.
 - `lib/notification_manager.dart` — `NotificationListenerService` integration.
 
 ## 🔁 Sync protocol
 
-Clipy uses a LAN-first protocol v2 for clipboard history and notifications:
+Clipy uses a LAN-first protocol v3 for clipboard history and notifications:
 
 - **Discovery** — `/24` TCP port scan + manual `IP:port` peers (cross-subnet / dual-band).
 - **Transport** — raw TCP with a 4-byte big-endian length prefix per JSON envelope (`v: 2`, max 2 MB/frame).
 - **Messages** — `history`, `history.fetch`, `notif.post` / `dismiss` / `clear` / `ack`, `hello` / `welcome`, `ping` / `pong`, `ack`.
-- **Encryption** — AES-GCM 256-bit on payloads (HKDF when a pairing secret is set).
+- **Encryption** — AES-GCM 256-bit on payloads with a built-in default key in current source.
 - **Authorization** — outbound clipboard/notification push only to peers in each device's authorized list.
 - **Reliability** — history frames require `ack` after persist; bounded offline queue + endpoint cache for reconnect.
 - **Loop prevention** — content hashes prevent rebroadcast loops.

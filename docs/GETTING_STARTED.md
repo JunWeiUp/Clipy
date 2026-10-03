@@ -12,7 +12,7 @@ Open the [latest published release](https://github.com/JunWeiUp/Clipy/releases/l
 | Android, arm64 | `ClipyClone-Android-arm64-v8a-v<version>.apk` |
 | Windows 10/11 x64, starting with v1.0.23 | `ClipyClone-Windows-x64-v<version>.zip` |
 
-The release uploads these three packages; GitHub displays each one's SHA-256 digest. It also generates source-code archives separately. Current local source is **v1.0.25**, build **10154**; CI adds the workflow run number. If replacing a release APK with a local build, use the same signing key and a build number higher than the installed package; do not uninstall without backing up app data.
+The release uploads these three packages; GitHub displays each one's SHA-256 digest. It also generates source-code archives separately. Current local source is **v1.0.26**, build **10156**; CI adds the workflow run number. If replacing a release APK with a local build, use the same signing key and a build number higher than the installed package; do not uninstall without backing up app data.
 
 The macOS ZIP contains an **arm64** application; it is not an Intel or universal build. The Android release APK targets arm64; the local build script can also produce an ARM32 APK. Older published releases may omit Windows. iOS has no published installer; CI builds its source without signing. For development builds, read [Development](DEVELOPMENT.md).
 
@@ -28,22 +28,14 @@ The project's current build workflow does not notarize the app. Verify the downl
 
 ## Sync version notes
 
-Published versions from v1.0.18 onward and current `main` source provide pairing settings that the older v1.0.15 release did not:
-
-| Build | Pairing behavior |
-| --- | --- |
-| Legacy v1.0.15 | Uses a public compatibility key; no private pairing-secret setting in its UI. It does not provide confidentiality against someone who knows that key. |
-| Published v1.0.18–v1.0.20 | Exposes a private pairing-secret setting. An empty value falls back to the public compatibility key. |
-| Current source | Pairing is required: sync stays paused until a secret is set, with no fallback key. Generate a code on the Mac and scan its QR code on Android (confirm the import), or type the same code on each device. A wrong secret is reported at handshake. |
-
-The intended environment is a trusted local network. If you still use v1.0.15, use only non-sensitive sample text; do not use that release to synchronize secrets. A private secret in v1.0.18+ does not add authenticated device identity or remove all protocol limitations. Read [Security](../SECURITY.md) before enabling sync.
+Current source uses pairing-free protocol v3; published v1.0.25 packages still use v2. Upgrade both endpoints to v3 builds together; old peers report a version mismatch. AES-GCM uses a built-in default key and ignores old pairing codes. See [Security](../SECURITY.md) for the boundaries.
 
 The macOS package includes modified macshot code and is distributed under [GPLv3](../LICENSE.GPL-3.0). Clipy-authored code remains under [MIT](../LICENSE); see [provenance and source access](../THIRD_PARTY_NOTICES.md).
 
 ## Connect Mac and Android
 
 1. Put both devices on a trusted local network and keep both apps open for the first test. Prefer the same app version on both ends.
-2. In v1.0.18 or newer, save the same strong, private **Pairing secret** in Settings on both devices **before** enabling LAN sync. v1.0.15 has no such setting; apply the limitations above. Avoid mixing private-secret mode with an older build that cannot use that secret.
+2. Enable LAN sync on both devices and refresh the device list. No pairing code is needed. Send text or files directly from the device page.
 3. Enable LAN sync. In each device's device list, enable clipboard sharing to the intended other device. These outgoing sharing switches are directional; configure both ends for two-way automatic sharing. Notification sharing is a separate option.
 4. Copy non-sensitive test text on the Mac and check the Android history. To test the other direction, keep the Android app in the foreground, use its clipboard/import controls as needed, and check Mac history. Android background clipboard capture depends on OS restrictions and the permissions available on your device.
 
@@ -53,7 +45,7 @@ Check that both apps have sync enabled, their listener ports match (default **55
 
 ### Devices appear, but text does not arrive
 
-Check the outgoing clipboard-sharing switch on the **sending** device. In v1.0.18 or newer, check that pairing secrets match. Then retry with both apps visible and non-sensitive sample text. A missing Android notification permission affects notification mirroring and should be investigated separately from clipboard sharing.
+Explicit sends do not require sharing switches. For automatic sync, check the **sending** device’s clipboard-sharing switch. Both endpoints must run protocol v3 builds. Then retry with both apps visible and non-sensitive sample text. A missing Android notification permission affects notification mirroring and should be investigated separately from clipboard sharing.
 
 ### How do I change language?
 

@@ -1,7 +1,7 @@
 # Architecture and code map
 
 Clipy keeps its Swift/AppKit macOS menu-bar application. The Flutter application
-shares UI, history storage and the v2 LAN protocol across Android, Windows and
+shares UI, history storage and the v3 LAN protocol across Android, Windows and
 iOS. Kotlin owns Android background services, the Windows C++ runner owns the
 system clipboard and tray, and Swift owns iOS user-initiated paste and sandbox
 paths. Platform adapters never replace the shared protocol implementation.
@@ -158,6 +158,14 @@ status items and test original menus/popovers without moving existing icons.
 The 15-second AX refresh timer exists only while a panel or classic menu is open;
 closing it cancels outstanding preview work. Workspace/display events can still
 refresh metadata while idle without starting a polling timer.
+
+## Default LAN transport
+
+Current source uses protocol v3 with the same built-in AES-GCM key on every device.
+There is no pairing configuration, QR import or handshake proof. Version checks
+reject v2 peers; outgoing automatic sharing choices remain independent of direct
+text/file sends. The first upgrade clears obsolete encoded pending frames only,
+retaining local history and user data. See PROTOCOL.md and SECURITY.md.
 
 ## Critical lifecycle contracts
 

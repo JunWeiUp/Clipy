@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Do not post pairing secrets, clipboard history, notification contents, passwords,
+Do not post credentials, clipboard history, notification contents, passwords,
 private files, or unredacted crash logs in a public issue.
 
 Use GitHub's **Report a vulnerability** option on this repository's Security tab
@@ -19,22 +19,16 @@ independent security audit.
 
 - The protocol is intended for **trusted local networks**, not Internet exposure.
   Do not port-forward the sync listener or expose it on public Wi-Fi/VPNs.
-- Payloads use AES-256-GCM. A non-empty user pairing secret is derived with HKDF;
-  configure the same strong, private secret on every participating device.
-- **Pairing is mandatory in current source.** There is no built-in fallback key:
-  with an empty secret the device cannot encrypt or handshake and sync stays
-  paused. Older releases (v1.0.15, and v1.0.18–v1.0.20 with an empty secret) used
-  a public compatibility key that provides no confidentiality; such peers can no
-  longer talk to current builds until both sides set the same private secret.
-- The Mac's "Generate" button creates a 100-bit random pairing code and shows it
-  as a `clipy://pair` QR code. Treat the QR code like a password. Android asks for
-  confirmation before importing a pairing link, because any app can open one.
-- hello/welcome carry a pairing proof (the sender's peer ID sealed with the key),
-  so a wrong secret fails at handshake. It proves knowledge of the shared group
-  secret only, not per-device identity.
-- Device IDs and the authorized-devices list are not cryptographic proof of
-  identity. The current protocol has no authenticated key exchange; all devices
-  sharing a secret belong to the same trust group, not isolated per-device pairs.
+- Current source uses AES-256-GCM with a built-in default key, derived as
+  `SHA256("ClipySyncSecret2026")`. There is no pairing code, QR import or shared
+  secret configuration. Older saved pairing codes do not affect current traffic.
+- This key is public. Any LAN participant with the application/source can decrypt
+  or construct payloads; default encryption is not authenticated device identity
+  or a confidentiality boundary against those participants.
+- Protocol v3 deliberately rejects v2 clients. Upgrade both endpoints together.
+  Versions through v1.0.25 use v2; source and packages from v1.0.26 use
+  pairing-free v3.
+- Device IDs and outgoing sharing switches express user choices, not identity.
 - Envelope metadata is not encrypted/authenticated as a whole. Do not equate
   payload encryption with authenticated transport or comprehensive replay protection.
 - Allow-lists primarily control outgoing automatic sync and history replay.
