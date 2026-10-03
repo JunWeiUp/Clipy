@@ -13,7 +13,7 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   shared_preferences: ^2.2.2
-  uuid: ^3.0.7
+  uuid: ^4.6.0
   crypto: ^3.0.3
   encrypt: ^5.0.3
   file_picker: ^11.0.2
