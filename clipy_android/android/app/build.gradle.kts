@@ -95,5 +95,5 @@ dependencies {
     // after the system (Doze / MIUI killer / dataSync 6h quota on Android 15)
     // stops or kills it. Doze-friendly: periodic work is always rescheduled by
     // the system even if START_STICKY delivery is dropped.
-    implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation("androidx.work:work-runtime-ktx:2.12.0")
 }
