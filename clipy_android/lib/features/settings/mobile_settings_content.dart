@@ -25,6 +25,22 @@ class _MobileSettingsContentState extends State<MobileSettingsContent>
   static const _widgetChannel = MethodChannel(
     'com.clipyclone.clipy_android/widget',
   );
+  late final Future<String> _version = _readVersion();
+
+  Future<String> _readVersion() async {
+    try {
+      final info = await const MethodChannel(
+        'com.clipyclone.clipy_android/storage',
+      ).invokeMapMethod<String, String>('getAppVersion');
+      final version = info?['version']?.trim() ?? '';
+      final build = info?['build']?.trim() ?? '';
+      if (version.isEmpty) return '—';
+      return build.isEmpty ? 'v$version' : 'v$version ($build)';
+    } catch (_) {
+      return '—';
+    }
+  }
+
   bool _timerWidgetPinned = false;
   bool _pinning = false;
   late final TextEditingController _excludedAppsController;
@@ -287,6 +303,17 @@ class _MobileSettingsContentState extends State<MobileSettingsContent>
                   l10n.aboutClipy,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 10),
+                FutureBuilder<String>(
+                  future: _version,
+                  builder: (context, snapshot) => Text(
+                    '${l10n.appVersionLabel} ${snapshot.data ?? '—'}',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                 ),
               ],
             ),

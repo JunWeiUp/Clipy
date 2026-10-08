@@ -6,6 +6,8 @@ import 'package:clipy_android/app_localizations.dart';
 import 'package:clipy_android/features/devices/devices_page.dart';
 import 'package:clipy_android/features/settings/mobile_settings_content.dart';
 import 'package:clipy_android/sync_manager.dart';
+import 'package:clipy_android/sync/discovery_scan.dart';
+import 'package:clipy_android/features/devices/device_widgets.dart';
 import 'package:clipy_android/ui/app_components.dart';
 import 'package:clipy_android/ui/app_theme.dart';
 
@@ -46,6 +48,38 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets('device scan progress survives page re-open and resets on stop', (
+    tester,
+  ) async {
+    final progress = SyncManager.instance.discoveryProgress;
+    addTearDown(() => progress.value = const DiscoveryProgress());
+    await mount(tester, const SyncTargetDeviceList(), scale: 1.6);
+    progress.value = const DiscoveryProgress(
+      running: true,
+      completed: 12,
+      total: 64,
+    );
+    await tester.pump();
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator))
+          .value,
+      12 / 64,
+    );
+    expect(find.textContaining('12/64'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: SyncTargetDeviceList())),
+    );
+    await tester.pump();
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    progress.value = const DiscoveryProgress();
+    await tester.pump();
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
 
   testWidgets(
     'connection editor validates before changing the listening port',

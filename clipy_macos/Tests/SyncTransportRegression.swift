@@ -19,6 +19,13 @@ func runSyncTransportRegressionTests() {
     runCryptoChecks(manager, useSecret: useSecret)
     useSecret("transport-test-secret-A")
     runFramingChecks(manager)
+    var capability = SyncEnvelope.make(type: SyncType.hello, peerId: "capability-test")
+    capability.sessionPolicy = "peer-id-v1"
+    let capabilityData = try! JSONEncoder().encode(capability)
+    check(SyncCodec.decodeEnvelope(capabilityData)?.sessionPolicy == "peer-id-v1", "optional session capability")
+    capability.sessionPolicy = nil
+    let legacyData = try! JSONEncoder().encode(capability)
+    check(SyncCodec.decodeEnvelope(legacyData)?.sessionPolicy == nil, "legacy handshake without capability")
     runHandshakeChecks(manager, useSecret: useSecret)
     useSecret("transport-test-secret-A")
     runSessionReaderChecks(manager)

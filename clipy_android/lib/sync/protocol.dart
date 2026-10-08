@@ -16,6 +16,7 @@ class SyncEnvelope {
   final double ts;
   final String? hash;
   final String? payload;
+  final String? sessionPolicy;
 
   SyncEnvelope({
     required this.v,
@@ -27,6 +28,7 @@ class SyncEnvelope {
     required this.ts,
     this.hash,
     this.payload,
+    this.sessionPolicy,
   });
 
   factory SyncEnvelope.make({
@@ -36,6 +38,7 @@ class SyncEnvelope {
     int? port,
     String? hash,
     String? payload,
+    String? sessionPolicy,
   }) {
     return SyncEnvelope(
       v: version,
@@ -47,6 +50,7 @@ class SyncEnvelope {
       ts: DateTime.now().millisecondsSinceEpoch / 1000.0,
       hash: hash,
       payload: payload,
+      sessionPolicy: sessionPolicy,
     );
   }
 
@@ -61,6 +65,7 @@ class SyncEnvelope {
       ts: (json['ts'] as num?)?.toDouble() ?? 0,
       hash: json['hash'] as String?,
       payload: json['payload'] as String?,
+      sessionPolicy: json['sessionPolicy'] as String?,
     );
   }
 
@@ -74,6 +79,7 @@ class SyncEnvelope {
     'ts': ts,
     if (hash != null) 'hash': hash,
     if (payload != null) 'payload': payload,
+    if (sessionPolicy != null) 'sessionPolicy': sessionPolicy,
   };
 }
 

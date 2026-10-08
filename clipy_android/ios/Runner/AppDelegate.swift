@@ -2,14 +2,18 @@ import Flutter
 import UIKit
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var documentController: UIDocumentInteractionController?
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GeneratedPluginRegistrant.register(with: self)
-    if let registrar = self.registrar(forPlugin: "ClipyPlatform") {
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ClipyPlatform") {
       let storage = FlutterMethodChannel(
         name: "com.clipyclone.clipy_android/storage",
         binaryMessenger: registrar.messenger()
@@ -17,6 +21,11 @@ import UIKit
       storage.setMethodCallHandler { call, result in
         let manager = FileManager.default
         switch call.method {
+        case "getAppVersion":
+          result([
+            "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
+            "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+          ])
         case "getAppStorageDirectory":
           guard let base = manager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             result(FlutterError(code: "NO_STORAGE", message: "Application Support is unavailable", details: nil))
@@ -49,7 +58,8 @@ import UIKit
           result(FlutterError(code: "FILE_NOT_FOUND", message: path, details: nil))
           return
         }
-        guard let controller = self?.window?.rootViewController else {
+        // UIScene owns the window; AppDelegate.window is no longer populated.
+        guard let controller = self?.activeViewController else {
           result(FlutterError(code: "NO_ACTIVITY", message: nil, details: nil))
           return
         }
@@ -64,7 +74,18 @@ import UIKit
       )
       registrar.register(ClipyPasteControlFactory(channel: pasteChannel), withId: "clipy/iosPasteControl")
     }
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  private var activeViewController: UIViewController? {
+    let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+    guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }),
+          var controller = scene.windows.first(where: \.isKeyWindow)?.rootViewController else {
+      return nil
+    }
+    while let presented = controller.presentedViewController {
+      controller = presented
+    }
+    return controller
   }
 }
 

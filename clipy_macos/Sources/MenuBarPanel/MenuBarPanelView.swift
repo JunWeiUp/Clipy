@@ -30,7 +30,14 @@ struct MenuBarPanelView: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             if model.page == .home {
                 Divider()
-                footer.padding(.vertical, 8)
+                footer.padding(.top, 8).padding(.bottom, 3)
+                Text("v" + AppVersion.displayString)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.bottom, 5)
+                    .accessibilityLabel(L10n.t(.settingsVersion) + " " + AppVersion.displayString)
             }
         }
         .padding(.horizontal, 14).padding(.top, 14)

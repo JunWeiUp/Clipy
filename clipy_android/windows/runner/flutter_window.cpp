@@ -239,7 +239,14 @@ void FlutterWindow::InstallPlatformChannels() {
           messenger, "com.clipyclone.clipy_android/storage", codec);
   storage_channel_->SetMethodCallHandler(
       [](const auto& call, auto result) {
-        if (call.method_name() == "getAppStorageDirectory") {
+        if (call.method_name() == "getAppVersion") {
+          const auto version = std::to_string(FLUTTER_VERSION_MAJOR) + "." +
+              std::to_string(FLUTTER_VERSION_MINOR) + "." + std::to_string(FLUTTER_VERSION_PATCH);
+          result->Success(flutter::EncodableValue(flutter::EncodableMap{
+              {flutter::EncodableValue("version"), flutter::EncodableValue(version)},
+              {flutter::EncodableValue("build"), flutter::EncodableValue(std::to_string(FLUTTER_VERSION_BUILD))},
+          }));
+        } else if (call.method_name() == "getAppStorageDirectory") {
           auto base = KnownFolderPath(FOLDERID_RoamingAppData);
           result->Success(flutter::EncodableValue(base.empty() ? base : base + "\\ClipyClone"));
         } else if (call.method_name() == "getDownloadsDirectory") {

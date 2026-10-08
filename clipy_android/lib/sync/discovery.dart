@@ -11,8 +11,12 @@ extension SyncDiscoveryMethods on SyncManager {
     bool pruneCache = true,
     bool scanFullSubnet = true,
   }) async {
+    if (!isEnabled) return;
+    await ensureStartedIfEnabled();
     final epoch = _runLifecycle.epoch;
-    if (!_isRunCurrent(epoch)) return;
+    if (!_isRunCurrent(epoch) || !isServerRunning) {
+      throw StateError('Sync listener is not running');
+    }
     if (_isRefreshingDiscovery) return;
     _isRefreshingDiscovery = true;
     try {
@@ -42,24 +46,38 @@ extension SyncDiscoveryMethods on SyncManager {
       _discoveredPeers
         ..clear()
         ..addAll(kept);
-      if (pruneCache) {
-        await _rewriteEndpointCacheAfterRefresh(kept.values.toList(), cache);
-      }
       if (!_isRunCurrent(epoch)) return;
       _emitPeers();
-      triggerCrossBandDiscovery(scanFullSubnet: scanFullSubnet);
+      _scanDebounceTimer?.cancel();
+      _pendingAutoFullScan = false;
+      // Explicit refresh bypasses debounce and waits through the actual scan.
+      await _runDiscovery(scanFullSubnet: scanFullSubnet, userInitiated: true);
+      if (pruneCache && _isRunCurrent(epoch)) {
+        await _rewriteEndpointCacheAfterRefresh(availablePeers, cache);
+      }
     } finally {
       if (_isRunCurrent(epoch)) _isRefreshingDiscovery = false;
     }
   }
 
+  /// User-added endpoints are explicit discovery requests, not automatic sharing.
+  Future<void> connectManualPeer(String host, int peerPort) =>
+      _dial(host, peerPort, reason: 'direct');
+
   void triggerCrossBandDiscovery({bool scanFullSubnet = false}) {
     final epoch = _runLifecycle.epoch;
     if (!_isRunCurrent(epoch)) return;
+    _pendingAutoFullScan |= scanFullSubnet;
     _scanDebounceTimer?.cancel();
     _scanDebounceTimer = Timer(SyncManager._discoveryDebounce, () {
       if (_isRunCurrent(epoch)) {
-        unawaited(_runDiscovery(scanFullSubnet: scanFullSubnet));
+        final full = _pendingAutoFullScan;
+        _pendingAutoFullScan = false;
+        unawaited(
+          _runDiscovery(scanFullSubnet: full).catchError((Object error) {
+            appLog('Discovery failed: $error', level: 'warning');
+          }),
+        );
       }
     });
   }
@@ -96,138 +114,142 @@ extension SyncDiscoveryMethods on SyncManager {
     triggerCrossBandDiscovery(scanFullSubnet: true);
   }
 
-  Future<void> _runDiscovery({bool scanFullSubnet = false}) async {
+  Future<void> _runDiscovery({
+    bool scanFullSubnet = false,
+    bool userInitiated = false,
+  }) async {
     final epoch = _runLifecycle.epoch;
     if (!_isRunCurrent(epoch)) return;
-    if (_discoveryRunning) {
-      // A full scan requested while another run holds the flag must not be
-      // lost (the auto-rediscover cooldown would swallow the retry) — park it
-      // and honor it at the end of the current run.
-      if (scanFullSubnet) _pendingAutoFullScan = true;
+    final active = _discoveryTask;
+    if (active != null) {
+      final covered =
+          (!scanFullSubnet || _activeDiscoveryFull) &&
+          (!userInitiated || _activeDiscoveryExplicit);
+      await active;
+      if (!covered && _isRunCurrent(epoch)) {
+        await _runDiscovery(
+          scanFullSubnet: scanFullSubnet,
+          userInitiated: userInitiated,
+        );
+      }
       return;
     }
-    _discoveryRunning = true;
-    if (_pendingAutoFullScan) {
-      scanFullSubnet = true;
-      _pendingAutoFullScan = false;
-    }
+    _activeDiscoveryFull = scanFullSubnet;
+    _activeDiscoveryExplicit = userInitiated;
+    discoveryProgress.value = const DiscoveryProgress(running: true);
+    final task = _performDiscovery(
+      epoch,
+      scanFullSubnet: scanFullSubnet,
+      userInitiated: userInitiated,
+    );
+    _discoveryTask = task;
     try {
-      final auth = authorizedPeerIds.toSet();
-      final cached = await _readEndpointCache();
-      if (!_isRunCurrent(epoch)) return;
-      for (final e in cached) {
-        if (!_isRunCurrent(epoch)) return;
-        final id = e['peerId'] as String?;
-        if (id == null || id == peerId) continue;
-        if (!auth.contains(id)) continue;
-        final host = e['host'] as String?;
-        final p = e['port'] as int?;
-        if (host == null || p == null) continue;
-        unawaited(_dial(host, p, reason: 'cache', peerId: id, runEpoch: epoch));
-      }
-
-      final prefs = await SharedPreferences.getInstance();
-      if (!_isRunCurrent(epoch)) return;
-      final manual = prefs.getStringList('manualSyncPeers') ?? [];
-      for (final entry in manual) {
-        if (!_isRunCurrent(epoch)) return;
-        final parts = entry.split(':');
-        if (parts.isEmpty || parts.first.isEmpty) continue;
-        final host = parts.first;
-        final p = parts.length >= 2 ? int.tryParse(parts[1]) ?? port : port;
-        final id = _resolvePeerId(host, p);
-        if (id == null || !auth.contains(id)) continue;
-        unawaited(
-          _dial(host, p, reason: 'manual', peerId: id, runEpoch: epoch),
-        );
-      }
-
-      if (scanFullSubnet) {
-        final myIPs = await _enumerateLocalIPv4s();
-        if (!_isRunCurrent(epoch)) return;
-        final connectedHosts = _sessions.values.map((s) => s.host).toSet();
-        final candidates = <String>{};
-        final subnets = <String>{};
-        for (final ip in myIPs) {
-          final parts = ip.split('.');
-          if (parts.length != 4) continue;
-          final a = int.tryParse(parts[0]);
-          final b = int.tryParse(parts[1]);
-          final c = int.tryParse(parts[2]);
-          if (a == null || b == null || c == null) continue;
-          if (!_isLanIPv4(a, b)) continue;
-          subnets.add('$a.$b.$c.0/24');
-          for (var d = 1; d <= 254; d++) {
-            final candidate = '$a.$b.$c.$d';
-            if (myIPs.contains(candidate)) continue;
-            if (connectedHosts.contains(candidate)) continue;
-            candidates.add(candidate);
-          }
-        }
-
-        final list = candidates.toList()..sort();
-        final subnetList = subnets.isEmpty
-            ? '<none>'
-            : (subnets.toList()..sort()).join(', ');
-        appLog(
-          'Subnet scan: ${list.length} hosts on :$port (subnets: $subnetList)',
-        );
-
-        // Aggregate stats across all /24 workers (mirrors the Mac side's ScanStats).
-        // `timeout` dominating connectFailures is the VPN/route-hijack tell-tale.
-        var attempted = 0;
-        final connectFail = <String, int>{};
-        final handshakeFail = <String, int>{};
-        void cf(String label) =>
-            connectFail[label] = (connectFail[label] ?? 0) + 1;
-        void hf(String label) =>
-            handshakeFail[label] = (handshakeFail[label] ?? 0) + 1;
-
-        var index = 0;
-        Future<void> worker() async {
-          while (_isRunCurrent(epoch)) {
-            if (index >= list.length) return;
-            final host = list[index++];
-            attempted++;
-            await _dial(
-              host,
-              port,
-              reason: 'scan',
-              timeout: SyncManager._scanConnectTimeout,
-              onConnectFailure: cf,
-              onHandshakeFailure: hf,
-              runEpoch: epoch,
-            );
-          }
-        }
-
-        await Future.wait(
-          List.generate(SyncManager._scanConcurrency, (_) => worker()),
-        );
-
-        // connect_ok = attempted - connectFailures (those that got past TCP).
-        final connectOkCount =
-            attempted - connectFail.values.fold(0, (a, b) => a + b);
-        final hsFailTotal = handshakeFail.values.fold(0, (a, b) => a + b);
-        final hsOk = connectOkCount - hsFailTotal;
-        final cfStr = connectFail.entries
-            .map((e) => '${e.key}=${e.value}')
-            .join(',');
-        final hfStr = handshakeFail.entries
-            .map((e) => '${e.key}=${e.value}')
-            .join(',');
-        appLog(
-          'Subnet scan finished: attempted=$attempted connect_ok=$connectOkCount '
-          'handshake_ok=${hsOk < 0 ? 0 : hsOk} | connect_fail{$cfStr} handshake_fail{$hfStr}',
-        );
-        if (_isRunCurrent(epoch)) _pruneStaleTimestampMaps();
-      }
+      await task;
     } finally {
-      if (_isRunCurrent(epoch)) _discoveryRunning = false;
+      if (_isRunCurrent(epoch) && identical(_discoveryTask, task)) {
+        _discoveryTask = null;
+        final progress = discoveryProgress.value;
+        discoveryProgress.value = DiscoveryProgress(
+          completed: progress.completed,
+          total: progress.total,
+        );
+      }
     }
-    if (_isRunCurrent(epoch) && _pendingAutoFullScan) {
-      _pendingAutoFullScan = false;
-      unawaited(_runDiscovery(scanFullSubnet: true));
+  }
+
+  Future<void> _performDiscovery(
+    int epoch, {
+    required bool scanFullSubnet,
+    required bool userInitiated,
+  }) async {
+    final auth = authorizedPeerIds.toSet();
+    final targets =
+        <String, ({String host, int port, String? id, String reason})>{};
+    void add(String host, int peerPort, String? id, String reason) {
+      if (peerPort < 1 || peerPort > 65535) return;
+      targets.putIfAbsent(
+        '$host:$peerPort',
+        () => (host: host, port: peerPort, id: id, reason: reason),
+      );
+    }
+
+    // Explicit refresh tries remembered and manual endpoints first, including
+    // peers whose outgoing sharing toggles are off. Background work stays gated.
+    for (final e in await _readEndpointCache()) {
+      if (!_isRunCurrent(epoch)) return;
+      final id = e['peerId'] as String?;
+      final host = e['host'] as String?;
+      final peerPort = e['port'] as int?;
+      if (id == null || id == peerId || host == null || peerPort == null) {
+        continue;
+      }
+      if (!userInitiated && !auth.contains(id)) continue;
+      add(host, peerPort, id, userInitiated ? 'scan' : 'cache');
+    }
+    final prefs = await SharedPreferences.getInstance();
+    if (!_isRunCurrent(epoch)) return;
+    for (final entry in prefs.getStringList('manualSyncPeers') ?? <String>[]) {
+      final parts = entry.split(':');
+      if (parts.first.isEmpty) continue;
+      final host = parts.first;
+      final peerPort = parts.length >= 2
+          ? int.tryParse(parts[1]) ?? port
+          : port;
+      final id = _resolvePeerId(host, peerPort);
+      if (!userInitiated && (id == null || !auth.contains(id))) continue;
+      add(host, peerPort, id, userInitiated ? 'scan' : 'manual');
+    }
+    if (scanFullSubnet) {
+      final myIPs = await _enumerateLocalIPv4s();
+      if (!_isRunCurrent(epoch)) return;
+      final connectedHosts = _sessions.values.map((s) => s.host).toSet();
+      for (final ip in myIPs) {
+        final parts = ip.split('.');
+        if (parts.length != 4) continue;
+        final prefix = parts.take(3).join('.');
+        for (var d = 1; d <= 254; d++) {
+          final host = '$prefix.$d';
+          if (myIPs.contains(host) || connectedHosts.contains(host)) continue;
+          add(host, port, null, 'scan');
+        }
+      }
+    }
+    final started = Stopwatch()..start();
+    final failures = <String, int>{};
+    void failure(String label) => failures[label] = (failures[label] ?? 0) + 1;
+    appLog('Discovery: ${targets.length} endpoints, full=$scanFullSubnet');
+    await runDiscoveryScan(
+      targets.keys.toList(),
+      concurrency: SyncManager._scanConcurrency,
+      isCurrent: () => _isRunCurrent(epoch),
+      onProgress: (completed, total) {
+        discoveryProgress.value = DiscoveryProgress(
+          running: true,
+          completed: completed,
+          total: total,
+        );
+      },
+      probe: (key) {
+        final target = targets[key]!;
+        return _dial(
+          target.host,
+          target.port,
+          peerId: target.id,
+          reason: target.reason,
+          timeout: scanFullSubnet ? SyncManager._scanConnectTimeout : null,
+          onConnectFailure: (f) => failure('connect:$f'),
+          onHandshakeFailure: (f) => failure('handshake:$f'),
+          runEpoch: epoch,
+          bypassScanCooldown: userInitiated,
+        );
+      },
+    );
+    if (_isRunCurrent(epoch)) {
+      appLog(
+        'Discovery finished: ${started.elapsedMilliseconds}ms, '
+        'peers=${_sessions.length}, failures=$failures',
+      );
+      _pruneStaleTimestampMaps();
     }
   }
 
@@ -235,10 +257,17 @@ extension SyncDiscoveryMethods on SyncManager {
     final result = <String>[];
     final diagParts = <String>[];
     try {
-      for (final iface in await NetworkInterface.list(
+      final interfaces = await NetworkInterface.list(
         type: InternetAddressType.IPv4,
         includeLinkLocal: false,
-      )) {
+      );
+      bool isTunnel(String name) =>
+          RegExp(r'^(tun|utun|tap|wg|ppp)').hasMatch(name);
+      interfaces.sort(
+        (a, b) =>
+            (isTunnel(a.name) ? 1 : 0).compareTo(isTunnel(b.name) ? 1 : 0),
+      );
+      for (final iface in interfaces) {
         for (final addr in iface.addresses) {
           final ip = addr.address;
           final parts = ip.split('.').map(int.tryParse).toList();
@@ -260,7 +289,7 @@ extension SyncDiscoveryMethods on SyncManager {
     appLog(
       'Discovery local interfaces: ${diagParts.isEmpty ? "<none>" : diagParts.join(", ")}',
     );
-    return result.toSet().toList()..sort();
+    return result.toSet().toList();
   }
 
   Future<List<String>> localIPv4Addresses() => _enumerateLocalIPv4s();

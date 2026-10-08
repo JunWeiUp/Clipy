@@ -419,7 +419,7 @@ struct SettingsView: View {
       }
       if pageID == "about" {
         Section {
-          LabeledContent(L10n.t(.settingsVersion), value: Self.versionString)
+          LabeledContent(L10n.t(.settingsVersion), value: AppVersion.displayString)
           HStack {
             Button(L10n.t(.showLogs)) { LogWindow.show() }
             Button(L10n.t(.openLogFolder)) {
@@ -500,13 +500,6 @@ struct SettingsView: View {
   }
 
   private static let historyLimitRange = 1...100_000
-
-  private static var versionString: String {
-    let info = Bundle.main.infoDictionary
-    let version = info?["CFBundleShortVersionString"] as? String ?? "—"
-    let build = info?["CFBundleVersion"] as? String ?? "—"
-    return "\(version) (\(build))"
-  }
 
   private struct AuthDeviceRow: Identifiable {
     var id: String { peerId }

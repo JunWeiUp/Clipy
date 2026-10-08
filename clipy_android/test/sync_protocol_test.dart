@@ -5,6 +5,17 @@ import 'package:clipy_android/sync/protocol.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('optional session capability is compatible with legacy handshakes', () {
+    final hello = SyncEnvelope.make(
+      type: SyncType.hello,
+      peerId: 'test',
+      sessionPolicy: 'peer-id-v1',
+    );
+    expect(SyncEnvelope.fromJson(hello.toJson()).sessionPolicy, 'peer-id-v1');
+    final legacy = hello.toJson()..remove('sessionPolicy');
+    expect(SyncEnvelope.fromJson(legacy).sessionPolicy, isNull);
+  });
+
   SyncEnvelope envelope({String? payload}) => SyncEnvelope(
     v: SyncEnvelope.version,
     type: SyncType.history,

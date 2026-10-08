@@ -160,6 +160,38 @@ runner with Xcode. It does not export an IPA or upload to TestFlight. On a Mac,
 verify UI and storage in Simulator; local-network permissions, user paste and
 foreground/background reconnect still need a signed physical-device check.
 
+### Install on a connected iPhone
+
+Use Flutter 3.41 or later and open `clipy_android/ios/Runner.xcworkspace` in
+Xcode. Sign in to your Apple developer account, select the Runner target's
+development team, and enable Developer Mode on the connected phone. Keep the
+existing bundle ID/team when updating an installed copy to retain its data.
+Team identifiers and provisioning profiles are local configuration, not source.
+
+For a command-line Release build that can launch without a debugger, first run
+`flutter pub get --enforce-lockfile` and
+`flutter build ios --release --no-codesign --no-pub` in `clipy_android/`. Then:
+
+```bash
+# Set IOS_TEAM and IOS_DEVICE to your own team ID and connected device ID.
+xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner \
+  -configuration Release -destination "id=$IOS_DEVICE" \
+  -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+  DEVELOPMENT_TEAM="$IOS_TEAM" CODE_SIGN_STYLE=Automatic \
+  -derivedDataPath build/ios-device build
+codesign --verify --deep --strict build/ios-device/Build/Products/Release-iphoneos/Runner.app
+xcrun devicectl device install app --device "$IOS_DEVICE" \
+  build/ios-device/Build/Products/Release-iphoneos/Runner.app
+xcrun devicectl device process launch --device "$IOS_DEVICE" com.clipyclone.clipy.ios
+```
+
+The runner uses Flutter's single-scene `UIScene` lifecycle. Plugin/channel
+registration occurs when the implicit engine initializes; file menus resolve
+the active scene's window. On device, check native Paste import, history copy,
+Files export, the Local Network prompt, and reconnect after background/resume.
+Keep the app foregrounded during sync and transfers. A local signed installation
+does not imply an IPA/TestFlight release; development profile expiry still applies.
+
 ## Manual regression checks
 
 ### App icons

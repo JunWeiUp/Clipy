@@ -169,6 +169,13 @@ retaining local history and user data. See PROTOCOL.md and SECURITY.md.
 
 ## Critical lifecycle contracts
 
+- iOS uses `FlutterSceneDelegate` with a single scene. Register plugins, storage
+  channels and the native Paste control in `didInitializeImplicitFlutterEngine`;
+  file presentation resolves the foreground scene's key window rather than
+  `AppDelegate.window`. Dart stops sync when hidden/paused and restarts on resume.
+  Clipboard imports remain user initiated; remote items do not overwrite the
+  iOS system clipboard automatically.
+
 Token usage refreshes stream up to 365 local calendar days from SQLite into daily
 agent/model aggregates on the existing worker. Individual events are released as
 they are read; the published report retains aggregates only. The detail view builds

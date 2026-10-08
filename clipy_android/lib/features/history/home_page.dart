@@ -264,9 +264,11 @@ class _HomePageState extends State<HomePage>
       l10n.settings,
     ];
     final subtitles = [
-      l10n.historyTagline,
+      Platform.isIOS ? l10n.iosHistoryTagline : l10n.historyTagline,
       l10n.localNetwork,
-      l10n.notificationIntro,
+      Platform.isAndroid
+          ? l10n.notificationIntro
+          : l10n.remoteNotificationIntro,
       l10n.settingsTagline,
     ];
     final icons = [
