@@ -108,6 +108,7 @@ extension SyncSessionMethods on SyncManager {
     void Function(String connectFailure)? onConnectFailure,
     void Function(String hsFailure)? onHandshakeFailure,
     int? runEpoch,
+    bool bypassScanCooldown = false,
   }) async {
     final epoch = runEpoch ?? _runLifecycle.epoch;
     if (!_isRunCurrent(epoch)) return;
@@ -120,7 +121,8 @@ extension SyncSessionMethods on SyncManager {
     final last = _lastDialAt[key];
     if (last != null &&
         now.difference(last) < SyncManager._dialDedupTtl &&
-        reason == 'scan') {
+        reason == 'scan' &&
+        !bypassScanCooldown) {
       return;
     }
     _lastDialAt[key] = now;
@@ -204,6 +206,7 @@ extension SyncSessionMethods on SyncManager {
     );
     final hello = SyncEnvelope.make(
       type: SyncType.hello,
+      sessionPolicy: syncSessionPolicy,
       peerId: peerId,
       name: displayName,
       port: port,
@@ -339,6 +342,7 @@ extension SyncSessionMethods on SyncManager {
     if (env.type == SyncType.hello) {
       final welcome = SyncEnvelope.make(
         type: SyncType.welcome,
+        sessionPolicy: syncSessionPolicy,
         peerId: peerId,
         name: displayName,
         port: port,
@@ -361,21 +365,29 @@ extension SyncSessionMethods on SyncManager {
 
     final existing = _sessions[env.peerId];
     if (existing != null) {
-      // Align with Mac: replace the old socket. Dropping the new fd while the
-      // peer keeps dialing causes Replacing/errno=54 storms and lost flushes.
+      // Simultaneous refresh creates two crossed sockets. Both peers must
+      // select the SAME connection: the smaller peer ID owns the outgoing one.
+      if (!shouldReplaceSyncSession(
+        remotePolicy: env.sessionPolicy,
+        localId: peerId,
+        remoteId: env.peerId,
+        existingInbound: existing.inbound,
+        incomingInbound: inbound,
+      )) {
+        await subscription.cancel();
+        socket.destroy();
+        return;
+      }
       appLog(
         'Duplicate session for ${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}, replacing existing @ ${existing.host}',
         level: 'warning',
       );
-      await existing.subscription?.cancel();
-      try {
-        await existing.socket.close();
-      } catch (_) {}
-      if (identical(_sessions[env.peerId], existing)) {
-        _sessions.remove(env.peerId);
-      }
+      // No await between arbitration and adoption: another handshake must
+      // never observe a transient empty slot and choose the crossed socket.
+      unawaited(existing.subscription?.cancel());
+      existing.socket.destroy();
+      _sessions.remove(env.peerId);
     }
-    if (await abandonIfStopped()) return;
 
     final name = env.name ?? env.peerId;
     final peerPort = env.port ?? port;
@@ -388,6 +400,7 @@ extension SyncSessionMethods on SyncManager {
       port: peerPort,
       socket: socket,
       isClient: peerId.compareTo(env.peerId) < 0,
+      inbound: inbound,
     );
     session.subscription = subscription;
     // Any leftover bytes after the handshake frame belong to the session.

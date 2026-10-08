@@ -43,3 +43,14 @@ The existing native Android countdown widget and its hour/minute/second setup sc
 Run `flutter analyze --no-pub` and `flutter test --no-pub` from `clipy_android/`, then build the affected Android target. The controller/repository tests cover concurrent refreshes, stale searches, literal query escaping and filtering before pagination. Widget tests cover invalid-port protection, small-screen large-text settings and cancellation of destructive actions.
 
 README captures use an isolated Android emulator and fictional database entries. Never use personal clipboard history, real notification content or pairing secrets in public images. Label source previews separately from published packages.
+
+Device refresh shows a progress bar and completed/total endpoint probes until
+the real scan and handshakes finish; discovered devices appear immediately. The
+refresh action is disabled during scanning and reports the final device count,
+including an explicit empty result. Leaving/reopening the page reads the manager's
+current progress; disabling sync clears it. No UI timer or background scan loop
+is added.
+
+The Settings footer displays version and build number below the app description
+on Android, iOS and Windows. Read native package/build metadata once per settings
+view; do not hardcode the source version or poll for changes.

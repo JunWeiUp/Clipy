@@ -263,7 +263,20 @@ class AppStrings {
   String get noDevicesFound => _t('未发现设备', 'No devices found');
   String get sameWifiHint =>
       _t('请确认其他设备连接到同一个 Wi-Fi', 'Ensure other devices are on the same WiFi');
+  String get appVersionLabel => _t('版本', 'Version');
   String get refreshDevices => _t('刷新设备', 'Refresh Devices');
+  String discoveryScanning(int completed, int total, int found) => total == 0
+      ? _t('正在准备搜索…', 'Preparing discovery…')
+      : _t(
+          '正在搜索 $completed/$total · 已发现 $found 台设备',
+          'Scanning $completed/$total · $found devices found',
+        );
+  String discoveryFinished(int found) => found == 0
+      ? _t(
+          '搜索完成，未发现设备。请确认两端已开启同步并连接同一 Wi-Fi。',
+          'Search complete. No devices found. Enable sync on both devices and use the same Wi-Fi.',
+        )
+      : _t('搜索完成，已发现 $found 台设备', 'Search complete: $found devices found');
   String get refreshingDevices => _t('正在刷新…', 'Refreshing…');
   String get devicesRefreshed => _t('已刷新局域网设备', 'LAN devices refreshed');
   String get appRuntimeLogs =>
@@ -383,6 +396,18 @@ class AppStrings {
   String get notifications => _t('通知', 'Notifications');
   String get historyTagline =>
       _t('复制过的，随时找回来。', 'Everything you copied. Within reach.');
+  String get iosHistoryTagline => _t(
+    '点按粘贴导入文字，或查看其他设备同步的内容。',
+    'Tap Paste to import text, or browse items synced from your devices.',
+  );
+  String get iosConnectionHint => _t(
+    '允许本地网络访问，并保持 Clipy 在前台进行同步或文件传输。返回应用后会自动重连。',
+    'Allow Local Network access and keep Clipy open to sync or transfer files. Reconnects automatically when you return.',
+  );
+  String get remoteNotificationIntro => _t(
+    '查看 Android 设备共享的通知。',
+    'View notifications shared by your Android devices.',
+  );
   String get devicesTagline =>
       _t('让内容，在设备之间流动。', 'Your devices. Working together.');
   String get settingsTagline =>

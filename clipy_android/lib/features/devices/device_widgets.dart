@@ -142,6 +142,7 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
   void initState() {
     super.initState();
     _peers = SyncManager.instance.availablePeers;
+    SyncManager.instance.discoveryProgress.addListener(_scanChanged);
     _subscription = SyncManager.instance.onPeersChanged.listen((peers) {
       if (mounted) setState(() => _peers = peers);
     });
@@ -150,8 +151,13 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
     }
   }
 
+  void _scanChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    SyncManager.instance.discoveryProgress.removeListener(_scanChanged);
     _subscription?.cancel();
     super.dispose();
   }
@@ -164,7 +170,13 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
         pruneCache: true,
         scanFullSubnet: true,
       );
-      if (mounted) setState(() => _peers = SyncManager.instance.availablePeers);
+      if (mounted) {
+        setState(() => _peers = SyncManager.instance.availablePeers);
+        showClipyMessage(
+          context,
+          context.l10n.discoveryFinished(_peers.length),
+        );
+      }
     } catch (_) {
       if (mounted) showClipyMessage(context, context.l10n.operationFailed);
     } finally {
@@ -189,6 +201,8 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
     final l10n = context.l10n;
     final manager = SyncManager.instance;
     final colors = Theme.of(context).colorScheme;
+    final progress = manager.discoveryProgress.value;
+    final refreshing = _refreshing || progress.running;
     final ids = {
       ...manager.authorizedPeerIds,
       ..._peers.map((p) => p.peerId),
@@ -205,9 +219,9 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
               ),
             ),
             IconButton(
-              onPressed: manager.isEnabled && !_refreshing ? _refresh : null,
+              onPressed: manager.isEnabled && !refreshing ? _refresh : null,
               tooltip: l10n.refreshDevices,
-              icon: _refreshing
+              icon: refreshing
                   ? const SizedBox(
                       width: 20,
                       height: 20,
@@ -226,7 +240,25 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
             ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
           ),
         ),
-        if (ids.isEmpty)
+        if (refreshing)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                LinearProgressIndicator(value: progress.fraction),
+                const SizedBox(height: 8),
+                Text(
+                  l10n.discoveryScanning(
+                    progress.completed,
+                    progress.total,
+                    _peers.length,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (ids.isEmpty && !refreshing)
           Card(
             child: Padding(
               padding: const EdgeInsets.all(24),
@@ -409,7 +441,13 @@ class _ManualPeerSectionState extends State<ManualPeerSection> {
       }
       await prefs.setStringList('manualSyncPeers', peers);
       if (mounted) setState(() => _peers = peers);
-      if (!remove) SyncManager.instance.triggerCrossBandDiscovery();
+      if (!remove) {
+        final parts = entry.split(':');
+        await SyncManager.instance.connectManualPeer(
+          parts.first,
+          parts.length > 1 ? int.parse(parts[1]) : SyncManager.instance.port,
+        );
+      }
     } catch (_) {
       if (mounted) showClipyMessage(context, context.l10n.operationFailed);
     } finally {

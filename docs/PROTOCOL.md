@@ -18,6 +18,7 @@ Do **not** change framing/crypto without bumping `v` and updating both ends plus
 | `peerId` | string | Stable device id |
 | `name` | string? | Display name (hello/welcome) |
 | `port` | int? | Listen port (hello/welcome) |
+| `sessionPolicy` | string? | Optional hello/welcome capability; updated Flutter advertises `peer-id-v1`; missing/unknown uses legacy duplicate replacement |
 | `ts` | number | Unix seconds |
 | `hash` | string? | Content / notif hash for ack |
 | `payload` | string? | Base64(AES-GCM blob) when encrypted |
@@ -58,6 +59,14 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
   - Device-list **Send Text / Send File** dials with `reason=direct` (no auth) and uses `history.direct` (text) / `file.*` (files).
   - All other outbound dials (`cache`, `reconnect`, `deliver`, `manual`, `syncTick`, startup) require the target `peerId` ∈ authorized set (clipboard ∪ notification). Unauthorized cache entries are not dialed. Reconnect may use `direct` when pending `history.direct` frames exist for that peer.
   - Inbound connections still accepted. Auth is **one-sided (sender)**: allow-lists gate outbound fanout / `history.fetch` responses / proactive dial; receivers accept inbound `history` / `history.direct` / notif without reciprocal authorization.
+- Flutter explicit refresh bypasses the 600ms background debounce and scan
+  cooldown, awaits all probes/handshakes, and displays completed/total probes
+  plus discovered peers. Known endpoints and manually entered IPs are attempted
+  first, physical LAN interfaces before VPN interfaces. Progress is ephemeral;
+  stop invalidates workers and resets progress, with no new polling loop.
+- Adding a manual IP is an explicit `direct` dial even before authorization.
+  Explicit refresh also probes saved manual addresses without authorization;
+  background discovery still requires outgoing sharing authorization.
 - Endpoint cache key: `clipy.peerEndpoints.v2` (SharedPreferences / UserDefaults), TTL 24h.
 - User **refresh** prunes disk cache to **live sessions ∪ still-authorized** peers (drops unauthorized ghosts). Settings/open must **not** prune or full-scan.
 - On sync **start** / network restore: dial **authorized** cache only; peers appear in the LAN list after handshake (not pre-filled from cache).
@@ -67,7 +76,13 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
 
 - After hello/welcome, one session per `peerId`.
 - **Client role**: lexicographically smaller `peerId` owns reconnect on pong timeout / EOF (avoids dual redial storms).
-- Duplicate inbound/outbound for same peer: **replace** the old session (do not silently drop the new one).
+- Flutter duplicate crossed connections: prefer the socket initiated by the
+  lexicographically smaller peer ID on both ends. Accept a sole connection in
+  either direction; replace same-direction stale sessions. Arbitration/adoption
+  is atomic across awaits. This rule is used only when the remote handshake
+  advertises `sessionPolicy=peer-id-v1`; old clients and macOS retain the existing
+  replacement policy. This optional metadata does not change v3 framing or crypto;
+  macOS decodes it but does not advertise it.
 - Authorization: **one-sided**. Outbound fanout / proactive dial / `history.fetch` responses use clipboard or notification allow-lists on the sending device. Receivers accept inbound history and notifications without requiring the sender on their allow-list. Device-list `history.direct` needs no allow-list on either side.
 
 ## Reliability
@@ -121,7 +136,7 @@ Entry: `ClipyApplication` → `PlatformChannels.registerAll` when sync is enable
 
 - FGS holds a **timed** `PARTIAL_WAKE_LOCK` (10 min), renewed on `onStartCommand` and each `syncTick` (not an indefinite hold).
 - `syncTick` is adaptive: **30s** when reconnect/pending work is needed, **90s** when all authorized peers are connected and idle. Still does **not** send `history.fetch`.
-- Subnet scan concurrency **24**; syncTick-triggered full scan min gap **5 min**. Network restore prefers **endpoint cache dial** before `/24` full scan.
+- Flutter subnet scan concurrency **64**, connect timeout **800ms**; syncTick-triggered full scan min gap **5 min**. Network restore prefers **endpoint cache dial** before `/24` full scan.
 - `ClipyApplication.onCreate` warms the FlutterEngine only when `flutter.syncEnabled` is true (same gate as BootReceiver).
 - FGS type is **`specialUse`** (Android 14+): Android 15 enforces a **6h/24h quota** on `dataSync`, which used to force-stop the always-on :5566 listener every few hours. API 29-33 falls back to `dataSync`.
 - **WorkManager watchdog** (`SyncGuardWorker`, 15 min periodic) re-asserts the FGS after the system kills it (Doze / MIUI) — it survives process death, unlike `START_STICKY` whose delivery Doze often drops. It runs as a **foreground worker** (`specialUse`/`dataSync` `ForegroundInfo`) so launching the FGS is legal under the Android 12+ background-FGS-start restriction. Armed by `ClipyApplication.onCreate` / `startForegroundSyncService` / `BootReceiver`; cancelled by `stopForegroundSyncService`. `onTaskRemoved` also re-asserts the FGS on swipe. Redmi/MIUI still requires the user to grant 自启动 + 省电无限制.

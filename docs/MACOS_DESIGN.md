@@ -67,3 +67,7 @@ Canvas overlays and floating capture tools are specialized surfaces. Keep their 
 5. Avoid new polling, timers, image effects or persistent data caches for decoration. Verify existing functional regression tests when navigation or menu structure changes.
 
 References: [Apple menus](https://developer.apple.com/design/human-interface-guidelines/menus), [Apple materials](https://developer.apple.com/design/human-interface-guidelines/materials).
+
+The home menu-bar panel shows the installed bundle version and build number in
+a small secondary label at the bottom right, below the action row. It shares
+the version formatter with About settings and adds no timer or background work.

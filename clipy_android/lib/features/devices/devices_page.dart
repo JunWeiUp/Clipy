@@ -106,7 +106,7 @@ class _DevicesPageState extends State<DevicesPage> {
               ),
               const SizedBox(height: 10),
               Text(
-                l10n.connectionHint,
+                Platform.isIOS ? l10n.iosConnectionHint : l10n.connectionHint,
                 style: TextStyle(color: colors.onPrimaryContainer, height: 1.5),
               ),
             ],

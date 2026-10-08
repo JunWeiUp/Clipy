@@ -30,6 +30,9 @@ struct SyncEnvelope: Codable {
     var ts: TimeInterval
     var hash: String?
     var payload: String?
+    // Optional capability; legacy/Mac peers do not advertise arbitration.
+    // Decode/ignore unknown capabilities without changing v3 framing/crypto.
+    var sessionPolicy: String? = nil
 
     static let version = 3
 

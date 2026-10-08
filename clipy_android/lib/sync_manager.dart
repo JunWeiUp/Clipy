@@ -23,6 +23,8 @@ import 'sync/crypto.dart';
 import 'sync/diagnostics.dart';
 import 'sync/protocol.dart';
 import 'sync/run_lifecycle.dart';
+import 'sync/discovery_scan.dart';
+import 'sync/session_policy.dart';
 
 export 'sync/protocol.dart' show SyncEnvelope, SyncType;
 
@@ -140,6 +142,7 @@ class _Session {
   DateTime lastPong = DateTime.now();
   StreamSubscription<List<int>>? subscription;
   final bool isClient;
+  final bool inbound;
 
   _Session({
     required this.peerId,
@@ -147,6 +150,7 @@ class _Session {
     required this.port,
     required this.socket,
     required this.isClient,
+    required this.inbound,
   });
 }
 
@@ -179,11 +183,11 @@ class SyncManager with WidgetsBindingObserver {
   static const Duration _discoveryDebounce = Duration(milliseconds: 600);
   static const Duration _handshakeTimeout = Duration(seconds: 2);
   static const Duration _connectTimeout = Duration(seconds: 3);
-  static const Duration _scanConnectTimeout = Duration(milliseconds: 350);
+  static const Duration _scanConnectTimeout = Duration(milliseconds: 800);
   static const Duration _pingInterval = Duration(seconds: 30);
   static const Duration _pendingTtl = Duration(hours: 24);
   static const int _pendingMax = 80;
-  static const int _scanConcurrency = 24;
+  static const int _scanConcurrency = 64;
   static const Duration _dialDedupTtl = Duration(seconds: 4);
   static const Duration _minReconnectInterval = Duration(seconds: 2);
   static const int _syncTickBusyMs = 30000;
@@ -236,12 +240,16 @@ class SyncManager with WidgetsBindingObserver {
   Timer? _pingTimer;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   bool _isRefreshingDiscovery = false;
-  bool _discoveryRunning = false;
+  Future<void>? _discoveryTask;
+  bool _activeDiscoveryFull = false;
+  bool _activeDiscoveryExplicit = false;
+  final discoveryProgress = ValueNotifier<DiscoveryProgress>(
+    const DiscoveryProgress(),
+  );
   int _autoRediscoverFailStreak = 0;
   DateTime? _lastAutoRediscoverAt;
 
-  /// A full /24 scan that arrived while another discovery run held
-  /// [_discoveryRunning]; replayed once that run finishes (see _runDiscovery).
+  /// Preserve full-scan intent across debounce calls.
   bool _pendingAutoFullScan = false;
   Future<void> _iosLifecycleTask = Future<void>.value();
   final SyncRunLifecycle _runLifecycle = SyncRunLifecycle();
@@ -616,7 +624,8 @@ class SyncManager with WidgetsBindingObserver {
     }
     _reconnectTimers.clear();
     _reconnectBackoffSec.clear();
-    _discoveryRunning = false;
+    _discoveryTask = null;
+    discoveryProgress.value = const DiscoveryProgress();
     _isRefreshingDiscovery = false;
     _pendingAutoFullScan = false;
     for (final e in _historyFetchCatchUp.entries) {

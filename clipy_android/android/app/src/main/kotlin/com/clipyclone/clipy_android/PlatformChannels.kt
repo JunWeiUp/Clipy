@@ -165,6 +165,13 @@ object PlatformChannels {
         MethodChannel(engine.dartExecutor.binaryMessenger, STORAGE)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "getAppVersion" -> {
+                        @Suppress("DEPRECATION")
+                        val info = app.packageManager.getPackageInfo(app.packageName, 0)
+                        @Suppress("DEPRECATION")
+                        val build = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
+                        result.success(mapOf("version" to (info.versionName ?: ""), "build" to build.toString()))
+                    }
                     "getAppStorageDirectory" -> result.success(app.filesDir.absolutePath)
                     "getDownloadsDirectory" -> {
                         val downloads = Environment.getExternalStoragePublicDirectory(
