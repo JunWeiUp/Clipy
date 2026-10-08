@@ -35,7 +35,10 @@ final class SystemNotificationRouter: NSObject, UNUserNotificationCenterDelegate
     ) {
         let request = response.notification.request
         if request.identifier.hasPrefix(Self.fileNotificationIdentifierPrefix) {
-            revealFile(from: request.content.userInfo)
+            if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+                let userInfo = request.content.userInfo
+                DispatchQueue.main.async { self.revealFile(from: userInfo) }
+            }
         } else {
             NotificationManager.shared.handleUserResponse(response)
         }

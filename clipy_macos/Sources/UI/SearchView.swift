@@ -563,10 +563,9 @@ struct SearchView: View {
     }
 
     private var historyTable: some View {
-        Table(viewModel.results, selection: $viewModel.selectedIDs) {
+        Table(of: HistorySearchResult.self, selection: $viewModel.selectedIDs) {
             TableColumn(L10n.t(.content)) { result in
                 historyContentRow(for: result)
-                    .onDrag { dragItemProvider(for: result.entry) }
                     .onAppear { viewModel.onResultRowAppear(result) }
             }
             .width(min: 220, ideal: 340, max: .infinity)
@@ -584,6 +583,13 @@ struct SearchView: View {
                     .lineLimit(1)
             }
             .width(68)
+        } rows: {
+            ForEach(viewModel.results) { result in
+                // Let the table own dragging so cell content does not swallow
+                // clicks needed for native row selection and double-click actions.
+                TableRow(result)
+                    .itemProvider { dragItemProvider(for: result.entry) }
+            }
         }
         .tableStyle(.inset(alternatesRowBackgrounds: false))
         .contextMenu(forSelectionType: HistoryEntry.ID.self) { ids in

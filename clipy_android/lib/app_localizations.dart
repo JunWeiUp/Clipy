@@ -247,6 +247,36 @@ class AppStrings {
           .replaceFirst('%s', peerIdShort);
   String get lanDevices => _t('局域网设备', 'Devices on Network');
   String get sendFile => _t('发送文件…', 'Send File…');
+  String get sharedFiles => _t('分享至 Clipy', 'Share to Clipy');
+  String get closeShare => _t('完成', 'Done');
+  String get sharedFilesHint => _t(
+    '确认文件并选择接收设备。仅在点击发送后传输。',
+    'Review the files and choose a device. Transfer starts only when you tap Send.',
+  );
+  String get shareNoDevices => _t(
+    '暂无设备。请在局域网设备页启用同步并刷新，文件会保留到关闭此页。',
+    'No devices yet. Enable sync and refresh in Devices. Files stay available until you close this page.',
+  );
+  String get shareImportFailed => _t(
+    '部分文件无法读取。请先下载到本机，再重新分享并允许读取。',
+    'Some files could not be read. Download them locally, then share again with read access.',
+  );
+  String shareImportError(String code) => switch (code) {
+    'tooLarge' => _t(
+      '部分文件超过单文件 1 GiB 上限，请选择较小文件。',
+      'Some files exceed the 1 GiB per-file limit. Choose smaller files.',
+    ),
+    'storageFull' => _t(
+      '临时存储空间不足，请关闭其它分享或释放手机空间后重试。',
+      'Not enough temporary storage. Close other shares or free space and retry.',
+    ),
+    'tooMany' => _t('每次最多分享 32 个文件。', 'Share up to 32 files at a time.'),
+    'busy' => _t(
+      '待处理分享过多，请先完成或关闭其它分享。',
+      'Too many pending shares. Finish or close another share first.',
+    ),
+    _ => shareImportFailed,
+  };
   String get sendText => _t('发送文本…', 'Send Text…');
   String sendTextTo(String deviceName) =>
       _t('发送文本到 $deviceName', 'Send text to $deviceName');

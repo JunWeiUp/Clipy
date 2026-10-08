@@ -9,6 +9,8 @@
 #include <gdiplus.h>
 
 #include <memory>
+#include <map>
+#include <string>
 
 #include "win32_window.h"
 #include "screenshot_capture.h"
@@ -33,6 +35,8 @@ class FlutterWindow : public Win32Window {
   void RemoveTrayIcon();
   void ShowFromTray();
   void ShowTrayMenu();
+  bool NotifyReceivedFile(const std::string& path, const std::string& name);
+  void RemoveReceipt(UINT id);
 
   // The project to run.
   flutter::DartProject project_;
@@ -48,6 +52,10 @@ class FlutterWindow : public Win32Window {
   ULONG_PTR gdiplus_token_ = 0;
   UINT taskbar_created_message_ = 0;
   bool tray_added_ = false;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> receipt_channel_;
+  // Separate native icon IDs prevent a later receipt changing an earlier tap.
+  std::map<UINT, std::string> receipt_paths_;
+  UINT next_receipt_id_ = 10;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

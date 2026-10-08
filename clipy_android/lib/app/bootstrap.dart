@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import '../features/transfers/transfer_notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -98,6 +99,7 @@ Future<void> _attachUi() async {
   }
 
   runApp(const MyApp());
+  if (Platform.isIOS) unawaited(TransferNotifications.initialize());
 
   // One-time: sync is enabled but notifications can't surface. Android 13+
   // denies POST_NOTIFICATIONS by default, which hides even the FGS persistent

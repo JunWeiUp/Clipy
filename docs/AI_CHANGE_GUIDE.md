@@ -23,6 +23,7 @@ The source is authoritative when a guide and implementation disagree.
 | Android screens | `clipy_android/lib/features/`, `lib/ui/` | Features own page state; repositories own persistence; follow `ANDROID_DESIGN.md`. | `scripts/check.sh flutter` |
 | Windows desktop system integration | `clipy_android/windows/runner/`, `lib/clipboard_manager.dart` | C++ owns clipboard, screenshot selection, tray and system paths; Dart owns durable history and sync. | Windows CI build, ZIP extraction and real desktop screenshot smoke |
 | iOS app integration | `clipy_android/ios/Runner/`, `lib/app/bootstrap.dart`, `lib/storage_paths.dart` | User-initiated paste only; foreground sync lifecycle; no Android listener calls. | unsigned iOS build, simulator launch and device permission check |
+| iOS direct share / large files | `ios/ShareExtension/`, `ios/Shared/`, `lib/features/transfers/`, both file-transfer receivers | Share sheet sends directly with explicit peer choice; 1 GiB/file, bounded buffers and cancellable sockets; preserve same-group signing. | `scripts/test_ios_share_transfer.py`, Flutter flow-control tests, share-sheet send smoke, signed-device build |
 
 `Sources/` in macOS rows means `clipy_macos/Sources/`. `build_macos_app.sh`
 collects Swift files recursively, so adding a source file needs no project-file edit.

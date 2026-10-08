@@ -1,0 +1,4 @@
+// Shared defaults; host-specific team and App Group overrides stay untracked.
+CLIPY_APP_GROUP = group.com.clipyclone.clipy.ios
+CLIPY_SHARE_BUNDLE_ID = com.clipyclone.clipy.ios.ShareExtension
+#include? "Signing.local.xcconfig"

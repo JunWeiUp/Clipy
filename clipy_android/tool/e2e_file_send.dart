@@ -49,8 +49,8 @@ Future<void> main(List<String> args) async {
 Future<bool> sendFileProbe(String host, int port, File file) async {
   const chunkSize = 1024 * 1024;
   final length = await file.length();
-  if (length > 512 * 1024 * 1024) {
-    throw ArgumentError('The sync protocol accepts files up to 512 MiB.');
+  if (length > 1024 * 1024 * 1024) {
+    throw ArgumentError('The sync protocol accepts files up to 1 GiB.');
   }
   final digest = (await sha256.bind(file.openRead()).first).toString();
   final chunks = (length + chunkSize - 1) ~/ chunkSize;

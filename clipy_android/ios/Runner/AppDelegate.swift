@@ -1,19 +1,80 @@
 import Flutter
 import UIKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+  private var pendingNotificationPath: String?
   private var documentController: UIDocumentInteractionController?
+  private let shareQueue = DispatchQueue(label: "clipy.share.inbox", qos: .userInitiated)
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    UNUserNotificationCenter.current().delegate = self
+    NotificationCenter.default.addObserver(self, selector: #selector(openPendingReceivedFile),
+      name: UIScene.didActivateNotification, object: nil)
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ClipyPlatform") {
+      let receipts = FlutterMethodChannel(name: "com.clipyclone.clipy_android/transfer_notifications", binaryMessenger: registrar.messenger())
+      receipts.setMethodCallHandler { call, result in
+        let center = UNUserNotificationCenter.current()
+        if call.method == "initialize" {
+          center.requestAuthorization(options: [.alert, .sound]) { _, error in
+            DispatchQueue.main.async {
+              if let error { result(FlutterError(code: "NOTIFICATION", message: error.localizedDescription, details: nil)) }
+              else { result(nil) }
+            }
+          }
+          return
+        }
+        guard call.method == "received", let args = call.arguments as? [String: Any],
+              let path = args["path"] as? String, FileManager.default.fileExists(atPath: path) else {
+          result(FlutterMethodNotImplemented); return
+        }
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        let sender = args["sender"] as? String ?? ""
+        let chinese = Locale.preferredLanguages.first?.hasPrefix("zh") == true
+        let content = UNMutableNotificationContent()
+        content.title = chinese ? "已接收：\(name)" : "Received: \(name)"
+        content.body = chinese ? "来自 \(sender) · 点击打开文件" : "From \(sender) · Tap to open file"
+        content.sound = .default
+        // Store a Documents-relative path: the sandbox prefix can change on update.
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        guard url.path.hasPrefix(documents.path + "/") else { result(nil); return }
+        content.userInfo = ["receivedFile": String(url.path.dropFirst(documents.path.count + 1))]
+        center.add(UNNotificationRequest(identifier: "clipy.file." + UUID().uuidString, content: content, trigger: nil)) { error in
+          DispatchQueue.main.async {
+            if let error { result(FlutterError(code: "NOTIFICATION", message: error.localizedDescription, details: nil)) }
+            else { result(nil) }
+          }
+        }
+      }
+      let shares = FlutterMethodChannel(name: "com.clipyclone.clipy_android/incoming_share", binaryMessenger: registrar.messenger())
+      shares.setMethodCallHandler { [weak self] call, result in
+        guard ["next", "complete", "configure"].contains(call.method) else { result(FlutterMethodNotImplemented); return }
+        self?.shareQueue.async {
+          do {
+            let value: [String: Any]?
+            if call.method == "configure" {
+              guard let args = call.arguments as? [String: Any] else { throw ShareInboxStore.Failure.invalid }
+              try ShareSettingsStore.configure(args)
+              value = nil
+            } else if call.method == "next" { value = try ShareInboxStore.next() }
+            else {
+              guard let args = call.arguments as? [String: Any], let id = args["id"] as? String else { throw ShareInboxStore.Failure.invalid }
+              try ShareInboxStore.remove(id)
+              value = nil
+            }
+            DispatchQueue.main.async { result(value) }
+          } catch { DispatchQueue.main.async { result(FlutterError(code: "SHARE_INBOX", message: "Shared files are unavailable", details: nil)) } }
+        }
+      }
       let storage = FlutterMethodChannel(
         name: "com.clipyclone.clipy_android/storage",
         binaryMessenger: registrar.messenger()
@@ -73,6 +134,49 @@ import UIKit
         binaryMessenger: registrar.messenger()
       )
       registrar.register(ClipyPasteControlFactory(channel: pasteChannel), withId: "clipy/iosPasteControl")
+    }
+  }
+
+  override func userNotificationCenter(_ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    if notification.request.identifier.hasPrefix("clipy.file.") { completionHandler([.banner, .list, .sound]) }
+    else { super.userNotificationCenter(center, willPresent: notification, withCompletionHandler: completionHandler) }
+  }
+
+  override func userNotificationCenter(_ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+    guard response.notification.request.identifier.hasPrefix("clipy.file.") else {
+      super.userNotificationCenter(center, didReceive: response, withCompletionHandler: completionHandler); return
+    }
+    if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+       let relative = response.notification.request.content.userInfo["receivedFile"] as? String {
+      DispatchQueue.main.async { [weak self] in
+        self?.pendingNotificationPath = relative
+        self?.openPendingReceivedFile()
+      }
+    }
+    completionHandler()
+  }
+
+  @objc private func openPendingReceivedFile() {
+    guard let relative = pendingNotificationPath, let controller = activeViewController else { return }
+    pendingNotificationPath = nil
+    let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].standardizedFileURL
+    let url = root.appendingPathComponent(relative).standardizedFileURL
+    guard url.path.hasPrefix(root.path + "/") else { return }
+    let chinese = Locale.preferredLanguages.first?.hasPrefix("zh") == true
+    guard FileManager.default.fileExists(atPath: url.path) else {
+      let alert = UIAlertController(title: chinese ? "文件已移动或删除" : "File moved or deleted",
+        message: url.lastPathComponent, preferredStyle: .alert)
+      alert.addAction(UIAlertAction(title: chinese ? "好" : "OK", style: .default))
+      controller.present(alert, animated: true); return
+    }
+    let preview = UIDocumentInteractionController(url: url)
+    documentController = preview
+    preview.delegate = self
+    if !preview.presentPreview(animated: true) {
+      _ = preview.presentOptionsMenu(from: controller.view.bounds, in: controller.view, animated: true)
     }
   }
 
@@ -161,5 +265,14 @@ private final class PasteReceiver: UIView {
       guard let text = object as? String else { return }
       DispatchQueue.main.async { self?.onText?(text) }
     }
+  }
+}
+
+extension AppDelegate: UIDocumentInteractionControllerDelegate {
+  func documentInteractionControllerViewControllerForPreview(_ controller: UIDocumentInteractionController) -> UIViewController {
+    activeViewController ?? UIViewController()
+  }
+  func documentInteractionControllerDidEndPreview(_ controller: UIDocumentInteractionController) {
+    documentController = nil
   }
 }

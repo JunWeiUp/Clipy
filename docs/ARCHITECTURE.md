@@ -4,9 +4,64 @@ Clipy keeps its Swift/AppKit macOS menu-bar application. The Flutter application
 shares UI, history storage and the v3 LAN protocol across Android, Windows and
 iOS. Kotlin owns Android background services, the Windows C++ runner owns the
 system clipboard and tray, and Swift owns iOS user-initiated paste and sandbox
-paths. Platform adapters never replace the shared protocol implementation.
+paths. Main-app platform adapters retain the shared protocol implementation;
+the iOS Share Extension has a bounded native one-shot client for the same wire
+contract, without starting a second background sync service.
+
+## File receipt notifications
+
+A receipt is posted only after SHA-256 verification, final rename and database
+commit. The native notification channel is best-effort and cannot change the ACK
+or completed-transfer state. Android registers it on the Application engine so
+background reception works; immutable PendingIntents carry bounded, private path
+tokens and cold/warm Activity taps reuse folder opening with viewer fallback.
+iOS requests alert permission on UI startup, shows foreground banners, and stores
+Documents-relative paths so taps survive sandbox relocation. A pending tap waits
+for scene activation, then previews the file or offers opening options. Missing
+files produce a message. macOS requests normal alert permission and reveals the
+final file in Finder; missing files fall back to the receive directory. Windows
+uses native tray receipts with separate IDs (maximum 32); taps reveal in Explorer,
+and native resources are released on timeout, tap, Explorer restart or app exit.
+Notification permission, Focus mode and OS policies still control presentation.
+No new polling, network service or file-content duplication is introduced.
 
 ## Repository layout
+
+### Mobile incoming shares
+
+- Android `SharedFileInbox` accepts `SEND` / `SEND_MULTIPLE` with `*/*` through
+  `MainActivity.onCreate` and `onNewIntent`. It deduplicates stream/ClipData URIs,
+  reads granted `content://` streams on one expiring worker, and bounds the inbox
+  to four batches, 32 files per batch, 1 GiB per file and 4 GiB staged in total.
+  Available disk capacity reserves 64 MiB. It rejects private `file://` paths
+  and this app's own FileProvider; missing display names use a safe fallback.
+- iOS `ShareExtension` reviews files and selects/sends to a device inside the
+  system share sheet. UIKit uses the same file-list/device-choice/Send sequence
+  as Android. It never opens the main app or starts a Flutter engine. File-provider
+  reads coordinate security-scoped URLs, try alternate representations and copy
+  in 64 KiB blocks through `Shared/ShareInboxStore`; the same size/count limits
+  apply, with distinct size/storage/read errors and cancellation between reads.
+- `ShareSettingsStore` exchanges only name, language, listening port and up to
+  128 cached endpoints via the App Group. Flutter publishes a snapshot on UI
+  startup/resume and peer changes. Explicit Refresh probes those endpoints and
+  at most two physical-interface /24 ranges, with 12 concurrent short-lived
+  connections; manual IPv4/port discovery is available. No idle scan or listener.
+- `ShareTransferClient` is an extension-safe, one-shot v3 sender using the same
+  default AES-GCM key, JSON frames, 1 MiB chunks, SHA-256 and final ACK contract.
+  Its separate session identity never replaces the containing app's session.
+  It verifies the selected peer ID on connect, handles ping/early rejection,
+  bounds each frame, and streams one chunk at a time. Closing cancels sockets,
+  file-provider reads and pending scans; temporary files are then removed.
+- Android's `incoming_share.dart` drains one batch at a time; `SharedFilesPage`
+  requires explicit device selection/Send and skips successes on same-peer retry.
+  Closing removes the batch. iOS retains this bridge only to drain legacy staged
+  shares. New iOS shares are never published to that main-app queue.
+- Android clears process-orphaned files on the next share. iOS excludes temporary
+  files from backups and prunes entries older than 24 hours on the next import.
+  There is no cleanup timer; the Android worker expires after 30 seconds idle.
+- Flutter file receivers pause socket reads with two decrypt/write operations
+  in flight, draining buffered frames before resuming. This bounds memory for
+  1 GiB transfers even when native decryption is slower than the network.
 
 ```text
 clipy_macos/

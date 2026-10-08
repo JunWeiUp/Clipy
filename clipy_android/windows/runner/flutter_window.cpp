@@ -76,6 +76,9 @@ void FlutterWindow::OnDestroy() {
   if (clipboard_channel_) clipboard_channel_->SetMethodCallHandler(nullptr);
   if (screenshot_channel_) screenshot_channel_->SetMethodCallHandler(nullptr);
   if (storage_channel_) storage_channel_->SetMethodCallHandler(nullptr);
+  while (!receipt_paths_.empty()) RemoveReceipt(receipt_paths_.begin()->first);
+  if (receipt_channel_) receipt_channel_->SetMethodCallHandler(nullptr);
+  receipt_channel_.reset();
   if (open_folder_channel_) open_folder_channel_->SetMethodCallHandler(nullptr);
   clipboard_channel_.reset();
   screenshot_channel_.reset();
@@ -109,6 +112,7 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   if (message == taskbar_created_message_ && taskbar_created_message_ != 0) {
+    receipt_paths_.clear();
     tray_added_ = false;
     AddTrayIcon();
     return 0;
@@ -124,6 +128,30 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       }
       return 0;
     case kTrayMessage:
+      if (HIWORD(lparam) != kTrayId) {
+        const UINT id = HIWORD(lparam);
+        auto receipt = receipt_paths_.find(id);
+        if (receipt != receipt_paths_.end()) {
+          if (LOWORD(lparam) == NIN_BALLOONUSERCLICK || LOWORD(lparam) == NIN_SELECT) {
+            if (!RevealFileInExplorer(receipt->second)) {
+              const auto separator = receipt->second.find_last_of("/\\");
+              if (separator != std::string::npos) {
+                const auto folder = receipt->second.substr(0, separator);
+                const int length = MultiByteToWideChar(CP_UTF8, 0, folder.data(), static_cast<int>(folder.size()), nullptr, 0);
+                std::wstring wide(static_cast<size_t>(length), L'\0');
+                if (length > 0) {
+                  MultiByteToWideChar(CP_UTF8, 0, folder.data(), static_cast<int>(folder.size()), wide.data(), length);
+                  ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                }
+              }
+            }
+            RemoveReceipt(id);
+          } else if (LOWORD(lparam) == NIN_BALLOONTIMEOUT) {
+            RemoveReceipt(id);
+          }
+        }
+        return 0;
+      }
       if (LOWORD(lparam) == WM_LBUTTONUP ||
           LOWORD(lparam) == WM_LBUTTONDBLCLK ||
           LOWORD(lparam) == NIN_SELECT) {
@@ -256,6 +284,19 @@ void FlutterWindow::InstallPlatformChannels() {
         }
       });
 
+  receipt_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      messenger, "com.clipyclone.clipy_android/transfer_notifications", codec);
+  receipt_channel_->SetMethodCallHandler([this](const auto& call, auto result) {
+    if (call.method_name() == "initialize") { result->Success(); return; }
+    if (call.method_name() != "received") { result->NotImplemented(); return; }
+    const auto* path_value = MapValue(call.arguments(), "path");
+    const auto* name_value = MapValue(call.arguments(), "name");
+    const auto* path = path_value ? std::get_if<std::string>(path_value) : nullptr;
+    const auto* name = name_value ? std::get_if<std::string>(name_value) : nullptr;
+    if (path && name && NotifyReceivedFile(*path, *name)) result->Success();
+    else result->Error("NOTIFICATION", "Could not post file receipt");
+  });
+
   open_folder_channel_ =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           messenger, "com.clipyclone.clipy_android/open_folder", codec);
@@ -324,4 +365,46 @@ void FlutterWindow::ShowTrayMenu() {
   } else {
     PostMessage(GetHandle(), WM_NULL, 0, 0);
   }
+}
+
+void FlutterWindow::RemoveReceipt(UINT id) {
+  NOTIFYICONDATAW icon{};
+  icon.cbSize = sizeof(icon);
+  icon.hWnd = GetHandle();
+  icon.uID = id;
+  Shell_NotifyIconW(NIM_DELETE, &icon);
+  receipt_paths_.erase(id);
+}
+
+bool FlutterWindow::NotifyReceivedFile(const std::string& path, const std::string& name) {
+  // Bounded native resources, released on tap, timeout, Explorer restart or exit.
+  if (receipt_paths_.size() >= 32) RemoveReceipt(receipt_paths_.begin()->first);
+  if (next_receipt_id_ > 65535) next_receipt_id_ = 10;
+  const UINT id = next_receipt_id_++;
+  if (receipt_paths_.count(id)) RemoveReceipt(id);
+  NOTIFYICONDATAW icon{};
+  icon.cbSize = sizeof(icon);
+  icon.hWnd = GetHandle();
+  icon.uID = id;
+  icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+  icon.uCallbackMessage = kTrayMessage;
+  icon.hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_APP_ICON));
+  wcscpy_s(icon.szTip, L"Clipy - Received file");
+  if (!Shell_NotifyIconW(NIM_ADD, &icon)) return false;
+  icon.uVersion = NOTIFYICON_VERSION_4;
+  Shell_NotifyIconW(NIM_SETVERSION, &icon);
+  const int length = MultiByteToWideChar(CP_UTF8, 0, name.data(), static_cast<int>(name.size()), nullptr, 0);
+  std::wstring wide(static_cast<size_t>(length), L'\0');
+  if (length > 0) MultiByteToWideChar(CP_UTF8, 0, name.data(), static_cast<int>(name.size()), wide.data(), length);
+  const bool chinese = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
+  const std::wstring title = chinese ? L"已接收文件" : L"File received";
+  const std::wstring body = wide + (chinese ? L"\n点击在文件资源管理器中显示" : L"\nClick to show in Explorer");
+  icon.uFlags = NIF_INFO;
+  icon.dwInfoFlags = NIIF_INFO;
+  wcsncpy_s(icon.szInfoTitle, title.c_str(), _TRUNCATE);
+  wcsncpy_s(icon.szInfo, body.c_str(), _TRUNCATE);
+  receipt_paths_[id] = path;
+  if (Shell_NotifyIconW(NIM_MODIFY, &icon)) return true;
+  RemoveReceipt(id);
+  return false;
 }
