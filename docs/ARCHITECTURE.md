@@ -240,6 +240,10 @@ the view and resets when the agent filter changes or the hosting view is release
 
 - Android owns one cached Flutter engine. `PlatformChannels.registerAll` is
   Application-owned so storage/notification processing works without an Activity.
+- Android `MainActivity` uses `singleTask` with the application task affinity:
+  launcher, incoming shares and notification taps reuse the same engine host via
+  `onNewIntent`. An evicted legacy/OEM duplicate finishes instead of leaving a
+  detached black window in Recents; UI-attach retries stop on eviction/destruction.
 - `lib/app/bootstrap.dart` mounts a minimal root immediately using the default
   `main` entrypoint. Native `ui.attach` mounts the full Android UI; do not introduce
   a custom entrypoint or require a visible page to acknowledge sync traffic.
