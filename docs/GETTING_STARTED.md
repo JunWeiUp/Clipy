@@ -4,7 +4,7 @@
 
 ## Downloads
 
-Open the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest) (currently [v1.0.28](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.28)) and choose the asset matching your device. The latest link follows new public releases and excludes drafts; the release notes give the exact version and build number.
+Open the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest) (currently [v1.0.29](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.29)) and choose the asset matching your device. The latest link follows new public releases and excludes drafts; the release notes give the exact version and build number.
 
 | Device | Asset to download from the release page |
 | --- | --- |
