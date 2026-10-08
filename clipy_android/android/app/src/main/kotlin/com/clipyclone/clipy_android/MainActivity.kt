@@ -36,6 +36,8 @@ class MainActivity: FlutterActivity() {
     private var notificationsMethodChannel: MethodChannel? = null
     private var shareChannel: MethodChannel? = null
     private var notificationFilePath: String? = null
+    private val uiAttachHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var engineEvicted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -176,6 +178,7 @@ class MainActivity: FlutterActivity() {
     // be a few hundred ms from its setMethodCallHandler when a cold Activity
     // attaches right after process start.
     private fun nudgeUiAttach(attempt: Int) {
+        if (engineEvicted || isFinishing || isDestroyed) return
         val engine = FlutterEngineCache.getInstance().get(ClipyApplication.ENGINE_ID) ?: return
         MethodChannel(engine.dartExecutor.binaryMessenger, ClipyApplication.SYNC_CONTROL_CHANNEL)
             .invokeMethod("ui.attach", null, object : MethodChannel.Result {
@@ -192,7 +195,7 @@ class MainActivity: FlutterActivity() {
             Log.w("ClipyMain", "ui.attach not handled after ${attempt + 1} attempts; UI may stay blank")
             return
         }
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+        uiAttachHandler.postDelayed({
             nudgeUiAttach(attempt + 1)
         }, 250L)
     }
@@ -212,7 +215,18 @@ class MainActivity: FlutterActivity() {
         return FlutterEngineCache.getInstance().get(ClipyApplication.ENGINE_ID) == null
     }
 
+    // A restored legacy task (or an OEM-created duplicate) must not survive
+    // after another Activity takes the sole engine: Flutter cannot resume its
+    // detached view. Keep the engine alive, but retire this unusable window.
+    override fun detachFromFlutterEngine() {
+        engineEvicted = true
+        uiAttachHandler.removeCallbacksAndMessages(null)
+        super.detachFromFlutterEngine()
+        finish()
+    }
+
     override fun onDestroy() {
+        uiAttachHandler.removeCallbacksAndMessages(null)
         shareChannel?.let { SharedFileInbox.detach(it) }
         shareChannel = null
         // Keep NLS MethodChannel attached: after force-kill recovery the engine

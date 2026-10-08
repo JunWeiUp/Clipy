@@ -133,7 +133,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.29** · Default local build **10190** · Latest published release: **[v1.0.29](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.29)** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.30** · Default local build **10221** · Latest published release: **[v1.0.29](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.29)** · [Build metadata](clipy_android/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
@@ -310,10 +310,10 @@ cd clipy_android
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.29
+./scripts/package_windows.ps1 -Version 1.0.30
 ```
 
-The package is `dist/ClipyClone-Windows-x64-v1.0.29.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
+The package is `dist/ClipyClone-Windows-x64-v1.0.30.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
 
 ### iOS (Flutter + Swift)
 
