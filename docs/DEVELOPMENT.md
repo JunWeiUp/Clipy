@@ -168,6 +168,39 @@ development team, and enable Developer Mode on the connected phone. Keep the
 existing bundle ID/team when updating an installed copy to retain its data.
 Team identifiers and provisioning profiles are local configuration, not source.
 
+The `Runner` and `ShareExtension` targets must use the same team and the same
+registered App Group. The project default is `group.com.clipyclone.clipy.ios`;
+override `CLIPY_APP_GROUP` for your own registered group, enable App Groups on
+both App IDs and regenerate both provisioning profiles. The extension bundle ID
+must remain prefixed by the containing app's bundle ID. Keep personal team IDs,
+certificates and provisioning files outside Git. Unsigned builds validate
+compilation but cannot validate these device entitlements.
+
+`ios/Signing.xcconfig` supplies shared defaults and optionally includes the
+gitignored `ios/Signing.local.xcconfig`. Put local `DEVELOPMENT_TEAM`,
+`CLIPY_APP_GROUP` and (if the default extension ID is already registered)
+`CLIPY_SHARE_BUNDLE_ID` overrides in that local file. Both targets inherit them;
+do not store a personal team ID in `project.pbxproj`. Preserve the main app's
+bundle ID when choosing a unique extension ID.
+
+App Groups are currently listed as supported for free Apple Developer accounts
+in [Apple's capability table](https://developer.apple.com/help/account/reference/supported-capabilities-ios).
+Personal Team provisioning for both targets has been verified; its seven-day
+profile expiry still requires periodic rebuilding/reinstallation. Account limits,
+identifier availability and the actual generated profile remain authoritative.
+
+For incoming-share QA, share a PDF, image, ZIP and an unknown-extension file,
+then a mixed multi-file selection from another app. Check Android cold start,
+warm `onNewIntent`, and a cached headless engine; check iPhone's Share Extension,
+direct device selection/refresh/manual IP and byte-for-byte file delivery. No transfer should
+start before selecting a device and tapping Send. Verify unreadable URIs, the
+32-file/1-GiB-per-file limits, low storage, offline retry and cleanup after closing.
+The iPhone extension must send directly without opening its containing app.
+Run `python3 scripts/test_ios_share_transfer.py` on macOS (Python `cryptography`
+required): it compiles the production Swift sender, validates v3 encryption
+against an independent receiver, streams exactly 1 GiB with bounded memory,
+and tests over-limit, early rejection, wrong peer, cancellation and disconnect.
+
 For a command-line Release build that can launch without a debugger, first run
 `flutter pub get --enforce-lockfile` and
 `flutter build ios --release --no-codesign --no-pub` in `clipy_android/`. Then:
@@ -271,3 +304,15 @@ endpoints must run protocol v3. Set `CLIPY_SYNC_PORT` for non-default ports. See
 
 This setup does not retroactively audit old releases, Git history or third-party
 licenses; an automated public release does not resolve distribution obligations.
+
+### File receipt notification checks
+
+`flutter test test/transfer_notifications_test.dart` verifies final-path routing
+and best-effort handling of denied/missing native notification services. For
+native smoke testing, send synthetic files using `tool/e2e_file_send.dart` to a
+receiver with notifications enabled, then tap its system receipt. Verify Finder
+selection on macOS, folder/viewer fallback on Android, document preview on iOS,
+and Explorer selection on Windows. Repeat with two differently named files and
+with the receiver relaunched before tapping (mobile). Removing a received file
+must not open an unrelated one. Focus/notification settings can suppress banners.
+Windows receipts require the tray process to remain running.

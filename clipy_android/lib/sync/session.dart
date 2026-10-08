@@ -385,6 +385,7 @@ extension SyncSessionMethods on SyncManager {
       // No await between arbitration and adoption: another handshake must
       // never observe a transient empty slot and choose the crossed socket.
       unawaited(existing.subscription?.cancel());
+      existing.fileReceiveFlow?.close();
       existing.socket.destroy();
       _sessions.remove(env.peerId);
     }
@@ -403,6 +404,15 @@ extension SyncSessionMethods on SyncManager {
       inbound: inbound,
     );
     session.subscription = subscription;
+    session.fileReceiveFlow = FileReceiveFlowControl(
+      pause: subscription.pause,
+      drain: () {
+        if (identical(_sessions[env.peerId], session)) _drainBuffer(env.peerId);
+      },
+      resume: () {
+        if (identical(_sessions[env.peerId], session)) subscription.resume();
+      },
+    );
     // Any leftover bytes after the handshake frame belong to the session.
     if (buffer.length > 0) {
       session.buffer.add(buffer.takeBytes());
@@ -514,6 +524,7 @@ extension SyncSessionMethods on SyncManager {
   void _drainBuffer(String peerId) {
     final session = _sessions[peerId];
     if (session == null) return;
+    if (session.fileReceiveFlow?.isAtCapacity == true) return;
     final bytes = session.buffer.takeBytes();
     var offset = 0;
     final remaining = BytesBuilder(copy: false);
@@ -540,6 +551,10 @@ extension SyncSessionMethods on SyncManager {
       final frame = bytes.sublist(offset + 4, offset + 4 + length);
       offset += 4 + length;
       _handleFrame(frame, from: peerId, host: session.host);
+      if (session.fileReceiveFlow?.isAtCapacity == true) {
+        remaining.add(bytes.sublist(offset));
+        break;
+      }
     }
     if (remaining.length > 0) {
       session.buffer.add(remaining.takeBytes());
@@ -553,6 +568,7 @@ extension SyncSessionMethods on SyncManager {
   }) async {
     final session = _sessions.remove(peerId);
     if (session == null) return;
+    session.fileReceiveFlow?.close();
     await session.subscription?.cancel();
     try {
       await session.socket.close();

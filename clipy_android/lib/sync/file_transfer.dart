@@ -358,13 +358,16 @@ extension SyncFileTransferMethods on SyncManager {
     // Chunks carry msgId = fileId (see the send loop above).
     final incoming = _incomingFiles[env.msgId];
     if (incoming == null || incoming.peerId != from) return;
+    final flow = _sessions[from]?.fileReceiveFlow;
+    flow?.enqueue();
     // Decrypt may hop through the native crypto channel; chain each chunk so
     // the async gap can't reorder writes (TCP order must reach the part file).
     incoming.queue = incoming.queue
         .then((_) => _processFileChunk(env, incoming))
         .catchError((Object e) {
           appLog('file.chunk processing error: $e', level: 'error');
-        });
+        })
+        .whenComplete(() => flow?.complete());
   }
 
   Future<void> _processFileChunk(
@@ -502,6 +505,15 @@ extension SyncFileTransferMethods on SyncManager {
         ),
       );
       _fileReceivedController.add(incoming.fileName);
+      // Notification delivery is best-effort and must never turn a committed
+      // transfer into a failed ACK (permissions may be denied).
+      unawaited(
+        TransferNotifications.received(
+          path: target.path,
+          name: target.uri.pathSegments.last,
+          sender: incoming.senderName,
+        ),
+      );
       appLog(
         'Received file ${incoming.fileName} (${incoming.fileSize} bytes) '
         'from ${incoming.senderName}',

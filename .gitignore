@@ -48,6 +48,7 @@ __pycache__/
 .env.*
 !.env.example
 **/key.properties
+clipy_android/ios/Signing.local.xcconfig
 *.p12
 *.pfx
 *.mobileprovision

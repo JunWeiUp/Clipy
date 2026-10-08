@@ -19,6 +19,17 @@ On History, the page title/intro collapses after scrolling 48 logical pixels and
 
 ## Feature ownership
 
+System sharing opens a separate file-review page on Android and iOS. Show the
+received filenames and sizes before device selection; enable Send only after
+the user chooses a peer. Send sequentially, show per-file success/progress, and
+keep failures available for retry without resending successful files to the
+same peer. The Devices link preserves the share while enabling sync or refreshing
+discovery. Closing the review removes temporary files. On iPhone the native share extension
+shows the same file/size list, device selection and explicit Send flow in the
+share sheet, with refresh/manual-IP controls and per-file progress/success. It
+sends directly without opening the main app. Enforce 1 GiB per file and report
+unreadable files, low storage and oversize files separately.
+
 | Area | Implementation | Behavior |
 | --- | --- | --- |
 | History | `features/history/history_feed_controller.dart`, `ui/clipboard_history_list.dart` | Debounced full-database search, type filters, date groups, tap to copy, hold to preview/send, pull to refresh, recoverable errors |

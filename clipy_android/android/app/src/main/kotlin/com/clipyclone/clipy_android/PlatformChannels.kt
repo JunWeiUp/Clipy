@@ -47,6 +47,7 @@ object PlatformChannels {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     fun registerAll(app: ClipyApplication, engine: FlutterEngine) {
+        TransferNotifications.register(app, engine)
         registerStorage(app, engine)
         registerClipboard(app, engine)
         registerNotifications(app, engine)

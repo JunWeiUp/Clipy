@@ -13,6 +13,8 @@ import '../../ui/active_page_stack.dart';
 import '../../ui/scroll_collapsing_header.dart';
 import '../devices/devices_page.dart';
 import '../transfers/received_files_page.dart';
+import '../transfers/incoming_share.dart';
+import '../transfers/shared_files_page.dart';
 import '../logs/log_page.dart';
 import '../settings/mobile_settings_content.dart';
 
@@ -23,7 +25,9 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  IncomingShareCoordinator? _incomingShares;
+  StreamSubscription? _sharePeersSubscription;
   int _selectedIndex = 0;
   final _visited = <int>{0};
   late final _transition = AnimationController(
@@ -43,6 +47,32 @@ class _HomePageState extends State<HomePage>
   @override
   void initState() {
     super.initState();
+    if (Platform.isAndroid || Platform.isIOS) {
+      WidgetsBinding.instance.addObserver(this);
+      _incomingShares = IncomingShareCoordinator(
+        present: (share) async {
+          if (!mounted) return;
+          await Navigator.push<void>(
+            context,
+            MaterialPageRoute(builder: (_) => SharedFilesPage(share: share)),
+          );
+        },
+        onError: () {
+          if (mounted) {
+            showClipyMessage(context, context.l10n.shareImportFailed);
+          }
+        },
+      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _incomingShares?.start();
+      });
+      if (Platform.isIOS) {
+        _sharePeersSubscription = SyncManager.instance.onPeersChanged.listen(
+          (_) => _updateShareConfiguration(),
+        );
+        unawaited(_updateShareConfiguration());
+      }
+    }
     _progressSubscription = SyncManager.instance.onFileProgress.listen((
       progress,
     ) {
@@ -71,10 +101,34 @@ class _HomePageState extends State<HomePage>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _incomingShares?.dispose();
+    _sharePeersSubscription?.cancel();
     _fileSubscription?.cancel();
     _progressSubscription?.cancel();
     _transition.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _incomingShares?.drain();
+    if (state == AppLifecycleState.resumed && Platform.isIOS) {
+      unawaited(_updateShareConfiguration());
+    }
+  }
+
+  Future<void> _updateShareConfiguration() async {
+    try {
+      final config = await SyncManager.instance.shareExtensionConfiguration();
+      if (!mounted) return;
+      config['language'] = AppLanguageController.instance.locale.languageCode;
+      await const MethodChannel(
+        'com.clipyclone.clipy_android/incoming_share',
+      ).invokeMethod<void>('configure', config);
+    } catch (_) {
+      // The extension can still discover peers itself; never block normal app startup.
+    }
   }
 
   void _select(int index) {

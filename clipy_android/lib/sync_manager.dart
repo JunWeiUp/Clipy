@@ -19,12 +19,14 @@ import 'database/pending_text_sync_repository.dart';
 import 'log_manager.dart';
 import 'notification_manager.dart';
 import 'storage_paths.dart';
+import 'features/transfers/transfer_notifications.dart';
 import 'sync/crypto.dart';
 import 'sync/diagnostics.dart';
 import 'sync/protocol.dart';
 import 'sync/run_lifecycle.dart';
 import 'sync/discovery_scan.dart';
 import 'sync/session_policy.dart';
+import 'sync/file_receive_flow_control.dart';
 
 export 'sync/protocol.dart' show SyncEnvelope, SyncType;
 
@@ -134,6 +136,7 @@ class _PendingFrame {
 }
 
 class _Session {
+  FileReceiveFlowControl? fileReceiveFlow;
   final String peerId;
   final String host;
   final int port;
@@ -204,7 +207,7 @@ class SyncManager with WidgetsBindingObserver {
   /// 1 MiB plaintext ≈ 1.37 MiB base64 frame — well under the 2 MiB cap and
   /// half the per-frame overhead of the old 512 KiB size.
   static const int fileChunkSize = 1024 * 1024;
-  static const int fileMaxBytes = 512 * 1024 * 1024;
+  static const int fileMaxBytes = 1024 * 1024 * 1024;
   static const Duration _fileIncomingIdleTimeout = Duration(minutes: 2);
   final Map<String, _IncomingFileTransfer> _incomingFiles = {};
   final Map<String, Completer<bool>> _fileAckWaiters = {};
@@ -317,6 +320,27 @@ class SyncManager with WidgetsBindingObserver {
 
   List<String> get availableDeviceNames =>
       availablePeers.map((p) => p.displayName).toList();
+
+  /// Snapshot only; the iOS share extension owns its short-lived direct client.
+  Future<Map<String, Object>> shareExtensionConfiguration() async {
+    final cached = await _readEndpointCache();
+    final liveIDs = availablePeers.map((peer) => peer.peerId).toSet();
+    return {
+      'name': displayName,
+      'port': port,
+      'peers': [
+        for (final peer in availablePeers)
+          {
+            'peerId': peer.peerId,
+            'name': peer.displayName,
+            'host': peer.host,
+            'port': peer.port,
+          },
+        for (final peer in cached)
+          if (!liveIDs.contains(peer['peerId'])) peer,
+      ].take(128).toList(),
+    };
+  }
 
   // -----------------------------------------------------------------------
   // Init / lifecycle
@@ -650,6 +674,7 @@ class SyncManager with WidgetsBindingObserver {
     final closingSessions = Map<String, _Session>.from(_sessions);
     for (final entry in closingSessions.entries) {
       final s = entry.value;
+      s.fileReceiveFlow?.close();
       await s.subscription?.cancel();
       try {
         await s.socket.close();

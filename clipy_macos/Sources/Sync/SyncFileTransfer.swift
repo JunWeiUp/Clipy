@@ -12,7 +12,7 @@ import CryptoKit
 /// discard state and the user can simply retry.
 extension SyncManager {
     static let fileChunkSize = 1024 * 1024
-    static let fileMaxBytes = 512 * 1024 * 1024
+    static let fileMaxBytes = 1024 * 1024 * 1024
     static let fileIncomingIdleTimeout: TimeInterval = 120
     /// Kernel buffer sizing for throughput; correctness no longer relies on a
     /// whole frame fitting here because writes are event-driven.
@@ -280,7 +280,7 @@ extension SyncManager {
             return
         }
         if meta.size < 0 || meta.size > Self.fileMaxBytes || meta.chunkSize <= 0
-            || meta.chunkSize > Self.fileMaxBytes || meta.sha256.isEmpty {
+            || meta.chunkSize > Self.fileChunkSize || meta.sha256.isEmpty {
             appLog("file.meta rejected (invalid) from \(peerId.prefix(8))", level: .warning)
             sendFileAck(to: peerId, fileId: meta.fileId, ok: false, error: "tooLarge")
             return

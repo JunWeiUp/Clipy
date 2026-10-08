@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.os.PowerManager
 import android.provider.DocumentsContract
@@ -33,6 +34,44 @@ class MainActivity: FlutterActivity() {
     private val SYNC_CHANNEL_ID = "clipy_sync_foreground"
     private var clipboardChangeListener: ClipboardChangeListener? = null
     private var notificationsMethodChannel: MethodChannel? = null
+    private var shareChannel: MethodChannel? = null
+    private var notificationFilePath: String? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        notificationFilePath = TransferNotifications.takePath(this, intent)
+        if (savedInstanceState == null) receiveShare(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notificationFilePath = TransferNotifications.takePath(this, intent)
+        receiveShare(intent)
+    }
+
+    override fun onPostResume() {
+        super.onPostResume()
+        val path = notificationFilePath ?: return
+        notificationFilePath = null
+        openFolder(path, object : MethodChannel.Result {
+            override fun success(result: Any?) {}
+            override fun error(code: String, message: String?, details: Any?) {
+                android.widget.Toast.makeText(this@MainActivity,
+                    if (resources.configuration.locales[0].language == "zh")
+                        "文件已移动或没有可用的打开方式" else "File moved or no viewer available",
+                    android.widget.Toast.LENGTH_LONG).show()
+            }
+            override fun notImplemented() {}
+        })
+    }
+
+    private fun receiveShare(intent: Intent) {
+        if (intent.action != Intent.ACTION_SEND && intent.action != Intent.ACTION_SEND_MULTIPLE) return
+        SharedFileInbox.enqueue(applicationContext, Intent(intent))
+        // Recreation must not import the same launch intent a second time.
+        setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
+    }
 
     companion object {
         private const val REBIND_THROTTLE_MS = 30_000L
@@ -45,6 +84,7 @@ class MainActivity: FlutterActivity() {
         // When Application skipped warm-start (sync off), cache this engine so
         // a later FGS start shares one isolate / :5566 bind.
         (application as? ClipyApplication)?.adoptEngineIfNeeded(flutterEngine)
+        shareChannel = SharedFileInbox.attach(applicationContext, flutterEngine)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             if (call.method == "openFolder") {
@@ -173,6 +213,8 @@ class MainActivity: FlutterActivity() {
     }
 
     override fun onDestroy() {
+        shareChannel?.let { SharedFileInbox.detach(it) }
+        shareChannel = null
         // Keep NLS MethodChannel attached: after force-kill recovery the engine
         // stays alive without Activity, and clearing here would send posts only
         // into NativePendingPostStore until the UI opens again.
