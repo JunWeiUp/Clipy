@@ -25,6 +25,7 @@ import 'sync/diagnostics.dart';
 import 'sync/protocol.dart';
 import 'sync/run_lifecycle.dart';
 import 'sync/discovery_scan.dart';
+import 'sync/discovery_refresh.dart';
 import 'sync/session_policy.dart';
 import 'sync/file_receive_flow_control.dart';
 
@@ -242,7 +243,7 @@ class SyncManager with WidgetsBindingObserver {
   Timer? _scanDebounceTimer;
   Timer? _pingTimer;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
-  bool _isRefreshingDiscovery = false;
+  final _discoveryRefresh = DiscoveryRefreshCoordinator();
   Future<void>? _discoveryTask;
   bool _activeDiscoveryFull = false;
   bool _activeDiscoveryExplicit = false;
@@ -650,7 +651,7 @@ class SyncManager with WidgetsBindingObserver {
     _reconnectBackoffSec.clear();
     _discoveryTask = null;
     discoveryProgress.value = const DiscoveryProgress();
-    _isRefreshingDiscovery = false;
+    _discoveryRefresh.reset();
     _pendingAutoFullScan = false;
     for (final e in _historyFetchCatchUp.entries) {
       e.value.debounce?.cancel();

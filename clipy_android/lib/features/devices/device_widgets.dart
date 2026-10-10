@@ -166,10 +166,7 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
     if (_refreshing || !SyncManager.instance.isEnabled) return;
     setState(() => _refreshing = true);
     try {
-      await SyncManager.instance.refreshDiscovery(
-        pruneCache: true,
-        scanFullSubnet: true,
-      );
+      await SyncManager.instance.refreshDiscovery();
       if (mounted) {
         setState(() => _peers = SyncManager.instance.availablePeers);
         showClipyMessage(

@@ -7,6 +7,7 @@ import 'package:clipy_android/app_localizations.dart';
 import 'package:clipy_android/features/transfers/incoming_share.dart';
 import 'package:clipy_android/features/transfers/shared_files_page.dart';
 import 'package:clipy_android/sync_manager.dart';
+import 'package:clipy_android/sync/discovery_scan.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -127,7 +128,26 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('report.pdf'), findsOneWidget);
       expect(find.text('archive.zip'), findsOneWidget);
-      expect(find.textContaining('No devices yet'), findsOneWidget);
+      expect(find.textContaining('LAN sync is off'), findsOneWidget);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.widgetWithIcon(IconButton, Icons.refresh_rounded),
+            )
+            .onPressed,
+        isNull,
+      );
+      final progress = SyncManager.instance.discoveryProgress;
+      progress.value = const DiscoveryProgress(
+        running: true,
+        completed: 8,
+        total: 16,
+      );
+      await tester.pump();
+      expect(find.textContaining('8/16'), findsOneWidget);
+      expect(find.textContaining('No devices yet'), findsNothing);
+      progress.value = const DiscoveryProgress();
+      await tester.pump();
       expect(
         tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
         isNull,

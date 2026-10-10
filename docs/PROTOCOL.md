@@ -55,20 +55,28 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
 ## Discovery
 
 - **Proactive dial vs scan**
-  - Only a user **refresh / scan devices** action may dial arbitrary `/24` hosts (`reason=scan`).
+  - User **refresh / scan devices** and Flutter's foreground **share device picker** may dial arbitrary `/24` hosts (`reason=scan`). The share picker probes cached/manual addresses first and scans only if no session is available.
   - Device-list **Send Text / Send File** dials with `reason=direct` (no auth) and uses `history.direct` (text) / `file.*` (files).
   - All other outbound dials (`cache`, `reconnect`, `deliver`, `manual`, `syncTick`, startup) require the target `peerId` ∈ authorized set (clipboard ∪ notification). Unauthorized cache entries are not dialed. Reconnect may use `direct` when pending `history.direct` frames exist for that peer.
   - Inbound connections still accepted. Auth is **one-sided (sender)**: allow-lists gate outbound fanout / `history.fetch` responses / proactive dial; receivers accept inbound `history` / `history.direct` / notif without reciprocal authorization.
 - Flutter explicit refresh bypasses the 600ms background debounce and scan
   cooldown, awaits all probes/handshakes, and displays completed/total probes
   plus discovered peers. Known endpoints and manually entered IPs are attempted
-  first, physical LAN interfaces before VPN interfaces. Progress is ephemeral;
+  first. Flutter subnet scans exclude VPN/mobile-data interfaces and cover at
+  most two unique LAN /24 ranges. VPN/cross-subnet peers remain reachable via
+  cached or manual addresses. Progress is ephemeral and throttled to at most
+  10 intermediate updates/second (start/end are always published);
   stop invalidates workers and resets progress, with no new polling loop.
 - Adding a manual IP is an explicit `direct` dial even before authorization.
   Explicit refresh also probes saved manual addresses without authorization;
   background discovery still requires outgoing sharing authorization.
 - Endpoint cache key: `clipy.peerEndpoints.v2` (SharedPreferences / UserDefaults), TTL 24h.
-- User **refresh** prunes disk cache to **live sessions ∪ still-authorized** peers (drops unauthorized ghosts). Settings/open must **not** prune or full-scan.
+- User **refresh** prunes disk cache to **live sessions ∪ still-authorized** peers (drops unauthorized ghosts). Ordinary settings/open must **not** prune or full-scan. The foreground share picker is the explicit exception above and never prunes the cache.
+- Foreground Flutter requests share one job, including startup/handshake waits.
+  Automatic picker requests reuse live sessions and have a 30-second cooldown;
+  repeated manual refresh has a 3-second gap. A manual request joining a cache
+  probe upgrades that job to a full scan. Stop invalidates pending fallback;
+  there are no new background timers or resume-driven full scans outside sharing.
 - On sync **start** / network restore: dial **authorized** cache only; peers appear in the LAN list after handshake (not pre-filled from cache).
 - Settings **authorized devices** UI lists authorized peers even when offline (labels from cache), plus currently discovered peers for new checkboxes.
 

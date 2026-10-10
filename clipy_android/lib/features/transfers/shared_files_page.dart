@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../app_localizations.dart';
@@ -13,11 +14,61 @@ class SharedFilesPage extends StatefulWidget {
   State<SharedFilesPage> createState() => _SharedFilesPageState();
 }
 
-class _SharedFilesPageState extends State<SharedFilesPage> {
+class _SharedFilesPageState extends State<SharedFilesPage>
+    with WidgetsBindingObserver {
   final _sent = <int>{};
   bool _sending = false;
   int? _current;
   String? _peerId;
+  bool _refreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    SyncManager.instance.discoveryProgress.addListener(_discoveryChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_refreshDevices(automatic: true));
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    SyncManager.instance.discoveryProgress.removeListener(_discoveryChanged);
+    super.dispose();
+  }
+
+  void _discoveryChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        ModalRoute.of(context)?.isCurrent == true) {
+      unawaited(_refreshDevices(automatic: true));
+    }
+  }
+
+  Future<void> _refreshDevices({bool automatic = false}) async {
+    final manager = SyncManager.instance;
+    if (_sending || _refreshing || !manager.isEnabled) return;
+    setState(() => _refreshing = true);
+    try {
+      await manager.refreshDiscovery(automatic: automatic);
+      if (mounted && !automatic) {
+        showClipyMessage(
+          context,
+          context.l10n.discoveryFinished(manager.availablePeers.length),
+        );
+      }
+    } catch (_) {
+      if (mounted) showClipyMessage(context, context.l10n.operationFailed);
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
 
   Future<void> _send(DiscoveredPeer peer) async {
     if (_sending) return;
@@ -55,12 +106,17 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
           ? context.l10n.sendFailed
           : context.l10n.fileSentTo(peer.displayName),
     );
+    if (!failed && _sent.length == widget.share.files.length) {
+      Navigator.pop(context);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final manager = SyncManager.instance;
+    final progress = manager.discoveryProgress.value;
+    final refreshing = _refreshing || progress.running;
     return PopScope(
       canPop: !_sending,
       child: Scaffold(
@@ -110,14 +166,43 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text(
-                        l10n.lanDevices,
-                        style: Theme.of(context).textTheme.titleMedium,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              l10n.lanDevices,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: l10n.refreshDevices,
+                            onPressed:
+                                !manager.isEnabled || _sending || refreshing
+                                ? null
+                                : () => _refreshDevices(),
+                            icon: const Icon(Icons.refresh_rounded),
+                          ),
+                        ],
                       ),
-                      if (peers.isEmpty)
+                      if (refreshing) ...[
+                        LinearProgressIndicator(value: progress.fraction),
+                        const SizedBox(height: 8),
+                        Text(
+                          l10n.discoveryScanning(
+                            progress.completed,
+                            progress.total,
+                            peers.length,
+                          ),
+                        ),
+                      ],
+                      if (peers.isEmpty && !refreshing)
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 12),
-                          child: Text(l10n.shareNoDevices),
+                          child: Text(
+                            manager.isEnabled
+                                ? l10n.shareNoDevices
+                                : l10n.shareSyncDisabled,
+                          ),
                         ),
                       for (final peer in peers)
                         ListTile(
@@ -151,7 +236,10 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                                     ),
                                   ),
                                 );
-                                if (mounted) setState(() {});
+                                if (mounted) {
+                                  setState(() {});
+                                  await _refreshDevices(automatic: true);
+                                }
                               },
                         icon: const Icon(Icons.settings_ethernet),
                         label: Text(l10n.lanDevices),

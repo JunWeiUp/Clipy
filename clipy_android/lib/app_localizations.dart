@@ -254,8 +254,12 @@ class AppStrings {
     'Review the files and choose a device. Transfer starts only when you tap Send.',
   );
   String get shareNoDevices => _t(
-    '暂无设备。请在局域网设备页启用同步并刷新，文件会保留到关闭此页。',
-    'No devices yet. Enable sync and refresh in Devices. Files stay available until you close this page.',
+    '暂无设备。请确认接收端已开启同步且连接同一 Wi-Fi，然后点击刷新。也可在局域网设备页添加 IP。',
+    'No devices yet. Enable sync on the receiving device, use the same Wi-Fi, then tap Refresh. You can also add an IP in Devices.',
+  );
+  String get shareSyncDisabled => _t(
+    '本机局域网同步未开启。请在下方局域网设备页开启后返回，文件会保留。',
+    'LAN sync is off on this device. Enable it in Devices below, then return. Your files will stay available.',
   );
   String get shareImportFailed => _t(
     '部分文件无法读取。请先下载到本机，再重新分享并允许读取。',
