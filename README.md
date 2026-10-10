@@ -133,7 +133,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.30** · Default local build **10221** · Latest published release: **[v1.0.30](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.30)** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.31** · Default local build **10223** · Latest published release: **[v1.0.30](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.30)** · [Build metadata](clipy_android/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
@@ -212,6 +212,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 - Devices discover each other via **/24 subnet scan** and **manual IP:port**. Cross-subnet connections require network routing and firewall access; no cloud relay or account is needed.
 - Automatic **text clipboard sync** uses acknowledgements and an offline queue. Images and file clipboard entries remain local; send files explicitly from the device page or menu.
 - **Mobile share target:** share files of any format to Clipy on Android or iPhone, review the files, choose a device and tap Send. Supports up to 32 files per share, **1 GiB per file**, with temporary storage checks. The iPhone Share Extension discovers/selects devices and sends directly in the share sheet; opening the main app is unnecessary. Both sender and receiver need this update for files above 512 MiB. Included in v1.0.29; iOS requires your own signed source build.
+- **Android share-device discovery:** the share page reuses live connections, tries remembered devices, then scans nearby LAN devices when needed. Refresh progress and clear sync-off guidance are available on the page. Concurrent requests share one bounded scan with cooldowns; no background polling is added. Successful sends close the share page automatically.
 - **File receipt notifications:** after a file is verified and saved, click its notification to reveal it in Finder, the Android file manager or Windows Explorer; iPhone previews the file or offers opening options. Allow system notifications. Windows notifications require Clipy to remain running in the tray.
 - **Mac-to-Mac folder transfer:** choose **Send File or Folder…** for a device. Updated Macs restore the folder in `~/Downloads/Clipy/`, preserving nested/empty folders and hidden files; name collisions create a new folder. Both Macs need this folder-transfer update for automatic restoration; older Macs and Android receive a regular ZIP instead. Each folder, including archive overhead, is limited to **1 GiB / 10,000 entries** (v1.0.29; older versions retain 512 MiB); symbolic links and special files are rejected.
 - Resilient: a bounded **offline-peer queue** re-delivers to devices that briefly drop off Wi-Fi.
@@ -310,10 +311,10 @@ cd clipy_android
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.30
+./scripts/package_windows.ps1 -Version 1.0.31
 ```
 
-The package is `dist/ClipyClone-Windows-x64-v1.0.30.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
+The package is `dist/ClipyClone-Windows-x64-v1.0.31.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
 
 ### iOS (Flutter + Swift)
 

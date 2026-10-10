@@ -54,7 +54,16 @@ No new polling, network service or file-content duplication is introduced.
   file-provider reads and pending scans; temporary files are then removed.
 - Android's `incoming_share.dart` drains one batch at a time; `SharedFilesPage`
   requires explicit device selection/Send and skips successes on same-peer retry.
-  Closing removes the batch. iOS retains this bridge only to drain legacy staged
+  Opening/resuming the visible share page reuses live sessions, otherwise probes
+  remembered/manual endpoints before falling back to a bounded subnet scan.
+  `DiscoveryRefreshCoordinator` shares one foreground job with device-page refresh;
+  automatic requests have a 30-second cooldown, manual requests a 3-second gap.
+  It retains only the current future and completion time; sync stop invalidates
+  the job and pending fallback. No polling is added. The bounded manager-owned
+  job may finish after a page closes; that page removes its progress/lifecycle
+  listeners and ignores late UI results.
+  A fully successful send closes the review route automatically; closing removes
+  the batch. iOS retains this bridge only to drain legacy staged
   shares. New iOS shares are never published to that main-app queue.
 - Android clears process-orphaned files on the next share. iOS excludes temporary
   files from backups and prunes entries older than 24 hours on the next import.

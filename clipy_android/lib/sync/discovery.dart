@@ -5,9 +5,21 @@ extension SyncDiscoveryMethods on SyncManager {
   // Discovery
   // -----------------------------------------------------------------------
 
-  /// - [pruneCache]: drop unauthorized ghosts (user refresh).
-  /// - [scanFullSubnet]: dial entire /24 (user refresh only).
-  Future<void> refreshDiscovery({
+  /// Foreground requests coalesce across pages. Sharing is an explicit device
+  /// selection flow, but repeated opens/resumes use the automatic cooldown.
+  Future<void> refreshDiscovery({bool automatic = false}) {
+    if (!isEnabled) return Future.value();
+    return _discoveryRefresh.refresh(
+      automatic: automatic,
+      hasPeers: () => _sessions.isNotEmpty,
+      scan: (full) => _refreshDiscovery(
+        pruneCache: !automatic && full,
+        scanFullSubnet: full,
+      ),
+    );
+  }
+
+  Future<void> _refreshDiscovery({
     bool pruneCache = true,
     bool scanFullSubnet = true,
   }) async {
@@ -17,46 +29,40 @@ extension SyncDiscoveryMethods on SyncManager {
     if (!_isRunCurrent(epoch) || !isServerRunning) {
       throw StateError('Sync listener is not running');
     }
-    if (_isRefreshingDiscovery) return;
-    _isRefreshingDiscovery = true;
-    try {
-      final cache = await _readEndpointCache();
-      if (!_isRunCurrent(epoch)) return;
-      final cacheById = <String, Map<String, dynamic>>{
-        for (final e in cache)
-          if (e['peerId'] is String) e['peerId'] as String: e,
-      };
-      final kept = <String, DiscoveredPeer>{};
-      for (final entry in _sessions.entries) {
-        final id = entry.key;
-        final session = entry.value;
-        final existing = _discoveredPeers[id];
-        if (existing != null) {
-          kept[id] = existing;
-        } else {
-          final name = (cacheById[id]?['name'] as String?) ?? id;
-          kept[id] = DiscoveredPeer(
-            peerId: id,
-            displayName: name,
-            host: session.host,
-            port: session.port,
-          );
-        }
+    final cache = await _readEndpointCache();
+    if (!_isRunCurrent(epoch)) return;
+    final cacheById = <String, Map<String, dynamic>>{
+      for (final e in cache)
+        if (e['peerId'] is String) e['peerId'] as String: e,
+    };
+    final kept = <String, DiscoveredPeer>{};
+    for (final entry in _sessions.entries) {
+      final id = entry.key;
+      final session = entry.value;
+      final existing = _discoveredPeers[id];
+      if (existing != null) {
+        kept[id] = existing;
+      } else {
+        final name = (cacheById[id]?['name'] as String?) ?? id;
+        kept[id] = DiscoveredPeer(
+          peerId: id,
+          displayName: name,
+          host: session.host,
+          port: session.port,
+        );
       }
-      _discoveredPeers
-        ..clear()
-        ..addAll(kept);
-      if (!_isRunCurrent(epoch)) return;
-      _emitPeers();
-      _scanDebounceTimer?.cancel();
-      _pendingAutoFullScan = false;
-      // Explicit refresh bypasses debounce and waits through the actual scan.
-      await _runDiscovery(scanFullSubnet: scanFullSubnet, userInitiated: true);
-      if (pruneCache && _isRunCurrent(epoch)) {
-        await _rewriteEndpointCacheAfterRefresh(availablePeers, cache);
-      }
-    } finally {
-      if (_isRunCurrent(epoch)) _isRefreshingDiscovery = false;
+    }
+    _discoveredPeers
+      ..clear()
+      ..addAll(kept);
+    if (!_isRunCurrent(epoch)) return;
+    _emitPeers();
+    _scanDebounceTimer?.cancel();
+    _pendingAutoFullScan = false;
+    // Explicit refresh bypasses debounce and waits through the actual scan.
+    await _runDiscovery(scanFullSubnet: scanFullSubnet, userInitiated: true);
+    if (pruneCache && _isRunCurrent(epoch)) {
+      await _rewriteEndpointCacheAfterRefresh(availablePeers, cache);
     }
   }
 
@@ -200,13 +206,17 @@ extension SyncDiscoveryMethods on SyncManager {
       add(host, peerPort, id, userInitiated ? 'scan' : 'manual');
     }
     if (scanFullSubnet) {
-      final myIPs = await _enumerateLocalIPv4s();
+      final myIPs = await _enumerateLocalIPv4s(forScan: true);
       if (!_isRunCurrent(epoch)) return;
       final connectedHosts = _sessions.values.map((s) => s.host).toSet();
+      final prefixes = <String>{};
       for (final ip in myIPs) {
         final parts = ip.split('.');
         if (parts.length != 4) continue;
         final prefix = parts.take(3).join('.');
+        if (prefixes.contains(prefix)) continue;
+        if (prefixes.length >= 2) break;
+        prefixes.add(prefix);
         for (var d = 1; d <= 254; d++) {
           final host = '$prefix.$d';
           if (myIPs.contains(host) || connectedHosts.contains(host)) continue;
@@ -215,6 +225,7 @@ extension SyncDiscoveryMethods on SyncManager {
       }
     }
     final started = Stopwatch()..start();
+    var lastProgressMs = -100;
     final failures = <String, int>{};
     void failure(String label) => failures[label] = (failures[label] ?? 0) + 1;
     appLog('Discovery: ${targets.length} endpoints, full=$scanFullSubnet');
@@ -223,6 +234,13 @@ extension SyncDiscoveryMethods on SyncManager {
       concurrency: SyncManager._scanConcurrency,
       isCurrent: () => _isRunCurrent(epoch),
       onProgress: (completed, total) {
+        // Publish at most 10 intermediate updates/second, plus start and end.
+        if (completed != 0 &&
+            completed != total &&
+            started.elapsedMilliseconds - lastProgressMs < 100) {
+          return;
+        }
+        lastProgressMs = started.elapsedMilliseconds;
         discoveryProgress.value = DiscoveryProgress(
           running: true,
           completed: completed,
@@ -253,7 +271,7 @@ extension SyncDiscoveryMethods on SyncManager {
     }
   }
 
-  Future<List<String>> _enumerateLocalIPv4s() async {
+  Future<List<String>> _enumerateLocalIPv4s({bool forScan = false}) async {
     final result = <String>[];
     final diagParts = <String>[];
     try {
@@ -268,6 +286,12 @@ extension SyncDiscoveryMethods on SyncManager {
             (isTunnel(a.name) ? 1 : 0).compareTo(isTunnel(b.name) ? 1 : 0),
       );
       for (final iface in interfaces) {
+        if (forScan &&
+            RegExp(
+              r'^(tun|utun|tap|wg|ppp|rmnet|ccmni|pdp_ip)',
+            ).hasMatch(iface.name)) {
+          continue;
+        }
         for (final addr in iface.addresses) {
           final ip = addr.address;
           final parts = ip.split('.').map(int.tryParse).toList();

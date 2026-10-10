@@ -23,8 +23,12 @@ System sharing opens a separate file-review page on Android and iOS. Show the
 received filenames and sizes before device selection; enable Send only after
 the user chooses a peer. Send sequentially, show per-file success/progress, and
 keep failures available for retry without resending successful files to the
-same peer. The Devices link preserves the share while enabling sync or refreshing
-discovery. Closing the review removes temporary files. On iPhone the native share extension
+same peer. The share page discovers on open/resume, shows a Refresh action and
+probe progress, and distinguishes sync-off from a completed empty search. The
+Devices link preserves the share while enabling sync or adding a manual IP;
+returning retries discovery subject to the shared cooldown. Closing the review
+removes temporary files; a fully successful send closes it automatically.
+On iPhone the native share extension
 shows the same file/size list, device selection and explicit Send flow in the
 share sheet, with refresh/manual-IP controls and per-file progress/success. It
 sends directly without opening the main app. Enforce 1 GiB per file and report
