@@ -16,6 +16,7 @@ class IncomingShare {
   IncomingShare.fromMap(Map<Object?, Object?> value)
     : id = value['id'] as String,
       error = value['error'] as String? ?? '',
+      text = value['text'] as String? ?? '',
       files = [
         for (final file in value['files'] as List<Object?>)
           SharedFile(
@@ -26,6 +27,8 @@ class IncomingShare {
       ];
   final String id;
   final String error;
+  final String text;
+  int get itemCount => files.length + (text.isEmpty ? 0 : 1);
   final List<SharedFile> files;
 }
 

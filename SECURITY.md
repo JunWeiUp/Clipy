@@ -60,3 +60,12 @@ unless a signing identity is supplied and is **not notarized** by this workflow.
 
 Before publishing, complete the [release checklist](docs/DEVELOPMENT.md#release-checklist),
 including the [macOS GPLv3 license and source checks](THIRD_PARTY_NOTICES.md).
+
+## Optional Internet relay
+
+Source builds use Common Relay device identities, verified peer public keys and
+SDK end-to-end encrypted streams over WSS. This outer encryption is independent
+of the public v3 LAN payload key. LAN sending requires no relay enrollment;
+importing relay credentials cannot change LAN encryption. The public LAN key
+still has the limitations above. Raw TCP 5566 must remain private. See
+[the current SDK integration and LAN boundary](docs/COMMON-RELAY-SDK.md).

@@ -26,6 +26,8 @@ extension SyncDiscoveryMethods on SyncManager {
     if (!isEnabled) return;
     await ensureStartedIfEnabled();
     final epoch = _runLifecycle.epoch;
+    _probeNetworkSessions();
+    _relay?.refreshPeers();
     if (!_isRunCurrent(epoch) || !isServerRunning) {
       throw StateError('Sync listener is not running');
     }
@@ -336,6 +338,7 @@ extension SyncDiscoveryMethods on SyncManager {
     String host,
     int port,
   ) async {
+    if (host.startsWith('relay:')) return;
     final prefs = await SharedPreferences.getInstance();
     final list = await _readEndpointCache();
     list.removeWhere((e) => e['peerId'] == peerId);
@@ -358,8 +361,12 @@ extension SyncDiscoveryMethods on SyncManager {
     final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
     final auth = authorizedPeerIds.toSet();
     final liveIds = livePeers.map((p) => p.peerId).toSet();
+    final directIds = livePeers
+        .where((p) => !p.host.startsWith('relay:'))
+        .map((p) => p.peerId)
+        .toSet();
     final list = <Map<String, dynamic>>[
-      for (final p in livePeers)
+      for (final p in livePeers.where((p) => !p.host.startsWith('relay:')))
         {
           'peerId': p.peerId,
           'name': p.displayName,
@@ -370,7 +377,12 @@ extension SyncDiscoveryMethods on SyncManager {
     ];
     for (final e in previousCache) {
       final id = e['peerId'] as String?;
-      if (id == null || liveIds.contains(id) || !auth.contains(id)) continue;
+      if (id == null ||
+          directIds.contains(id) ||
+          (!auth.contains(id) && !liveIds.contains(id)) ||
+          (e['host'] as String? ?? '').startsWith('relay:')) {
+        continue;
+      }
       list.add(Map<String, dynamic>.from(e));
     }
     if (list.isEmpty) {

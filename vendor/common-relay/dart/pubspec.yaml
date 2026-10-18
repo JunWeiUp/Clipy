@@ -1,0 +1,13 @@
+name: common_relay
+description: Common Relay v1 client with pinned peer encryption and bounded streams.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: '>=3.11.0 <4.0.0'
+dependencies:
+  sodium: 4.0.2
+  ffi: 2.2.0
+  http: 1.6.0
+  crypto: 3.0.7
+dev_dependencies:
+  test: ^1.25.0

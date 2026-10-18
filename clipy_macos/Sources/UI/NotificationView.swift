@@ -575,6 +575,7 @@ struct NotificationView: View {
 
 private struct NotificationToolbar: View {
     @ObservedObject var viewModel: NotificationViewModel
+    @ObservedObject private var notificationPopups = NotificationPopupPreference.shared
     @Binding var showSettingsPopover: Bool
 
     var body: some View {
@@ -625,6 +626,12 @@ private struct NotificationToolbar: View {
 
     private var settingsPopover: some View {
         VStack(alignment: .leading, spacing: AppSpacing.sm) {
+            Toggle(L10n.t(.notificationPopups), isOn: Binding(
+                get: { notificationPopups.enabled },
+                set: { notificationPopups.setEnabled($0) }))
+            Text(L10n.t(.notificationPopupsHint))
+                .font(AppFont.caption)
+                .foregroundStyle(.secondary)
             Toggle(L10n.t(.enableNotificationSync), isOn: $viewModel.notificationSyncEnabled)
             Toggle(L10n.t(.notificationSound), isOn: $viewModel.notificationSound)
 

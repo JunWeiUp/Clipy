@@ -48,13 +48,15 @@ final class MenuBarItemProvider: MenuBarOverflowProviding {
         guard AXIsProcessTrusted() else { return .init(items: [], isComplete: false) }
         let reader = Reader(cancellation, seconds: 2)
         let windows = bridge.windows()
-        var applicationMenuMaxX: CGFloat?
+        let geometries = context.geometries
+        var applicationMenuMaxX: [Int: CGFloat] = [:]
         if let pid = context.frontPID, BackgroundAccessibilityPolicy.canRead(pid: pid),
            let bar = reader.element(AXUIElementCreateApplication(pid), kAXMenuBarAttribute) {
-            let edges = reader.children(bar).compactMap { reader.frame($0) }.filter {
-                abs($0.minY - context.geometry.screen.minY) <= context.geometry.barHeight
-            }.map(\.maxX)
-            applicationMenuMaxX = edges.max()
+            for frame in reader.children(bar).compactMap({ reader.frame($0) }) {
+                guard let owner = MenuBarOverflowGeometry.owner(of: frame, among: geometries),
+                      let index = geometries.firstIndex(where: { $0.screen == owner.screen }) else { continue }
+                applicationMenuMaxX[index] = max(applicationMenuMaxX[index] ?? owner.screen.minX, frame.maxX)
+            }
         }
         var results: [MenuBarOverflowItem] = []
         // Prefer real source applications over the duplicate hosted Control Center elements.
@@ -68,7 +70,10 @@ final class MenuBarItemProvider: MenuBarOverflowProviding {
                 let window = MenuBarSystemBridge.matchedWindow(for: frame, in: windows)
                 // AX describes the inner button. On a notched display, its hosting
                 // window can already be hidden while the inner button still fits.
-                guard context.geometry.isOverflow(window?.frame ?? frame, applicationMenuMaxX: applicationMenuMaxX) else { continue }
+                let candidate = window?.frame ?? frame
+                guard let owner = MenuBarOverflowGeometry.owner(of: candidate, among: geometries),
+                      let index = geometries.firstIndex(where: { $0.screen == owner.screen }),
+                      owner.isOverflow(candidate, applicationMenuMaxX: applicationMenuMaxX[index]) else { continue }
                 let windowID = window?.id
                 if let windowID, results.contains(where: { $0.id.windowID == windowID }) { continue }
                 let title = (reader.value(element, kAXTitleAttribute) as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

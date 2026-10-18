@@ -35,6 +35,11 @@ No new polling, network service or file-content duplication is introduced.
   to four batches, 32 files per batch, 1 GiB per file and 4 GiB staged in total.
   Available disk capacity reserves 64 MiB. It rejects private `file://` paths
   and this app's own FileProvider; missing display names use a safe fallback.
+- Android text-only shares retain `EXTRA_TEXT` (or one plain ClipData item)
+  in the bounded inbox, with a 1 MiB UTF-8 limit and at most four batches.
+  The review page previews text and sends via `sendTextToPeer` (`history.direct`)
+  after explicit device selection; no text file is created. Completion/cancellation
+  releases the batch. Actual text-file URI attachments remain file transfers.
 - iOS `ShareExtension` reviews files and selects/sends to a device inside the
   system share sheet. UIKit uses the same file-list/device-choice/Send sequence
   as Android. It never opens the main app or starts a Flutter engine. File-provider
@@ -179,10 +184,11 @@ updates must not force its initialization.
 worker uses the existing history search service. `MenuBarPanelView` renders the approved
 compact panel with shared typography, SF Symbols, language observation and semantic colors.
 `MenuBarPanelPolicy` provides a compact preferred size per home tab/detail page, with
-the Devices page scaled to its count; the controller observes navigation and device
+the Devices tab scaled to its count; the controller observes navigation and device
 updates and repositions the visible panel under its status item.
-Detail pages replace the home search/strip/tabs/footer with a Back/title row, while
-the Tools tab omits actions already present in the home footer.
+The Devices tab has a refresh button (prune + full /24 scan) and per-device Send Text /
+Send File buttons. Detail pages replace the home search/strip/tabs/footer with a
+Back/title row; the footer's Tools page omits actions already present in the footer.
 Existing manager callbacks refresh only the open panel; there is no new idle polling.
 Native menu tracking defers those refreshes. Dismissal cancels queries and releases the view.
 
@@ -215,7 +221,7 @@ tracking can delay the reply even after the menu opens. Never automatically retr
 it or cover it with a modal failure alert.
 
 Disable, display changes, sleep/lock and permission loss invalidate pending work.
-Only one built-in screen is supported. `menuBarOverflowEnabled` defaults to false;
+Each attached display is evaluated against its own menu-bar geometry. `menuBarOverflowEnabled` defaults to false;
 window IDs, images and AX elements are never persisted or synchronized. Ordinary
 regressions mock lifecycle races; the explicitly enabled live tests use temporary
 status items and test original menus/popovers without moving existing icons.
@@ -288,3 +294,48 @@ checks. See also
 ## Smart Switch paste-back target
 
 `SmartSwitchWindowFocusSession` captures a metadata-only `SmartSwitchDeliveryTarget` before presentation and validates it after closing. The bounded focus worker reads process launch identity, window and editable element identity; mismatches and unresolved targets retain copied text with a nonactivating hint. Clipboard versions and session generations also gate the final PID-addressed key pair. `keySent` records dispatch only, never verified insertion. The target is transient and cleared on close or handoff; no editor contents, persistent observer or polling is added.
+
+## Optional Internet relay
+
+`SyncRelayClient.swift` / `sync/relay_client.dart` own authenticated WSS presence
+and bounded per-peer byte bridges; SyncManager starts/stops them with sync and
+validates peer identity/generation before adoption. Private LAN probes take
+priority; relay addresses never overwrite the LAN cache. The vendored Common Relay SDK provides authenticated, end-to-end encrypted streams and verified group membership. `relay/server.py` documents the retired service only. See [COMMON-RELAY-SDK.md](COMMON-RELAY-SDK.md) for current setup and the separate LAN trust boundary.
+
+## Internet relay configuration and routing
+
+`SyncRelaySettings` / `RelayConfiguration` merge the editable relay device ID and
+access token into existing secure enrollment, retaining identity keys and trusted
+peers. A blank token keeps the stored token. UI loading is read-only; explicit
+save rebuilds relay connections only. Device IDs follow the server's 1–80 character
+letters/digits/underscore/hyphen rule; access keys are validated before secure persistence.
+
+The relay device alias is independent of the stable LAN peer UUID. Authenticated
+presence advertises the LAN `peerId`; relay clients map aliases to that ID before
+dialing LAN or adopting a tunneled session. Legacy presence without this field
+uses its relay ID only when that ID is a UUID. Both transports share one active
+session per LAN peer, with LAN preferred. Manual discovery refreshes both LAN
+and relay presence; queued sending also nudges relay reconnection. No extra
+background polling or duplicate business session is introduced.
+
+### Relay group management
+
+`SyncRelayGroups` / `sync/relay_groups.dart` own private enrollment drafts, invitation persistence and verified membership updates. `SyncRelayGroupView` / `RelayGroupPage` own visible group-management actions. The common-relay SDK owns signing, chain verification and HTTP management calls. Before opening a managed relay connection, the client verifies newer membership entries; a revision-bearing `group.changed` event closes stale relay sessions and triggers a verified reconnect. LAN listeners and existing LAN sessions are not restarted by group management.
+
+### Relay group creation
+
+Unenrolled devices can create a group or join an invitation. SDK `prepareCreate` generates a random group namespace and client-signed root. The app saves the draft in private storage before calling `create`, then persists the verified membership and enables relay transport. Retries reuse the saved request. Existing group credentials are never silently replaced. Creation uses the configured relay URL and requires the server to enable self-service for Clipy. Group pages separate onboarding, members, invitations and approval; no background polling is added.
+
+Group exit drafts bind to the original server/group/device/token and survive response loss. Clearing enrollment stops only relay sessions, rotates the relay device ID and preserves LAN identity/history. Member names are signed display metadata: users rename themselves, managers may rename any member. The UI keeps exit/disband separate from device actions and confirms scope before changing membership.
+
+A group management HTTP 401 invalidates the UI’s active-membership state. Cached names/roles cannot remain actionable. The recovery card explains that the group may have closed or the device been removed; explicit local cleanup returns to onboarding while preserving identity keys, history and LAN settings. Ordinary connection errors still preserve the cached configuration for retry.
+
+### Automatic invitation progress
+
+Scanning an invitation submits the join request. While the group page is open, a single serialized check runs every two seconds only when a pending join or outgoing invitation exists. The inviter displays verified requests automatically above the QR code; approval remains explicit in manual mode. The applicant verifies approval with the existing SDK, persists membership and enables relay without a second confirmation. Closing the page cancels checks; Android pauses checks in the background and resumes on foreground. Reopening loads the private draft and resumes. Completion, discard, cancellation, expired outgoing invitations, or terminal HTTP errors stop checks; manual refresh can retry. No permanent background poller is introduced.
+
+Relay invitations default to automatic joining after scanning, with manual pairing-code approval available by turning the option off. Automatic admission verifies a time-limited manager-signed delegation and grants ordinary membership; the inviter need not remain online. QR codes and copied invitations use encrypted short links, while legacy invitations remain supported. Existing members must upgrade to the delegation-aware SDK; the server must support automatic admission and invitation-link endpoints.
+
+## Fast LAN / relay handoff
+
+Network-interface changes, peer reconnection and explicit device refresh trigger a bounded 3-second ping check. A fresh pong preserves a healthy session; only the captured session without a newer pong is retired, then relay discovery runs immediately. Repeated refreshes share the deadline; stop cancels the probe and lifecycle checks reject stale callbacks. Relay refresh wakes a pending retry, uses known presence immediately, coalesces roster requests and reconnects after a 3-second roster timeout. Wi-Fi/cellular changes are handled without requiring an offline interval. No new permanent poller is added; LAN preference and trust checks remain.

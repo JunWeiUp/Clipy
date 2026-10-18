@@ -63,6 +63,26 @@ class AppStrings {
 
   final AppLanguage language;
 
+  String get syncStart => _t('开启同步', 'Enable sync');
+  String get syncStarting => _t('正在开启同步…', 'Starting sync…');
+  String get syncStopping => _t('正在关闭同步…', 'Stopping sync…');
+  String get syncStopHint => _t('点击关闭同步', 'Tap to turn off sync');
+  String get syncLanConnected => _t('局域网已连通', 'Connected over LAN');
+  String get syncMixedConnected =>
+      _t('局域网与中继均已连通', 'Connected over LAN and relay');
+  String get syncRelayConnected => _t('当前在中继下', 'Syncing over relay');
+  String get syncRelayConnecting => _t('正在连接中继中', 'Connecting to relay');
+  String get syncRelayReady =>
+      _t('中继已连接，等待设备上线', 'Relay ready · waiting for devices');
+  String get syncRelayRetrying =>
+      _t('中继连接断开，正在重试', 'Relay disconnected · retrying');
+  String get syncSearching => _t('正在查找局域网设备', 'Searching for LAN devices');
+  String get syncWaiting =>
+      _t('局域网尚未连通，等待设备连接', 'LAN not connected · waiting for devices');
+  String get syncLanFirst =>
+      _t('局域网优先，不可用时自动使用公网中继', 'LAN first, with Internet relay fallback');
+
+  String get internetRelay => _t('公网中继', 'Internet relay');
   String get appTitle => 'Clipy';
   String get languageLabel => _t('语言', 'Language');
   String get history => _t('历史记录', 'History');
@@ -222,6 +242,7 @@ class AppStrings {
   String syncDiagnosticsHoursAgo(int n) => _t('$n 小时前', '${n}h ago');
   String get syncPairingSecretUpdated =>
       _t('配对密钥已更新，同步已重启', 'Pairing secret updated and sync restarted');
+  String get deviceSyncSettings => _t('自动同步设置', 'Automatic sync settings');
   String get authorizedDevices => _t('授权设备', 'Authorized Devices');
   String get syncTargetsSummary => _t(
     '选择每台设备接收的内容，也可以只发送一次文本或文件。',
@@ -249,6 +270,10 @@ class AppStrings {
   String get sendFile => _t('发送文件…', 'Send File…');
   String get sharedFiles => _t('分享至 Clipy', 'Share to Clipy');
   String get closeShare => _t('完成', 'Done');
+  String get sharedTextHint => _t(
+    '选择设备，将以下内容作为文本发送。',
+    'Choose a device to send the following content as text.',
+  );
   String get sharedFilesHint => _t(
     '确认文件并选择接收设备。仅在点击发送后传输。',
     'Review the files and choose a device. Transfer starts only when you tap Send.',
@@ -258,8 +283,8 @@ class AppStrings {
     'No devices yet. Enable sync on the receiving device, use the same Wi-Fi, then tap Refresh. You can also add an IP in Devices.',
   );
   String get shareSyncDisabled => _t(
-    '本机局域网同步未开启。请在下方局域网设备页开启后返回，文件会保留。',
-    'LAN sync is off on this device. Enable it in Devices below, then return. Your files will stay available.',
+    '本机局域网同步未开启。请在下方局域网设备页开启后返回，分享内容会保留。',
+    'LAN sync is off on this device. Enable it in Devices below, then return. Your shared content will stay available.',
   );
   String get shareImportFailed => _t(
     '部分文件无法读取。请先下载到本机，再重新分享并允许读取。',
@@ -290,6 +315,10 @@ class AppStrings {
       _t('文本已发送至 $deviceName', 'Text sent to $deviceName');
   String fileSentTo(String deviceName) =>
       _t('已发送至 $deviceName', 'Sent to $deviceName');
+  String get textDeliveryUnconfirmed => _t(
+    '未收到对方的接收确认，请检查网络及两端版本；待发送文本可能稍后送达',
+    'No receipt from the other device. Check network and app versions; queued text may arrive later',
+  );
   String get sendFailed => _t(
     '发送失败，目标设备可能离线或网络异常',
     'Send failed. The target device may be offline or the network is unstable',

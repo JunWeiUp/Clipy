@@ -25,6 +25,55 @@ void main() {
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
   test(
+    'text payload preserves whitespace and legacy file batches stay files',
+    () {
+      const text = '  中文 https://example.com/\nsecond line\n';
+      final share = IncomingShare.fromMap({
+        'id': 'text',
+        'files': <Object?>[],
+        'text': text,
+      });
+      expect(share.text, text);
+      expect(share.files, isEmpty);
+      expect(share.itemCount, 1);
+      final legacy = IncomingShare.fromMap(batch('legacy'));
+      expect(legacy.text, isEmpty);
+      expect(legacy.itemCount, 2);
+    },
+  );
+
+  testWidgets('text review previews content and requires a device', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({'appLanguage': 'en'});
+    await AppLanguageController.instance.init();
+    SyncManager.instance.isEnabled = false;
+    const text = '中文 shared text\nhttps://example.com/';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SharedFilesPage(
+          share: IncomingShare.fromMap({
+            'id': 'text',
+            'text': text,
+            'files': <Object?>[],
+          }),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(SelectableText, text), findsOneWidget);
+    expect(find.textContaining('as text'), findsOneWidget);
+    expect(find.text('shared-text.txt'), findsNothing);
+    expect(find.byIcon(Icons.insert_drive_file_outlined), findsNothing);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  test(
     'cold inbox and repeated resume events present each batch once',
     () async {
       final pending = [batch('one'), batch('two')];

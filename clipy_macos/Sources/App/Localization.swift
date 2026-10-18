@@ -90,6 +90,8 @@ enum L10nKey: String {
     case panelSyncSettings
     case panelAllNotifications
     case panelDeviceCount
+    case panelSendText
+    case panelSendFile
     case panelHistoryResults
     case panelRefresh
     case panelMoreResults
@@ -365,6 +367,8 @@ enum L10nKey: String {
     case clearAllOnPhone
     case notificationFilter
     case notificationSound
+    case notificationPopups
+    case notificationPopupsHint
     case clearNotifications
     case bannerRules
     case bannerRulesHint
@@ -667,6 +671,8 @@ struct L10n {
             .panelSyncSettings: "连接与同步设置",
             .panelAllNotifications: "查看全部通知",
             .panelDeviceCount: "设备 %d",
+            .panelSendText: "发送文本",
+            .panelSendFile: "发送文件",
             .panelHistoryResults: "历史结果",
             .panelRefresh: "刷新",
             .panelMoreResults: "最多显示 40 条，完整结果请打开历史窗口",
@@ -674,10 +680,10 @@ struct L10n {
             .overflowUnconfirmed: "打开请求已发出；若未显示，应用可能不支持此操作。",
             .overflowTitle: "隐藏的菜单栏图标",
             .overflowEnabled: "显示隐藏的菜单栏图标",
-            .overflowHint: "在单个内置屏幕上显示被刘海或菜单挤掉的项目，不移动原图标。原图不可用时显示应用图标；屏幕录制权限可改善图标预览。点击尝试打开原菜单，部分应用可能不响应。",
+            .overflowHint: "在每个已连接屏幕上显示被刘海或菜单挤掉的项目，不移动原图标。原图不可用时显示应用图标；屏幕录制权限可改善图标预览。点击尝试打开原菜单，部分应用可能不响应。",
             .overflowDisabled: "隐藏图标显示已关闭。",
             .overflowPermission: "需要辅助功能权限以读取菜单栏项目并打开原菜单。",
-            .overflowDisplay: "仅支持单个内置显示屏；连接外屏时暂停。",
+            .overflowDisplay: "当前没有可读取的菜单栏。",
             .overflowSuspended: "当前暂停读取菜单栏项目。",
             .overflowLoading: "正在读取图标，请稍后重新打开菜单…",
             .overflowPartial: "部分应用未及时响应，列表可能不完整，可刷新重试。",
@@ -942,6 +948,8 @@ struct L10n {
             .clearAllOnPhone: "清除所有手机通知",
             .notificationFilter: "通知过滤",
             .notificationSound: "通知声音",
+            .notificationPopups: "弹出",
+            .notificationPopupsHint: "关闭后手机通知仍保留在列表中，不再弹出 Mac 横幅。开启后仍只弹出命中规则的通知。",
             .clearNotifications: "清空通知",
             .bannerRules: "弹横幅规则",
             .bannerRulesHint: "未配置时不弹横幅；勾选应用或填写关键字后，命中才弹",
@@ -1231,6 +1239,8 @@ struct L10n {
             .panelSyncSettings: "Connection & Sync Settings",
             .panelAllNotifications: "View All Notifications",
             .panelDeviceCount: "Devices %d",
+            .panelSendText: "Send Text",
+            .panelSendFile: "Send File",
             .panelHistoryResults: "History Results",
             .panelRefresh: "Refresh",
             .panelMoreResults: "Showing up to 40 items. Open history for all results.",
@@ -1238,10 +1248,10 @@ struct L10n {
             .overflowUnconfirmed: "The request was sent. If no menu appeared, the app may not support this action.",
             .overflowTitle: "Hidden Menu Bar Icons",
             .overflowEnabled: "Show hidden menu bar icons",
-            .overflowHint: "Show items obscured by the notch or application menus on a single built-in display, without moving them. App icons are used when original images are unavailable; Screen Recording can improve previews. Clicking requests the original menu; some apps may not respond.",
+            .overflowHint: "Show items obscured by the notch or application menus on every connected display, without moving them. App icons are used when original images are unavailable; Screen Recording can improve previews. Clicking requests the original menu; some apps may not respond.",
             .overflowDisabled: "Hidden icon display is off.",
             .overflowPermission: "Accessibility permission is needed to read menu bar items and open their menus.",
-            .overflowDisplay: "Available on a single built-in display; paused while external displays are connected.",
+            .overflowDisplay: "No menu bar is available to read.",
             .overflowSuspended: "Menu bar inspection is paused.",
             .overflowLoading: "Reading icons. Reopen this menu in a moment…",
             .overflowPartial: "Some apps did not respond in time. The list may be incomplete; refresh to retry.",
@@ -1506,6 +1516,8 @@ struct L10n {
             .clearAllOnPhone: "Clear All on Phone",
             .notificationFilter: "Notification Filter",
             .notificationSound: "Notification Sound",
+            .notificationPopups: "Banners",
+            .notificationPopupsHint: "Turn off to keep phone notifications in the list without Mac banners. When on, only notifications that match the banner rules pop up.",
             .clearNotifications: "Clear Notifications",
             .bannerRules: "Banner Rules",
             .bannerRulesHint: "No banner without rules; tick apps or add keywords to show banners on match",

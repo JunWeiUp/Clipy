@@ -4,16 +4,16 @@ import Combine
 /// UI-only state. History queries are bounded and cancelled on every edit/close.
 /// No clipboard data or temporary menu-bar identities are persisted here.
 final class MenuBarPanelModel: ObservableObject {
-    enum Tab: CaseIterable { case clipboard, snippets, tools
+    enum Tab: CaseIterable { case clipboard, snippets, devices
         var title: String {
             switch self {
             case .clipboard: return L10n.t(.panelClipboard)
             case .snippets: return L10n.t(.snippets)
-            case .tools: return L10n.t(.menuTools)
+            case .devices: return L10n.t(.panelDevices)
             }
         }
     }
-    enum Page { case home, capture, devices, notifications, settings }
+    enum Page { case home, capture, tools, notifications, settings }
     enum Action { case search(String), snippets, preferences, syncSettings, notifications, word, wordBook, smartSwitch, password, tokenUsage, toggleKeepAwake
         case region, window, fullscreen, screenshotSettings, permission, quit
         case sendText(String), sendFile(String)
@@ -130,12 +130,13 @@ final class MenuBarPanelModel: ObservableObject {
         }
     }
     var selectableIDs: [String] {
+        if page == .tools { return visibleTools.map { "t:" + $0.rawValue } }
         guard page == .home else { return [] }
         if isSearching { return history.map { "h:" + $0.id } + visibleSnippets.map { "s:" + $0.id.uuidString } + matchingTools.map { "t:" + $0.rawValue } }
         switch tab {
         case .clipboard: return history.map { "h:" + $0.id }
         case .snippets: return visibleSnippets.map { "s:" + $0.id.uuidString }
-        case .tools: return visibleTools.map { "t:" + $0.rawValue }
+        case .devices: return []
         }
     }
     func moveSelection(_ delta: Int) {
@@ -182,11 +183,12 @@ enum MenuBarPanelPolicy {
     static func preferredSize(page: MenuBarPanelModel.Page, tab: MenuBarPanelModel.Tab, deviceCount: Int = 0) -> CGSize {
         switch page {
         case .home:
-            return CGSize(width: 520, height: tab == .tools ? 430 : 640)
-        case .capture: return CGSize(width: 520, height: 350)
-        case .devices:
-            let height = deviceCount == 0 ? 240 : min(500, max(200, 150 + deviceCount * 48))
+            guard tab == .devices else { return CGSize(width: 520, height: 640) }
+            // Home chrome (search, icons, usage, tabs, footer) plus refresh row and device rows.
+            let height = deviceCount == 0 ? 470 : min(640, max(430, 380 + deviceCount * 60))
             return CGSize(width: 520, height: CGFloat(height))
+        case .capture: return CGSize(width: 520, height: 350)
+        case .tools: return CGSize(width: 520, height: 280)
         case .notifications: return CGSize(width: 520, height: 560)
         case .settings: return CGSize(width: 520, height: 440)
         }

@@ -79,6 +79,7 @@ object SharedFileInbox {
             val id = UUID.randomUUID().toString()
             val files = mutableListOf<Map<String, Any>>()
             var error = ""
+            var sharedText = ""
             val directory = File(root(app), id)
             try {
                 // A previous process cannot still own a transfer. Remove its orphaned cache once.
@@ -101,13 +102,13 @@ object SharedFileInbox {
                 if (uris.size > MAX_FILES) throw ImportFailure("tooMany")
                 if (uris.isEmpty()) {
                     val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
-                    require(!text.isNullOrEmpty() && text.length <= 1024 * 1024)
-                    val bytes = text.toByteArray(Charsets.UTF_8)
-                    check(stagedBytes + bytes.size <= MAX_BYTES)
-                    val file = File(directory, "shared-text.txt")
-                    file.writeBytes(bytes)
-                    stagedBytes += bytes.size
-                    files.add(metadata(file))
+                        ?: intent.clipData?.takeIf { it.itemCount == 1 }
+                            ?.getItemAt(0)?.text?.toString()
+                    require(!text.isNullOrEmpty())
+                    if (text.length > 1024 * 1024 || text.toByteArray(Charsets.UTF_8).size > 1024 * 1024) {
+                        throw ImportFailure("tooLarge")
+                    }
+                    sharedText = text
                 } else {
                     for ((index, uri) in uris.withIndex()) {
                         val fileDirectory = File(directory, index.toString()).apply { mkdirs() }
@@ -144,7 +145,7 @@ object SharedFileInbox {
                 directory.deleteRecursively()
                 error = (failure as? ImportFailure)?.reason ?: "unreadable"
             }
-            val batch = mapOf("id" to id, "files" to files, "error" to error)
+            val batch = mapOf("id" to id, "files" to files, "text" to sharedText, "error" to error)
             main.post {
                 pending--
                 batches[id] = batch

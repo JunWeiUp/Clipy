@@ -108,6 +108,7 @@ extension SyncManager {
     }
 
     func persistEndpoint(peerId: String, name: String, host: String, port: UInt16) {
+        guard !host.hasPrefix("relay:") else { return }
         var entries = loadEndpointCacheEntries()
         entries.removeAll { $0.peerId == peerId }
         entries.append(CachedEndpoint(peerId: peerId, name: name, host: host, port: port, ts: Date().timeIntervalSince1970))
@@ -119,11 +120,12 @@ extension SyncManager {
         let auth = Set(PreferencesManager.shared.authorizedPeerIds)
         let previous = Dictionary(uniqueKeysWithValues: loadEndpointCacheEntries().map { ($0.peerId, $0) })
         let now = Date().timeIntervalSince1970
-        var entries: [CachedEndpoint] = livePeers.map {
+        var entries: [CachedEndpoint] = livePeers.filter { !$0.host.hasPrefix("relay:") }.map {
             CachedEndpoint(peerId: $0.peerId, name: $0.displayName, host: $0.host, port: $0.port, ts: now)
         }
         let liveIds = Set(livePeers.map(\.peerId))
-        for (id, entry) in previous where auth.contains(id) && !liveIds.contains(id) {
+        let directIds = Set(entries.map(\.peerId))
+        for (id, entry) in previous where (auth.contains(id) || liveIds.contains(id)) && !directIds.contains(id) && !entry.host.hasPrefix("relay:") {
             entries.append(entry)
         }
         writeEndpointCacheEntries(entries)

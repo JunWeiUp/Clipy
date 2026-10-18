@@ -1,11 +1,11 @@
-# Clipy LAN Sync Protocol v3
+# Clipy Sync Protocol v3
 
 Canonical wire + reliability notes for macOS (`Sources/Sync/`) and Android Dart (`lib/sync/` + `sync_manager.dart`).  
 Do **not** change framing/crypto without bumping `v` and updating both ends plus this doc.
 
 ## Framing
 
-- Transport: raw TCP, default port **5566**.
+- Transport: raw TCP, default port **5566**, or an opt-in authenticated WSS byte tunnel. See [Internet relay](COMMON-RELAY-SDK.md) for discovery, access keys, limits and trust. v3 framing and payload encryption are unchanged. Relay device aliases are separate from LAN peer IDs; encrypted presence carries `peerId` for session matching, with UUID relay IDs as the legacy fallback. Explicit discovery refreshes both LAN and relay presence.
 - Each frame: **4-byte big-endian length** + UTF-8 JSON body.
 - Max frame: **2 MiB**. Handshake frames should stay ≤ **64 KiB**.
 - Envelope fields (`v: 3`):
@@ -49,7 +49,7 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
   Previous pairing settings are ignored and removed; no code, QR import, or pairing proof is needed.
 - hello/welcome only exchange protocol version and device metadata. A v2 peer is rejected with `versionMismatch`; both endpoints must run v3 source builds.
 - The default key is public and built into the application. Encryption does not authenticate devices or provide confidentiality against other LAN participants who know the key. See [SECURITY.md](../SECURITY.md).
-- On the first v3 startup, old encoded pending frames are discarded because their ciphertext cannot be replayed under the new key. Local history, received files and outgoing sharing choices are retained. Subsequent v3 restarts preserve pending delivery.
+- On the first v3 startup (and once when upgrading from experimental private-LAN-key builds), old encoded pending frames are discarded because their ciphertext cannot be replayed under the new key. Local history, received files and outgoing sharing choices are retained. Subsequent v3 restarts preserve pending delivery.
 - Regression vectors: `clipy_android/test/default_key_parity_test.dart`, `sync_crypto_test.dart`, and `clipy_macos/Tests/SyncTransportRegression.swift`. Binary chunks retain the native Android AES-GCM fast path.
 
 ## Discovery
@@ -116,6 +116,7 @@ may still reject files above 512 MiB; update both endpoints for larger transfers
 ### History
 
 1. Sender fans out `history` and tracks in-flight / pending until `ack` with matching `hash` (ACK clears by **peer + hash**).
+   Explicit Flutter text sends wait up to 12 seconds for an ACK matching peer + hash before showing success. Timeout/stop is unconfirmed, not successful; pending text can still arrive later. At most 32 receipt waits are kept, identical concurrent sends share one wait, and ACK/timeout/stop releases each timer. Pending is stored before the first write to avoid re-enqueue after a fast ACK.
 2. Receiver must **persist successfully, then send `ack`**. Never ack before store (headless Android previously hung on DB → no ack).
 3. Both ends: SQLite `pending_sync` stores **encoded frames** keyed by `(peer_id, hash)`; ≥**120s** without ack clears in-flight and re-flushes on the ping path (Mac; avoids catch-up storms).
 4. Android may still flush legacy `pending_text_sync` (plaintext) once, re-encoding into `pending_sync`. `NotificationManager` keeps its own notif pending table for content-level offline queue.
@@ -217,3 +218,7 @@ after testing with `adb forward --remove tcp:15566`.
 9. Sync off + cold start without UI: no warm engine / no FGS; open UI still single engine (no double-bind :5566).
 10. Device-list **Send Text** without authorization: `history.direct`. Automatic clipboard/notif: authorize only on the **sending** device; receiving peer does not need to authorize the sender.
 11. Device-list **Send File** both directions (Mac ⇄ Android): sender waits for `file.ack`; receiver gets the file on disk (Mac: `~/Downloads/Clipy` + history entry + notification; Android: `Download/Clipy/` + 已接收文件 page; tapping an entry opens the system file manager at that folder) without any authorization toggles.
+
+## Relay invitation modes and short links
+
+Relay invitations default to automatic joining after scanning, with manual pairing-code approval available by turning the option off. Automatic admission verifies a time-limited manager-signed delegation and grants ordinary membership; the inviter need not remain online. QR codes and copied invitations use encrypted short links, while legacy invitations remain supported. Existing members must upgrade to the delegation-aware SDK; the server must support automatic admission and invitation-link endpoints.

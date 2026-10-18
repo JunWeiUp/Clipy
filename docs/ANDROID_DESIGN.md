@@ -15,12 +15,13 @@ The mobile Flutter UI uses Clipy blue, semantic light/dark surfaces, generous ty
 
 Copy feedback uses a short checkmark transition and selection haptics. Confirmation is shown only after the clipboard write finishes. File-transfer progress remains visible across tabs. Avoid looping decorative animations or discovery polling for visual effects.
 
-On History, the page title/intro collapses after scrolling 48 logical pixels and returns at the top for long lists. Lists whose maximum scroll extent is at most 48 pixels also collapse after 24 pixels of user drag in either direction, so a short history can reclaim the intro space without reaching an impossible scroll offset. Short-list collapse stays stable at zero offset and resets when leaving History. Search, filters and the app bar remain available. Header motion respects reduced animations. Other tabs retain their page headings; viewport changes alone do not collapse them.
+On History, Notifications and Settings, the page title/intro collapses after scrolling 48 logical pixels and returns at the top for long lists. Lists whose maximum scroll extent is at most 48 pixels also collapse after 24 pixels of user drag in either direction, so a short history can reclaim the intro space without reaching an impossible scroll offset. Short-list collapse stays stable at zero offset and resets when changing main tabs. Search, filters and the app bar remain available. Header motion respects reduced animations. Devices omits its page heading. Android notification lists inside TabBarView use scroll notification depth 1; other pages use depth 0. Horizontal swipes and viewport changes alone do not collapse headings.
 
 ## Feature ownership
 
 System sharing opens a separate file-review page on Android and iOS. Show the
-received filenames and sizes before device selection; enable Send only after
+received filenames and sizes before device selection; Android text-only shares
+show a bounded scrollable text preview and use direct text sending; enable Send only after
 the user chooses a peer. Send sequentially, show per-file success/progress, and
 keep failures available for retry without resending successful files to the
 same peer. The share page discovers on open/resume, shows a Refresh action and
@@ -69,3 +70,36 @@ is added.
 The Settings footer displays version and build number below the app description
 on Android, iOS and Windows. Read native package/build metadata once per settings
 view; do not hardcode the source version or poll for changes.
+
+The Devices page leads with device cards instead of the introductory banner and
+connection form. Online peers precede saved offline peers. Text/file send actions
+remain directly visible; automatic clipboard/notification switches open from the tuning icon in
+the card header (one card at a time). Compact cards use a 36px device icon,
+8px bottom spacing and no separate expansion row. The Devices tab omits the
+large page title and local-connection subtitle, keeping the list heading only. Connection settings, diagnostics and manual addresses follow the list.
+The shared desktop settings list retains expanded switches. Refresh progress and
+empty-state guidance remain visible, with no new subscriptions or polling.
+
+The Devices sync button reflects live sessions, not merely a bound listening
+socket: LAN, relay, and mixed routes have distinct labels. Relay control
+connecting, retrying, and ready-without-peers are separate states; discovery,
+waiting, disabled, and toggle-in-progress are also explicit. Connection and
+discovery events refresh the view; listeners are removed on disposal, with no
+new timers. An enabled button retains its tap-to-disable action and visible hint.
+
+### Relay form state and narrow layouts
+
+- Relay fields and the enrollment disclosure each use a distinct `PageStorageKey`.
+  The Devices list retains its scroll position; the disclosure's boolean state must
+  never share a storage identifier with a text field's numeric scroll offset.
+- Device IDs and relay addresses wrap without accepting line breaks. Helper text
+  wraps for large fonts; the save button spans the card width. Enrollment stays
+  obscured and drafts survive disclosure collapse, without saving or restarting sync.
+- `relay_settings_layout_test.dart` covers a 320 dp viewport, 2× text, Chinese/English,
+  both themes, repeated disclosure toggles, keyboard insets and save-button reachability.
+
+## Relay invitation progress
+
+Scanning a device-group QR code submits the request. While this page is open, requests appear automatically above the invitation QR; manual mode requires the inviter to compare the pairing code and explicitly approve. Approval automatically completes enrollment on the requesting device. Do not require “Check join request” or “Finish joining” buttons. Keep discard/cancel controls and inline network/expiry feedback.
+
+Relay invitations default to automatic joining after scanning, with manual pairing-code approval available by turning the option off. Automatic admission verifies a time-limited manager-signed delegation and grants ordinary membership; the inviter need not remain online. QR codes and copied invitations use encrypted short links, while legacy invitations remain supported. Existing members must upgrade to the delegation-aware SDK; the server must support automatic admission and invitation-link endpoints.

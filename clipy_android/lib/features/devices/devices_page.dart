@@ -5,9 +5,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../app_localizations.dart';
 import '../../notification_manager.dart';
 import '../../sync_manager.dart';
+import '../../sync/relay_client.dart';
 import '../../ui/app_components.dart';
 import 'device_widgets.dart';
 import 'sync_diagnostics_page.dart';
+import 'relay_settings.dart';
 
 class DevicesPage extends StatefulWidget {
   const DevicesPage({super.key});
@@ -17,18 +19,35 @@ class DevicesPage extends StatefulWidget {
 
 class _DevicesPageState extends State<DevicesPage> {
   bool _busy = false;
+  bool _toggleTarget = false;
   Future<List<String>>? _addresses;
 
   @override
   void initState() {
     super.initState();
     _addresses = SyncManager.instance.localIPv4Addresses();
+    SyncManager.instance.connectionRevision.addListener(_connectionChanged);
+    SyncManager.instance.discoveryProgress.addListener(_connectionChanged);
+  }
+
+  void _connectionChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    SyncManager.instance.connectionRevision.removeListener(_connectionChanged);
+    SyncManager.instance.discoveryProgress.removeListener(_connectionChanged);
+    super.dispose();
   }
 
   Future<void> _toggle(bool enabled) async {
     if (_busy) return;
     final manager = SyncManager.instance;
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _toggleTarget = enabled;
+    });
     final previous = manager.isEnabled;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -72,71 +91,63 @@ class _DevicesPageState extends State<DevicesPage> {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final manager = SyncManager.instance;
-    final colors = Theme.of(context).colorScheme;
     return ListView(
       key: const PageStorageKey('devices'),
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
       children: [
-        Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                colors.primaryContainer,
-                colors.secondaryContainer.withValues(alpha: .6),
-              ],
+        // 开启同步按钮（顶部）
+        Padding(
+          padding: const EdgeInsets.only(bottom: 20),
+          child: FilledButton.icon(
+            onPressed: _busy ? null : () => _toggle(!manager.isEnabled),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(56),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
             ),
-            borderRadius: BorderRadius.circular(28),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.devices_rounded,
-                size: 36,
-                color: colors.onPrimaryContainer,
+            icon: _busy
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Icon(
+                    manager.isEnabled
+                        ? Icons.sync_rounded
+                        : Icons.sync_disabled_rounded,
+                  ),
+            label: Text(
+              syncButtonLabel(
+                l10n,
+                enabled: _busy ? _toggleTarget : manager.isEnabled,
+                serverRunning: manager.isServerRunning,
+                lan: manager.hasLanSession,
+                relay: manager.hasRelaySession,
+                relayState: manager.relayConnectionState,
+                scanning: manager.discoveryProgress.value.running,
+                busy: _busy,
               ),
-              const SizedBox(height: 20),
-              Text(
-                l10n.devicesTagline,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: colors.onPrimaryContainer,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                Platform.isIOS ? l10n.iosConnectionHint : l10n.connectionHint,
-                style: TextStyle(color: colors.onPrimaryContainer, height: 1.5),
-              ),
-            ],
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 16),
+            ),
           ),
         ),
+        if (manager.isEnabled && !_busy)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(l10n.syncStopHint, textAlign: TextAlign.center),
+          ),
+        SyncTargetDeviceList(key: ValueKey(manager.isEnabled), compact: true),
         const SizedBox(height: 20),
         ClipySection(
           title: l10n.localNetwork,
+          subtitle: l10n.syncLanFirst,
           child: Column(
             children: [
-              SwitchListTile(
-                secondary: _busy
-                    ? const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const ClipyIcon(Icons.wifi_rounded),
-                title: Text(l10n.enableLanSync),
-                subtitle: Text(
-                  manager.isEnabled
-                      ? (manager.isServerRunning
-                            ? l10n.syncReady
-                            : l10n.diagServerNotBound)
-                      : l10n.syncPaused,
-                ),
-                value: manager.isEnabled,
-                onChanged: _busy ? null : _toggle,
-              ),
-              const Divider(indent: 20, endIndent: 20),
               ListTile(
                 leading: const ClipyIcon(Icons.tune_rounded),
                 title: Text(l10n.connectionSettings),
@@ -144,6 +155,7 @@ class _DevicesPageState extends State<DevicesPage> {
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: _busy ? null : _editConnection,
               ),
+              const Divider(indent: 20, endIndent: 20),
               ListTile(
                 leading: const ClipyIcon(Icons.monitor_heart_outlined),
                 title: Text(l10n.syncDiagnosticsTitle),
@@ -175,7 +187,12 @@ class _DevicesPageState extends State<DevicesPage> {
             ],
           ),
         ),
-        SyncTargetDeviceList(key: ValueKey(manager.isEnabled)),
+        const SizedBox(height: 20),
+        RelaySettings(
+          onSettingsChanged: () {
+            if (mounted) setState(() {});
+          },
+        ),
         const SizedBox(height: 20),
         const Card(child: ManualPeerSection()),
       ],
@@ -295,5 +312,33 @@ class _ConnectionEditorState extends State<ConnectionEditor> {
         ),
       ),
     );
+  }
+}
+
+String syncButtonLabel(
+  AppStrings l10n, {
+  required bool enabled,
+  required bool serverRunning,
+  required bool lan,
+  required bool relay,
+  required RelayConnectionState relayState,
+  required bool scanning,
+  bool busy = false,
+}) {
+  if (busy) return enabled ? l10n.syncStarting : l10n.syncStopping;
+  if (!enabled) return l10n.syncStart;
+  if (lan && relay) return l10n.syncMixedConnected;
+  if (lan) return l10n.syncLanConnected;
+  if (relay) return l10n.syncRelayConnected;
+  if (!serverRunning) return l10n.diagServerNotBound;
+  switch (relayState) {
+    case RelayConnectionState.connecting:
+      return l10n.syncRelayConnecting;
+    case RelayConnectionState.ready:
+      return l10n.syncRelayReady;
+    case RelayConnectionState.retrying:
+      return l10n.syncRelayRetrying;
+    case RelayConnectionState.disabled:
+      return scanning ? l10n.syncSearching : l10n.syncWaiting;
   }
 }

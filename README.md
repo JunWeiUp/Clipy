@@ -133,7 +133,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.31** · Default local build **10223** · Latest published release: **[v1.0.31](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.31)** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.32** · Default local build **12284** · Latest published release: **[v1.0.31](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.31)** · [Build metadata](clipy_android/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
@@ -212,6 +212,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 - Devices discover each other via **/24 subnet scan** and **manual IP:port**. Cross-subnet connections require network routing and firewall access; no cloud relay or account is needed.
 - Automatic **text clipboard sync** uses acknowledgements and an offline queue. Images and file clipboard entries remain local; send files explicitly from the device page or menu.
 - **Mobile share target:** share files of any format to Clipy on Android or iPhone, review the files, choose a device and tap Send. Supports up to 32 files per share, **1 GiB per file**, with temporary storage checks. The iPhone Share Extension discovers/selects devices and sends directly in the share sheet; opening the main app is unnecessary. Both sender and receiver need this update for files above 512 MiB. Included in v1.0.29; iOS requires your own signed source build.
+- **Android text sharing (current source):** text shared from another app is previewed and sent as text to the selected device, without creating a `.txt` file. Text-file attachments still transfer as files.
 - **Android share-device discovery:** the share page reuses live connections, tries remembered devices, then scans nearby LAN devices when needed. Refresh progress and clear sync-off guidance are available on the page. Concurrent requests share one bounded scan with cooldowns; no background polling is added. Successful sends close the share page automatically.
 - **File receipt notifications:** after a file is verified and saved, click its notification to reveal it in Finder, the Android file manager or Windows Explorer; iPhone previews the file or offers opening options. Allow system notifications. Windows notifications require Clipy to remain running in the tray.
 - **Mac-to-Mac folder transfer:** choose **Send File or Folder…** for a device. Updated Macs restore the folder in `~/Downloads/Clipy/`, preserving nested/empty folders and hidden files; name collisions create a new folder. Both Macs need this folder-transfer update for automatic restoration; older Macs and Android receive a regular ZIP instead. Each folder, including archive overhead, is limited to **1 GiB / 10,000 entries** (v1.0.29; older versions retain 512 MiB); symbolic links and special files are rejected.
@@ -229,10 +230,10 @@ Download installers from the [latest published release](https://github.com/JunWe
 - Turning it off or quitting Clipy releases the request. Closing the laptop lid and choosing Sleep manually still work; restarting Clipy starts with Keep Awake off.
 
 ### macOS interface
-- **Hidden menu bar icons:** opt in under Preferences → General or the panel’s settings. On a single built-in display, overflowing items appear in a visible row below the panel search field with their original icon when capture succeeds, or an application icon and name otherwise. Clicking requests the original menu through Accessibility; some apps do not support this. Icons are never moved. Accessibility is required; Screen Recording is optional for original previews (macOS 14+). Dynamic status images are not guaranteed. External displays pause the feature.
+- **Hidden menu bar icons:** opt in under Preferences → General or the panel’s settings. On every connected display, overflowing items appear in a visible row below the panel search field with their original icon when capture succeeds, or an application icon and name otherwise. Clicking requests the original menu through Accessibility; some apps do not support this. Icons are never moved. Accessibility is required; Screen Recording is optional for original previews (macOS 14+). Dynamic status images are not guaranteed.
 - Native title bars, readable light/dark content surfaces, consistent SF Symbols, spacing and controls.
 - Press <kbd>Esc</kbd> to close the focused window, including settings, search, word lookup, vocabulary, snippet and image/video editors, OCR results and pinned images. Existing save prompts still apply; input-method composition, shortcut recording and modal dialogs handle cancellation first.
-- **Control panel:** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, a compact estimate of today's Token usage below them, Clipboard / Snippets / Tools tabs, and device/notification pages. Detail pages use a smaller Back/title layout; Tools omits actions already in the persistent footer. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-click the menu-bar icon for the classic native menu.
+- **Control panel:** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, a compact estimate of today's Token usage below them, Clipboard / Snippets / Devices tabs (refresh plus direct Send Text / Send File per device), and tools/notification pages. Detail pages use a smaller Back/title layout; Tools omits actions already in the persistent footer. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-click the menu-bar icon for the classic native menu.
 - Preferences and screenshot settings scroll continuously across categories; the sidebar follows the visible section and supports click-to-jump. See the [macOS design standard](docs/MACOS_DESIGN.md) for UI development guidance.
 
 ### ⌨️ Global hotkeys & 🌍 i18n
@@ -311,10 +312,10 @@ cd clipy_android
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.31
+./scripts/package_windows.ps1 -Version 1.0.32
 ```
 
-The package is `dist/ClipyClone-Windows-x64-v1.0.31.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
+The package is `dist/ClipyClone-Windows-x64-v1.0.32.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Windows source and release ZIPs are unsigned; check the release page for public availability.
 
 ### iOS (Flutter + Swift)
 
@@ -363,7 +364,7 @@ Run `bash scripts/check.sh all` from the root for local quality checks. On macOS
 Clipy uses a LAN-first protocol v3 for clipboard history and notifications:
 
 - **Discovery** — `/24` TCP port scan + manual `IP:port` peers (cross-subnet / dual-band).
-- **Transport** — raw TCP with a 4-byte big-endian length prefix per JSON envelope (`v: 2`, max 2 MB/frame).
+- **Transport** — raw TCP with a 4-byte big-endian length prefix per JSON envelope (`v: 3`, max 2 MB/frame).
 - **Messages** — `history`, `history.fetch`, `notif.post` / `dismiss` / `clear` / `ack`, `hello` / `welcome`, `ping` / `pong`, `ack`.
 - **Encryption** — AES-GCM 256-bit on payloads with a built-in default key in current source.
 - **Authorization** — outbound clipboard/notification push only to peers in each device's authorized list.
@@ -371,6 +372,8 @@ Clipy uses a LAN-first protocol v3 for clipboard history and notifications:
 - **Loop prevention** — content hashes prevent rebroadcast loops.
 
 Full wire notes, headless Android channel rules, and code map: [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+
+Current source also supports an opt-in [self-hosted Internet relay](docs/COMMON-RELAY-SDK.md): LAN first, authenticated WSS fallback for text, notifications and files. Enroll each relay device with its own identity and verified peer public keys; LAN sending remains pairing-free. The native iOS Share Extension remains LAN-only. This is not yet part of a published release.
 
 ## 📁 Project structure
 
@@ -425,3 +428,16 @@ Clipy-authored code remains under [MIT](LICENSE). The combined macOS application
 If Clipy saves you time, consider giving it a ⭐ — it really helps others discover the project!
 
 </div>
+
+[Common Relay SDK upgrade / 通用中继 SDK 升级](docs/COMMON-RELAY-SDK.md)
+
+Version 1.0.32 source: relay settings include **Manage relay device group** for listing online/offline members, inviting devices by QR/link, approving joins and removing members. Management requires a compatible common-relay server; new groups require self-service creation to be enabled. See [relay SDK and device groups](docs/COMMON-RELAY-SDK.md). Existing legacy groups can activate management through a trusted administrator invitation.
+
+
+Relay device groups support creating a new group directly or joining by QR invitation. Creators can invite, view and remove devices. Invitations, pairing approval and member lists have separate sections. Existing legacy groups retain their configuration and can upgrade management trust through a manager invitation.
+
+Device groups also support device renaming, leaving the current group and administrator disbanding. Exit actions confirm their scope and preserve local history and LAN configuration.
+
+Relay invitations default to automatic joining after scanning, with manual pairing-code approval available by turning the option off. Automatic admission verifies a time-limited manager-signed delegation and grants ordinary membership; the inviter need not remain online. QR codes and copied invitations use encrypted short links, while legacy invitations remain supported. Existing members must upgrade to the delegation-aware SDK; the server must support automatic admission and invitation-link endpoints.
+
+Network changes and device refresh now probe stale connections within three seconds and trigger relay fallback immediately; healthy LAN connections remain preferred. This is a detection deadline, not a guaranteed end-to-end connection time.

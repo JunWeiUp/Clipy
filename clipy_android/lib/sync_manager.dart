@@ -1,3 +1,5 @@
+import 'sync/relay_identity.dart';
+import 'sync/network_handoff.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -21,6 +23,8 @@ import 'notification_manager.dart';
 import 'storage_paths.dart';
 import 'features/transfers/transfer_notifications.dart';
 import 'sync/crypto.dart';
+import 'sync/text_delivery_receipts.dart';
+import 'sync/relay_client.dart';
 import 'sync/diagnostics.dart';
 import 'sync/protocol.dart';
 import 'sync/run_lifecycle.dart';
@@ -230,6 +234,17 @@ class SyncManager with WidgetsBindingObserver {
   Stream<String> get onFileReceived => _fileReceivedController.stream;
   Stream<FileProgress> get onFileProgress => _fileProgressController.stream;
 
+  // Event-driven UI revision; no polling or retained UI objects.
+  final connectionRevision = ValueNotifier<int>(0);
+  void _notifyConnectionChanged() => connectionRevision.value++;
+  RelayConnectionState get relayConnectionState =>
+      _relay?.state ?? RelayConnectionState.disabled;
+  bool get hasLanSession =>
+      _sessions.values.any((s) => !s.host.startsWith('relay:'));
+  bool get hasRelaySession =>
+      _sessions.values.any((s) => s.host.startsWith('relay:'));
+
+  SyncRelayClient? _relay;
   ServerSocket? _server;
   final Map<String, _Session> _sessions = {};
   final Set<Socket> _handshakeSockets = {};
@@ -269,6 +284,7 @@ class SyncManager with WidgetsBindingObserver {
   String displayName = 'Android';
   final SyncCrypto _crypto = SyncCrypto();
   final SyncDiagnostics diagnostics = SyncDiagnostics();
+  final _textDeliveryReceipts = TextDeliveryReceipts();
 
   final _lastHistoryFetchAt = <String, DateTime>{};
 
@@ -349,6 +365,11 @@ class SyncManager with WidgetsBindingObserver {
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
+    // Discard only old encoded ciphertext from private-key builds, once.
+    if (prefs.getInt('lanDefaultKeyVersion') != 1) {
+      await PendingSyncRepository.instance.clearAll();
+      await prefs.setInt('lanDefaultKeyVersion', 1);
+    }
     isEnabled = prefs.getBool('syncEnabled') ?? false;
     port = prefs.getInt('syncPort') ?? 5566;
     peerId = prefs.getString('peerId') ?? '';
@@ -573,6 +594,116 @@ class SyncManager with WidgetsBindingObserver {
     return next;
   }
 
+  Future<void> _startRelay(int epoch) async {
+    final prefs = await SharedPreferences.getInstance();
+    final url = prefs.getString('syncRelayURL') ?? '';
+    final token = await ClipyRelayIdentity.config();
+    if (!_isRunCurrent(epoch) ||
+        prefs.getBool('syncRelayEnabled') != true ||
+        !SyncRelayClient.validUrl(url) ||
+        token.length < 32) {
+      return;
+    }
+    final addresses = await localIPv4Addresses();
+    if (!_isRunCurrent(epoch)) return;
+    _relay?.stop();
+    _relay = SyncRelayClient(
+      url: url,
+      token: token,
+      id: peerId,
+      name: displayName,
+      port: port,
+      addresses: addresses,
+      onStateChanged: (_) {
+        if (_isRunCurrent(epoch)) _notifyConnectionChanged();
+      },
+      onPeerAvailable: _probeNetworkSessions,
+      hasSession: (id) => _sessions.containsKey(id),
+      tryLan: (id, host, port) => _dial(
+        host,
+        port,
+        reason: 'direct',
+        peerId: id,
+        runEpoch: epoch,
+        timeout: const Duration(milliseconds: 800),
+      ),
+      onSocket: (id, socket) {
+        if (!_isRunCurrent(epoch)) {
+          socket.destroy();
+          return;
+        }
+        unawaited(
+          _performHandshake(
+            socket,
+            host: 'relay:$id',
+            inbound: peerId.compareTo(id) > 0,
+            runEpoch: epoch,
+            expectedPeerId: id,
+          ),
+        );
+      },
+    );
+    _relay!.start();
+  }
+
+  Future<void> updateRelaySettings({
+    required bool enabled,
+    required String url,
+    required String token,
+    String? deviceId,
+    String accessKey = '',
+    bool forceRelayRestart = false,
+  }) async {
+    url = url.trim();
+    token = token.trim();
+    accessKey = accessKey.trim();
+    final prefs = await SharedPreferences.getInstance();
+    final savedDevice = prefs.getString('syncRelayDeviceId') ?? peerId;
+    final device = (deviceId ?? savedDevice).trim();
+    if (!forceRelayRestart &&
+        token.isEmpty &&
+        accessKey.isEmpty &&
+        device == savedDevice &&
+        (prefs.getBool('syncRelayEnabled') ?? false) == enabled &&
+        (prefs.getString('syncRelayURL') ?? '') == url) {
+      return;
+    }
+    final existing = await ClipyRelayIdentity.config();
+    final configured = await ClipyRelayIdentity.prepareConfig(
+      existing: existing,
+      device: device,
+      accessKey: accessKey,
+      enrollment: token,
+    );
+    if (enabled && (!SyncRelayClient.validUrl(url) || configured.isEmpty)) {
+      throw const FormatException('enrollmentRequired');
+    }
+    if (configured != existing) await ClipyRelayIdentity.saveConfig(configured);
+    await prefs.setString('syncRelayDeviceId', device);
+    await prefs.setString('syncRelayURL', url);
+    await prefs.remove('syncRelayToken');
+    await prefs.setBool('syncRelayEnabled', enabled);
+    if (_runLifecycle.isActive) {
+      final epoch = _runLifecycle.epoch;
+      // A relay edit must not restart the LAN listener, clear discovered
+      // devices, cancel LAN transfers, or reset outgoing sharing choices.
+      _relay?.stop();
+      _relay = null;
+      final relayPeers = _sessions.entries
+          .where((entry) => entry.value.host.startsWith('relay:'))
+          .map((entry) => entry.key)
+          .toList();
+      for (final id in relayPeers) {
+        // A direct session may have replaced the old tunnel while awaiting.
+        if (_sessions[id]?.host.startsWith('relay:') == true) {
+          await _closeSession(id, scheduleReconnect: false);
+        }
+      }
+      if (_isRunCurrent(epoch)) await _startRelay(epoch);
+      _notifyConnectionChanged();
+    }
+  }
+
   Future<void> start() async {
     if (_runLifecycle.isActive && _server != null) return;
     appLog('SyncManager v3 starting...');
@@ -589,6 +720,7 @@ class SyncManager with WidgetsBindingObserver {
       return;
     }
     if (!_isRunCurrent(epoch)) return;
+    await _startRelay(epoch);
     _startConnectivityMonitoring();
     await _startForegroundService();
     if (!_isRunCurrent(epoch)) return;
@@ -619,6 +751,7 @@ class SyncManager with WidgetsBindingObserver {
     }
     if (!_isRunCurrent(epoch)) return;
     _startConnectivityMonitoring();
+    if (_relay == null) await _startRelay(epoch);
     _startPingTimer();
     await _loadEndpointCache();
     if (!_isRunCurrent(epoch)) return;
@@ -626,6 +759,9 @@ class SyncManager with WidgetsBindingObserver {
   }
 
   Future<void> stop() async {
+    _textDeliveryReceipts.cancelAll();
+    _relay?.stop();
+    _relay = null;
     // Invalidate outstanding bind/connect/handshake/scan work before the first
     // await. iOS keeps isEnabled=true while backgrounded, so that flag alone
     // cannot prevent a late socket from reviving the listener.
@@ -640,6 +776,8 @@ class SyncManager with WidgetsBindingObserver {
     _handshakeSockets.clear();
     _connectivitySub?.cancel();
     _connectivitySub = null;
+    _networkProbeTimer?.cancel();
+    _networkProbeTimer = null;
     _scanDebounceTimer?.cancel();
     _scanDebounceTimer = null;
     _pingTimer?.cancel();
@@ -713,21 +851,52 @@ class SyncManager with WidgetsBindingObserver {
     }
   }
 
+  Timer? _networkProbeTimer;
+
+  void _probeNetworkSessions() {
+    // Repeated Scan taps share one deadline instead of postponing recovery.
+    if (_networkProbeTimer != null || !_runLifecycle.isActive) return;
+    final epoch = _runLifecycle.epoch;
+    final captured = Map.of(_sessions);
+    final pongs = {for (final e in captured.entries) e.key: e.value.lastPong};
+    unawaited(_sendPings());
+    _networkProbeTimer = Timer(const Duration(seconds: 3), () {
+      _networkProbeTimer = null;
+      if (!_isRunCurrent(epoch)) return;
+      for (final e in captured.entries) {
+        final current = _sessions[e.key];
+        if (current != null &&
+            shouldExpireNetworkProbe(
+              capturedConnection: e.value,
+              currentConnection: current,
+              previousPong: pongs[e.key]!,
+              currentPong: current.lastPong,
+            )) {
+          unawaited(_closeSession(e.key, scheduleReconnect: true));
+        }
+      }
+      _relay?.refreshPeers();
+    });
+  }
+
   void _startConnectivityMonitoring() {
     _connectivitySub?.cancel();
     final epoch = _runLifecycle.epoch;
-    var wasOffline = false;
+    String? previous;
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       if (!_isRunCurrent(epoch)) return;
-      final offline = results.every((r) => r == ConnectivityResult.none);
-      if (offline) {
-        wasOffline = true;
+      final signature = (results.map((r) => r.name).toSet().toList()..sort())
+          .join(',');
+      final changed = previous != null && previous != signature;
+      previous = signature;
+      if (!changed ||
+          results.every((r) => r == ConnectivityResult.none) ||
+          !isEnabled) {
         return;
       }
-      if (wasOffline && isEnabled) {
-        wasOffline = false;
-        unawaited(_recoverAfterNetworkRestore(epoch));
-      }
+      _probeNetworkSessions();
+      _relay?.networkChanged();
+      unawaited(_recoverAfterNetworkRestore(epoch));
     });
   }
 

@@ -24,7 +24,7 @@ void main() {
         await source.writeAsBytes(original);
         final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
         final received = BytesBuilder(copy: false);
-        final crypto = SyncCrypto();
+        final crypto = SyncCrypto()..configureKey('03' * 32);
         final receiver = () async {
           final client = await server.first;
           final buffer = BytesBuilder(copy: false);
@@ -90,7 +90,12 @@ void main() {
           }
         }();
         try {
-          final send = probe.sendFileProbe('127.0.0.1', server.port, source);
+          final send = probe.sendFileProbe(
+            '127.0.0.1',
+            server.port,
+            source,
+            groupKey: '03' * 32,
+          );
           final results = await Future.wait<Object?>([send, receiver]);
           expect(results.first, isTrue);
           expect(received.toBytes(), original);

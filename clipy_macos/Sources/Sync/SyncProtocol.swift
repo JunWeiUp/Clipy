@@ -15,6 +15,20 @@ struct DeviceEntry {
     let displayName: String
     let peerId: String
     let originalName: String
+    let host: String
+    let port: UInt16
+
+    var connectionDescription: String { SyncEndpointDisplay.label(host: host, port: port) }
+}
+
+/// Shared by settings and the menu-bar panel; relay IDs are not IP addresses.
+enum SyncEndpointDisplay {
+    static func label(host: String, port: UInt16) -> String {
+        if host.hasPrefix("relay:") {
+            return PreferencesManager.shared.appLanguage == .zh ? "公网中继" : "Internet relay"
+        }
+        return "\(host):\(port)"
+    }
 }
 
 // MARK: - Protocol v3

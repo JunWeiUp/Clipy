@@ -7,10 +7,13 @@ func runMenuBarOverflowRegressionTests() {
     }
     let geometry = MenuBarOverflowGeometry(screen: CGRect(x: 0, y: 0, width: 1512, height: 982),
                                             barHeight: 33, rightAreaMinX: 848)
-    check(MenuBarOverflowEnvironment.supportsDisplays(screenCount: 1, onlineDisplayCount: 1, builtIn: true), "built-in screen rejected")
-    check(!MenuBarOverflowEnvironment.supportsDisplays(screenCount: 1, onlineDisplayCount: 2, builtIn: true), "mirrored external display not paused")
-    check(!MenuBarOverflowEnvironment.supportsDisplays(screenCount: 2, onlineDisplayCount: 2, builtIn: true), "extended display not paused")
-    check(!MenuBarOverflowEnvironment.supportsDisplays(screenCount: 1, onlineDisplayCount: 1, builtIn: false), "external-only display accepted")
+    let external = MenuBarOverflowGeometry(screen: CGRect(x: 1512, y: -200, width: 1920, height: 1080),
+                                          barHeight: 24, rightAreaMinX: 1512)
+    check(MenuBarOverflowGeometry.owner(of: CGRect(x: 810, y: 4, width: 36, height: 24), among: [geometry, external])?.screen == geometry.screen, "built-in item assigned to the external bar")
+    check(MenuBarOverflowGeometry.owner(of: CGRect(x: 1800, y: -196, width: 24, height: 24), among: [geometry, external])?.screen == external.screen, "external item assigned to the built-in bar")
+    check(external.isOverflow(CGRect(x: 1480, y: -200, width: 24, height: 24), applicationMenuMaxX: nil), "icon clipped off the external bar missed")
+    check(!external.isOverflow(CGRect(x: 1600, y: -200, width: 24, height: 24), applicationMenuMaxX: nil), "visible external icon included")
+    check(!MenuBarOverflowEnvironment.geometries().isEmpty, "connected displays produced no menu bars")
     check(geometry.isOverflow(CGRect(x: 810, y: 4, width: 36, height: 24), applicationMenuMaxX: 400), "notch occlusion missed")
     check(geometry.isOverflow(CGRect(x: 846, y: 4.5, width: 24, height: 24), applicationMenuMaxX: 400), "two-point notch overlap was incorrectly tolerated")
     let insetButton = CGRect(x: 851, y: 4.5, width: 24, height: 24)

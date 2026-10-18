@@ -40,6 +40,8 @@ STAGED_APP="${BUILD_DIR}/${APP_BUNDLE}"
 mkdir -p "${STAGED_APP}/Contents/MacOS" "${STAGED_APP}/Contents/Resources"
 cp -R "${MACOS_PROJECT_DIR}/Sources" "${BUILD_DIR}/Sources"
 
+source "${REPO_ROOT}/scripts/common_relay_swift.sh"
+common_relay_swift "${REPO_ROOT}" "${MACOS_ARCH}"
 SWIFT_SOURCES=()
 while IFS= read -r -d '' source_path; do
   SWIFT_SOURCES+=("${source_path}")
@@ -50,14 +52,14 @@ done < <(find "${BUILD_DIR}/Sources" -type f -name '*.swift' -print0)
 DEBUG_FLAGS=()
 if [ "${GENERATE_DSYM}" = 1 ]; then DEBUG_FLAGS+=(-g); fi
 printf 'Building %s %s (%s) for %s...\n' "${APP_NAME}" "${APP_VERSION}" "${BUILD_NUMBER}" "${MACOS_ARCH}"
-swiftc "${SWIFT_SOURCES[@]}" ${DEBUG_FLAGS[@]+"${DEBUG_FLAGS[@]}"} \
+swiftc "${COMMON_RELAY_COMPILE_FLAGS[@]}" "${SWIFT_SOURCES[@]}" ${DEBUG_FLAGS[@]+"${DEBUG_FLAGS[@]}"} \
   -whole-module-optimization -swift-version 5 -target "${MACOS_ARCH}-apple-macos13.0" -D OFFLINE \
   -emit-object -emit-module -module-name "${APP_NAME}" \
   -emit-module-path "${BUILD_DIR}/${APP_NAME}.swiftmodule" \
   -o "${BUILD_DIR}/${APP_NAME}.o"
 # Retain the object/module until dsymutil finishes; swiftc's implicit temporary
 # objects otherwise disappear before debug symbols can be extracted.
-swiftc "${BUILD_DIR}/${APP_NAME}.o" -target "${MACOS_ARCH}-apple-macos13.0" \
+swiftc "${COMMON_RELAY_LINK_FLAGS[@]}" "${BUILD_DIR}/${APP_NAME}.o" -target "${MACOS_ARCH}-apple-macos13.0" \
   -o "${STAGED_APP}/Contents/MacOS/${APP_NAME}" \
   -framework AppKit -framework SwiftUI -framework CoreGraphics -framework Carbon -framework IOKit \
   -framework UserNotifications -framework ServiceManagement -framework ApplicationServices \

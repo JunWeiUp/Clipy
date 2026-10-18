@@ -65,3 +65,7 @@ clipy_android/ios/Signing.local.xcconfig
 **/history.json
 **/notifications.json
 /res/search.png
+
+# Swift Package Manager local build cache
+.build/
+.swiftpm/

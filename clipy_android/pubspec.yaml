@@ -1,13 +1,19 @@
 name: clipy_android
 description: Clipboard history, encrypted LAN sync, notification mirroring, and file transfer for Clipy.
 publish_to: none
-version: 1.0.31+10223
+version: 1.0.32+12284
 
 environment:
   sdk: ">=3.11.0 <4.0.0"
   flutter: ">=3.41.0"
 
 dependencies:
+  common_relay:
+    path: ../vendor/common-relay/dart
+  qr_flutter: 4.1.0
+  mobile_scanner: 7.4.2
+  sodium: 4.0.2
+  flutter_secure_storage: 10.0.0
   flutter:
     sdk: flutter
   flutter_localizations:

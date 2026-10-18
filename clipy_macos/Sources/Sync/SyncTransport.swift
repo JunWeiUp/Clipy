@@ -87,6 +87,7 @@ extension SyncManager {
     }
 
     func dialOnScanQueue(host: String, port: UInt16, reason: String, peerId: String? = nil, timeout: TimeInterval, stats: ScanStats?) {
+        guard !host.hasPrefix("relay:") else { return }
         let resolvedPeerId = peerId ?? (reason == "scan" ? nil : resolvePeerId(host: host, port: port))
         if !allowsProactiveDial(reason: reason, peerId: resolvedPeerId) {
             return
@@ -117,7 +118,7 @@ extension SyncManager {
             return
         }
         if reason == "scan" { stats?.recordConnectOk() }
-        performHandshake(fd: fd, host: host, port: port, inbound: false) { handshakeFailure in
+        performHandshake(fd: fd, host: host, port: port, inbound: false, expectedPeerId: peerId) { handshakeFailure in
             if reason == "scan" { stats?.recordHandshakeFailure(handshakeFailure) }
             else {
                 appLog("Dial \(reason) \(host):\(port) failed: handshake(\(handshakeFailure.label))", level: .warning)
@@ -128,8 +129,9 @@ extension SyncManager {
         }
     }
 
-    func performHandshake(fd: Int32, host: String, port: UInt16, inbound: Bool, onFailure: ((HandshakeFailure) -> Void)? = nil) {
-        let generation = currentGeneration
+    func performHandshake(fd: Int32, host: String, port: UInt16, inbound: Bool, expectedPeerId: String? = nil, expectedGeneration: Int? = nil, onFailure: ((HandshakeFailure) -> Void)? = nil) {
+        let generation = expectedGeneration ?? currentGeneration
+        guard generation == currentGeneration else { Darwin.close(fd); return }
         let hello = SyncEnvelope.make(type: SyncType.hello, peerId: peerId, name: displayName, port: Int(syncPort))
         guard let helloData = encodeFrame(hello), writeAll(fd, helloData) else {
             onFailure?(.writeFail); Darwin.close(fd); return
@@ -141,6 +143,7 @@ extension SyncManager {
         guard env.type == SyncType.welcome || env.type == SyncType.hello, env.peerId != peerId, !env.peerId.isEmpty else {
             onFailure?(env.peerId == peerId ? .selfHandshake : .badType); Darwin.close(fd); return
         }
+        guard expectedPeerId == nil || expectedPeerId == env.peerId else { onFailure?(.badType); Darwin.close(fd); return }
         if env.type == SyncType.hello {
             let welcome = SyncEnvelope.make(type: SyncType.welcome, peerId: peerId, name: displayName, port: Int(syncPort))
             if let data = encodeFrame(welcome), !writeAll(fd, data) {
@@ -155,6 +158,9 @@ extension SyncManager {
             guard let self else { Darwin.close(fd); return }
             guard generation == self.currentGeneration else { Darwin.close(fd); return }
             if let existing = self.sessions[peerId] {
+                if !host.hasPrefix("relay:") && existing.host.hasPrefix("relay:") &&
+                    (!self.incomingFiles.isEmpty || !self.fileAckWaiters.isEmpty) { Darwin.close(fd); return }
+                if host.hasPrefix("relay:") && !existing.host.hasPrefix("relay:") { Darwin.close(fd); return }
                 appLog("Replacing session for \(peerId.prefix(8)) (existing last pong \(Int(Date().timeIntervalSince(existing.lastPong)))s ago)")
                 self.closeSession(peerId: peerId, scheduleReconnect: false)
             }
@@ -189,7 +195,7 @@ extension SyncManager {
             self.pendingReconnects.removeValue(forKey: peerId)?.cancel()
             self.noteSessionEstablished()
             self.recordPeer(peerId: peerId, name: name, host: host, port: port)
-            self.persistEndpoint(peerId: peerId, name: name, host: host, port: port)
+            if !host.hasPrefix("relay:") { self.persistEndpoint(peerId: peerId, name: name, host: host, port: port) }
             self.flushPending(for: peerId)
             self.diagnostics.noteSessionUp(peerId: peerId, name: name, host: host)
             appLog("Session up with \(name) (\(peerId.prefix(8))) @ \(host):\(port)")
@@ -274,6 +280,7 @@ extension SyncManager {
         discardIncomingFiles(from: peerId)
         diagnostics.noteSessionDown(peerId: peerId)
         appLog("Session closed with \(peerId.prefix(8))")
+        if scheduleReconnect { relayClient?.refreshPeers() }
         guard scheduleReconnect, !(keepaliveDriven && !session.isClient) else { return }
         self.scheduleReconnect(peerId: peerId)
     }

@@ -56,7 +56,9 @@ Future<void> showSendTextToDeviceDialog(
     if (context.mounted) {
       showClipyMessage(
         context,
-        success ? l10n.textSentTo(peer.displayName) : l10n.sendFailed,
+        success
+            ? l10n.textSentTo(peer.displayName)
+            : l10n.textDeliveryUnconfirmed,
       );
     }
   } catch (_) {
@@ -113,7 +115,9 @@ class LanDeviceActionTile extends StatelessWidget {
   Widget build(BuildContext context) => ListTile(
     leading: const ClipyIcon(Icons.devices_rounded),
     title: Text(peer.displayName),
-    subtitle: Text(peer.host),
+    subtitle: Text(
+      peer.host.startsWith('relay:') ? context.l10n.internetRelay : peer.host,
+    ),
     trailing: PopupMenuButton<String>(
       tooltip: context.l10n.moreActions,
       onSelected: (value) => value == 'text'
@@ -128,7 +132,9 @@ class LanDeviceActionTile extends StatelessWidget {
 }
 
 class SyncTargetDeviceList extends StatefulWidget {
-  const SyncTargetDeviceList({super.key});
+  const SyncTargetDeviceList({super.key, this.compact = false});
+
+  final bool compact;
   @override
   State<SyncTargetDeviceList> createState() => _SyncTargetDeviceListState();
 }
@@ -138,6 +144,7 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
   List<DiscoveredPeer> _peers = [];
   bool _refreshing = false;
   final Set<String> _busy = {};
+  String? _expandedPeerId;
   @override
   void initState() {
     super.initState();
@@ -193,6 +200,17 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
     }
   }
 
+  Future<void> _removePeer(String id) async {
+    final confirmed = await confirmRemoval(
+      context,
+      title: context.l10n.delete,
+      message: context.l10n.removeDeviceConfirm,
+    );
+    if (confirmed && mounted) {
+      await _change(id, () => SyncManager.instance.removeAuthorizedPeer(id));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
@@ -200,10 +218,16 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
     final colors = Theme.of(context).colorScheme;
     final progress = manager.discoveryProgress.value;
     final refreshing = _refreshing || progress.running;
-    final ids = {
-      ...manager.authorizedPeerIds,
-      ..._peers.map((p) => p.peerId),
-    }.toList()..sort();
+    final onlineIds = _peers.map((peer) => peer.peerId).toSet();
+    final ids =
+        {...manager.authorizedPeerIds, ..._peers.map((p) => p.peerId)}.toList()
+          ..sort((a, b) {
+            if (widget.compact &&
+                onlineIds.contains(a) != onlineIds.contains(b)) {
+              return onlineIds.contains(a) ? -1 : 1;
+            }
+            return a.compareTo(b);
+          });
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -228,15 +252,16 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
             ),
           ],
         ),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 16),
-          child: Text(
-            l10n.syncTargetsSummary,
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+        if (!widget.compact)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Text(
+              l10n.syncTargetsSummary,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+            ),
           ),
-        ),
         if (refreshing)
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
@@ -286,76 +311,85 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
                 id,
               );
               final busy = _busy.contains(id);
+              final syncControls = <Widget>[
+                SwitchListTile(
+                  title: Text(l10n.syncClipboardToDevice),
+                  value: clipboard,
+                  onChanged: busy
+                      ? null
+                      : (value) => _change(
+                          id,
+                          () => manager.setClipboardSyncTarget(
+                            id,
+                            enabled: value,
+                          ),
+                        ),
+                ),
+                SwitchListTile(
+                  title: Text(l10n.syncNotificationsToDevice),
+                  value: notifications,
+                  onChanged: busy
+                      ? null
+                      : (value) => _change(
+                          id,
+                          () => manager.setNotificationSyncTarget(
+                            id,
+                            enabled: value,
+                          ),
+                        ),
+                ),
+              ];
               return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
+                padding: EdgeInsets.only(bottom: widget.compact ? 8 : 12),
                 child: Card(
                   child: Column(
                     children: [
                       ListTile(
-                        leading: const ClipyIcon(Icons.computer_rounded),
+                        minTileHeight: widget.compact ? 64 : null,
+                        contentPadding: widget.compact
+                            ? const EdgeInsets.only(left: 12, right: 4)
+                            : null,
+                        minVerticalPadding: widget.compact ? 4 : null,
+                        leading: ClipyIcon(
+                          Icons.computer_rounded,
+                          size: widget.compact ? 36 : 44,
+                        ),
                         title: Text(
                           peer?.displayName ?? manager.resolvedPeerLabel(id),
                         ),
                         subtitle: Text(
                           peer == null
                               ? l10n.deviceOffline
-                              : '${l10n.deviceOnline} · ${peer.host}',
+                              : '${l10n.deviceOnline} · ${peer.host.startsWith('relay:') ? l10n.internetRelay : peer.host}',
                           style: TextStyle(color: colors.onSurfaceVariant),
                         ),
-                        trailing: clipboard || notifications
+                        trailing: widget.compact
                             ? IconButton(
-                                onPressed: busy
-                                    ? null
-                                    : () async {
-                                        final confirmed = await confirmRemoval(
-                                          context,
-                                          title: l10n.delete,
-                                          message: l10n.removeDeviceConfirm,
-                                        );
-                                        if (confirmed && mounted) {
-                                          await _change(
-                                            id,
-                                            () => manager.removeAuthorizedPeer(
-                                              id,
-                                            ),
-                                          );
-                                        }
-                                      },
+                                tooltip: l10n.deviceSyncSettings,
+                                isSelected: _expandedPeerId == id,
+                                icon: const Icon(Icons.tune_rounded, size: 20),
+                                onPressed: () => setState(() {
+                                  _expandedPeerId = _expandedPeerId == id
+                                      ? null
+                                      : id;
+                                }),
+                              )
+                            : clipboard || notifications
+                            ? IconButton(
+                                onPressed: busy ? null : () => _removePeer(id),
                                 tooltip: l10n.delete,
                                 icon: const Icon(Icons.link_off_rounded),
                               )
                             : null,
                       ),
-                      const Divider(indent: 20, endIndent: 20),
-                      SwitchListTile(
-                        title: Text(l10n.syncClipboardToDevice),
-                        value: clipboard,
-                        onChanged: busy
-                            ? null
-                            : (value) => _change(
-                                id,
-                                () => manager.setClipboardSyncTarget(
-                                  id,
-                                  enabled: value,
-                                ),
-                              ),
-                      ),
-                      SwitchListTile(
-                        title: Text(l10n.syncNotificationsToDevice),
-                        value: notifications,
-                        onChanged: busy
-                            ? null
-                            : (value) => _change(
-                                id,
-                                () => manager.setNotificationSyncTarget(
-                                  id,
-                                  enabled: value,
-                                ),
-                              ),
-                      ),
                       if (peer != null)
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                          padding: EdgeInsets.fromLTRB(
+                            12,
+                            0,
+                            12,
+                            widget.compact ? 8 : 16,
+                          ),
                           child: Wrap(
                             spacing: 8,
                             runSpacing: 8,
@@ -392,6 +426,19 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
                             ],
                           ),
                         ),
+                      if (!widget.compact || _expandedPeerId == id) ...[
+                        const Divider(indent: 12, endIndent: 12),
+                        ...syncControls,
+                        if (widget.compact && (clipboard || notifications))
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: IconButton(
+                              onPressed: busy ? null : () => _removePeer(id),
+                              tooltip: l10n.delete,
+                              icon: const Icon(Icons.link_off_rounded),
+                            ),
+                          ),
+                      ],
                     ],
                   ),
                 ),

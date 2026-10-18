@@ -344,26 +344,30 @@ class _HomePageState extends State<HomePage>
     final content = SafeArea(
       top: false,
       child: ScrollCollapsingHeader(
-        enabled: _selectedIndex == 0,
-        header: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                titles[_selectedIndex],
-                style: Theme.of(context).textTheme.headlineLarge,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                subtitles[_selectedIndex],
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: colors.onSurfaceVariant,
+        enabled: _selectedIndex != 1,
+        pageIdentity: _selectedIndex,
+        scrollDepth: _selectedIndex == 2 && Platform.isAndroid ? 1 : 0,
+        header: _selectedIndex == 1
+            ? const SizedBox.shrink()
+            : Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      titles[_selectedIndex],
+                      style: Theme.of(context).textTheme.headlineLarge,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      subtitles[_selectedIndex],
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
-        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

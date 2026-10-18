@@ -250,6 +250,7 @@ class ClipySyncForegroundService : Service() {
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(getNotificationTitleRes()))
             .setContentText(getString(getNotificationTextRes()))
+            .setContentIntent(SyncNotificationIntent.openApp(this))
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

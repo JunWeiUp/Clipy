@@ -6,6 +6,34 @@ extension Notification.Name {
     static let phoneNotificationsDidChange = Notification.Name("phoneNotificationsDidChange")
 }
 
+/// Master switch for Mac banners. Missing preference stays on so existing
+/// banner rules keep working; the list and sync are unaffected either way.
+enum NotificationPopupPolicy {
+    static let defaultsKey = "notificationPopupsEnabled"
+
+    static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: defaultsKey) == nil { return true }
+        return defaults.bool(forKey: defaultsKey)
+    }
+
+    static func setEnabled(_ value: Bool, defaults: UserDefaults = .standard) {
+        defaults.set(value, forKey: defaultsKey)
+    }
+}
+
+final class NotificationPopupPreference: ObservableObject {
+    static let shared = NotificationPopupPreference()
+    @Published private(set) var enabled: Bool
+
+    private init() { enabled = NotificationPopupPolicy.isEnabled() }
+
+    func setEnabled(_ value: Bool) {
+        guard enabled != value else { return }
+        enabled = value
+        NotificationPopupPolicy.setEnabled(value)
+    }
+}
+
 class NotificationManager: NSObject {
     static let shared = NotificationManager()
 
@@ -304,9 +332,11 @@ class NotificationManager: NSObject {
     }
 
     /// 收到的通知是否弹出系统横幅。
+    /// - 弹出总开关关闭时一律不弹；列表和同步不受影响。
     /// - 屏蔽关键字（blockedKeywords）优先：命中则一律不弹，即便白名单命中。
     /// - 白名单为空（无应用、无关键字）时不弹任何横幅。
     func shouldShowBanner(_ entry: NotificationEntry) -> Bool {
+        guard NotificationPopupPolicy.isEnabled() else { return false }
         if matchesKeyword(entry, keywords: blockedKeywords) { return false }
         if bannerApps.isEmpty && bannerKeywords.isEmpty { return false }
         if bannerApps.contains(entry.packageName) { return true }

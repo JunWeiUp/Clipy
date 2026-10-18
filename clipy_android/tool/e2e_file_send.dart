@@ -1,7 +1,7 @@
 // Manual integration probe. Sends an EXISTING file; never creates/overwrites it.
 // The receiver writes to its normal Downloads/Clipy directory.
 // Usage: dart run tool/e2e_file_send.dart <host> <file>
-// Optional: CLIPY_PAIRING_SECRET and CLIPY_SYNC_PORT environment variables.
+// Optional: CLIPY_SYNC_KEY and CLIPY_SYNC_PORT environment variables.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -37,7 +37,13 @@ Future<void> main(List<String> args) async {
     return;
   }
   try {
-    final success = await sendFileProbe(args[0], port, file);
+    final success = await sendFileProbe(
+      args[0],
+      port,
+      file,
+      groupKey: Platform.environment['CLIPY_SYNC_KEY'] ?? '',
+      localPeerId: Platform.environment['CLIPY_DEVICE_ID'],
+    );
     exitCode = success ? 0 : 2;
   } catch (error) {
     stderr.writeln('Transfer failed: $error');
@@ -46,7 +52,13 @@ Future<void> main(List<String> args) async {
 }
 
 /// Uses bounded file reads and waits for the actual handshake, not a fixed sleep.
-Future<bool> sendFileProbe(String host, int port, File file) async {
+Future<bool> sendFileProbe(
+  String host,
+  int port,
+  File file, {
+  required String groupKey,
+  String? localPeerId,
+}) async {
   const chunkSize = 1024 * 1024;
   final length = await file.length();
   if (length > 1024 * 1024 * 1024) {
@@ -54,9 +66,9 @@ Future<bool> sendFileProbe(String host, int port, File file) async {
   }
   final digest = (await sha256.bind(file.openRead()).first).toString();
   final chunks = (length + chunkSize - 1) ~/ chunkSize;
-  final peerId = const Uuid().v4();
+  final peerId = localPeerId ?? const Uuid().v4();
   final fileId = const Uuid().v4();
-  final crypto = SyncCrypto();
+  final crypto = SyncCrypto()..configureKey(groupKey);
   final handshake = Completer<SyncEnvelope?>();
   final ack = Completer<Map<String, dynamic>>();
   final buffer = BytesBuilder(copy: false);

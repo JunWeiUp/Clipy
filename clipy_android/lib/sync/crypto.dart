@@ -5,15 +5,25 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as enc;
 
-/// Default AES-GCM transport encryption for the trusted-LAN protocol.
-/// The built-in key is shared by every installation; it is not device identity.
+/// Pairing-free v3 payloads for trusted LANs. Relay identity/encryption is separate.
 class SyncCrypto {
   static const defaultKeySeed = 'ClipySyncSecret2026';
-  static final enc.Key _defaultKey = enc.Key(
+  enc.Key _privateKey = enc.Key(
     Uint8List.fromList(sha256.convert(utf8.encode(defaultKeySeed)).bytes),
   );
+  void configureKey(String value) {
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(value)) {
+      throw ArgumentError('Invalid private group key');
+    }
+    _privateKey = enc.Key(
+      Uint8List.fromList([
+        for (var i = 0; i < 64; i += 2)
+          int.parse(value.substring(i, i + 2), radix: 16),
+      ]),
+    );
+  }
 
-  enc.Key key() => _defaultKey;
+  enc.Key key() => _privateKey;
 
   String? encryptText(String text) {
     try {

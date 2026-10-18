@@ -100,6 +100,7 @@ extension SyncReliabilityMethods on SyncManager {
     if (_isQueueable(type)) {
       await _enqueuePending(data, type, peerId, hash);
     }
+    _relay?.refreshPeers();
     final reason = type == SyncType.historyDirect ? 'direct' : dialReason;
     final peer = _discoveredPeers[peerId];
     if (peer != null) {
@@ -321,6 +322,7 @@ extension SyncReliabilityMethods on SyncManager {
 
   void _handleAck(String hash, {required String from}) {
     if (hash.isEmpty) return;
+    _textDeliveryReceipts.acknowledge(peerId: from, hash: hash);
     final before = _pendingQueue.length;
     _pendingQueue.removeWhere((f) => f.peerId == from && f.hash == hash);
     if (_pendingQueue.length != before) {
@@ -383,17 +385,23 @@ extension SyncReliabilityMethods on SyncManager {
     );
     final data = syncEncodeFrame(env);
     if (data == null) return false;
-    final delivered = await _deliver(
-      data,
-      type: env.type,
+    final epoch = _runLifecycle.epoch;
+    return _textDeliveryReceipts.send(
       peerId: peerId,
       hash: hash,
-      dialReason: 'direct',
+      dispatch: () async {
+        // Persist before writing: a fast ACK must not be followed by re-enqueue.
+        await _enqueuePending(data, env.type, peerId, hash);
+        if (!_isRunCurrent(epoch)) return;
+        await _deliver(
+          data,
+          type: env.type,
+          peerId: peerId,
+          hash: hash,
+          dialReason: 'direct',
+        );
+      },
     );
-    if (delivered) {
-      await _enqueuePending(data, env.type, peerId, hash);
-    }
-    return delivered;
   }
 
   Future<bool> sendFileToPeer(File file, {required String peerId}) =>

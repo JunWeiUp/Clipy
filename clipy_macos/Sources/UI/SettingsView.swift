@@ -235,6 +235,7 @@ struct SettingsView: View {
         SmartSwitchSettingsView()
       }
       if pageID == "sync" {
+        SyncRelaySettingsView()
         Section {
           TextField(L10n.t(.designDeviceName), text: $deviceName)
             .focused($deviceNameFocused)
@@ -523,7 +524,7 @@ struct SettingsView: View {
       return AuthDeviceRow(
         peerId: peerId,
         displayName: online?.displayName ?? sync.resolvedPeerLabel(peerId: peerId),
-        hostPort: online.map { "\($0.host):\($0.port)" }
+        hostPort: online.map { SyncEndpointDisplay.label(host: $0.host, port: $0.port) }
           ?? sync.resolvedPeerHostPort(peerId: peerId),
         isOnline: online != nil
       )

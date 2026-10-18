@@ -31,6 +31,23 @@ struct MenuBarOverflowGeometry {
         // The system clock can extend two points beyond the right screen edge.
         return frame.minX < left || frame.maxX > screen.maxX + 2
     }
+
+    /// Pick the menu bar that owns an item. A center inside a display stays there;
+    /// an item clipped outside every display stays with the nearest bar.
+    static func owner(of frame: CGRect, among geometries: [MenuBarOverflowGeometry]) -> MenuBarOverflowGeometry? {
+        let row = geometries.filter {
+            frame.origin.x.isFinite && frame.origin.y.isFinite &&
+            frame.width.isFinite && frame.height.isFinite &&
+            frame.width > 0 && frame.height > 0 &&
+            frame.height <= $0.barHeight + 8 &&
+            abs(frame.minY - $0.screen.minY) <= $0.barHeight
+        }
+        guard !row.isEmpty else { return nil }
+        if let inside = row.first(where: { frame.midX >= $0.screen.minX && frame.midX < $0.screen.maxX }) {
+            return inside
+        }
+        return row.min { abs($0.screen.midX - frame.midX) < abs($1.screen.midX - frame.midX) }
+    }
 }
 
 struct MenuBarOverflowIdentity: Hashable {
@@ -59,8 +76,18 @@ struct MenuBarOverflowApplication {
 
 struct MenuBarOverflowContext {
     let geometry: MenuBarOverflowGeometry
+    /// Every display menu bar. Older callers pass only `geometry`.
+    var geometries: [MenuBarOverflowGeometry]
     let applications: [MenuBarOverflowApplication]
     let frontPID: pid_t?
+
+    init(geometry: MenuBarOverflowGeometry, geometries: [MenuBarOverflowGeometry]? = nil,
+         applications: [MenuBarOverflowApplication], frontPID: pid_t?) {
+        self.geometry = geometry
+        self.geometries = geometries?.isEmpty == false ? geometries! : [geometry]
+        self.applications = applications
+        self.frontPID = frontPID
+    }
 }
 
 enum MenuBarOverflowStatus {

@@ -74,7 +74,20 @@ class _SharedFilesPageState extends State<SharedFilesPage>
     if (_sending) return;
     setState(() => _sending = true);
     var failed = false;
+    var textUnconfirmed = false;
     try {
+      if (widget.share.text.isNotEmpty && !_sent.contains(-1)) {
+        final success = await SyncManager.instance.sendTextToPeer(
+          widget.share.text,
+          peerId: peer.peerId,
+        );
+        if (!mounted) return;
+        if (!success) {
+          textUnconfirmed = true;
+          throw StateError('Text delivery unconfirmed');
+        }
+        setState(() => _sent.add(-1));
+      }
       for (var index = 0; index < widget.share.files.length; index++) {
         if (_sent.contains(index)) continue;
         setState(() => _current = index);
@@ -103,10 +116,14 @@ class _SharedFilesPageState extends State<SharedFilesPage>
     showClipyMessage(
       context,
       failed
-          ? context.l10n.sendFailed
+          ? (textUnconfirmed
+                ? context.l10n.textDeliveryUnconfirmed
+                : context.l10n.sendFailed)
+          : widget.share.text.isNotEmpty
+          ? context.l10n.textSentTo(peer.displayName)
           : context.l10n.fileSentTo(peer.displayName),
     );
-    if (!failed && _sent.length == widget.share.files.length) {
+    if (!failed && _sent.length == widget.share.itemCount) {
       Navigator.pop(context);
     }
   }
@@ -124,7 +141,21 @@ class _SharedFilesPageState extends State<SharedFilesPage>
         body: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Text(l10n.sharedFilesHint),
+            Text(
+              widget.share.text.isNotEmpty
+                  ? l10n.sharedTextHint
+                  : l10n.sharedFilesHint,
+            ),
+            if (widget.share.text.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 240),
+                  child: SingleChildScrollView(
+                    child: SelectableText(widget.share.text),
+                  ),
+                ),
+              ),
             if (widget.share.error.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 12),
@@ -153,8 +184,8 @@ class _SharedFilesPageState extends State<SharedFilesPage>
               ),
             if (_sending) const LinearProgressIndicator(),
             const SizedBox(height: 20),
-            if (widget.share.files.isNotEmpty &&
-                _sent.length < widget.share.files.length)
+            if (widget.share.itemCount > 0 &&
+                _sent.length < widget.share.itemCount)
               StreamBuilder<List<DiscoveredPeer>>(
                 stream: manager.onPeersChanged,
                 initialData: manager.availablePeers,
@@ -259,7 +290,7 @@ class _SharedFilesPageState extends State<SharedFilesPage>
             TextButton(
               onPressed: _sending ? null : () => Navigator.pop(context),
               child: Text(
-                _sent.length == widget.share.files.length && _sent.isNotEmpty
+                _sent.length == widget.share.itemCount && _sent.isNotEmpty
                     ? l10n.closeShare
                     : l10n.cancel,
               ),

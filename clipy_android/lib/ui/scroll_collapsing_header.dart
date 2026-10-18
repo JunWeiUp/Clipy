@@ -8,9 +8,14 @@ class ScrollCollapsingHeader extends StatefulWidget {
     required this.enabled,
     required this.header,
     required this.child,
+    this.pageIdentity,
+    this.scrollDepth = 0,
   });
 
   final bool enabled;
+  final Object? pageIdentity;
+  // A TabBarView adds a horizontal viewport around its vertical page list.
+  final int scrollDepth;
   final Widget header;
   final Widget child;
 
@@ -25,12 +30,15 @@ class _ScrollCollapsingHeaderState extends State<ScrollCollapsingHeader> {
   @override
   void didUpdateWidget(ScrollCollapsingHeader oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.enabled) _collapsed = false;
+    if (!widget.enabled || oldWidget.pageIdentity != widget.pageIdentity) {
+      _collapsed = false;
+      _shortListDrag = 0;
+    }
   }
 
   bool _onScroll(ScrollNotification notification) {
     if (!widget.enabled ||
-        notification.depth != 0 ||
+        notification.depth != widget.scrollDepth ||
         notification.metrics.axis != Axis.vertical) {
       return false;
     }

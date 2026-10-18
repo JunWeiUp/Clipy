@@ -82,6 +82,7 @@ class SyncGuardWorker(
         val notification: Notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setContentTitle(applicationContext.getString(R.string.fgs_notification_title))
             .setContentText(applicationContext.getString(R.string.fgs_notification_text))
+            .setContentIntent(SyncNotificationIntent.openApp(applicationContext))
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

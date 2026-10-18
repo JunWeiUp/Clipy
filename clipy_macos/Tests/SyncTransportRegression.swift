@@ -1,7 +1,8 @@
 import Foundation
 import Darwin
+import Network
 
-/// Transport-layer regression: default AES-GCM payload crypto,
+/// Transport-layer regression: default-key AES-GCM payload crypto,
 /// length-prefixed framing, and the hello/welcome handshake over a real
 /// socketpair. The remote side is scripted by hand because two managers in
 /// one process share the same peerId (they would trip selfHandshake).
@@ -14,11 +15,22 @@ func runSyncTransportRegressionTests() {
         arguments["syncPairingSecret"] = secret
         defaults.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
     }
+    runNetworkHandoffChecks()
+    runRelayConfigurationChecks()
     let manager = SyncManager()
     useSecret("transport-test-secret-A")
     runCryptoChecks(manager, useSecret: useSecret)
     useSecret("transport-test-secret-A")
     runFramingChecks(manager)
+    // Refresh must retain a previous LAN route while that device is relayed.
+    let oldCache = defaults.object(forKey: SyncManager.endpointCacheKey)
+    manager.writeEndpointCacheEntries([.init(peerId: "relay-cache-test", name: "Fixture", host: "192.168.10.20", port: 5566, ts: Date().timeIntervalSince1970)])
+    let relayPeer = DiscoveredPeer(peerId: "relay-cache-test", displayName: "Fixture", endpoint: .hostPort(host: "relay:relay-cache-test", port: 5566), host: "relay:relay-cache-test", port: 5566)
+    manager.rewriteEndpointCacheAfterRefresh(livePeers: [relayPeer])
+    check(manager.cachedEndpoint(for: "relay-cache-test")?.host == "192.168.10.20", "relay refresh overwrote LAN endpoint")
+    manager.persistEndpoint(peerId: "relay-cache-test", name: "Fixture", host: "relay:relay-cache-test", port: 5566)
+    check(manager.cachedEndpoint(for: "relay-cache-test")?.host == "192.168.10.20", "relay persistence overwrote LAN endpoint")
+    defaults.set(oldCache, forKey: SyncManager.endpointCacheKey)
     var capability = SyncEnvelope.make(type: SyncType.hello, peerId: "capability-test")
     capability.sessionPolicy = "peer-id-v1"
     let capabilityData = try! JSONEncoder().encode(capability)
@@ -56,7 +68,7 @@ private func runCryptoChecks(_ m: SyncManager, useSecret: (String) -> Void) {
         check(m.decryptToBytes(sealedBytes) == bytes, "legacy preference changed binary key")
     }
     let fixture = "AAECAwQFBgcICQoLhdUwCui4zMJDC8GLd3CsDGCvgcc2/Zua+hgmwEW4aNreepO2aYY99Q=="
-    check(m.decrypt(fixture) == "default transport 世界", "default-key interoperability vector")
+    check(m.decrypt(fixture) == "default transport 世界", "Dart/default-key fixture must interoperate")
 }
 
 private func makePair() -> (Int32, Int32) {
@@ -125,7 +137,7 @@ private func runFramingChecks(_ m: SyncManager) {
 /// `script` plays the remote. syncQueue is held until the handshake returns
 /// and the generation is bumped, so a successful handshake's adoptSession is
 /// discarded (it closes the fd) instead of touching real session state.
-private func handshake(_ m: SyncManager, script: (Int32) -> Void) -> SyncManager.HandshakeFailure? {
+private func handshake(_ m: SyncManager, expectedPeerId: String? = nil, script: (Int32) -> Void) -> SyncManager.HandshakeFailure? {
     let (local, remote) = makePair()
     defer { Darwin.close(remote) }
     let hold = DispatchSemaphore(value: 0)
@@ -133,7 +145,7 @@ private func handshake(_ m: SyncManager, script: (Int32) -> Void) -> SyncManager
     var failure: SyncManager.HandshakeFailure?
     let done = DispatchSemaphore(value: 0)
     DispatchQueue.global().async {
-        m.performHandshake(fd: local, host: "127.0.0.1", port: 5566, inbound: true) { failure = $0 }
+        m.performHandshake(fd: local, host: "127.0.0.1", port: 5566, inbound: true, expectedPeerId: expectedPeerId) { failure = $0 }
         m.scanStateLock.lock(); m.serviceGeneration &+= 1; m.scanStateLock.unlock()
         done.signal()
     }
@@ -152,6 +164,21 @@ private func sendHello(_ fd: Int32, _ m: SyncManager, peerId: String, payload: S
 
 private func runHandshakeChecks(_ m: SyncManager, useSecret: (String) -> Void) {
     let remoteId = "transport-fixture-peer"
+    check(SyncRelayClient.validURL("wss://relay.example/relay/v1/ws"), "valid relay URL rejected")
+    for url in ["ws://relay.example/clipy-relay", "wss://secret@relay.example/clipy-relay", "wss://relay.example/clipy-relay?key=secret"] {
+        check(!SyncRelayClient.validURL(url), "unsafe relay URL accepted")
+    }
+    check(handshake(m, expectedPeerId: "expected-relay-peer") { fd in
+        _ = m.readOneFrame(fd: fd, timeout: 2)
+        sendHello(fd, m, peerId: remoteId)
+    } == .badType, "relay tunnel adopted an unexpected peer")
+    do {
+        let (local, remote) = makePair(); defer { Darwin.close(remote) }
+        m.performHandshake(fd: local, host: "relay:old", port: 5566, inbound: false,
+                           expectedPeerId: "old", expectedGeneration: m.currentGeneration - 1)
+        var byte: UInt8 = 0
+        check(Darwin.recv(remote, &byte, 1, 0) == 0, "late relay bridge survived stop generation")
+    }
     for legacy in ["", "old-code-A", "old-code-B"] {
         useSecret(legacy)
         var welcome: SyncEnvelope?
@@ -233,4 +260,53 @@ private func runSessionReaderChecks(_ m: SyncManager) {
     var byte: UInt8 = 0
     waitFor("session fd not closed") { Darwin.read(peer, &byte, 1) == 0 }
     m.diagnostics.reset()
+}
+
+private func runRelayConfigurationChecks() {
+    let original: [String: Any] = ["app": "clipy", "group": "personal", "device": "mac_old",
+        "token": String(repeating: "a", count: 32), "secret_key": String(repeating: "01", count: 32),
+        "trusted_peers": ["phone": String(repeating: "02", count: 32)]]
+    let raw = String(decoding: try! JSONSerialization.data(withJSONObject: original), as: UTF8.self)
+    let rotated = try! SyncRelaySettings.preparedConfiguration(existing: raw, deviceID: "mac_old", accessKey: String(repeating: "b", count: 32), enrollment: "")
+    let parsed = SyncRelayClient.Access.parse(rotated)!
+    check(parsed.device == "mac_old" && parsed.token == String(repeating: "b", count: 32), "key rotation changed device")
+    check(parsed.secret_key == (original["secret_key"] as! String) && parsed.trusted_peers.count == 1, "key rotation lost identity/trust")
+    let renamed = try! SyncRelaySettings.preparedConfiguration(existing: rotated, deviceID: "mac_new", accessKey: "", enrollment: "")
+    check(SyncRelayClient.Access.parse(renamed)?.token == parsed.token, "ID edit erased saved key")
+    check((try? SyncRelaySettings.preparedConfiguration(existing: raw, deviceID: "bad id", accessKey: "", enrollment: "")) == nil, "invalid device accepted")
+    check((try? SyncRelaySettings.preparedConfiguration(existing: raw, deviceID: "mac_old", accessKey: "short", enrollment: "")) == nil, "short key accepted")
+    let lan = "12345678-1234-1234-1234-123456789abc"
+    check(SyncRelayClient.lanPeerID(relayID: "phone_new", presence: ["peerId": lan]) == lan, "custom relay ID lost LAN identity")
+    check(SyncRelayClient.lanPeerID(relayID: lan, presence: [:]) == lan, "legacy identity mapping")
+    check(SyncRelayClient.lanPeerID(relayID: "phone_new", presence: [:]) == nil, "unknown alias treated as LAN identity")
+}
+
+private func runNetworkHandoffChecks() {
+    let manager = SyncManager()
+    var peers: [String:Int32] = [:]
+    manager.syncQueue.sync {
+        for id in ["stale", "healthy", "replacement"] {
+            var fds: [Int32] = [0,0]
+            precondition(socketpair(AF_UNIX,SOCK_STREAM,0,&fds) == 0)
+            peers[id] = fds[1]
+            manager.sessions[id] = SyncManager.Session(peerId:id,host:"127.0.0.1",port:0,fd:fds[0],isClient:false)
+        }
+        manager.probeNetworkSessions(delay:0.05)
+        let first = manager.networkProbe
+        manager.probeNetworkSessions(delay:2)
+        check(manager.networkProbe === first,"repeat scan preserves probe deadline")
+        manager.sessions["healthy"]!.lastPong = Date().addingTimeInterval(1)
+        // A replacement reader identity must survive a late probe even with the same fd.
+        let fd = manager.sessions["replacement"]!.fd
+        manager.sessions["replacement"]!.readSource = DispatchSource.makeReadSource(fileDescriptor:fd,queue:manager.syncQueue)
+        manager.sessions["replacement"]!.readSource!.resume()
+    }
+    Thread.sleep(forTimeInterval:0.15)
+    manager.syncQueue.sync {
+        check(manager.sessions["stale"] == nil,"network probe retires stale session")
+        check(manager.sessions["healthy"] != nil,"pong preserves healthy LAN")
+        check(manager.sessions["replacement"] != nil,"late probe preserves replacement")
+        for id in Array(manager.sessions.keys) { manager.closeSession(peerId:id,scheduleReconnect:false) }
+    }
+    for fd in peers.values { Darwin.close(fd) }
 }

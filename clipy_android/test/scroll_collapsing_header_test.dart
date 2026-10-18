@@ -51,6 +51,68 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets(
+    'nested notification list collapses and tab change resets header',
+    (tester) async {
+      final controller = ScrollController();
+      addTearDown(controller.dispose);
+      Future<void> mount(int page) => tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ScrollCollapsingHeader(
+              enabled: true,
+              pageIdentity: page,
+              scrollDepth: 1,
+              header: const SizedBox(height: 100, child: Text('Page intro')),
+              child: DefaultTabController(
+                length: 2,
+                child: Column(
+                  children: [
+                    const TabBar(
+                      tabs: [
+                        Tab(text: 'Settings'),
+                        Tab(text: 'History'),
+                      ],
+                    ),
+                    Expanded(
+                      child: TabBarView(
+                        children: [
+                          ListView.builder(
+                            controller: controller,
+                            itemCount: 100,
+                            itemExtent: 60,
+                            itemBuilder: (_, index) => Text('Row $index'),
+                          ),
+                          const SizedBox(),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await mount(2);
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView), const Offset(0, -250));
+      await tester.pumpAndSettle();
+      expect(find.text('Page intro'), findsNothing);
+      expect(find.byType(TabBar), findsOneWidget);
+      controller.jumpTo(0);
+      await tester.pumpAndSettle();
+      expect(find.text('Page intro'), findsOneWidget);
+      await tester.drag(find.byType(ListView), const Offset(0, -250));
+      await tester.pumpAndSettle();
+      await mount(3);
+      await tester.pumpAndSettle();
+      expect(find.text('Page intro'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   for (final delta in [-180.0, 180.0]) {
     testWidgets('short history hides intro for vertical drag $delta', (
       tester,

@@ -22,6 +22,34 @@ if CommandLine.arguments.contains(OCRSubprocess.childModeArgument) {
     OCRSubprocess.runChildMode()
 }
 
+// Local, explicit administration; credentials are read from a private file, never command arguments.
+if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--relay-device-id" {
+    print(SyncRelaySettings.deviceID)
+    exit(0)
+}
+if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--relay-import" {
+    do {
+        let path = CommandLine.arguments[2]
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        guard let mode = attributes[.posixPermissions] as? NSNumber, mode.intValue & 0o077 == 0,
+              (attributes[.size] as? NSNumber)?.intValue ?? 65537 <= 65536 else {
+            throw NSError(domain: "SyncRelay", code: 1)
+        }
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        let raw = String(decoding: data, as: UTF8.self)
+        guard let _ = SyncRelayClient.Access.parse(raw),
+              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let url = object["url"] as? String else { throw NSError(domain: "SyncRelay", code: 2) }
+        try SyncRelaySettings.save(enabled: true, url: url, token: raw)
+        UserDefaults.standard.synchronize()
+        print("Relay configuration imported; restart Clipy to connect.")
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("Relay import failed; verify private file permissions and device configuration.\n".utf8))
+        exit(1)
+    }
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

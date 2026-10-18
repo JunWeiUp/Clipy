@@ -17,6 +17,7 @@ extension SyncSessionMethods on SyncManager {
         return false;
       }
       _server = server;
+      _notifyConnectionChanged();
       appLog('Listening on 0.0.0.0:$port');
       // `onDone` must null out `_server` — otherwise the field stays non-null
       // after the listening stream closes, and `onSyncTick` would skip the
@@ -25,17 +26,24 @@ extension SyncSessionMethods on SyncManager {
         (socket) => _onInbound(socket, epoch),
         onError: (e) {
           appLog('Server error: $e', level: 'error');
-          if (identical(_server, server)) _server = null;
+          if (identical(_server, server)) {
+            _server = null;
+            _notifyConnectionChanged();
+          }
         },
         onDone: () {
           appLog('Server socket closed (onDone)', level: 'warning');
-          if (identical(_server, server)) _server = null;
+          if (identical(_server, server)) {
+            _server = null;
+            _notifyConnectionChanged();
+          }
         },
       );
       return true;
     } catch (e) {
       if (_isRunCurrent(epoch)) {
         _server = null;
+        _notifyConnectionChanged();
         appLog('Failed to bind :$port — $e', level: 'error');
       }
       return false;
@@ -110,6 +118,7 @@ extension SyncSessionMethods on SyncManager {
     int? runEpoch,
     bool bypassScanCooldown = false,
   }) async {
+    if (host.startsWith('relay:')) return;
     final epoch = runEpoch ?? _runLifecycle.epoch;
     if (!_isRunCurrent(epoch)) return;
     final resolved =
@@ -172,6 +181,7 @@ extension SyncSessionMethods on SyncManager {
       host: host,
       inbound: false,
       runEpoch: epoch,
+      expectedPeerId: peerId,
       onHandshakeFailure: reason == 'scan'
           ? onHandshakeFailure
           : (f) {
@@ -191,6 +201,7 @@ extension SyncSessionMethods on SyncManager {
     required String host,
     required bool inbound,
     required int runEpoch,
+    String? expectedPeerId,
     void Function(String failure)? onHandshakeFailure,
   }) async {
     if (!_isRunCurrent(runEpoch)) {
@@ -238,7 +249,7 @@ extension SyncSessionMethods on SyncManager {
         final id = adoptedPeerId;
         if (id == null) return;
         final session = _sessions[id];
-        if (session == null) return;
+        if (session == null || !identical(session.socket, socket)) return;
         session.buffer.add(chunk);
         _drainBuffer(id);
       },
@@ -330,7 +341,9 @@ extension SyncSessionMethods on SyncManager {
       } catch (_) {}
       return;
     }
-    if (env.peerId.isEmpty || env.peerId == peerId) {
+    if (env.peerId.isEmpty ||
+        env.peerId == peerId ||
+        (expectedPeerId != null && env.peerId != expectedPeerId)) {
       onHandshakeFailure?.call('selfHandshake');
       await subscription.cancel();
       try {
@@ -365,15 +378,28 @@ extension SyncSessionMethods on SyncManager {
 
     final existing = _sessions[env.peerId];
     if (existing != null) {
+      if (!host.startsWith('relay:') &&
+          existing.host.startsWith('relay:') &&
+          (_incomingFiles.isNotEmpty || _fileAckWaiters.isNotEmpty)) {
+        await subscription.cancel();
+        socket.destroy();
+        return;
+      }
+      if (host.startsWith('relay:') && !existing.host.startsWith('relay:')) {
+        await subscription.cancel();
+        socket.destroy();
+        return;
+      }
       // Simultaneous refresh creates two crossed sockets. Both peers must
       // select the SAME connection: the smaller peer ID owns the outgoing one.
-      if (!shouldReplaceSyncSession(
-        remotePolicy: env.sessionPolicy,
-        localId: peerId,
-        remoteId: env.peerId,
-        existingInbound: existing.inbound,
-        incomingInbound: inbound,
-      )) {
+      if (host.startsWith('relay:') == existing.host.startsWith('relay:') &&
+          !shouldReplaceSyncSession(
+            remotePolicy: env.sessionPolicy,
+            localId: peerId,
+            remoteId: env.peerId,
+            existingInbound: existing.inbound,
+            incomingInbound: inbound,
+          )) {
         await subscription.cancel();
         socket.destroy();
         return;
@@ -426,7 +452,9 @@ extension SyncSessionMethods on SyncManager {
     _reconnectTimers.remove(env.peerId)?.cancel();
     noteSessionEstablished();
     _recordPeer(env.peerId, name, host, peerPort);
-    await _persistEndpoint(env.peerId, name, host, peerPort);
+    if (!host.startsWith('relay:')) {
+      await _persistEndpoint(env.peerId, name, host, peerPort);
+    }
     if (!_isRunCurrent(runEpoch)) return;
     if (session.buffer.length > 0) {
       _drainBuffer(env.peerId);
@@ -517,6 +545,7 @@ extension SyncSessionMethods on SyncManager {
   }
 
   void _emitPeers() {
+    _notifyConnectionChanged();
     _devicesChangedController.add(availableDeviceNames);
     _peersChangedController.add(availablePeers);
   }
@@ -588,6 +617,7 @@ extension SyncSessionMethods on SyncManager {
       'Session closed with ${peerId.substring(0, peerId.length.clamp(0, 8))}',
     );
     if (!scheduleReconnect) return;
+    _relay?.refreshPeers();
     // Keepalive-driven close (pong timeout / socket error / frame corruption):
     // only the client role redials, so both sides don't reconnect each other.
     // Data-driven close (deliver write fail) bypasses this — both roles may

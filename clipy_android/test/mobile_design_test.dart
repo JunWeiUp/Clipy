@@ -117,6 +117,32 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('device cards lead the page and sync controls expand on demand', (
+    tester,
+  ) async {
+    final manager = SyncManager.instance;
+    final original = manager.clipboardSyncPeerIds;
+    manager.clipboardSyncPeerIds = ['layout-fixture'];
+    addTearDown(() => manager.clipboardSyncPeerIds = original);
+    await mount(
+      tester,
+      const DevicesPage(),
+      scale: 1.6,
+      brightness: Brightness.dark,
+    );
+    expect(
+      find.byTooltip('Automatic sync settings').hitTestable(),
+      findsOneWidget,
+    );
+    expect(find.byType(SwitchListTile).hitTestable(), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.byTooltip('Automatic sync settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SwitchListTile).hitTestable(), findsWidgets);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('destructive action can be cancelled without confirmation', (
     tester,
   ) async {

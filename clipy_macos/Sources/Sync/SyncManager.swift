@@ -45,8 +45,9 @@ final class SyncManager: NSObject {
     }
 
     let diagnostics = SyncDiagnostics()
-
+    var relayConfigurationGeneration = 0
     static let defaultEncryptionKey = SymmetricKey(data: SHA256.hash(data: Data("ClipySyncSecret2026".utf8)))
+
 
     var discoveredPeers: [String: DiscoveredPeer] = [:]
     let peersLock = NSLock()
@@ -97,6 +98,8 @@ final class SyncManager: NSObject {
     var pendingReconnects: [String: DispatchWorkItem] = [:]
     var lastReconnectAttempt: [String: Date] = [:]
 
+    var relayClient: SyncRelayClient?
+    var relayConnecting = Set<String>()
     var listenFD: Int32 = -1
     var listenSource: DispatchSourceRead?
     var listenerClosing = false
@@ -108,6 +111,8 @@ final class SyncManager: NSObject {
     var pingTimer: DispatchSourceTimer?
     var pathMonitor: NWPathMonitor?
     var lastPathStatus: NWPath.Status = .requiresConnection
+    var networkProbe: DispatchWorkItem?
+    var lastPathSignature: String?
 
     // MARK: File transfer state (SyncFileTransfer.swift)
     // incomingFiles / fileAckWaiters are only touched on syncQueue.
@@ -154,8 +159,14 @@ final class SyncManager: NSObject {
                 defaults.removeObject(forKey: "syncSecret")
                 defaults.set(SyncEnvelope.version, forKey: "syncTransportVersion")
             }
+            // Old private-key encoded frames cannot be replayed with pairing-free LAN.
+            if defaults.integer(forKey: "lanDefaultKeyVersion") != 1 {
+                PendingSyncRepository.shared.clearAll()
+                defaults.set(1, forKey: "lanDefaultKeyVersion")
+            }
             PendingSyncRepository.shared.cleanOld(ttl: Self.pendingQueueTTL)
             self.startListening()
+            self.startRelay()
             self.startPingTimer()
             self.startPathMonitoring()
             if PreferencesManager.shared.isSyncEnabled {
@@ -171,6 +182,8 @@ final class SyncManager: NSObject {
         scanStateLock.lock(); serviceGeneration &+= 1; scanStateLock.unlock()
         syncQueue.async { [weak self] in
             guard let self else { return }
+            self.relayClient?.stop(); self.relayClient = nil
+            self.relayConnecting.removeAll()
             self.stopPathMonitoring()
             self.pingTimer?.cancel(); self.pingTimer = nil
             self.pendingDiscoveryWork?.cancel(); self.pendingDiscoveryWork = nil
@@ -198,6 +211,8 @@ final class SyncManager: NSObject {
         isRefreshingDiscovery = true
         syncQueue.async { [weak self] in
             guard let self else { return }
+            self.probeNetworkSessions()
+            self.relayClient?.refreshPeers()
             let liveSessions = self.sessions
             var cached: [String: CachedEndpoint] = [:]
             for entry in self.loadEndpointCacheEntries() {
@@ -274,7 +289,9 @@ final class SyncManager: NSObject {
             DeviceEntry(
                 displayName: (counts[$0.displayName] ?? 0) > 1 ? "\($0.displayName) (\($0.peerId.prefix(6)))" : $0.displayName,
                 peerId: $0.peerId,
-                originalName: $0.displayName
+                originalName: $0.displayName,
+                host: $0.host,
+                port: $0.port
             )
         }
     }
@@ -451,18 +468,46 @@ final class SyncManager: NSObject {
     func startPathMonitoring() {
         stopPathMonitoring()
         let monitor = NWPathMonitor(); pathMonitor = monitor
-        monitor.pathUpdateHandler = { [weak self] path in
-            guard let self else { return }
-            let previous = self.lastPathStatus; self.lastPathStatus = path.status
-            if path.status == .satisfied && previous != .satisfied {
-                appLog("Network path restored; dialing authorized cache")
+        monitor.pathUpdateHandler = { [weak self, weak monitor] path in
+            guard let self, let monitor else { return }
+            guard self.pathMonitor === monitor else { return }
+            let signature = "\(path.status)|" + path.availableInterfaces.filter { path.usesInterfaceType($0.type) }.map { "\($0.name):\($0.index)" }.sorted().joined(separator:",")
+            let changed = self.lastPathSignature != nil && self.lastPathSignature != signature
+            self.lastPathSignature = signature
+            if path.status == .satisfied && changed {
+                appLog("Network path changed; probing sessions and reconnecting relay")
+                self.probeNetworkSessions()
+                self.restartRelayConfiguration()
                 self.loadEndpointCache()
                 self.scheduleDiscovery(immediate: true, scanFullSubnet: false)
             }
         }
         monitor.start(queue: syncQueue)
     }
-    func stopPathMonitoring() { pathMonitor?.cancel(); pathMonitor = nil }
+    func stopPathMonitoring() {
+        pathMonitor?.cancel(); pathMonitor = nil; lastPathSignature = nil
+        networkProbe?.cancel(); networkProbe = nil
+    }
+    /// One bounded check per network event/Scan burst; fresh pongs keep healthy LAN sessions.
+    func probeNetworkSessions(delay: TimeInterval = 3) {
+        guard networkProbe == nil else { return }
+        let generation = currentGeneration
+        let captured = sessions
+        sendPings()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }; self.networkProbe = nil
+            guard generation == self.currentGeneration else { return }
+            for (id, old) in captured {
+                guard let current = self.sessions[id],
+                    current.fd == old.fd, current.readSource === old.readSource,
+                    current.lastPong <= old.lastPong else { continue }
+                self.closeSession(peerId:id,scheduleReconnect:true)
+            }
+            self.relayClient?.refreshPeers()
+        }
+        networkProbe = work
+        syncQueue.asyncAfter(deadline:.now()+delay,execute:work)
+    }
 
     func notifyPeersChanged() {
         let peers = availablePeers, names = peers.map(\.displayName)

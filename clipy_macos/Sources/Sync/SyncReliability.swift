@@ -77,6 +77,7 @@ extension SyncManager {
             return true
         }
         if reliable { enqueuePending(data: data, type: type, peerId: peerId, hash: hash) }
+        relayClient?.refreshPeers()
         let reason = (type == SyncType.historyDirect) ? "direct" : dialReason
         if let peer = peerSnapshot(peerId) {
             dial(host: peer.host, port: peer.port, reason: reason, peerId: peerId)
