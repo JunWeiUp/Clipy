@@ -133,7 +133,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.32** · Default local build **12284** · Latest published release: **[v1.0.31](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.31)** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.32** · Default local build **12284** · Latest published release: **[v1.0.32](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.32)** · [Build metadata](clipy_android/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
@@ -373,7 +373,7 @@ Clipy uses a LAN-first protocol v3 for clipboard history and notifications:
 
 Full wire notes, headless Android channel rules, and code map: [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
-Current source also supports an opt-in [self-hosted Internet relay](docs/COMMON-RELAY-SDK.md): LAN first, authenticated WSS fallback for text, notifications and files. Enroll each relay device with its own identity and verified peer public keys; LAN sending remains pairing-free. The native iOS Share Extension remains LAN-only. This is not yet part of a published release.
+Current source also supports an opt-in [self-hosted Internet relay](docs/COMMON-RELAY-SDK.md): LAN first, authenticated WSS fallback for text, notifications and files. Enroll each relay device with its own identity and verified peer public keys; LAN sending remains pairing-free. The native iOS Share Extension remains LAN-only. Available in v1.0.32; a compatible common-relay server is required.
 
 ## 📁 Project structure
 
@@ -431,7 +431,7 @@ If Clipy saves you time, consider giving it a ⭐ — it really helps others dis
 
 [Common Relay SDK upgrade / 通用中继 SDK 升级](docs/COMMON-RELAY-SDK.md)
 
-Version 1.0.32 source: relay settings include **Manage relay device group** for listing online/offline members, inviting devices by QR/link, approving joins and removing members. Management requires a compatible common-relay server; new groups require self-service creation to be enabled. See [relay SDK and device groups](docs/COMMON-RELAY-SDK.md). Existing legacy groups can activate management through a trusted administrator invitation.
+Version 1.0.32: relay settings include **Manage relay device group** for listing online/offline members, inviting devices by QR/link, approving joins and removing members. Management requires a compatible common-relay server; new groups require self-service creation to be enabled. See [relay SDK and device groups](docs/COMMON-RELAY-SDK.md). Existing legacy groups can activate management through a trusted administrator invitation.
 
 
 Relay device groups support creating a new group directly or joining by QR invitation. Creators can invite, view and remove devices. Invitations, pairing approval and member lists have separate sections. Existing legacy groups retain their configuration and can upgrade management trust through a manager invitation.
