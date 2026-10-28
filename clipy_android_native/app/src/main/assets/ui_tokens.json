@@ -1,0 +1,494 @@
+{
+  "dark": {
+    "colors": {
+      "primary": 4289447935,
+      "onPrimary": 4279905888,
+      "primaryContainer": 4279843175,
+      "onPrimaryContainer": 4292273407,
+      "secondary": 4290889437,
+      "onSecondary": 4280954946,
+      "secondaryContainer": 4280561989,
+      "onSecondaryContainer": 4292731385,
+      "tertiary": 4294099819,
+      "onTertiary": 4282525505,
+      "tertiaryContainer": 4282856728,
+      "onTertiaryContainer": 4294959526,
+      "surface": 4279704614,
+      "onSurface": 4293124841,
+      "surfaceContainerLow": 4280100147,
+      "surfaceContainerHigh": 4280890181,
+      "surfaceContainer": 4280164133,
+      "surfaceContainerHighest": 4281545786,
+      "onSurfaceVariant": 4291151568,
+      "outline": 4287598746,
+      "outlineVariant": 4282271834,
+      "error": 4294948011,
+      "onError": 4285071365,
+      "errorContainer": 4287823882,
+      "onErrorContainer": 4294957782,
+      "inverseSurface": 4293124841,
+      "inverseOnSurface": 4281282614,
+      "inversePrimary": 4283063442,
+      "background": 4279243804
+    },
+    "typography": {
+      "headlineLarge": {
+        "fontSize": 32.0,
+        "fontWeight": 800,
+        "letterSpacing": -1.1,
+        "height": 1.25,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "headlineMedium": {
+        "fontSize": 28.0,
+        "fontWeight": 800,
+        "letterSpacing": -0.7,
+        "height": 1.29,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "titleLarge": {
+        "fontSize": 22.0,
+        "fontWeight": 700,
+        "letterSpacing": 0.0,
+        "height": 1.27,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "titleMedium": {
+        "fontSize": 16.0,
+        "fontWeight": 600,
+        "letterSpacing": 0.15,
+        "height": 1.5,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "titleSmall": {
+        "fontSize": 14.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.1,
+        "height": 1.43,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "bodyLarge": {
+        "fontSize": 16.0,
+        "fontWeight": 400,
+        "letterSpacing": 0.5,
+        "height": 1.5,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "bodyMedium": {
+        "fontSize": 14.0,
+        "fontWeight": 400,
+        "letterSpacing": 0.25,
+        "height": 1.5,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "bodySmall": {
+        "fontSize": 12.0,
+        "fontWeight": 400,
+        "letterSpacing": 0.4,
+        "height": 1.33,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "labelLarge": {
+        "fontSize": 14.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.1,
+        "height": 1.43,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "labelMedium": {
+        "fontSize": 12.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.5,
+        "height": 1.33,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "labelSmall": {
+        "fontSize": 11.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.5,
+        "height": 1.45,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      }
+    }
+  },
+  "dark-dense": {
+    "colors": {
+      "primary": 4289447935,
+      "onPrimary": 4279905888,
+      "primaryContainer": 4279843175,
+      "onPrimaryContainer": 4292273407,
+      "secondary": 4290889437,
+      "onSecondary": 4280954946,
+      "secondaryContainer": 4280561989,
+      "onSecondaryContainer": 4292731385,
+      "tertiary": 4294099819,
+      "onTertiary": 4282525505,
+      "tertiaryContainer": 4282856728,
+      "onTertiaryContainer": 4294959526,
+      "surface": 4279704614,
+      "onSurface": 4293124841,
+      "surfaceContainerLow": 4280100147,
+      "surfaceContainerHigh": 4280890181,
+      "surfaceContainer": 4280164133,
+      "surfaceContainerHighest": 4281545786,
+      "onSurfaceVariant": 4291151568,
+      "outline": 4287598746,
+      "outlineVariant": 4282271834,
+      "error": 4294948011,
+      "onError": 4285071365,
+      "errorContainer": 4287823882,
+      "onErrorContainer": 4294957782,
+      "inverseSurface": 4293124841,
+      "inverseOnSurface": 4281282614,
+      "inversePrimary": 4283063442,
+      "background": 4279243804
+    },
+    "typography": {
+      "headlineLarge": {
+        "fontSize": 32.0,
+        "fontWeight": 800,
+        "letterSpacing": -1.1,
+        "height": 1.25,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "headlineMedium": {
+        "fontSize": 28.0,
+        "fontWeight": 800,
+        "letterSpacing": -0.7,
+        "height": 1.29,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "titleLarge": {
+        "fontSize": 22.0,
+        "fontWeight": 700,
+        "letterSpacing": 0.0,
+        "height": 1.27,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "titleMedium": {
+        "fontSize": 16.0,
+        "fontWeight": 600,
+        "letterSpacing": 0.15,
+        "height": 1.5,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "titleSmall": {
+        "fontSize": 14.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.1,
+        "height": 1.43,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "bodyLarge": {
+        "fontSize": 16.0,
+        "fontWeight": 400,
+        "letterSpacing": 0.5,
+        "height": 1.5,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "bodyMedium": {
+        "fontSize": 14.0,
+        "fontWeight": 400,
+        "letterSpacing": 0.25,
+        "height": 1.5,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "bodySmall": {
+        "fontSize": 12.0,
+        "fontWeight": 400,
+        "letterSpacing": 0.4,
+        "height": 1.33,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "labelLarge": {
+        "fontSize": 14.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.1,
+        "height": 1.43,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "labelMedium": {
+        "fontSize": 12.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.5,
+        "height": 1.33,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "labelSmall": {
+        "fontSize": 11.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.5,
+        "height": 1.45,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      }
+    }
+  },
+  "light": {
+    "colors": {
+      "primary": 4279395059,
+      "onPrimary": 4294967295,
+      "primaryContainer": 4293193215,
+      "onPrimaryContainer": 4279054443,
+      "secondary": 4283981426,
+      "onSecondary": 4294967295,
+      "secondaryContainer": 4293587192,
+      "onSecondaryContainer": 4282467929,
+      "tertiary": 4286666240,
+      "onTertiary": 4294967295,
+      "tertiaryContainer": 4294963408,
+      "onTertiaryContainer": 4283775754,
+      "surface": 4294967295,
+      "onSurface": 4279900961,
+      "surfaceContainerLow": 4293784055,
+      "surfaceContainerHigh": 4293257970,
+      "surfaceContainer": 4293848564,
+      "surfaceContainerHighest": 4293124841,
+      "onSurfaceVariant": 4282730063,
+      "outline": 4285888128,
+      "outlineVariant": 4292666092,
+      "error": 4290386458,
+      "onError": 4294967295,
+      "errorContainer": 4294957782,
+      "onErrorContainer": 4287823882,
+      "inverseSurface": 4281282614,
+      "inverseOnSurface": 4294045943,
+      "inversePrimary": 4289971711,
+      "background": 4294244090
+    },
+    "typography": {
+      "headlineLarge": {
+        "fontSize": 32.0,
+        "fontWeight": 800,
+        "letterSpacing": -1.1,
+        "height": 1.25,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "headlineMedium": {
+        "fontSize": 28.0,
+        "fontWeight": 800,
+        "letterSpacing": -0.7,
+        "height": 1.29,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "titleLarge": {
+        "fontSize": 22.0,
+        "fontWeight": 700,
+        "letterSpacing": 0.0,
+        "height": 1.27,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "titleMedium": {
+        "fontSize": 16.0,
+        "fontWeight": 600,
+        "letterSpacing": 0.15,
+        "height": 1.5,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "titleSmall": {
+        "fontSize": 14.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.1,
+        "height": 1.43,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "bodyLarge": {
+        "fontSize": 16.0,
+        "fontWeight": 400,
+        "letterSpacing": 0.5,
+        "height": 1.5,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "bodyMedium": {
+        "fontSize": 14.0,
+        "fontWeight": 400,
+        "letterSpacing": 0.25,
+        "height": 1.5,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "bodySmall": {
+        "fontSize": 12.0,
+        "fontWeight": 400,
+        "letterSpacing": 0.4,
+        "height": 1.33,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "labelLarge": {
+        "fontSize": 14.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.1,
+        "height": 1.43,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "labelMedium": {
+        "fontSize": 12.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.5,
+        "height": 1.33,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      },
+      "labelSmall": {
+        "fontSize": 11.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.5,
+        "height": 1.45,
+        "textBaseline": "alphabetic",
+        "leadingDistribution": "even"
+      }
+    }
+  },
+  "light-dense": {
+    "colors": {
+      "primary": 4279395059,
+      "onPrimary": 4294967295,
+      "primaryContainer": 4293193215,
+      "onPrimaryContainer": 4279054443,
+      "secondary": 4283981426,
+      "onSecondary": 4294967295,
+      "secondaryContainer": 4293587192,
+      "onSecondaryContainer": 4282467929,
+      "tertiary": 4286666240,
+      "onTertiary": 4294967295,
+      "tertiaryContainer": 4294963408,
+      "onTertiaryContainer": 4283775754,
+      "surface": 4294967295,
+      "onSurface": 4279900961,
+      "surfaceContainerLow": 4293784055,
+      "surfaceContainerHigh": 4293257970,
+      "surfaceContainer": 4293848564,
+      "surfaceContainerHighest": 4293124841,
+      "onSurfaceVariant": 4282730063,
+      "outline": 4285888128,
+      "outlineVariant": 4292666092,
+      "error": 4290386458,
+      "onError": 4294967295,
+      "errorContainer": 4294957782,
+      "onErrorContainer": 4287823882,
+      "inverseSurface": 4281282614,
+      "inverseOnSurface": 4294045943,
+      "inversePrimary": 4289971711,
+      "background": 4294244090
+    },
+    "typography": {
+      "headlineLarge": {
+        "fontSize": 32.0,
+        "fontWeight": 800,
+        "letterSpacing": -1.1,
+        "height": 1.25,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "headlineMedium": {
+        "fontSize": 28.0,
+        "fontWeight": 800,
+        "letterSpacing": -0.7,
+        "height": 1.29,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "titleLarge": {
+        "fontSize": 22.0,
+        "fontWeight": 700,
+        "letterSpacing": 0.0,
+        "height": 1.27,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "titleMedium": {
+        "fontSize": 16.0,
+        "fontWeight": 600,
+        "letterSpacing": 0.15,
+        "height": 1.5,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "titleSmall": {
+        "fontSize": 14.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.1,
+        "height": 1.43,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "bodyLarge": {
+        "fontSize": 16.0,
+        "fontWeight": 400,
+        "letterSpacing": 0.5,
+        "height": 1.5,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "bodyMedium": {
+        "fontSize": 14.0,
+        "fontWeight": 400,
+        "letterSpacing": 0.25,
+        "height": 1.5,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "bodySmall": {
+        "fontSize": 12.0,
+        "fontWeight": 400,
+        "letterSpacing": 0.4,
+        "height": 1.33,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "labelLarge": {
+        "fontSize": 14.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.1,
+        "height": 1.43,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "labelMedium": {
+        "fontSize": 12.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.5,
+        "height": 1.33,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      },
+      "labelSmall": {
+        "fontSize": 11.0,
+        "fontWeight": 500,
+        "letterSpacing": 0.5,
+        "height": 1.45,
+        "textBaseline": "ideographic",
+        "leadingDistribution": "even"
+      }
+    }
+  }
+}

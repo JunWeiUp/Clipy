@@ -32,14 +32,7 @@ struct MenuBarPanelView: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             if model.page == .home {
                 Divider()
-                footer.padding(.top, 8).padding(.bottom, 3)
-                Text("v" + AppVersion.displayString)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.bottom, 5)
-                    .accessibilityLabel(L10n.t(.settingsVersion) + " " + AppVersion.displayString)
+                footer.padding(.vertical, 9)
             }
         }
         .padding(.horizontal, 14).padding(.top, 14)
@@ -161,11 +154,11 @@ struct MenuBarPanelView: View {
                 Button { model.selectTab(tab) } label: {
                     Text(tab == .devices ? L10n.format(.panelDeviceCount, model.devices.count) : tab.title).frame(maxWidth: .infinity).frame(height: 32)
                         .contentShape(Rectangle())
-                        .background(model.page == .home && model.tab == tab ? AppColor.accent : .clear, in: RoundedRectangle(cornerRadius: 7))
-                        .foregroundStyle(model.page == .home && model.tab == tab ? Color.white : .primary)
+                        .background(model.page == .home && model.tab == tab ? Color(nsColor: .controlBackgroundColor) : .clear, in: RoundedRectangle(cornerRadius: 7))
+                        .foregroundStyle(model.page == .home && model.tab == tab ? AppColor.accent : .primary)
                 }.buttonStyle(.plain).accessibilityAddTraits(model.page == .home && model.tab == tab ? [.isSelected] : [])
             }
-        }.background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+        }.padding(3).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
     }
     @ViewBuilder private var content: some View {
         switch model.page {
@@ -176,13 +169,10 @@ struct MenuBarPanelView: View {
                 case .clipboard: historyContent
                 case .snippets: snippetsContent
                 case .devices: devicesContent
+                case .tools: toolsContent
                 }
             }
         case .capture: captureContent
-        case .tools:
-            ScrollViewReader { proxy in
-                ScrollView { toolList }.onChange(of: model.selectedID) { id in if let id { proxy.scrollTo(id) } }
-            }
         case .notifications: notificationsContent
         case .settings: settingsContent
         }
@@ -190,7 +180,6 @@ struct MenuBarPanelView: View {
     private var pageTitle: String {
         switch model.page {
         case .capture: return L10n.t(.panelCapture)
-        case .tools: return L10n.t(.menuTools)
         case .notifications: return L10n.t(.notificationSync)
         case .settings: return L10n.t(.preferences)
         case .home: return model.tab.title
@@ -291,6 +280,9 @@ struct MenuBarPanelView: View {
             }
             actionLink(.panelAllHistory) { model.onAction?(.search(model.query)) }
         }
+    }
+    private var toolsContent: some View {
+        MenuBarPanelToolsView(model: model)
     }
     private var toolList: some View {
         VStack(spacing: 0) {
@@ -403,70 +395,49 @@ struct MenuBarPanelView: View {
         }
     }
     private var footer: some View {
-        ViewThatFits(in: .horizontal) {
-            footerRow(showLabels: true)
-            footerRow(showLabels: false)
-        }
-    }
-    private func footerRow(showLabels: Bool) -> some View {
-        HStack(spacing: 8) {
-            quick(.panelCaptureShortcut, symbol: "camera", showLabel: showLabels) { model.navigate(.capture) }
-            quick(.panelLookupShortcut, symbol: "character.book.closed", showLabel: showLabels) { model.onAction?(.word) }
-            quick(.panelSwitchShortcut, symbol: "arrow.triangle.swap", showLabel: showLabels) { model.onAction?(.smartSwitch) }
-            Spacer(minLength: 4)
-            popupToggle
-            Divider().frame(height: 24)
-            Button { model.navigate(.tools) } label: {
-                Text(L10n.t(.menuTools)).font(AppFont.secondary).lineLimit(1)
-            }.buttonStyle(.plain)
+        HStack(spacing: 10) {
+            Button { model.useTool(.keepAwake) } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: keepAwake.isActive ? "sun.max.fill" : "moon.zzz")
+                    Text(L10n.t(.keepAwakeTitle))
+                    Text(L10n.t(keepAwake.isActive ? .keepAwakeOn : .keepAwakeOff))
+                        .font(AppFont.caption).foregroundStyle(.secondary)
+                }.font(AppFont.secondary).lineLimit(1).padding(.horizontal, 8)
+                    .frame(height: 32).contentShape(Rectangle())
+                    .foregroundStyle(keepAwake.isActive ? AppColor.accent : Color.primary)
+                    .background(keepAwake.isActive ? AppColor.accent.opacity(0.10) : .clear,
+                                in: RoundedRectangle(cornerRadius: 7))
+            }.buttonStyle(.plain).help(L10n.t(.keepAwakeHint))
+                .accessibilityLabel(L10n.t(.keepAwakeTitle))
+                .accessibilityValue(L10n.t(keepAwake.isActive ? .keepAwakeOn : .keepAwakeOff))
+                .accessibilityAddTraits(keepAwake.isActive ? [.isSelected] : [])
+            Divider().frame(height: 17)
             Button { model.navigate(.notifications) } label: {
-                Image(systemName: "bell").font(.system(size: 18)).frame(width: 27, height: 30)
-                    .contentShape(Rectangle())
-                    .overlay(alignment: .topTrailing) {
-                        if model.notificationCount > 0 {
-                            Text(model.notificationCount > 99 ? "99+" : "\(model.notificationCount)")
-                                .font(.system(size: 9, weight: .semibold)).foregroundStyle(.white)
-                                .padding(3).background(Color.red, in: Capsule()).offset(x: 5, y: -5)
-                        }
+                HStack(spacing: 6) {
+                    Image(systemName: "bell")
+                    Text(L10n.t(.panelNotificationsShort))
+                    if model.notificationCount > 0 {
+                        Text(model.notificationCount > 99 ? "99+" : "\(model.notificationCount)")
+                            .font(AppFont.caption).foregroundStyle(AppColor.accent)
                     }
-            }.buttonStyle(.plain).help(L10n.t(.notificationSync)).accessibilityLabel(L10n.t(.notificationSync))
+                }.font(AppFont.secondary).lineLimit(1).frame(height: 32).contentShape(Rectangle())
+            }.buttonStyle(.plain).help(L10n.t(.notificationSync))
+            Spacer(minLength: 0)
+            Text("v" + AppVersion.displayString).font(.system(size: 10)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .accessibilityLabel(L10n.t(.settingsVersion) + " " + AppVersion.displayString)
             Menu {
+                Toggle(L10n.t(.notificationPopups), isOn: Binding(
+                    get: { notificationPopups.enabled }, set: { notificationPopups.setEnabled($0) }))
+                Divider()
                 Button(L10n.t(.preferences)) { model.onAction?(.preferences) }
                 Button(L10n.t(.overflowRefresh)) { overflow.refreshForMenu() }
                 Divider()
                 Button(L10n.t(.quit)) { model.onAction?(.quit) }
-            } label: { Image(systemName: "ellipsis").frame(width: 18, height: 26) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L10n.t(.panelMore)).accessibilityLabel(L10n.t(.panelMore))
+            } label: { Image(systemName: "ellipsis").frame(width: 20, height: 28) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help(L10n.t(.panelMore)).accessibilityLabel(L10n.t(.panelMore))
         }
-    }
-    private var popupToggle: some View {
-        HStack(spacing: 4) {
-            Image(systemName: notificationPopups.enabled ? "bell" : "bell.slash")
-                .font(.system(size: 13))
-                .foregroundStyle(notificationPopups.enabled ? AppColor.accent : Color.secondary)
-                .frame(width: 16)
-            Toggle(isOn: Binding(get: { notificationPopups.enabled }, set: { notificationPopups.setEnabled($0) })) {
-                Text(L10n.t(.notificationPopups))
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .labelsHidden()
-        }
-        .fixedSize()
-        .help(L10n.t(.notificationPopups) + "\n" + L10n.t(.notificationPopupsHint))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(L10n.t(.notificationPopups))
-    }
-    private func quick(_ key: L10nKey, symbol: String, showLabel: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Group {
-                if showLabel { Label(L10n.t(key), systemImage: symbol).fixedSize() }
-                else { Image(systemName: symbol) }
-            }
-            .font(AppFont.secondary).lineLimit(1).padding(.horizontal, showLabel ? 7 : 8)
-            .frame(height: 30).contentShape(Rectangle())
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
-        }.buttonStyle(.plain).help(L10n.t(key)).accessibilityLabel(L10n.t(key))
     }
     private func iconButton(_ key: L10nKey, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).font(.system(size: 17)).frame(width: 28, height: 28).contentShape(Rectangle()) }.buttonStyle(.plain).help(L10n.t(key)).accessibilityLabel(L10n.t(key))

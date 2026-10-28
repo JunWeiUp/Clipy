@@ -1,0 +1,74 @@
+Third-party notices: Android native relay, secure storage and invitation scanner
+
+This application includes the components listed below. Each retains its own
+license. Full license text and upstream source records are in this directory.
+The component versions correspond to the bundled source snapshot or declared
+Maven artifacts; libsodium 1.0.20 is the version embedded in the four native
+libraries distributed in lazysodium-android 5.2.0.
+
+The common-relay and flutter_secure_storage Java sources are adapted; details
+are recorded in their adjacent SOURCE.json files. These ports do not include a
+Flutter engine. Dependencies are used as published, without source modification.
+
+Lazysodium covered source is available under Mozilla Public License 2.0 at:
+https://repo.maven.apache.org/maven2/com/goterl/lazysodium-android/5.2.0/lazysodium-android-5.2.0-sources.jar
+That source archive includes the Android and shared Java classes present in the
+published artifact. The MPL applies to those covered files, not automatically
+to the entire application. Native libsodium has its separate ISC license.
+
+For JNA this distribution chooses Apache License 2.0 from the upstream dual
+license. See Apache-2.0.txt as well as jna-LICENSE.txt and the bundled libffi
+copyright/license. ZXing upstream notices are retained in zxing-NOTICE.txt;
+some notices in the full upstream distribution may concern modules not used
+by this application. OkHttp public suffix data retains its upstream notice
+at okhttp3/internal/publicsuffix/NOTICE inside the APK.
+
+common-relay — 794a2396266ee6f26ab7406f6d6466732a269dbf
+License: MIT
+Source: https://github.com/JunWeiUp/common-relay/tree/794a2396266ee6f26ab7406f6d6466732a269dbf
+License file: common-relay-LICENSE.txt
+
+flutter_secure_storage — 10.0.0
+License: BSD-3-Clause
+Source: https://pub.dev/packages/flutter_secure_storage/versions/10.0.0
+License file: flutter-secure-storage-LICENSE.txt
+
+com.goterl:lazysodium-android — 5.2.0
+License: MPL-2.0
+Source: https://github.com/terl/lazysodium-android/tree/v5.2.0
+License file: lazysodium-MPL-2.0.txt
+
+libsodium — 1.0.20
+License: ISC
+Source: https://github.com/jedisct1/libsodium/tree/1.0.20-RELEASE
+License file: libsodium-LICENSE.txt
+
+net.java.dev.jna:jna — 5.17.0
+License: Apache-2.0 (chosen from Apache-2.0 OR LGPL-2.1-or-later)
+Source: https://github.com/java-native-access/jna/tree/5.17.0
+License file: jna-LICENSE.txt
+
+JNA bundled libffi — as bundled in JNA 5.17.0
+License: MIT
+Source: https://github.com/java-native-access/jna/tree/5.17.0/native/libffi
+License file: jna-libffi-LICENSE.txt
+
+com.google.crypto.tink:tink-android — 1.19.0
+License: Apache-2.0
+Source: https://github.com/tink-crypto/tink-java/tree/v1.19.0
+License file: tink-LICENSE.txt
+
+com.google.zxing:core — 3.5.3
+License: Apache-2.0
+Source: https://github.com/zxing/zxing/tree/zxing-3.5.3
+License file: zxing-LICENSE.txt
+
+com.journeyapps:zxing-android-embedded — 4.3.0
+License: Apache-2.0
+Source: https://github.com/journeyapps/zxing-android-embedded/tree/v4.3.0
+License file: zxing-android-embedded-LICENSE.txt
+
+com.squareup.okhttp3:okhttp — 4.12.0
+License: Apache-2.0
+Source: https://github.com/square/okhttp/tree/parent-4.12.0
+License file: okhttp-LICENSE.txt

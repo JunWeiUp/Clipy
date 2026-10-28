@@ -1,0 +1,1 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:networkSecurityConfig="@xml/native_test_network_security"><activity android:name="com.clipyclone.nativeandroid.VisualFixtureActivity" android:exported="true" /></application></manifest>

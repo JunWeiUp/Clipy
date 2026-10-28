@@ -27,6 +27,8 @@ require(signingValues.all { it == null } || hasReleaseSigning) {
     "Incomplete release signing configuration. See docs/DEVELOPMENT.md."
 }
 
+val nativeParityReference = providers.gradleProperty("nativeParityReference").orNull == "true"
+
 android {
     namespace = "com.clipyclone.clipy_android"
     compileSdk = flutter.compileSdkVersion
@@ -43,7 +45,7 @@ android {
 
     defaultConfig {
         // Keep stable for upgrades and the native method-channel contract.
-        applicationId = "com.clipyclone.clipy_android"
+        applicationId = if (nativeParityReference) "com.clipyclone.clipy_android.reference" else "com.clipyclone.clipy_android"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -79,6 +81,9 @@ android {
 gradle.taskGraph.whenReady {
     val packagesRelease = allTasks.any {
         it.project == project && it.name in setOf("assembleRelease", "bundleRelease", "packageRelease")
+    }
+    if (packagesRelease && nativeParityReference) {
+        throw GradleException("The native UI reference application is debug-only.")
     }
     if (packagesRelease && !hasReleaseSigning && !allowDebugSigning) {
         throw GradleException("Release signing is required. See docs/DEVELOPMENT.md; for local tests only, set CLIPY_ALLOW_DEBUG_SIGNING=1.")

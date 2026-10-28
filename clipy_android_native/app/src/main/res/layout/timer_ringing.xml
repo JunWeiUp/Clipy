@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full-screen alert for a finished countdown: amber title, big readout,
+     one stop button. Matches the timer panel's visual language. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/ringing_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="#000000"
+    android:padding="32dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/timer_widget_done_title"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:textColor="#FFB169" />
+
+    <TextView
+        android:id="@+id/ringing_time"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:typeface="monospace"
+        android:textSize="60sp"
+        android:textStyle="bold"
+        android:textColor="#F2F2F2" />
+
+    <TextView
+        android:id="@+id/ringing_duration"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:textSize="14sp"
+        android:textColor="#808080" />
+
+    <Button
+        android:id="@+id/ringing_stop"
+        android:layout_width="168dp"
+        android:layout_height="64dp"
+        android:layout_marginTop="48dp"
+        android:background="@drawable/timer_start_pill_bg"
+        android:minWidth="0dp"
+        android:minHeight="0dp"
+        android:text="@string/timer_widget_stop"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="#4787FD" />
+</LinearLayout>

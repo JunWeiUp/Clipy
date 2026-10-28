@@ -27,6 +27,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       build: ${{ steps.version.outputs.build }}
+      android_build: ${{ steps.version.outputs.android_build }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -60,6 +61,8 @@ jobs:
           {
             echo "version=$APP_VERSION"
             echo "build=$BUILD_NUMBER"
+            # Continue the old Flutter ARM64 +2000 versionCode sequence.
+            echo "android_build=$((BUILD_NUMBER + 2000))"
             echo "tag=v$APP_VERSION"
           } >> "$GITHUB_OUTPUT"
 
@@ -81,14 +84,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - name: Read pinned Flutter version
-        id: flutter
-        run: echo "version=$(jq -r .flutter .fvmrc)" >> "$GITHUB_OUTPUT"
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-        with:
-          flutter-version: ${{ steps.flutter.outputs.version }}
-          channel: stable
-          cache: true
+      - name: Install Android SDK packages
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"'
       - name: Prepare Android release signing
         env:
           CLIPY_KEYSTORE_BASE64: ${{ secrets.CLIPY_KEYSTORE_BASE64 }}
@@ -106,13 +103,14 @@ jobs:
         env:
           APP_VERSION: ${{ needs.metadata.outputs.version }}
           BUILD_NUMBER: ${{ needs.metadata.outputs.build }}
+          ANDROID_BUILD_NUMBER: ${{ needs.metadata.outputs.android_build }}
           CLIPY_KEYSTORE_PATH: ${{ runner.temp }}/clipy-release.jks
           CLIPY_KEYSTORE_PASSWORD: ${{ secrets.CLIPY_KEYSTORE_PASSWORD }}
           CLIPY_KEY_ALIAS: ${{ secrets.CLIPY_KEY_ALIAS }}
           CLIPY_KEY_PASSWORD: ${{ secrets.CLIPY_KEY_PASSWORD }}
         run: |
           bash build_macos_app.sh
-          bash build_android_apk.sh
+          BUILD_NUMBER="$ANDROID_BUILD_NUMBER" bash build_android_apk.sh
       - name: Package macOS
         env:
           APP_VERSION: ${{ needs.metadata.outputs.version }}

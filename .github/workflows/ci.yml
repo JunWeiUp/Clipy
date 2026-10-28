@@ -65,7 +65,7 @@ jobs:
                     all=true ;;
                   clipy_android/lib/*|clipy_android/assets/*|clipy_android/pubspec.*|clipy_android/analysis_options.yaml|clipy_android/devtools_options.yaml|.fvmrc)
                     android=true windows=true ios=true ;;
-                  clipy_android/android/*|clipy_android/test/*|clipy_android/tool/*|build_android_apk.sh)
+                  clipy_android_native/*|clipy_android/android/*|clipy_android/test/*|clipy_android/tool/*|build_android_apk.sh)
                     android=true ;;
                   clipy_android/windows/*|scripts/package_windows.ps1)
                     windows=true ;;
@@ -102,9 +102,29 @@ jobs:
       - run: bash scripts/check.sh repo
 
   android:
-    name: Flutter checks and Android build
+    name: Native Android tests, lint and build
     needs: changes
     if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Android SDK packages
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"'
+      - name: Check and build isolated native preview
+        working-directory: clipy_android_native
+        run: bash ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+
+  flutter:
+    name: Shared Flutter reference and desktop/mobile checks
+    needs: changes
+    if: needs.changes.outputs.android == 'true' || needs.changes.outputs.windows == 'true' || needs.changes.outputs.ios == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -126,9 +146,6 @@ jobs:
       - run: flutter pub get --enforce-lockfile
         working-directory: clipy_android
       - run: bash scripts/check.sh flutter
-      - name: Build Android without release credentials
-        working-directory: clipy_android
-        run: flutter build apk --debug --no-pub
 
   macos:
     name: macOS compile and bundle validation

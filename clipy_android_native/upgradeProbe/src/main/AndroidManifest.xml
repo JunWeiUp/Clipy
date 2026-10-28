@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:allowBackup="false" android:label="Clipy upgrade inspection" />
+    <instrumentation android:name="com.clipyclone.upgradeprobe.UpgradeProbe"
+        android:targetPackage="com.clipyclone.clipy_android"
+        android:functionalTest="true" android:handleProfiling="false" />
+</manifest>

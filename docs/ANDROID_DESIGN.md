@@ -103,3 +103,11 @@ new timers. An enabled button retains its tap-to-disable action and visible hint
 Scanning a device-group QR code submits the request. While this page is open, requests appear automatically above the invitation QR; manual mode requires the inviter to compare the pairing code and explicitly approve. Approval automatically completes enrollment on the requesting device. Do not require “Check join request” or “Finish joining” buttons. Keep discard/cancel controls and inline network/expiry feedback.
 
 Relay invitations default to automatic joining after scanning, with manual pairing-code approval available by turning the option off. Automatic admission verifies a time-limited manager-signed delegation and grants ordinary membership; the inviter need not remain online. QR codes and copied invitations use encrypted short links, while legacy invitations remain supported. Existing members must upgrade to the delegation-aware SDK; the server must support automatic admission and invitation-link endpoints.
+
+## Native migration preview
+
+The independent Kotlin/Compose history slice in `clipy_android_native/` uses Material 3
+semantic light/dark themes, localized English/Chinese strings, native clipboard
+actions and explicit deletion confirmation. It identifies itself as a local-only
+preview and does not show fake device/sync controls. See [migration gates](NATIVE_MIGRATION.md)
+for the remaining navigation, system integration and parity requirements.

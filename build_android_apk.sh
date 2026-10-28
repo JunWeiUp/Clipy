@@ -1,16 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-# Flutter Android APK build script.
-# This is separate from build_macos_app.sh, which builds the macOS .app bundle.
-
+# Native Android production APKs. Flutter remains a reference/other-platform tree.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/build_common.sh
 source "${REPO_ROOT}/scripts/lib/build_common.sh"
-resolve_build_version
-ANDROID_DIR="${REPO_ROOT}/clipy_android"
+resolve_android_build_version
+export APP_VERSION BUILD_NUMBER
+ANDROID_DIR="${REPO_ROOT}/clipy_android_native"
 DIST_DIR="${REPO_ROOT}/dist"
-
 APP_NAME="ClipyClone"
 TARGET_PLATFORM="${TARGET_PLATFORM:-android-arm,android-arm64}"
 SPLIT_PER_ABI="${SPLIT_PER_ABI:-1}"
@@ -19,71 +17,40 @@ if [ "${SPLIT_PER_ABI}" = 1 ] && [ "${TARGET_PLATFORM}" != android-arm,android-a
     fail "Split packaging supports TARGET_PLATFORM=android-arm,android-arm64; use SPLIT_PER_ABI=0 for a custom target"
 fi
 
-echo "Starting Android APK build for ${APP_NAME}..."
-
-if [ ! -d "${ANDROID_DIR}" ]; then
-    echo "Android project directory does not exist: ${ANDROID_DIR}"
-    exit 1
-fi
-
-if ! command -v flutter >/dev/null 2>&1; then
-    echo "flutter command not found. Please install Flutter and add it to PATH."
-    exit 1
-fi
-
+# Preserve the public Flutter-era target names, without calling Flutter.
+ABIS=()
+case "${TARGET_PLATFORM}" in
+    ,*|*,|*,,*) fail "TARGET_PLATFORM contains an empty target" ;;
+esac
+IFS=, read -r -a TARGETS <<< "${TARGET_PLATFORM}"
+for target in "${TARGETS[@]}"; do
+    case "${target}" in
+        android-arm) ABIS+=(armeabi-v7a) ;;
+        android-arm64) ABIS+=(arm64-v8a) ;;
+        android-x64) ABIS+=(x86_64) ;;
+        *) fail "Unsupported TARGET_PLATFORM: ${target}" ;;
+    esac
+done
+[ "${#ABIS[@]}" -gt 0 ] || fail "TARGET_PLATFORM must not be empty"
+[ -f "${ANDROID_DIR}/gradlew" ] || fail "Native Android Gradle wrapper is missing"
+require_command java
 mkdir -p "${DIST_DIR}"
-
 cd "${ANDROID_DIR}"
+OUTPUT_APK="${ANDROID_DIR}/app/build/outputs/apk/release/app-release.apk"
+printf 'Building native production Android %s (actual versionCode %s)...\n' "${APP_VERSION}" "${BUILD_NUMBER}"
 
-echo "Resolving Flutter dependencies..."
-flutter pub get --enforce-lockfile
+build_apk() {
+    bash ./gradlew --no-daemon :app:assembleRelease -PnativeProduction=true "$1"
+    [ -s "${OUTPUT_APK}" ] || fail "Expected signed release APK was not generated: ${OUTPUT_APK}"
+    cp "${OUTPUT_APK}" "$2"
+    printf 'Build complete: %s\n' "$2"
+}
 
-BUILD_ARGS=(
-    build
-    apk
-    --release
-    --target-platform
-    "${TARGET_PLATFORM}"
-    --build-name
-    "${APP_VERSION}"
-    --build-number
-    "${BUILD_NUMBER}"
-)
-
-if [ "${SPLIT_PER_ABI}" = "1" ]; then
-    BUILD_ARGS+=(--split-per-abi)
-fi
-
-echo "Building release APK..."
-flutter "${BUILD_ARGS[@]}"
-
-OUTPUT_DIR="${ANDROID_DIR}/build/app/outputs/flutter-apk"
-
-if [ "${SPLIT_PER_ABI}" = "1" ]; then
-    ARMV7_APK="${OUTPUT_DIR}/app-armeabi-v7a-release.apk"
-    ARM64_APK="${OUTPUT_DIR}/app-arm64-v8a-release.apk"
-
-    if [ ! -f "${ARMV7_APK}" ] || [ ! -f "${ARM64_APK}" ]; then
-        echo "Expected split APK files were not generated in: ${OUTPUT_DIR}"
-        exit 1
-    fi
-
-    cp "${ARMV7_APK}" "${DIST_DIR}/${APP_NAME}-Android-armeabi-v7a-v${APP_VERSION}.apk"
-    cp "${ARM64_APK}" "${DIST_DIR}/${APP_NAME}-Android-arm64-v8a-v${APP_VERSION}.apk"
-
-    echo "Build complete:"
-    echo "  ${DIST_DIR}/${APP_NAME}-Android-armeabi-v7a-v${APP_VERSION}.apk"
-    echo "  ${DIST_DIR}/${APP_NAME}-Android-arm64-v8a-v${APP_VERSION}.apk"
+if [ "${SPLIT_PER_ABI}" = 1 ]; then
+    for abi in "${ABIS[@]}"; do
+        build_apk "-PnativeAbi=${abi}" "${DIST_DIR}/${APP_NAME}-Android-${abi}-v${APP_VERSION}.apk"
+    done
 else
-    UNIVERSAL_APK="${OUTPUT_DIR}/app-release.apk"
-
-    if [ ! -f "${UNIVERSAL_APK}" ]; then
-        echo "Expected APK file was not generated: ${UNIVERSAL_APK}"
-        exit 1
-    fi
-
-    cp "${UNIVERSAL_APK}" "${DIST_DIR}/${APP_NAME}-Android-v${APP_VERSION}.apk"
-
-    echo "Build complete:"
-    echo "  ${DIST_DIR}/${APP_NAME}-Android-v${APP_VERSION}.apk"
+    ABI_LIST="$(IFS=,; printf '%s' "${ABIS[*]}")"
+    build_apk "-PnativeAbis=${ABI_LIST}" "${DIST_DIR}/${APP_NAME}-Android-v${APP_VERSION}.apk"
 fi

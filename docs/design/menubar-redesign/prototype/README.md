@@ -1,10 +1,12 @@
 # Clipy 轻量控制面板 · UI 原型
 
+依赖管理统一使用 `pnpm@10.33.0`：运行 `pnpm install --frozen-lockfile`，依赖复用用户级 pnpm store。
+
 用户选定第一张概念图后制作的独立 React/Vite 原型。用于确认布局与操作层级；不包含 macOS 系统调用，不读取真实剪贴板、通知或设备，不安装或替换应用。
 
 ## 本地查看
 
-在此目录执行 `npm ci`，再运行 `npm run dev -- --host 127.0.0.1 --port 4173 --strictPort`。当前评审地址为 `http://127.0.0.1:4173/`。`npm run build` 可验证前端构建。
+在此目录执行 `pnpm install --frozen-lockfile`，再运行 `pnpm run dev --host 127.0.0.1 --port 4173 --strictPort`。当前评审地址为 `http://127.0.0.1:4173/`。`pnpm run build` 可验证前端构建。
 
 ## 可体验的流程
 

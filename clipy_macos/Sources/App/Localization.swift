@@ -78,6 +78,17 @@ enum L10nKey: String {
     case keepAwakeOn
     case keepAwakeOff
     case keepAwakeFailed
+    case panelToolsWordBook
+    case panelToolsSwitch
+    case panelToolsHint
+    case panelToolsLearning
+    case panelToolsEfficiency
+    case panelCaptureSummary
+    case panelCaptureRegionShort
+    case panelCaptureWindowShort
+    case panelCaptureFullscreenShort
+    case panelHiddenIconsShort
+    case panelNotificationsShort
     case panelCaptureToolHint
     case panelManageSnippets
     case panelDevices
@@ -660,6 +671,17 @@ struct L10n {
             .keepAwakeOff: "已关闭",
             .keepAwakeFailed: "无法更改保持唤醒状态，请稍后重试。",
             .panelCaptureToolHint: "区域、窗口、全屏、长截图与录屏",
+            .panelToolsWordBook: "单词本",
+            .panelToolsSwitch: "智能切换",
+            .panelToolsHint: "常用功能，触手可及",
+            .panelToolsLearning: "语言与学习",
+            .panelToolsEfficiency: "效率工具",
+            .panelCaptureSummary: "选取、标注，随手保存与分享",
+            .panelCaptureRegionShort: "区域",
+            .panelCaptureWindowShort: "窗口",
+            .panelCaptureFullscreenShort: "全屏",
+            .panelHiddenIconsShort: "隐藏图标",
+            .panelNotificationsShort: "通知",
             .panelManageSnippets: "管理片段",
             .panelDevices: "设备",
             .panelMore: "更多操作",
@@ -1228,6 +1250,17 @@ struct L10n {
             .keepAwakeOff: "Off",
             .keepAwakeFailed: "Could not change Keep Awake. Please try again.",
             .panelCaptureToolHint: "Region, window, full screen, scrolling and recording",
+            .panelToolsWordBook: "Vocabulary",
+            .panelToolsSwitch: "Smart Switch",
+            .panelToolsHint: "Your everyday tools, together",
+            .panelToolsLearning: "Language & Learning",
+            .panelToolsEfficiency: "Productivity",
+            .panelCaptureSummary: "Select, annotate, save and share",
+            .panelCaptureRegionShort: "Region",
+            .panelCaptureWindowShort: "Window",
+            .panelCaptureFullscreenShort: "Screen",
+            .panelHiddenIconsShort: "Hidden icons",
+            .panelNotificationsShort: "Notifications",
             .panelManageSnippets: "Manage Snippets",
             .panelDevices: "Devices",
             .panelMore: "More Actions",

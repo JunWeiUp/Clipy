@@ -1,0 +1,28 @@
+<resources>
+    <string name="app_name">Clipy 原生预览</string>
+    <string name="history">剪贴板历史</string>
+    <string name="preview_notice">原生预览 · 当前仅支持本地历史，尚未接入同步。</string>
+    <string name="search">搜索历史</string>
+    <string name="all">全部</string>
+    <string name="text">文本</string>
+    <string name="links">链接</string>
+    <string name="files">文件</string>
+    <string name="images">图片</string>
+    <string name="add">添加文本</string>
+    <string name="paste">粘贴</string>
+    <string name="refresh">刷新</string>
+    <string name="empty">暂无匹配记录，可以添加文本或粘贴内容。</string>
+    <string name="error">操作未完成，请重试。</string>
+    <string name="more">加载更多</string>
+    <string name="limit">最多显示 500 条，可通过搜索查找更早记录。</string>
+    <string name="copy">复制</string>
+    <string name="copied">已复制</string>
+    <string name="delete">删除</string>
+    <string name="delete_confirm">删除这条历史记录？原始文件会保留。</string>
+    <string name="cancel">取消</string>
+    <string name="save">保存</string>
+    <string name="close">关闭</string>
+    <string name="empty_clipboard">剪贴板没有文本内容。</string>
+    <string name="unsupported">可以查看这条记录，当前预览版尚不支持复制媒体。</string>
+    <string name="new_text">文本（最大 1 MiB）</string>
+</resources>

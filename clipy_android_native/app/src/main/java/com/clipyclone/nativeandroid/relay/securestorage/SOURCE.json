@@ -1,0 +1,7 @@
+{
+  "upstream": "https://github.com/mogol/flutter_secure_storage",
+  "package": "flutter_secure_storage",
+  "version": "10.0.0",
+  "scope": "Android Java cipher/storage implementation only; Flutter plugin/engine bridge excluded",
+  "adaptation": "Package namespace only; original private preferences/keystore aliases intentionally preserved"
+}

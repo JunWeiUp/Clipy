@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- updatePeriodMillis=0: the running readout is a launcher-side countdown
+     Chronometer, so no periodic widget updates (or wakeups) are needed. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/timer_widget"
+    android:previewLayout="@layout/timer_widget"
+    android:description="@string/timer_widget_desc"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

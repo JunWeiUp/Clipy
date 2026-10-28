@@ -1,0 +1,24 @@
+{
+  "upstream": "https://github.com/JunWeiUp/common-relay",
+  "source_commit": "794a2396266ee6f26ab7406f6d6466732a269dbf",
+  "upstream_sha256": {
+    "Crypto.java": "99375163d44f71c4560c089ec57abebae5ec6fd00f3b4c14fbef1f66062f32c5",
+    "RelayClient.java": "1976d943ec4144903eaaadef5d24922c5168ee62436e2688ae60a5622957b2f8",
+    "RelayGroups.java": "05abcb2a914678cf53aea879261b3d206ccbf5c659d3d4a4d55744dd49cb9b34",
+    "InvitationLinks.java": "f98bc1ae6430fa27d309897d674ce3521cb33940846259740696a73988376218",
+    "StrictPayload.java": "1a4c0507f7b40c829c689a1eb042b2d87dae3ee76f4e1a6fb13c3b8668794a87",
+    "RelayJournal.java": "77f4c4f3ac023459a63ac66b5aa93be32c6def1414cae5222b537106a2f7d509"
+  },
+  "adaptations": [
+    "Android API24 base64 and file IO",
+    "Forward group.changed notifications",
+    "Close and synchronize native secretstream state",
+    "Map.copyOf replaced for older Android",
+    "size_t return mapped to NativeLong",
+    "Canonical padded base64 validation to prevent Android decoder whitespace leniency",
+    "Preserve membership ordering with LinkedHashMap",
+    "Reject reads/writes immediately after stream close",
+    "Dart-compatible journal tuple hashing with unescaped slash"
+  ],
+  "working_tree_patch": false
+}

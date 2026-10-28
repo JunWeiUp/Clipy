@@ -5,7 +5,7 @@ func runMenuBarPanelRegressionTests() {
     func check(_ value: @autoclosure () -> Bool, _ message: String) { if !value() { fatalError(message) } }
     _ = NSApplication.shared
     let homeSize = MenuBarPanelPolicy.preferredSize(page: .home, tab: .clipboard)
-    let toolsSize = MenuBarPanelPolicy.preferredSize(page: .tools, tab: .clipboard)
+    let toolsSize = MenuBarPanelPolicy.preferredSize(page: .home, tab: .tools)
     let devicesSize = MenuBarPanelPolicy.preferredSize(page: .home, tab: .devices)
     let suiteName = "clipy.notification-popup-tests"
     let suite = UserDefaults(suiteName: suiteName)!
@@ -17,7 +17,8 @@ func runMenuBarPanelRegressionTests() {
     check(NotificationPopupPolicy.isEnabled(suite), "popup preference did not turn back on")
     suite.removePersistentDomain(forName: suiteName)
     check(homeSize == CGSize(width: 520, height: 640), "home panel grew beyond compact size")
-    check(toolsSize.height < homeSize.height && devicesSize.height < homeSize.height, "sparse pages did not shrink")
+    check(toolsSize == homeSize, "switching to tools must preserve the home panel frame")
+    check(devicesSize.height < homeSize.height, "sparse devices page did not shrink")
     check(MenuBarPanelPolicy.preferredSize(page: .home, tab: .devices, deviceCount: 1).height == 440,
           "one-device panel retains excessive empty space")
     check(MenuBarPanelPolicy.preferredSize(page: .home, tab: .devices, deviceCount: 50).height == homeSize.height,
@@ -34,6 +35,8 @@ func runMenuBarPanelRegressionTests() {
     for scale in [1.0, 2.0] {
         for bounds in [CGRect(x: 0, y: 0, width: 1512, height: 945), CGRect(x: -1280, y: 50, width: 1280, height: 650), CGRect(x: 0, y: 0, width: 420, height: 580)] {
             let frame = MenuBarPanelPolicy.frame(anchor: CGRect(x: bounds.minX + 8, y: bounds.maxY, width: 26, height: 24), visible: bounds, preferred: homeSize)
+            let toolsFrame = MenuBarPanelPolicy.frame(anchor: CGRect(x: bounds.minX + 8, y: bounds.maxY, width: 26, height: 24), visible: bounds, preferred: toolsSize)
+            check(toolsFrame == frame, "tools tab shifts the panel on constrained screens")
             check(bounds.contains(frame), "panel escapes screen at scale \(scale)")
             check(frame.width <= homeSize.width && frame.height <= homeSize.height, "logical size multiplied by backing scale")
         }
@@ -86,14 +89,21 @@ func runMenuBarPanelRegressionTests() {
     check(model.visibleSnippets.count == 1, "global search is limited by old folder")
     model.query = ""; model.selectTab(.devices)
     check(model.selectableIDs.isEmpty, "device tab exposes stale keyboard selections")
-    model.navigate(.tools)
-    check(model.visibleTools == [.wordBook, .password, .keepAwake], "tools page shows the keep awake control")
+    model.selectTab(.tools)
+    check(model.visibleTools == [.capture, .word, .wordBook, .smartSwitch, .password], "tools dashboard lost a launcher")
+    check(model.page == .home, "tools tab hides home navigation")
+    model.moveSelection(1)
+    check(model.selectedID == "t:capture", "tool keyboard order must start with capture")
+    model.moveSelection(1)
     model.moveSelection(1)
     check(model.selectedID == "t:wordBook", "tools are not keyboard selectable")
     var openedWordBook = false
     model.onAction = { if case .wordBook = $0 { openedWordBook = true } }
     model.useSelection()
     check(openedWordBook, "Enter did not open selected tool")
+    model.query = L10n.t(.panelToolsWordBook)
+    check(model.matchingTools.contains(.wordBook), "search cannot find the visible vocabulary title")
+    model.query = ""
     model.useTool(.capture)
     check(model.page == .capture, "capture shortcut did not open detail page")
     model.escape(); check(model.page == .home, "Escape did not leave detail page")
@@ -183,21 +193,22 @@ func runMenuBarPanelSnapshot() -> Never {
     window.setContentSize(MenuBarPanelPolicy.preferredSize(page: .home, tab: .clipboard))
     window.center(); window.orderFrontRegardless()
     var step = 0
-    let steps = ["light-history", "light-tools", "dark-history", "dark-devices", "english-history", "dark-notifications", "short-notifications", "narrow-history", "light-devices", "english-devices", "empty-devices", "narrow-devices"]
+    let steps = ["light-history", "light-tools", "dark-history", "dark-devices", "english-history", "dark-notifications", "short-notifications", "narrow-history", "light-devices", "english-devices", "empty-devices", "narrow-devices", "dark-tools", "english-tools", "narrow-tools"]
     func prepare() {
-        UserDefaults.standard.setVolatileDomain(["appLanguage": step == 4 || step == 9 ? "en" : "zh"], forName: UserDefaults.argumentDomain)
+        UserDefaults.standard.setVolatileDomain(["appLanguage": step == 4 || step == 9 || step == 13 ? "en" : "zh"], forName: UserDefaults.argumentDomain)
         NotificationCenter.default.post(name: .appLanguageDidChange, object: nil)
         // UI localization alone does not translate example clipboard contents.
         // Reload the locale-specific fixture before the next native capture.
         model.refreshHistory()
-        let dark = step == 2 || step == 3 || step == 5 || step == 6
+        let dark = step == 2 || step == 3 || step == 5 || step == 6 || step == 12
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        model.page = step == 1 ? .tools : (step == 5 || step == 6 ? .notifications : .home)
-        model.tab = step == 3 || step >= 8 ? .devices : .clipboard
+        model.page = step == 5 || step == 6 ? .notifications : .home
+        model.tab = step == 1 || step >= 12 ? .tools : (step == 3 || step >= 8 ? .devices : .clipboard)
         model.devices = step == 10 ? [] : deviceFixtures
         var size = MenuBarPanelPolicy.preferredSize(page: model.page, tab: model.tab, deviceCount: model.devices.count)
         if step == 6 { size.height = 420 }
         if step == 7 || step == 11 { size = CGSize(width: 420, height: 560) }
+        if step == 14 { size = CGSize(width: 420, height: 690) }
         window.setContentSize(size)
         model.selectedID = step == 0 || step == 2 ? "h:" + samples[0].id : nil
     }
