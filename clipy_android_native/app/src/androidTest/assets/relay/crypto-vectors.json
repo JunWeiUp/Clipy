@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "app": "example",
+  "group": "test",
+  "id": "01010101010101010101010101010101",
+  "alice_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "alice_public": "8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f",
+  "bob_secret": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "bob_public": "358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254",
+  "message": "0sNG+xs9/BPQMwRSTuuJ8o3zhHVr2fDd4yCKALorNXwCSL70yHvQzSJBfGfLTegDk2RGCR34GXxM8Nxc6KrChvbVFbacnhkfVGjE6ToBFxO/86mq0yPukTpFLhCVUWPViqqKO1s4hIgHFxvwtP8GEwyGXPk11cJ3+eU6V4gSzRM4Xbsd1CpiN7Z9Je6wJWgenAw8kMoHFyZCmEm+xAd8",
+  "stream_descriptor": {
+    "key": "f551fb6ebf1858f63115e4dadea7871d10d234f23d59df49da7b30ab3497bb5b",
+    "header": "70bd7e2338d66a62e990e83f3238727e860577e93e7c46c5"
+  },
+  "stream_aad": "[1,\"example\",\"test\",\"alice\",\"bob\",\"stream\",\"01010101010101010101010101010101\",0]",
+  "stream_ciphertext": "d5214879ba0ea667b395bf6c74622535b44d74aeac6b",
+  "offline_expires": 1234567890,
+  "offline_message": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXOC18TwFgHESH19LrwpGv2Bjw3F8SDC3XNVGMqhWG1fN11+0NLcyigV/tTcy23rTmlflfxs9BCgUDDRlkKhGhaH2UOL7mpzOFxKF2AUFhbrSOQ+ouRiDthb3NgIT4SYG7kQdrJ0V6nbM2NdKcu32ulLeEyGu6rMWsPsk6tHDukOywWT86in3jc2HpdWEUkhR51YXQU8HgAv2VJpua"
+}

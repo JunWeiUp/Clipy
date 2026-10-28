@@ -1,0 +1,28 @@
+<resources>
+    <string name="app_name">Clipy Native Preview</string>
+    <string name="history">History</string>
+    <string name="preview_notice">Native preview · Local history only. Sync is not enabled in this build.</string>
+    <string name="search">Search history</string>
+    <string name="all">All</string>
+    <string name="text">Text</string>
+    <string name="links">Links</string>
+    <string name="files">Files</string>
+    <string name="images">Images</string>
+    <string name="add">Add text</string>
+    <string name="paste">Paste</string>
+    <string name="refresh">Refresh</string>
+    <string name="empty">No matching history. Add text or paste to get started.</string>
+    <string name="error">Unable to complete the operation. Please retry.</string>
+    <string name="more">Load more</string>
+    <string name="limit">Showing up to 500 items. Search to find older entries.</string>
+    <string name="copy">Copy</string>
+    <string name="copied">Copied</string>
+    <string name="delete">Delete</string>
+    <string name="delete_confirm">Delete this history entry? The original file will be kept.</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="close">Close</string>
+    <string name="empty_clipboard">The clipboard has no text.</string>
+    <string name="unsupported">This item can be inspected, but media copy is not available in this preview.</string>
+    <string name="new_text">Text (up to 1 MiB)</string>
+</resources>

@@ -4,16 +4,17 @@ import Combine
 /// UI-only state. History queries are bounded and cancelled on every edit/close.
 /// No clipboard data or temporary menu-bar identities are persisted here.
 final class MenuBarPanelModel: ObservableObject {
-    enum Tab: CaseIterable { case clipboard, snippets, devices
+    enum Tab: CaseIterable { case clipboard, snippets, devices, tools
         var title: String {
             switch self {
             case .clipboard: return L10n.t(.panelClipboard)
             case .snippets: return L10n.t(.snippets)
             case .devices: return L10n.t(.panelDevices)
+            case .tools: return L10n.t(.menuTools)
             }
         }
     }
-    enum Page { case home, capture, tools, notifications, settings }
+    enum Page { case home, capture, notifications, settings }
     enum Action { case search(String), snippets, preferences, syncSettings, notifications, word, wordBook, smartSwitch, password, tokenUsage, toggleKeepAwake
         case region, window, fullscreen, screenshotSettings, permission, quit
         case sendText(String), sendFile(String)
@@ -22,10 +23,10 @@ final class MenuBarPanelModel: ObservableObject {
         case capture, word, wordBook, smartSwitch, password, keepAwake
         var title: L10nKey {
             switch self {
-            case .capture: return .panelCapture
-            case .word: return .wordLookup
-            case .wordBook: return .wordBook
-            case .smartSwitch: return .smartSwitchTitle
+            case .capture: return .panelCaptureShortcut
+            case .word: return .panelLookupShortcut
+            case .wordBook: return .panelToolsWordBook
+            case .smartSwitch: return .panelToolsSwitch
             case .password: return .generatePassword
             case .keepAwake: return .keepAwakeTitle
             }
@@ -88,7 +89,7 @@ final class MenuBarPanelModel: ObservableObject {
 
     var isSearching: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var visibleTools: [Tool] {
-        isSearching ? matchingTools : matchingTools.filter { $0 == .wordBook || $0 == .password || $0 == .keepAwake }
+        isSearching ? matchingTools : [.capture, .word, .wordBook, .smartSwitch, .password]
     }
     var visibleSnippets: [Snippet] {
         folders.filter { isSearching || folderID == nil || $0.id == folderID }
@@ -130,13 +131,13 @@ final class MenuBarPanelModel: ObservableObject {
         }
     }
     var selectableIDs: [String] {
-        if page == .tools { return visibleTools.map { "t:" + $0.rawValue } }
         guard page == .home else { return [] }
         if isSearching { return history.map { "h:" + $0.id } + visibleSnippets.map { "s:" + $0.id.uuidString } + matchingTools.map { "t:" + $0.rawValue } }
         switch tab {
         case .clipboard: return history.map { "h:" + $0.id }
         case .snippets: return visibleSnippets.map { "s:" + $0.id.uuidString }
         case .devices: return []
+        case .tools: return visibleTools.map { "t:" + $0.rawValue }
         }
     }
     func moveSelection(_ delta: Int) {
@@ -188,7 +189,6 @@ enum MenuBarPanelPolicy {
             let height = deviceCount == 0 ? 470 : min(640, max(430, 380 + deviceCount * 60))
             return CGSize(width: 520, height: CGFloat(height))
         case .capture: return CGSize(width: 520, height: 350)
-        case .tools: return CGSize(width: 520, height: 280)
         case .notifications: return CGSize(width: 520, height: 560)
         case .settings: return CGSize(width: 520, height: 440)
         }

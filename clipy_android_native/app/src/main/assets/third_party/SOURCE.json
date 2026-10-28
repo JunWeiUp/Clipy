@@ -1,0 +1,89 @@
+{
+  "scope": "Directly copied relay/storage sources and relay/scanner direct dependencies; Android/Compose framework notices are separate.",
+  "components": [
+    {
+      "component": "common-relay",
+      "version": "794a2396266ee6f26ab7406f6d6466732a269dbf",
+      "license": "MIT",
+      "source": "https://github.com/JunWeiUp/common-relay/tree/794a2396266ee6f26ab7406f6d6466732a269dbf",
+      "license_file": "common-relay-LICENSE.txt"
+    },
+    {
+      "component": "flutter_secure_storage",
+      "version": "10.0.0",
+      "license": "BSD-3-Clause",
+      "source": "https://pub.dev/packages/flutter_secure_storage/versions/10.0.0",
+      "license_file": "flutter-secure-storage-LICENSE.txt"
+    },
+    {
+      "component": "com.goterl:lazysodium-android",
+      "version": "5.2.0",
+      "license": "MPL-2.0",
+      "source": "https://github.com/terl/lazysodium-android/tree/v5.2.0",
+      "license_file": "lazysodium-MPL-2.0.txt"
+    },
+    {
+      "component": "libsodium",
+      "version": "1.0.20",
+      "license": "ISC",
+      "source": "https://github.com/jedisct1/libsodium/tree/1.0.20-RELEASE",
+      "license_file": "libsodium-LICENSE.txt"
+    },
+    {
+      "component": "net.java.dev.jna:jna",
+      "version": "5.17.0",
+      "license": "Apache-2.0 (chosen from Apache-2.0 OR LGPL-2.1-or-later)",
+      "source": "https://github.com/java-native-access/jna/tree/5.17.0",
+      "license_file": "jna-LICENSE.txt"
+    },
+    {
+      "component": "JNA bundled libffi",
+      "version": "as bundled in JNA 5.17.0",
+      "license": "MIT",
+      "source": "https://github.com/java-native-access/jna/tree/5.17.0/native/libffi",
+      "license_file": "jna-libffi-LICENSE.txt"
+    },
+    {
+      "component": "com.google.crypto.tink:tink-android",
+      "version": "1.19.0",
+      "license": "Apache-2.0",
+      "source": "https://github.com/tink-crypto/tink-java/tree/v1.19.0",
+      "license_file": "tink-LICENSE.txt"
+    },
+    {
+      "component": "com.google.zxing:core",
+      "version": "3.5.3",
+      "license": "Apache-2.0",
+      "source": "https://github.com/zxing/zxing/tree/zxing-3.5.3",
+      "license_file": "zxing-LICENSE.txt"
+    },
+    {
+      "component": "com.journeyapps:zxing-android-embedded",
+      "version": "4.3.0",
+      "license": "Apache-2.0",
+      "source": "https://github.com/journeyapps/zxing-android-embedded/tree/v4.3.0",
+      "license_file": "zxing-android-embedded-LICENSE.txt"
+    },
+    {
+      "component": "com.squareup.okhttp3:okhttp",
+      "version": "4.12.0",
+      "license": "Apache-2.0",
+      "source": "https://github.com/square/okhttp/tree/parent-4.12.0",
+      "license_file": "okhttp-LICENSE.txt"
+    }
+  ],
+  "license_sha256": {
+    "Apache-2.0.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+    "common-relay-LICENSE.txt": "272282293edccf0e0df0cc16ecc9e7d9bc112f4d2995422556ea173ba1795ef5",
+    "flutter-secure-storage-LICENSE.txt": "55dafb084270616f95b9bea53654adda8bdcad95c022a83c4cf8769073f829fa",
+    "jna-LICENSE.txt": "07c938b23950ab7d47a24ef35f9f5da3a05ae164278dc959ad6994135ed59ff1",
+    "jna-libffi-LICENSE.txt": "2c9c2acb9743e6b007b91350475308aee44691d96aa20eacef8e199988c8c388",
+    "lazysodium-MPL-2.0.txt": "4b89d4518bd135ab4ee154a7bce722246b57a98c3d7efc1a09409898160c2bd1",
+    "libsodium-LICENSE.txt": "43964d976a6db3fb986af689d05f8ca0e9971878bccae709750dac8fdc4a99cf",
+    "okhttp-LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "tink-LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "zxing-LICENSE.txt": "3f62881f0566227a24b12e5a754cc79f39aaa94883038e95c94812e1f50af42f",
+    "zxing-NOTICE.txt": "4db4b60aace29ec6c5c4f13ca9cac1930d3c0c54bcc67dceead0c10771120e66",
+    "zxing-android-embedded-LICENSE.txt": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  }
+}

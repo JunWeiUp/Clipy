@@ -1,18 +1,37 @@
 # Architecture and code map
 
-Clipy keeps its Swift/AppKit macOS menu-bar application. The Flutter application
-shares UI, history storage and the v3 LAN protocol across Android, Windows and
-iOS. Kotlin owns Android background services, the Windows C++ runner owns the
-system clipboard and tray, and Swift owns iOS user-initiated paste and sandbox
-paths. Main-app platform adapters retain the shared protocol implementation;
-the iOS Share Extension has a bounded native one-shot client for the same wire
-contract, without starting a second background sync service.
+Clipy uses Swift/AppKit on macOS and Kotlin/Compose for production Android
+source builds. The Flutter tree remains the Windows/iOS implementation and the
+Android UI/protocol parity reference. Windows C++ owns the clipboard and tray;
+Swift owns iOS user-initiated paste and sandbox paths. All clients retain the v3
+wire contract; iOS Share Extension uses a bounded native one-shot client without
+starting a second background sync service.
+
+## Native Android production source
+
+`clipy_android_native/` contains the Android UI, SQLite repositories, LAN v3
+protocol/session/file pipeline, notifications, sharing, timer widgets and relay
+integration. `build_android_apk.sh` builds it with `nativeProduction=true`, the
+original application ID and the existing release keystore. Debug previews keep
+an isolated `.nativepreview` ID. Flutter is not an Android build/runtime dependency;
+its pubspec remains the shared version source. Public Android builds default to
+source build +2000 to continue historical ARM64 numbering; explicit BUILD_NUMBER
+is the actual versionCode. See [DEVELOPMENT.md](DEVELOPMENT.md).
+
+`ClipyApplication` owns the coroutine scope and sync/relay/notification/file
+managers. Compose observes snapshots; durable operations do not depend on a
+visible Activity. `NativeLegacyMigration`, unchanged database fields, existing
+FlutterSharedPreferences names and the compatible Java secure-storage adapter
+preserve local history, identities, settings and enrollment. Credential decode
+failures never clear data or silently regenerate identity. [NATIVE_MIGRATION.md](NATIVE_MIGRATION.md)
+and [the parity checklist](NATIVE_MIGRATION_PARITY.md) track acceptance evidence;
+source cutover alone does not assert release publication or final device parity.
 
 ## File receipt notifications
 
 A receipt is posted only after SHA-256 verification, final rename and database
 commit. The native notification channel is best-effort and cannot change the ACK
-or completed-transfer state. Android registers it on the Application engine so
+or completed-transfer state. Android uses Application-owned native file callbacks so
 background reception works; immutable PendingIntents carry bounded, private path
 tokens and cold/warm Activity taps reuse folder opening with viewer fallback.
 iOS requests alert permission on UI startup, shows foreground banners, and stores
@@ -57,19 +76,16 @@ No new polling, network service or file-content duplication is introduced.
   It verifies the selected peer ID on connect, handles ping/early rejection,
   bounds each frame, and streams one chunk at a time. Closing cancels sockets,
   file-provider reads and pending scans; temporary files are then removed.
-- Android's `incoming_share.dart` drains one batch at a time; `SharedFilesPage`
-  requires explicit device selection/Send and skips successes on same-peer retry.
-  Opening/resuming the visible share page reuses live sessions, otherwise probes
-  remembered/manual endpoints before falling back to a bounded subnet scan.
-  `DiscoveryRefreshCoordinator` shares one foreground job with device-page refresh;
-  automatic requests have a 30-second cooldown, manual requests a 3-second gap.
-  It retains only the current future and completion time; sync stop invalidates
-  the job and pending fallback. No polling is added. The bounded manager-owned
-  job may finish after a page closes; that page removes its progress/lifecycle
-  listeners and ignores late UI results.
-  A fully successful send closes the review route automatically; closing removes
-  the batch. iOS retains this bridge only to drain legacy staged
-  shares. New iOS shares are never published to that main-app queue.
+- Android `MainActivity` observes `SharedFileInbox` and opens the native
+  `SharedFilesPage`. `ShareSendSession` requires explicit peer selection and
+  Send, skips successful files on same-peer retry, and closes a successful review.
+  Its UI observes application-owned transfers; explicit completion/cancellation
+  releases the staged batch. Visible review refresh reuses live
+  sessions and probes remembered/manual endpoints before bounded subnet discovery.
+  `DiscoveryRefreshCoordinator` coalesces refresh requests; sync stop invalidates
+  pending discovery. There is no idle share-page polling. Flutter's
+  `incoming_share.dart` remains a reference and an iOS bridge for legacy staged
+  shares; new iOS shares are not published to that main-app queue.
 - Android clears process-orphaned files on the next share. iOS excludes temporary
   files from backups and prunes entries older than 24 hours on the next import.
   There is no cleanup timer; the Android worker expires after 30 seconds idle.
@@ -93,7 +109,14 @@ clipy_macos/
   Sources/UI/                 shared SwiftUI views and window layouts
   Resources/Info.plist        reviewed bundle/permission metadata template
   Resources/token-prices-*.json  bundled offline model-price snapshot and overrides
-clipy_android/
+clipy_android_native/
+  app/src/main/java/com/clipyclone/
+    nativeandroid/           Compose UI, repositories, LAN/files, relay, notifications
+    clipy_android/           Application, original service/widget component names
+  app/src/main/assets/       icons/fonts and packaged third-party notices
+  app/src/test/              deterministic native JVM tests
+  app/src/androidTest/       Android storage/crypto/socket/integration checks
+clipy_android/               Windows/iOS implementation; Android parity reference
   lib/main.dart              default Dart entrypoint only
   lib/app/                   bootstrap, headless bridge, application root
   lib/features/              devices, history, settings, logs, transfers
@@ -116,9 +139,9 @@ follow-ups with tests; do not mix a protocol rewrite with directory reorganizati
 
 Windows uses `sqflite_common_ffi` with the same schema and Dart repositories.
 Its `main_windows.dart` target initializes the FFI factory before bootstrap,
-keeping the Android/iOS entrypoint free of desktop database initialization.
+keeping the iOS/reference Android entrypoint free of desktop database initialization.
 The sqlite3 hook resolves Windows' `winsqlite3.dll` and system SQLite on the
-other platforms, avoiding an extra binary download during Android builds.
+other Flutter targets. Native Android uses the platform SQLite APIs.
 `WM_CLIPBOARDUPDATE` delivers text, PNG images and file paths to
 `ClipboardManager`; copied images live under the private application data
 directory and are deleted with trimmed history. Closing the main window hides it
@@ -139,8 +162,8 @@ failure rather than saving pixels from a different window. Some protected or
 GPU-rendered windows can still return a blank frame despite `PrintWindow`
 reporting success; Windows device acceptance must cover representative apps.
 
-iOS attaches its Flutter UI after core bootstrap (Android's Activity still owns
-`ui.attach`). Native `UIPasteControl` sends user-pasted text to history; there is
+iOS attaches its Flutter UI after core bootstrap. Native Android mounts Compose
+directly and has no `ui.attach` or Flutter engine lifecycle. Native `UIPasteControl` sends user-pasted text to history; there is
 no background clipboard polling. The app's documents directory holds received
 files and is visible in Files. The foreground sync listener stops when the app
 is backgrounded and restarts on resume. Android notifications received over LAN
@@ -154,14 +177,14 @@ missed text history and flushes peers' durable pending messages.
 
 ## Ownership and data flow
 
-| Concern | macOS | Flutter / Android, Windows, iOS |
-| --- | --- | --- |
-| Clipboard | `ClipboardManager` | `ClipboardManager`, native clipboard channel |
-| Persistence | `AppDatabase`, `HistoryRepository` | `database/` repositories, storage channel |
-| Sync orchestration | `SyncManager` | `sync_manager.dart` |
-| Wire contract | `SyncProtocol.swift`, `SyncCrypto.swift` | `sync/protocol.dart`, `sync/crypto.dart` |
-| Notification delivery | `NotificationManager`, `SystemNotificationRouter` | notification manager; Kotlin listener on Android, read-only mirror on Windows/iOS |
-| UI lifetime | `WindowSession`, window controllers | feature widget state + subscriptions |
+| Concern | macOS | Native Android | Flutter Windows/iOS and Android reference |
+| --- | --- | --- | --- |
+| Clipboard | `ClipboardManager` | `NativeClipboard` | `ClipboardManager`, native clipboard channel |
+| Persistence | `AppDatabase`, `HistoryRepository` | `ClipyDatabase`, `HistoryRepository`, `PendingSyncRepository` | `database/` repositories, storage channel |
+| Sync orchestration | `SyncManager` | `NativeSyncManager` | `sync_manager.dart` |
+| Wire contract | `SyncProtocol.swift`, `SyncCrypto.swift` | `sync/` protocol/crypto/session modules | `sync/protocol.dart`, `sync/crypto.dart` |
+| Notification delivery | `NotificationManager`, `SystemNotificationRouter` | `NativeNotificationManager`, existing listener component | notification manager, read-only mirror on Windows/iOS |
+| UI lifetime | `WindowSession`, window controllers | Compose route state, view models, lifecycle-aware flows | feature widget state + subscriptions |
 
 Local clipboard changes are normalized and deduplicated, persisted, then offered
 to authorized sync peers. Remote history must be persisted **before** ACK.
@@ -188,7 +211,11 @@ the Devices tab scaled to its count; the controller observes navigation and devi
 updates and repositions the visible panel under its status item.
 The Devices tab has a refresh button (prune + full /24 scan) and per-device Send Text /
 Send File buttons. Detail pages replace the home search/strip/tabs/footer with a
-Back/title row; the footer's Tools page omits actions already present in the footer.
+Back/title row. Tools is the fourth home tab: a capture row directly launches region/window/full-screen,
+followed by Lookup/Vocabulary and Smart Switch/Password pairs. `MenuBarPanelToolsView`
+owns this layout and uses the same model/action handoff. Its header shares the same hidden-icon strip and Token summary as other home tabs;
+Tools keeps the Clipboard/Snippets panel size, with its content scrolling independently. The footer contains named Keep Awake
+and Notifications controls; banner preferences remain in More. No new background work or persistence is introduced.
 Existing manager callbacks refresh only the open panel; there is no new idle polling.
 Native menu tracking defers those refreshes. Dismissal cancels queries and releases the view.
 
@@ -253,15 +280,16 @@ a bounded 365-day heatmap from that report, with at most 53 week columns and no
 additional log scans, timers or persisted chart state. Hover/click state belongs to
 the view and resets when the agent filter changes or the hosting view is released.
 
-- Android owns one cached Flutter engine. `PlatformChannels.registerAll` is
-  Application-owned so storage/notification processing works without an Activity.
-- Android `MainActivity` uses `singleTask` with the application task affinity:
-  launcher, incoming shares and notification taps reuse the same engine host via
-  `onNewIntent`. An evicted legacy/OEM duplicate finishes instead of leaving a
-  detached black window in Recents; UI-attach retries stop on eviction/destruction.
-- `lib/app/bootstrap.dart` mounts a minimal root immediately using the default
-  `main` entrypoint. Native `ui.attach` mounts the full Android UI; do not introduce
-  a custom entrypoint or require a visible page to acknowledge sync traffic.
+- Native Android `ClipyApplication` initializes managers/repositories without a
+  Flutter engine. Sync commits incoming history before ACK even without UI.
+- Android `MainActivity` retains `singleTask` and the application task affinity.
+  Launcher, shares and notification taps reuse the same native Activity through
+  `onNewIntent`. Original service/widget component names are preserved for
+  upgrades; no migration may depend on an uninstall or permission reset.
+- Compose route/tab state survives navigation with `ActivePageLayout`; hidden
+  pages suppress dialogs, focus, animations and page-owned polling. Application
+  scope owns submitted durable operations. The group watcher is bounded to one
+  two-second check while a visible foreground page has pending work.
 - FGS/watchdog types in Kotlin must match both service declarations in the
   manifest, including WorkManager's `SystemForegroundService`.
 - macOS sync socket operations run on `syncQueue`; file work has a separate
@@ -278,7 +306,10 @@ the view and resets when the agent filter changes or the hosting view is release
 
 - Wire fields, ACK rules, framing: update both sync implementations and
   [PROTOCOL.md](PROTOCOL.md), then run protocol tests and bidirectional device checks.
-- Flutter navigation/pages: `lib/features/`; startup and channel registration:
+- Android native navigation/pages: `nativeandroid/MainActivity.kt`, `ui/` and
+  view models; lifecycle/managers: `clipy_android/ClipyApplication.kt` within the
+  native Java source root. Read `NATIVE_MIGRATION_PARITY.md` before changing contracts.
+- Flutter Windows/iOS and reference navigation/pages: `lib/features/`; bootstrap:
   `lib/app/bootstrap.dart` (not a feature widget).
 - Android timer: `TimerWidgetProvider`, `TimerSetupActivity`, `TimerWheelPicker`,
   `TimerRinger`, `TimerRingingActivity`, and related resources.
@@ -297,10 +328,11 @@ checks. See also
 
 ## Optional Internet relay
 
-`SyncRelayClient.swift` / `sync/relay_client.dart` own authenticated WSS presence
+`SyncRelayClient.swift`, native Android `relay/NativeRelayTransport.kt`, and
+Flutter `sync/relay_client.dart` own authenticated WSS presence
 and bounded per-peer byte bridges; SyncManager starts/stops them with sync and
 validates peer identity/generation before adoption. Private LAN probes take
-priority; relay addresses never overwrite the LAN cache. The vendored Common Relay SDK provides authenticated, end-to-end encrypted streams and verified group membership. `relay/server.py` documents the retired service only. See [COMMON-RELAY-SDK.md](COMMON-RELAY-SDK.md) for current setup and the separate LAN trust boundary.
+priority; relay addresses never overwrite the LAN cache. The vendored Common Relay SDK provides authenticated, end-to-end encrypted streams and verified group membership. Android reuses its Java SDK through loopback socket bridges into the same v3 session/ACK/file pipeline; `NativeRelayController` owns settings and group state. The original secure-storage aliases and Dart journal format are preserved. Packaged provenance and licenses are in APK `assets/third_party/`. `relay/server.py` documents the retired service only. See [COMMON-RELAY-SDK.md](COMMON-RELAY-SDK.md) for current setup and the separate LAN trust boundary.
 
 ## Internet relay configuration and routing
 

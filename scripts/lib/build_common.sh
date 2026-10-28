@@ -28,3 +28,15 @@ resolve_build_version() {
   # Keep the Android versionCode within the platform's supported range.
   [ "${#BUILD_NUMBER}" -le 10 ] && [ "${BUILD_NUMBER}" -le 2100000000 ] || fail "BUILD_NUMBER is too large"
 }
+
+# Flutter split APKs added 1000 (ARM32) / 2000 (ARM64) to their base build.
+# Preserve the ARM64 release sequence by default, but explicit BUILD_NUMBER is
+# now always the actual versionCode, identical across native ABI packages.
+resolve_android_build_version() {
+  local explicit_build="${BUILD_NUMBER:-}"
+  resolve_build_version
+  if [ -z "${explicit_build}" ]; then
+    BUILD_NUMBER="$((BUILD_NUMBER + 2000))"
+    resolve_build_version
+  fi
+}

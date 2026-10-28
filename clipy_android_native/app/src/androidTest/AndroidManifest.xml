@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <application>
+        <provider android:name="com.clipyclone.nativeandroid.ShareFixtureProvider"
+            android:authorities="com.clipyclone.clipy_android.nativepreview.test.share-fixture"
+            android:exported="true" />
+    </application>
+</manifest>

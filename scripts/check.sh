@@ -10,6 +10,7 @@ check_repo() {
   python3 scripts/check_repository.py
   python3 -B scripts/test_repository_privacy.py
   python3 scripts/check_icons.py
+  python3 scripts/check_native_android_schema.py
 }
 
 check_flutter() {

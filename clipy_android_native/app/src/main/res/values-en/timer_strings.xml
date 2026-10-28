@@ -1,0 +1,23 @@
+<resources>
+    <string name="timer_widget_label">Timer Widget</string>
+    <string name="timer_widget_desc">1–40 min home-screen countdown; drag the ruler to set, with pause and reset</string>
+    <string name="timer_widget_status_idle">Ready</string>
+    <string name="timer_widget_status_running">Counting down</string>
+    <string name="timer_widget_status_paused">Paused</string>
+    <string name="timer_widget_status_finished">Time\'s up</string>
+    <string name="timer_widget_reset">Reset</string>
+    <string name="timer_widget_stop">Stop</string>
+    <string name="timer_widget_done_title">Time\'s up</string>
+    <string name="timer_widget_done_text">The %1$s countdown has finished</string>
+    <string name="timer_widget_channel_name">Timer Widget</string>
+    <string name="timer_widget_channel_desc">Countdown finished alerts</string>
+    <string name="timer_running_channel_name">Countdown running</string>
+    <string name="timer_running_channel_desc">Shows the current countdown in the status bar</string>
+    <string name="timer_countdown_title">Countdown</string>
+    <string name="timer_countdown_paused">Paused · %1$s left</string>
+    <string name="timer_action_pause">Pause</string>
+    <string name="timer_action_resume">Resume</string>
+    <string name="timer_panel_title">Timer</string>
+    <string name="timer_panel_start">Start countdown</string>
+    <string name="timer_panel_cancel">Cancel</string>
+</resources>

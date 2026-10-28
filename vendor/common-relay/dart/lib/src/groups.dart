@@ -12,8 +12,12 @@ class RelayGroups {
       hashes.sha256.convert(data).toString();
   static Uint8List payload(Map<String, dynamic> e) =>
       base64Decode(e['payload'] as String);
-  static Map<String, dynamic> unpack(Map<String, dynamic> e) =>
-      jsonDecode(utf8.decode(payload(e))) as Map<String, dynamic>;
+  static Map<String, dynamic> unpack(Map<String, dynamic> e) {
+    final raw = payload(e);
+    // Every signed payload is a state, join request or admission grant.
+    if (!_schemas.any((schema) => _strict(raw, schema))) throw StateError('Ambiguous signed payload');
+    return jsonDecode(utf8.decode(raw)) as Map<String, dynamic>;
+  }
   KeyPair _signing() {
     final seed = SecureKey.fromList(
       sodium,
