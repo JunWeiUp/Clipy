@@ -13,7 +13,8 @@ acceptance and the original-ID, same-certificate phone upgrade to versionCode
 14285 are complete. Existing data, identity, permissions and UID were retained.
 The user confirmed text/file sending and sharing work; automatic Mac-to-phone
 text/file checks also passed. This is a local installation, not a new public
-Release. iOS/Windows migration and Flutter removal remain separate work.
+Release. Public releases and `build_android_apk.sh` use the Flutter app again;
+build this port with `build_android_native_apk.sh`. iOS/Windows migration and Flutter removal remain separate work.
 
 ## Build and verify
 

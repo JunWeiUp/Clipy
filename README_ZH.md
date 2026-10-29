@@ -19,7 +19,7 @@
 
 </div>
 
-Android 源码构建已切换 Kotlin/Compose：[迁移与验收计划](docs/NATIVE_MIGRATION.md)。公共脚本构建原生 production 包；Flutter 保留为对照参考及 Windows/iOS 实现。新的版本正式发布前，已有公开安装包仍沿用原实现。
+Android 正式版与公共构建脚本使用 Flutter 版。原生 Kotlin/Compose 移植保留在 `clipy_android_native` 作为备选（[迁移与验收计划](docs/NATIVE_MIGRATION.md)），沿用相同包名、签名与数据文件，仅由 `./build_android_native_apk.sh` 构建。
 
 <br />
 
@@ -59,7 +59,7 @@ Mac 原生菜单栏应用还集成了**截图标注、OCR 文字识别、屏幕�
 | --- | --- | --- |
 | **macOS 13+ · Apple Silicon** | ZIP · Swift/AppKit 原生应用 | 剪贴板历史、片段、局域网同步、文件/文件夹传输、截图标注、OCR、录屏、Android 通知镜像与保持唤醒。 |
 | **Windows 10/11 · x64** | 免安装 ZIP · Flutter + Win32 | 文字/图片/文件历史、搜索、系统托盘、文本同步、主动文件传输、区域/窗口/显示器截图与 Android 通知查看。 |
-| **Android · arm64-v8a** | APK · Kotlin/Compose 源码 | 剪贴板历史与搜索、文本同步、文件传输、通知转发与原生倒计时部件。剪贴板采集受 Android 前台访问规则限制。 |
+| **Android · arm64-v8a** | APK · Flutter + Kotlin | 剪贴板历史与搜索、文本同步、文件传输、通知转发与原生倒计时部件。剪贴板采集受 Android 前台访问规则限制。 |
 | **iOS 15+** | 开发目标 · 暂无 IPA/TestFlight 发布包 | 历史查看、用户主动粘贴、前台局域网同步、文件传输与 Android 通知查看；CI 进行无签名构建和模拟器检查。 |
 
 ## 从菜单栏开始
@@ -254,27 +254,31 @@ Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留
 
 这些是临时签名的开发构建，不代表已正式发布；首次打开的「**隐私与安全 → 仍要打开**」操作和更新后授权说明见[安装指南](docs/MACOS_INSTALL.md)。完成发布清单后，版本标签会触发三个平台的正式发布。
 
-### Android（Kotlin/Compose）
+### Android（Flutter）
 
-环境要求：JDK 17、Android SDK platform/build-tools 36。仓库中的 Gradle wrapper 解析原生依赖；构建 Android 无需 Flutter。
+环境要求：Flutter **3.41.7**（见 `.fvmrc`）、JDK 17 与 Android SDK。
 
-通过 Git 忽略的 `clipy_android/android/key.properties` 或[Android 签名指南](docs/DEVELOPMENT.md#android)中的环境变量配置原有发布密钥，以原应用 ID 和同一签名构建：
+每台构建机器首次使用时，需按 [Android 签名指南](docs/DEVELOPMENT.md#android)配置固定发布密钥，使用 Git 忽略的 `clipy_android/android/key.properties` 或签名环境变量。配置完成后，直接运行：
 
 ```bash
 ./build_android_apk.sh
 ```
 
-产物为 `dist/ClipyClone-Android-arm64-v8a-v<version>.apk` 和 `dist/ClipyClone-Android-armeabi-v7a-v<version>.apk`。脚本构建 `clipy_android_native`，启用 `nativeProduction=true`；缺少发布签名时直接失败，不回退调试密钥。GitHub Release 只提供 arm64。升级须保留原密钥，不要通过卸载绕过签名或版本不匹配。
+产物为 `dist/ClipyClone-Android-arm64-v8a-v<version>.apk` 和 `dist/ClipyClone-Android-armeabi-v7a-v<version>.apk`。脚本会解析锁定的依赖并使用已配置的密钥签名两个 Release APK；GitHub Release 只提供 arm64 APK。后续升级须保留同一份密钥，切勿提交签名文件或密码。
 
-保留 `TARGET_PLATFORM=android-arm,android-arm64`、`SPLIT_PER_ABI=1` 默认接口。`SPLIT_PER_ABI=0` 为逗号分隔的目标集合（`android-arm`、`android-arm64`、`android-x64`）生成一个 `ClipyClone-Android-v<version>.apk`。
-
-无需发布签名的隔离调试预览：
+如果只需调试包，无需配置发布签名：
 
 ```bash
-(cd clipy_android_native && bash ./gradlew :app:assembleDebug)
+(
+  cd clipy_android
+  flutter pub get --enforce-lockfile
+  flutter build apk --debug --no-pub
+)
 ```
 
-调试产物位于 `clipy_android_native/app/build/outputs/apk/debug/app-debug.apk`，使用独立的 `.nativepreview` 应用 ID，不覆盖正式数据。正式升级保留原 ID、签名，并使用更高的**实际 versionCode**，规则见下方。历史 Flutter Android 文件保留用于对照，不参与此构建。
+调试包位于 `clipy_android/build/app/outputs/flutter-apk/app-debug.apk`。调试包与发布包签名不同，不能假设可互相覆盖安装；如确需卸载重装，请先备份应用数据。
+
+原生备选（相同包名与签名，不发布）：`./build_android_native_apk.sh` 用 JDK 17 与 Android SDK 36 构建 `clipy_android_native`，无需 Flutter。显式 `BUILD_NUMBER` 即实际 versionCode（默认源码 +2000）；只能覆盖更低的 versionCode，切回 Flutter 时同样使用更高的构建号。
 
 ### Windows（Flutter + Win32）
 
@@ -324,10 +328,7 @@ Android、iOS 和 Windows 在设置底部显示版本号与构建号，macOS 在
 - `NotificationManager` —— 手机通知镜像。
 - `PreferencesManager`、`SettingsWindow`、`SnippetEditorWindow`、`LogWindow` —— 配置与编辑界面。
 
-**Android 应用** —— Kotlin/Compose 原生实现（`clipy_android_native`）：
-- Application 管理同步生命周期；v3 LAN 会话与中继字节流共用历史落库、ACK 与文件语义。
-- Compose 页面、原生通知监听、系统分享入口与倒计时部件保留现有数据契约。
-- Release 保留原应用 ID 与密钥，隔离调试预览使用独立包名。
+**Android 应用** —— Flutter（`clipy_android`）配合 Kotlin 平台通道、前台服务、通知监听与倒计时部件。原生 Kotlin/Compose 备选实现（`clipy_android_native`）沿用相同数据契约、包名与密钥，但不用于正式发布。
 
 **Windows/iOS 应用与 Android 对照参考** —— Flutter/Dart：
 - `lib/main.dart` —— 默认入口；`lib/app/` 负责初始化与无界面引擎桥接。
@@ -356,8 +357,8 @@ Clipy 使用面向局域网的协议 v3 处理剪贴板历史与通知：
 
 ```
 clipy_macos/Sources/      # macOS Swift/AppKit 源码
-clipy_android_native/     # Android Kotlin/Compose 正式源码
-clipy_android/lib/        # Windows/iOS Flutter 源码；Android 对照参考
+clipy_android/lib/        # Android、Windows 与 iOS 的 Flutter/Dart 源码
+clipy_android_native/     # 原生 Kotlin/Compose Android 备选实现（不发布）
 build_macos_app.sh        # macOS 应用包构建脚本
 build_android_apk.sh      # Android 分 ABI APK 构建脚本
 .github/workflows/        # CI + 三平台正式发布
