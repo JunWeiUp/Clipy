@@ -99,7 +99,6 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
         ClipboardManager.shared.refreshFromPasteboardIfNeeded()
         ClipboardManager.shared.ensureMenuSummariesLoaded()
         model.begin()
-        TokenUsageManager.shared.refreshIfStale()
         updateSnapshots()
         let root = MenuBarPanelView(model: model, overflow: MenuBarOverflowManager.shared) { [weak self] entry in
             self?.activate(entry)

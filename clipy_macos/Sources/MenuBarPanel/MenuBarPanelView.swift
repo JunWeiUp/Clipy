@@ -17,10 +17,6 @@ struct MenuBarPanelView: View {
             if model.page == .home {
                 topBar.padding(.bottom, 8)
                 overflowStrip.padding(.bottom, 8)
-                if !model.isSearching {
-                    TokenUsagePanelSummary(manager: .shared) { model.onAction?(.tokenUsage) }
-                        .padding(.bottom, 8)
-                }
                 tabs.padding(.bottom, 8)
             } else {
                 detailHeader.padding(.bottom, 8)

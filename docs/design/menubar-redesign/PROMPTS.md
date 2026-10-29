@@ -1,5 +1,7 @@
 # UI concept generation prompts
 
+> 历史设计资料；当前客户端已移除今日消耗和智能切换功能，以当前源码和主 README 为准。
+
 Mode: built-in ImageGen. Reference assets: `res/screenshots/macos-menu-en.png` and `res/screenshots/macos-history-en.png`. Images are visual concepts, not implemented UI. All displayed contents and counts are fictional. Generated text, shortcut labels and OS chrome are illustrative and require implementation review.
 
 ## Displayed concept 1

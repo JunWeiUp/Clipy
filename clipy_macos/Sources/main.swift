@@ -3,8 +3,6 @@ import AppKit
 #if CLIPY_CORE_TESTS
 if CommandLine.arguments.contains("--clipy-panel-snapshot") {
     runMenuBarPanelSnapshot()
-} else if CommandLine.arguments.contains("--clipy-token-snapshot") {
-    runTokenUsageSnapshot()
 } else if CommandLine.arguments.contains("--clipy-overflow-fixture-menu") {
     runMenuBarOverflowFixture(popover: false)
 } else if CommandLine.arguments.contains("--clipy-overflow-fixture-popover") {
@@ -94,7 +92,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
         menuController = MenuController()
-        SmartSwitchVoiceRouter.shared.start()
         MemoryFootprintReclaimer.registerIdleHandlers()
         LaunchAtLoginManager.syncWithPreference()
         SyncManager.shared.start()

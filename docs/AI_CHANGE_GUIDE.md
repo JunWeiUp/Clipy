@@ -15,8 +15,6 @@ The source is authoritative when a guide and implementation disagree.
 | Clipboard and history | `Sources/Clipboard/`, `Sources/History/` | `ClipboardManager` orchestrates; repositories own SQL; media paths live in `HistoryMediaStore`. Search pages and cancellations precede UI display. | search/history regressions |
 | Snippets and hotkeys | `Sources/Snippets/`, `App/HotKeyManager.swift` | Persist snippets through `SnippetManager`; unregister keys before reuse. | core regressions, keyboard check |
 | Screenshot, pin, recording | `Sources/Screenshot/`, `App/ScreenshotImageProcessor.swift` | `ScreenshotSessionCoordinator` is the integration point; capture/overlay/editor own their temporary images and monitors. | screenshot flow and settled footprint |
-| Smart Switch focus and paste-back | `Sources/SmartSwitch/`, `App/BackgroundAccessibilityPolicy.swift` | Background AX must never inspect the current process: local AppKit/SwiftUI getters bypass remote IPC timeouts and can invert UI locks. Use AppKit for our own panel focus. | `SmartSwitchVoiceRegression`, repeated native window open/close |
-| Token usage | `Sources/TokenUsage/` | Sources parse metadata; store owns SQLite/cursors; manager scans only on open/refresh; view prices from catalog. Do not persist prompts or sync usage. | `TokenUsageRegression`, empty/unpriced UI |
 | Notifications | `Sources/Notifications/`, `UI/NotificationView.swift` | Repository persists; manager routes; view model pages and clears data on close. | notification UI and sync checks |
 | Sync | `Sources/Sync/`, `clipy_android_native/.../nativeandroid/sync/`, `clipy_android/lib/sync/` | Wire changes require native Android, macOS and remaining Flutter peers plus `PROTOCOL.md`. Persist remote history before ACK. | native/Flutter socket and protocol tests |
 | Android startup and background work | `clipy_android_native/app/src/main/java/com/clipyclone/clipy_android/`, `nativeandroid/sync/` | Application-owned native managers; no Flutter engine. Preserve component names, FGS manifest types, identities and stored preferences. | native unit/instrumentation tests, device checks |
@@ -51,7 +49,6 @@ For a screenshot change, follow this chain instead of editing the overlay first:
 macOS: status item → MenuController → panel/model or feature window
        clipboard → ClipboardManager → HistoryRepository → AppDatabase
        screenshot → ScreenshotSessionCoordinator → clipboard/history + optional sync
-       local Agent logs → TokenUsageSource → TokenUsageStore → report/pricing → UI
 
 Android: ClipyApplication → native managers/repositories → lifecycle-aware Compose state
          sync discovery/session → protocol/crypto → persistent inbound store → ACK
@@ -75,8 +72,6 @@ Android: ClipyApplication → native managers/repositories → lifecycle-aware C
 - Screenshot overlays, CI contexts, images and recording buffers are temporary.
   Keep their release path paired with capture teardown. Do not reclaim while a
   visible panel/window still owns the content.
-- Token and model-price data stay local to macOS. No Android or LAN schema change
-  is needed for a Token UI request.
 
 ## Make a change safely
 

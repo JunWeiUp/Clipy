@@ -25,7 +25,7 @@ Android source builds now use Kotlin/Compose: [migration and acceptance gates](d
 
 **Clipy (ClipyClone)** keeps clipboard history on your device and provides **cross-device clipboard sync** and **LAN file transfer** between connected computers and phones. Automatic history sync shares text; images and file clipboard entries stay local, and file sending is explicit. Sync uses AES-GCM encryption on your trusted local network, without a cloud relay or account.
 
-The native Mac menu bar app also brings together a **screenshot and annotation tool, OCR text recognition, screen recorder, text snippet manager, AI token usage tracker, dictionary and Keep Awake switch**. The Windows app uses the system tray; Android includes notification mirroring and a countdown home-screen widget. Platform availability is listed below.
+The native Mac menu bar app also brings together a **screenshot and annotation tool, OCR text recognition, screen recorder, text snippet manager, dictionary and Keep Awake switch**. The Windows app uses the system tray; Android includes notification mirroring and a countdown home-screen widget. Platform availability is listed below.
 
 <table>
 <tr>
@@ -57,7 +57,7 @@ Organize reusable replies and code snippets in folders on Mac. Assign keyboard s
 
 | Platform | Distribution | Available features |
 | --- | --- | --- |
-| **macOS 13+ · Apple Silicon** | ZIP · native Swift/AppKit app | Clipboard history, snippets, LAN sync, file/folder transfer, screenshots, annotation, OCR, screen recording, Android notification mirroring, AI token statistics and Keep Awake. |
+| **macOS 13+ · Apple Silicon** | ZIP · native Swift/AppKit app | Clipboard history, snippets, LAN sync, file/folder transfer, screenshots, annotation, OCR, screen recording, Android notification mirroring, and Keep Awake. |
 | **Windows 10/11 · x64** | Portable ZIP · Flutter + Win32 | Text/image/file history, search, system tray, text sync, explicit file transfer, region/window/display screenshots and Android notification viewing. |
 | **Android · arm64-v8a** | APK · Kotlin/Compose source | Clipboard history and search, text sync, file transfer, notification forwarding and a native countdown widget. Clipboard capture is limited by Android's foreground-access rules. |
 | **iOS 15+** | Development target · no IPA/TestFlight release | History viewing, user-initiated paste, foreground LAN sync, file transfer and Android notification viewing; unsigned builds and simulator checks run in CI. |
@@ -66,9 +66,9 @@ Organize reusable replies and code snippets in folders on Mac. Assign keyboard s
 
 ### A native Mac menu bar clipboard manager
 
-The compact Mac panel puts search at the top, hidden menu bar icons below it, then today's Token usage and recent copies. Open snippets, tools and connected devices without keeping a Dock window open.
+The compact Mac panel puts search at the top, hidden menu bar icons below it, then recent copies. Open snippets, tools and connected devices without keeping a Dock window open.
 
-<p align="center"><a href="res/screenshots/macos-panel-en.png"><img src="res/screenshots/macos-panel-en.png" alt="Current Mac menu bar panel with top search, hidden icons, today's Token usage and clipboard history" width="520" /></a></p>
+<p align="center"><a href="res/screenshots/macos-panel-en.png"><img src="res/screenshots/macos-panel-en.png" alt="Current Mac menu bar panel with top search, hidden icons and clipboard history" width="520" /></a></p>
 
 <table>
 <tr>
@@ -93,12 +93,6 @@ Folders on the left, snippets in the middle, your writing on the right. Find, ed
 </tr>
 </table>
 
-### Track AI token usage and estimated cost
-
-View **Codex, Claude Code, Gemini CLI and ZCode** token usage from local activity metadata. Open Token Usage from the menu bar summary to inspect daily totals, model breakdowns and 1/7/30-day ranges. Costs are estimates based on model prices; unknown models remain visible as unpriced.
-
-<p align="center"><a href="res/screenshots/macos-token-usage-en.png"><img src="res/screenshots/macos-token-usage-en.png" alt="Mac Token Usage window with a 365-day activity heatmap, Agent filter and daily estimated costs" width="860" /></a></p>
-
 **Capture an idea, too.** On Mac, take a screenshot, annotate it, extract text with OCR or pin it to your screen. Scrolling capture, screen recording and word lookup are also included. [Explore the tools ↓](#feature-reference)
 
 ## At home on Android
@@ -111,7 +105,7 @@ A four-tab layout for **History · Devices · Notifications · Settings**. Searc
   <a href="res/screenshots/android-settings-dark-en.png"><img src="res/screenshots/android-settings-dark-en.png" alt="Android settings in dark appearance" width="30%" /></a>
 </p>
 
-<sub>Mac panel and Token Usage images are native source-build snapshots with fictional data; the history, snippets and preferences showcases use decorative styling and link to original captures. Android previews use an isolated emulator. The header is a concept illustration. [Image sources & production notes](res/screenshots/README.md)</sub>
+<sub>Mac panel images are native source-build snapshots with fictional data; the history, snippets and preferences showcases use decorative styling and link to original captures. Android previews use an isolated emulator. The header is a concept illustration. [Image sources & production notes](res/screenshots/README.md)</sub>
 
 <details>
 <summary><b>One more detail: preferences that stay out of your way</b></summary>
@@ -177,21 +171,6 @@ Download installers from the [latest published release](https://github.com/JunWe
 - **Regex** support, plus filters by **type, source app, and date**.
 - Ranked results, multi-select, copy/paste, and pin straight from results.
 
-### 🗣️ Smart app switch (macOS)
-
-- Press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>A</kbd> or choose **Smart App Switch** from the menu bar. The focused input selects Doubao if it is enabled; start Doubao voice input yourself, or type, then press Return. Return first confirms any active input-method composition. Esc cancels composition first; otherwise it closes the window and requests paste-back of the current text to the originating app. Empty input or the window’s close button only dismisses it. If the original app is unavailable, the text remains on the clipboard.
-- In **Preferences → Smart Switch**, add applications and give them names, aliases and descriptions, such as “browser / research” or “my code editor.” A clear match activates the running app or launches it; ambiguous results offer an Up/Down and Return selection. Missing apps can be located again. The shortcut can be changed, disabled or cleared.
-- **App launch comes first:** in Smart mode, explicit commands such as “open ZCode” match enabled app names and aliases locally before any model request. Unique matches launch immediately; ambiguous aliases show candidates. Compound requests for a new ZCode conversation keep their new-chat action.
-- **All six buttons stay visible:** Smart, Open app, New ZCode chat, Open Codex, Search web and Translate. New ZCode chat creates a projectless conversation and carries the full current input into its draft; empty input opens a blank chat. It never sends automatically. Open Codex activates or starts the installed desktop app without model setup.
-- **Wheel cycling:** all actions appear in two rows, with no pages or overflow menu. Scroll over the buttons to select in either direction with wraparound, then press Return to execute. Clicking a button executes it when its required input is available. Text/result areas keep normal scrolling. Preferences lets you reorder the buttons and choose a search engine and translation language. Google is the default search engine.
-- **Translation results:** model output appears directly below the Smart Switch title, in its own scrollable area for long text. Copy, reuse as input, or paste back without scrolling the action buttons away. When a result is visible, Esc uses that result for paste-back. Model setup is needed for semantic routing and translation; exact app matches, Open Codex and New ZCode chat also work without it.
-- Configure a Chat Completions-compatible **Base URL** (including its version path, such as `/v1`, without `/chat/completions`), **model** and **API key**. Test the connection, then save. The app list and API settings start empty; clear all three API fields and save to remove the service configuration.
-- Model-based actions send only the current input, allowed action IDs and enabled application names, aliases, descriptions and selection IDs to your chosen service. Translation sends the text you choose to translate. Paths and clipboard history are not uploaded. Keys stay in macOS Keychain; Clipy does not record audio or execute model-generated commands. Editing text, switching actions or closing cancels pending results.
-- **Automatic voice entry (opt-in):** enable it in Preferences → Smart Switch and select the same hold-to-talk key as Doubao (Right Command by default; Right Option and Fn are also available). All apps use the same rule: confirmed text inputs and unresolved focus keep normal dictation; only confirmed non-text focus, such as a focused button or verified desktop, can open the input window. Window, group and web-page containers alone do not prove non-text focus. Clipy reads fresh control metadata on press and rechecks the same target after the hold threshold, using a bounded probe with limited retries. Timeouts, conflicting evidence and late responses cannot take over a gesture already passed to Doubao. Custom editors with incomplete accessibility information may require the regular Smart Switch shortcut. Dictate, release, then press Return. Dismissal restores the original app. Secure input, short taps and shortcuts pass through. Accessibility and Input Monitoring permissions are required; restart ClipyClone after granting them. Hands-free mode and voice buttons are not intercepted, and pauses in text do not trigger submission.
-
-- The input uses a nonactivating panel: it accepts typing and dictation while the original application stays frontmost, avoiding an intermediate Clipy app-preset switch in peripheral tools. The panel releases keyboard focus before an app action. Version 1.0.25 validates the original process, window and editable input before Escape or Paste back sends a single ⌘V. If the target changed or cannot be confirmed, the text stays copied and a brief hint asks you to paste manually.
-- Once a voice hold has requested the input window, an early release, peripheral preset change or input-readiness failure stops only voice forwarding. The window remains available for another hold or typing; Escape, close and successful actions still dismiss it normally.
-
 ### 📖 Dictionary, translation & vocabulary book (macOS)
 - Open from the clipboard menu or press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>D</kbd>; change or disable the shortcut in Preferences.
 - Search in Chinese, English or with partial text. Chinese queries list English translations; bilingual suggestions and English spelling corrections open complete entries on selection. English entries include Chinese definitions, parts of speech, American IPA, word forms, phrases and bilingual examples. Click a phrase to look it up.
@@ -201,12 +180,6 @@ Download installers from the [latest published release](https://github.com/JunWe
 - Open **Vocabulary** from the menu or lookup window to review **Unfamiliar / Familiar** lists. Check a word to mark it familiar, or uncheck to move it back. Fuzzy search in Chinese or English supports partial text, skipped letters/characters, mixed keywords and English typo tolerance across headwords, meanings, inflections, phrases and examples; review saved IPA, definitions, word forms, phrases and examples offline, and play pronunciation online (with system voice fallback). Repeat lookups update the entry and lookup count while preserving familiarity. The vocabulary book stays on this Mac and is not synced. Previous versions did not retain lookups, so earlier queries cannot be recovered.
 - Show or hide Chinese meanings in Vocabulary, including list summaries, definitions, phrase translations and example translations. The choice persists across window reopening and app restarts. The separate lookup window continues to show complete definitions.
 - Uses Youdao's web dictionary endpoints without an API key; these are not a versioned public API and may change or become unavailable. Each result links to its source.
-
-### 💰 AI token usage & cost tracking (macOS)
-- Clicking the menu-bar icon shows today's token count and estimated cost directly below the hidden-icons strip. Click the summary to open **Token Usage** for daily and model details, 1/7/30-day ranges and an agent filter; the classic right-click menu also has an entry.
-- Version **1.0.25** adds a **365-day token activity heatmap**, with weekday/month labels and four green intensity levels. It follows the agent filter independently of the 1/7/30-day details. Hover over a day for exact tokens and estimated cost, or click to keep its details visible; narrower windows scroll horizontally.
-- Reads existing local usage metadata from Codex, Claude Code, Gemini CLI and ZCode when the panel or window opens, then incrementally on later opens or manual refresh. The first scan imports available history. Clipy stores usage fields and hashed file cursors locally; it does not install hooks, keep a background polling timer, save prompts/responses or raw source paths, or sync usage to Android. Cursor is not included in this first version.
-- USD amounts use bundled model prices and are **estimates, not subscription bills or actual charges**. Unknown models retain their token counts and appear as unpriced rather than $0. **Update model prices** is an explicit action that downloads [LiteLLM's pricing data](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json); normal viewing works offline.
 
 ### 🔄 Encrypted clipboard sync & LAN file transfer
 
@@ -235,11 +208,11 @@ Download installers from the [latest published release](https://github.com/JunWe
 - **Hidden menu bar icons:** opt in under Preferences → General or the panel’s settings. On every connected display, overflowing items appear in a visible row below the panel search field with their original icon when capture succeeds, or an application icon and name otherwise. Clicking requests the original menu through Accessibility; some apps do not support this. Icons are never moved. Accessibility is required; Screen Recording is optional for original previews (macOS 14+). Dynamic status images are not guaranteed.
 - Native title bars, readable light/dark content surfaces, consistent SF Symbols, spacing and controls.
 - Press <kbd>Esc</kbd> to close the focused window, including settings, search, word lookup, vocabulary, snippet and image/video editors, OCR results and pinned images. Existing save prompts still apply; input-method composition, shortcut recording and modal dialogs handle cancellation first.
-- **Control panel:** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, a compact estimate of today's Token usage below them, Clipboard / Snippets / Devices / Tools tabs (refresh plus direct Send Text / Send File per device), and a notification page. Detail pages use a smaller Back/title layout; Tools groups five launchers: direct screenshot modes, Lookup / Vocabulary, and Smart Switch / Password. Its hidden-icon strip and Token summary match the other tabs, and switching to Tools keeps the same panel size; Keep Awake and Notifications remain in the footer, with notification banners in More. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-click the menu-bar icon for the classic native menu.
+- **Control panel:** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, Clipboard / Snippets / Devices / Tools tabs (refresh plus direct Send Text / Send File per device), and a notification page. Detail pages use a smaller Back/title layout; Tools groups four launchers: direct screenshot modes, Lookup / Vocabulary, and Password. Its hidden-icon strip matches the other tabs, and switching to Tools keeps the same panel size; Keep Awake and Notifications remain in the footer, with notification banners in More. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-click the menu-bar icon for the classic native menu.
 - Preferences and screenshot settings scroll continuously across categories; the sidebar follows the visible section and supports click-to-jump. See the [macOS design standard](docs/MACOS_DESIGN.md) for UI development guidance.
 
 ### ⌨️ Global hotkeys & 🌍 i18n
-- Hotkeys for search, word lookup, smart app switching, screenshots, and every snippet.
+- Hotkeys for search, word lookup, screenshots, and every snippet.
 - Chinese / English UI; native macOS and Android source targets; Windows and iOS currently use Flutter. Windows adds local text/image/file history and a system tray. iOS supports user-initiated paste and foreground LAN sync; it cannot continuously read other apps' clipboards or notifications in the background. CI builds iOS without signing, so there is no installable iOS release package yet.
 
 <details>
@@ -337,7 +310,7 @@ The source version remains `X.Y.Z+N` in [`clipy_android/pubspec.yaml`](clipy_and
 
 An explicit Android `BUILD_NUMBER` is the **final versionCode**, with no additional ABI offset. Release CI uses `N + workflow run number + 2000` for Android and `N + workflow run number` for macOS/Windows. For an in-place Android upgrade, preserve the signer and choose an actual code higher than the installed APK (including any older Flutter split offset); the default may be lower than an installed CI or local build. Update **both README files** when changing source versions. This migration does not change the published release version.
 
-Run `bash scripts/check.sh all` from the root for local quality checks. On macOS, also run `bash scripts/test_macos_core.sh` for search, word lookup, smart app switching and socket regressions; it uses a temporary test executable without installing or launching the app. Smart Switch tests use mock API responses and do not require an API key or activate real applications. Optional `CLIPY_MENU_BAR_LIVE_TESTS=1 bash scripts/test_macos_core.sh` also creates temporary overflowing status items and verifies original menu/popover activation on a single built-in display with existing Accessibility permission; it does not install the app or move existing icons.
+Run `bash scripts/check.sh all` from the root for local quality checks. On macOS, also run `bash scripts/test_macos_core.sh` for search, word lookup, and socket regressions; it uses a temporary test executable without installing or launching the app. Optional `CLIPY_MENU_BAR_LIVE_TESTS=1 bash scripts/test_macos_core.sh` also creates temporary overflowing status items and verifies original menu/popover activation on a single built-in display with existing Accessibility permission; it does not install the app or move existing icons.
 
 ## 🏗️ Architecture
 

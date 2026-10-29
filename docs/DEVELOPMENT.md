@@ -330,3 +330,23 @@ and Explorer selection on Windows. Repeat with two differently named files and
 with the receiver relaunched before tapping (mobile). Removing a received file
 must not open an unrelated one. Focus/notification settings can suppress banners.
 Windows receipts require the tray process to remain running.
+
+## Clean repository-local outputs
+
+Stop project builds before cleanup. Preview the reclaimable outputs first:
+
+```sh
+python3 scripts/clean_generated.py
+python3 scripts/clean_generated.py --apply
+```
+
+The script only accepts known, ignored output paths inside this repository and refuses paths containing tracked files or links outside the repository. It retains source, lockfiles, signing configuration, Git history, system SDKs, global dependency caches and installed applications. Flutter package metadata and platform build caches are regenerated on the next dependency resolution/build.
+
+Paused NSH experiment outputs require explicit opt-in after preserving any needed patches, SDK artifacts or diagnostic evidence:
+
+```sh
+python3 scripts/clean_generated.py --include-nsh
+python3 scripts/clean_generated.py --include-nsh --apply
+```
+
+Keep the experiment branch itself; generated outputs are separate from its source checkpoint. Cleanup does not remove application data under the user's Library or Android device/emulator storage.

@@ -90,7 +90,7 @@ func runMenuBarPanelRegressionTests() {
     model.query = ""; model.selectTab(.devices)
     check(model.selectableIDs.isEmpty, "device tab exposes stale keyboard selections")
     model.selectTab(.tools)
-    check(model.visibleTools == [.capture, .word, .wordBook, .smartSwitch, .password], "tools dashboard lost a launcher")
+    check(model.visibleTools == [.capture, .word, .wordBook, .password], "tools dashboard lost a launcher")
     check(model.page == .home, "tools tab hides home navigation")
     model.moveSelection(1)
     check(model.selectedID == "t:capture", "tool keyboard order must start with capture")
@@ -173,15 +173,6 @@ func runMenuBarPanelSnapshot() -> Never {
             postTime: Date().timeIntervalSince1970, groupKey: nil, isClearable: true, extras: nil)
     }
     model.notificationCount = model.notifications.count
-    let usage = TokenCounts(input: 182_400, output: 28_600, cacheRead: 94_000)
-    TokenUsageManager.shared.setPreview(
-        report: TokenUsageReport(
-            lines: [TokenUsageLine(id: "panel-fixture-usage", day: TokenUsageFormat.day(Date()),
-                                   agent: .codex, model: "sample-model", counts: usage,
-                                   estimatedUSD: 1.8425, unpricedEvents: 0)],
-            days: [TokenUsageDay(day: TokenUsageFormat.day(Date()), counts: usage,
-                                estimatedUSD: 1.8425, unpricedEvents: 0)]),
-        statuses: [:])
     overflow.refresh()
     let root = MenuBarPanelView(model: model, overflow: overflow, activateIcon: { _ in }).environmentObject(AppLanguageObserver.shared)
     let window = NSPanel(contentRect: CGRect(origin: .zero, size: MenuBarPanelPolicy.preferredSize(page: .home, tab: .clipboard)), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
