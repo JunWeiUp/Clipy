@@ -197,6 +197,13 @@ jobs:
           } finally {
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
+      - name: Upload Windows ZIP
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ClipyClone-Windows-x64-${{ github.run_id }}
+          path: dist/ClipyClone-Windows-x64-vci-smoke.zip
+          if-no-files-found: error
+          retention-days: 7
 
   ios:
     name: iOS unsigned build and simulator compile
