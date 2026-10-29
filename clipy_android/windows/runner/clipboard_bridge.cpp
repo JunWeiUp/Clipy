@@ -75,16 +75,14 @@ bool PngEncoder(CLSID* out) {
   return false;
 }
 
-std::vector<uint8_t> EncodeBitmap(HBITMAP bitmap) {
-  if (!bitmap) return {};
-  Gdiplus::Bitmap image(bitmap, nullptr);
+std::vector<uint8_t> EncodeImage(Gdiplus::Bitmap& image) {
   if (image.GetLastStatus() != Gdiplus::Ok) return {};
   CLSID encoder{};
   if (!PngEncoder(&encoder)) return {};
   IStream* stream = nullptr;
   if (CreateStreamOnHGlobal(nullptr, TRUE, &stream) != S_OK) return {};
   std::vector<uint8_t> bytes;
-  if (image.Save(stream, &encoder) == Gdiplus::Ok) {
+  if (image.Save(stream, &encoder, nullptr) == Gdiplus::Ok) {
     HGLOBAL memory = nullptr;
     if (GetHGlobalFromStream(stream, &memory) == S_OK && memory) {
       STATSTG stats{};
@@ -103,6 +101,47 @@ std::vector<uint8_t> EncodeBitmap(HBITMAP bitmap) {
   return bytes;
 }
 
+std::vector<uint8_t> EncodeBitmap(HBITMAP bitmap) {
+  if (!bitmap) return {};
+  Gdiplus::Bitmap image(bitmap, nullptr);
+  return EncodeImage(image);
+}
+
+// CreateDIBitmap yields a device bitmap without alpha, so 32-bit BGRA DIBs
+// that carry transparency are encoded directly. All-zero alpha means opaque.
+std::vector<uint8_t> EncodeAlphaDib(const BITMAPINFOHEADER& header,
+                                    const uint8_t* pixels, uint64_t stride,
+                                    uint64_t height) {
+  if (header.biBitCount != 32) return {};
+  if (header.biCompression == BI_BITFIELDS) {
+    const auto* masks = reinterpret_cast<const DWORD*>(
+        reinterpret_cast<const uint8_t*>(&header) + sizeof(BITMAPINFOHEADER));
+    if (masks[0] != 0x00FF0000 || masks[1] != 0x0000FF00 ||
+        masks[2] != 0x000000FF) {
+      return {};
+    }
+  }
+  bool has_alpha = false;
+  for (uint64_t row = 0; row < height && !has_alpha; ++row) {
+    const uint8_t* line = pixels + row * stride;
+    for (LONG x = 0; x < header.biWidth; ++x) {
+      if (line[x * 4 + 3] != 0) {
+        has_alpha = true;
+        break;
+      }
+    }
+  }
+  if (!has_alpha) return {};
+  const bool bottom_up = header.biHeight > 0;
+  const INT signed_stride = bottom_up ? -static_cast<INT>(stride)
+                                      : static_cast<INT>(stride);
+  BYTE* scan0 = const_cast<BYTE*>(bottom_up ? pixels + (height - 1) * stride
+                                            : pixels);
+  Gdiplus::Bitmap image(header.biWidth, static_cast<INT>(height),
+                        signed_stride, PixelFormat32bppARGB, scan0);
+  return EncodeImage(image);
+}
+
 std::vector<uint8_t> EncodeDib(HANDLE dib) {
   if (!dib) return {};
   const SIZE_T size = GlobalSize(dib);
@@ -111,11 +150,18 @@ std::vector<uint8_t> EncodeDib(HANDLE dib) {
   if (!info) return {};
   const auto& header = info->bmiHeader;
   std::vector<uint8_t> bytes;
-  if (header.biSize >= sizeof(BITMAPINFOHEADER) &&
+  if ((header.biSize == sizeof(BITMAPINFOHEADER) ||
+       header.biSize == sizeof(BITMAPV4HEADER) ||
+       header.biSize == sizeof(BITMAPV5HEADER)) &&
+      header.biSize <= size && header.biPlanes == 1 &&
+      (header.biBitCount > 8 || header.biClrUsed <= (1u << header.biBitCount)) &&
       header.biWidth > 0 && header.biWidth <= 16384 &&
       header.biHeight != 0 && header.biHeight >= -16384 &&
       header.biHeight <= 16384 &&
-      (header.biCompression == BI_RGB || header.biCompression == BI_BITFIELDS)) {
+      (header.biBitCount == 1 || header.biBitCount == 4 || header.biBitCount == 8 ||
+       header.biBitCount == 16 || header.biBitCount == 24 || header.biBitCount == 32) &&
+      (header.biCompression == BI_RGB ||
+       (header.biCompression == BI_BITFIELDS && (header.biBitCount == 16 || header.biBitCount == 32)))) {
     const SIZE_T colors = header.biBitCount <= 8
         ? (header.biClrUsed != 0 ? header.biClrUsed : 1u << header.biBitCount)
         : 0;
@@ -123,10 +169,13 @@ std::vector<uint8_t> EncodeDib(HANDLE dib) {
                                  header.biSize == sizeof(BITMAPINFOHEADER)
                              ? 3 * sizeof(DWORD) : 0;
     const SIZE_T offset = header.biSize + colors * sizeof(RGBQUAD) + masks;
-    if (offset < size) {
-      HDC dc = GetDC(nullptr);
+    const uint64_t stride = ((static_cast<uint64_t>(header.biWidth) * header.biBitCount + 31) / 32) * 4;
+    const uint64_t height = header.biHeight < 0 ? -static_cast<int64_t>(header.biHeight) : header.biHeight;
+    if (offset <= size && stride * height <= size - offset) {
+      auto* pixels = reinterpret_cast<const uint8_t*>(info) + offset;
+      bytes = EncodeAlphaDib(header, pixels, stride, height);
+      HDC dc = bytes.empty() ? GetDC(nullptr) : nullptr;
       if (dc) {
-        auto* pixels = reinterpret_cast<const uint8_t*>(info) + offset;
         HBITMAP bitmap = CreateDIBitmap(dc, &header, CBM_INIT, pixels, info,
                                        DIB_RGB_COLORS);
         if (bitmap) {
@@ -150,7 +199,10 @@ std::vector<uint8_t> EncodeBitmapToPng(HBITMAP bitmap) {
 flutter::EncodableMap ReadClipboardSnapshot(HWND owner) {
   flutter::EncodableMap snapshot{{flutter::EncodableValue("type"),
                                   flutter::EncodableValue("none")}};
-  if (!OpenClipboard(owner)) return snapshot;
+  if (!OpenClipboard(owner)) {
+    snapshot[flutter::EncodableValue("type")] = flutter::EncodableValue("busy");
+    return snapshot;
+  }
   snapshot[flutter::EncodableValue("ownedByClipy")] =
       flutter::EncodableValue(GetClipboardOwner() == owner);
   const std::string source_app = ClipboardOwnerProcess();
@@ -259,9 +311,19 @@ bool WriteClipboardImage(HWND owner, const std::vector<uint8_t>& png) {
     if (handle) DeleteObject(handle);
     return false;
   }
+  const UINT png_format = RegisterClipboardFormatW(L"PNG");
+  HGLOBAL png_memory = GlobalAlloc(GMEM_MOVEABLE, png.size());
+  if (png_memory) {
+    void* png_data = GlobalLock(png_memory);
+    if (png_data) { memcpy(png_data, png.data(), png.size()); GlobalUnlock(png_memory); }
+    else { GlobalFree(png_memory); png_memory = nullptr; }
+  }
   EmptyClipboard();
-  const bool written = SetClipboardData(CF_BITMAP, handle) != nullptr;
-  if (!written) DeleteObject(handle);
+  const bool png_written = png_format && png_memory && SetClipboardData(png_format, png_memory);
+  if (!png_written && png_memory) GlobalFree(png_memory);
+  const bool bitmap_written = SetClipboardData(CF_BITMAP, handle) != nullptr;
+  if (!bitmap_written) DeleteObject(handle);
+  const bool written = png_written || bitmap_written;
   CloseClipboard();
   return written;
 }
