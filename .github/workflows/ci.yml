@@ -65,7 +65,7 @@ jobs:
                     all=true ;;
                   clipy_android/lib/*|clipy_android/assets/*|clipy_android/pubspec.*|clipy_android/analysis_options.yaml|clipy_android/devtools_options.yaml|.fvmrc)
                     android=true windows=true ios=true ;;
-                  clipy_android_native/*|clipy_android/android/*|clipy_android/test/*|clipy_android/tool/*|build_android_apk.sh)
+                  clipy_android_native/*|clipy_android/android/*|clipy_android/test/*|clipy_android/tool/*|build_android_apk.sh|build_android_native_apk.sh)
                     android=true ;;
                   clipy_android/windows/*|scripts/package_windows.ps1)
                     windows=true ;;
@@ -102,7 +102,7 @@ jobs:
       - run: bash scripts/check.sh repo
 
   android:
-    name: Native Android tests, lint and build
+    name: Native Android (kept alternative) tests, lint and build
     needs: changes
     if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
@@ -146,6 +146,10 @@ jobs:
       - run: flutter pub get --enforce-lockfile
         working-directory: clipy_android
       - run: bash scripts/check.sh flutter
+      - name: Build Flutter Android without release credentials
+        if: needs.changes.outputs.android == 'true'
+        working-directory: clipy_android
+        run: flutter build apk --debug --no-pub
 
   macos:
     name: macOS compile and bundle validation

@@ -110,49 +110,52 @@ Developer ID signing.
 
 ## Android
 
-Production Android is Kotlin/Compose in `clipy_android_native/`. Install JDK 17,
-Android SDK platform 36 and build-tools 36; Flutter is not needed for this build.
-The original `clipy_android` tree remains the Windows/iOS implementation and the
-Android parity reference. Source version metadata still lives in its pubspec.
-
 ```bash
-# Separate preview ID, no release credentials, no installation:
-(cd clipy_android_native && bash ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug)
-# Original application ID, existing release signer:
-./build_android_apk.sh
+cd clipy_android
+flutter build apk --debug --no-pub
 ```
 
-Copy `clipy_android/android/key.properties.example` to the ignored
-`clipy_android/android/key.properties` and configure the existing keystore, or
-supply `CLIPY_KEYSTORE_PATH`, `CLIPY_KEYSTORE_PASSWORD`, `CLIPY_KEY_ALIAS` and
-`CLIPY_KEY_PASSWORD`. Relative `storeFile` paths are resolved from
-`clipy_android/android/`, preserving the existing configuration. Never commit
-credentials. Native production builds fail when release signing is missing;
-`CLIPY_ALLOW_DEBUG_SIGNING` is not a production bypass.
+Normal release builds require a persistent keystore. Copy
+`android/key.properties.example` to `android/key.properties` and fill it locally,
+or supply `CLIPY_KEYSTORE_PATH`, `CLIPY_KEYSTORE_PASSWORD`, `CLIPY_KEY_ALIAS` and
+`CLIPY_KEY_PASSWORD`. Relative `storeFile` paths are resolved from `android/`.
+Never commit the resulting file or keystore. See the official
+[Flutter signing instructions](https://docs.flutter.dev/deployment/android#sign-the-app).
 
-The script enables `nativeProduction=true`, retaining application ID
-`com.clipyclone.clipy_android`. Debug previews omit that flag and use
-`com.clipyclone.clipy_android.nativepreview`. Do not install a differently signed
-package over production or uninstall to bypass an upgrade failure.
+```bash
+# From repository root, after configuring release signing:
+./build_android_apk.sh
+# Local smoke-test ONLY, explicitly allowing a debug-signed release-mode build:
+CLIPY_ALLOW_DEBUG_SIGNING=1 ./build_android_apk.sh
+```
 
 Output: `dist/ClipyClone-Android-{armeabi-v7a,arm64-v8a}-v<version>.apk`.
-Default `TARGET_PLATFORM=android-arm,android-arm64` and `SPLIT_PER_ABI=1` produce
-separate packages; `SPLIT_PER_ABI=0` produces one `ClipyClone-Android-v<version>.apk`
-for the requested targets. Non-split targets accept `android-arm`, `android-arm64`
-and `android-x64`. Release uploads only arm64.
+`SPLIT_PER_ABI=0` creates one APK; the default split packaging targets ARM32/ARM64.
+The Release workflow uploads only the arm64 APK; the ARM32 build remains a local
+output of the shared script.
+Build numbers now come directly from Flutter metadata, with no device-specific
+minimum hidden in Gradle. The current source version and build number are recorded
+in `clipy_android/pubspec.yaml`; keep them aligned with the current-version text in
+both root README files. To upgrade a newer local or CI installation, explicitly
+supply a higher `BUILD_NUMBER`. Changing signing keys prevents in-place APK upgrades;
+back up user data before any uninstall/reinstall.
 
-`BUILD_NUMBER` explicitly supplied to the native build is the **actual APK
-versionCode**, identical across ABIs. Without an override, the public script uses
-source build `N + 2000`; Release CI uses `N + workflow run number + 2000`. This
-continues the old Flutter ARM64 split-APK offset (ARM32 previously used +1000).
-Direct Gradle preview builds default to `N`. Before upgrading, compare the actual
-installed versionCode and signer; select a higher `BUILD_NUMBER` if necessary.
-Neither the script nor CI silently uninstalls or clears application data.
+### Native Kotlin/Compose alternative
 
-CI's Android job runs native unit tests, lint and debug/test APK compilation.
-Shared Flutter formatting/analysis/tests run in a separate job for the remaining
-platforms and reference code; Android production does not invoke Flutter.
-APK assets include the relay/storage dependency notices in `assets/third_party/`.
+`clipy_android_native/` is a kept native port with the same application ID,
+release signer, `clipy.db` and `FlutterSharedPreferences` files (schema stays v6),
+so either implementation can be installed over the other without data loss. It is
+not used by Release CI. Build it with JDK 17 and Android SDK platform/build-tools 36:
+
+```bash
+(cd clipy_android_native && bash ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug)
+./build_android_native_apk.sh   # original ID, existing release signer
+```
+
+Its explicit `BUILD_NUMBER` is the **actual versionCode** for every ABI (default
+source `N + 2000`), unlike Flutter split APKs where the arm64 code is the build
+number plus 2000. Android rejects downgrades, so when switching between the two
+implementations pick a build number above the installed versionCode.
 
 ## Windows and iOS
 

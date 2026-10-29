@@ -1,17 +1,17 @@
 # Architecture and code map
 
-Clipy uses Swift/AppKit on macOS and Kotlin/Compose for production Android
-source builds. The Flutter tree remains the Windows/iOS implementation and the
-Android UI/protocol parity reference. Windows C++ owns the clipboard and tray;
+Clipy uses Swift/AppKit on macOS and Flutter for Android, Windows and iOS
+releases. A native Kotlin/Compose Android port is kept as an alternative with the
+same application ID and data files. Windows C++ owns the clipboard and tray;
 Swift owns iOS user-initiated paste and sandbox paths. All clients retain the v3
 wire contract; iOS Share Extension uses a bounded native one-shot client without
 starting a second background sync service.
 
-## Native Android production source
+## Native Android alternative (not released)
 
 `clipy_android_native/` contains the Android UI, SQLite repositories, LAN v3
 protocol/session/file pipeline, notifications, sharing, timer widgets and relay
-integration. `build_android_apk.sh` builds it with `nativeProduction=true`, the
+integration. `build_android_native_apk.sh` builds it with `nativeProduction=true`, the
 original application ID and the existing release keystore. Debug previews keep
 an isolated `.nativepreview` ID. Flutter is not an Android build/runtime dependency;
 its pubspec remains the shared version source. Public Android builds default to

@@ -20,7 +20,7 @@ The source is authoritative when a guide and implementation disagree.
 | Android startup and background work | `clipy_android_native/app/src/main/java/com/clipyclone/clipy_android/`, `nativeandroid/sync/` | Application-owned native managers; no Flutter engine. Preserve component names, FGS manifest types, identities and stored preferences. | native unit/instrumentation tests, device checks |
 | Android screens | `clipy_android_native/.../nativeandroid/ui/`, `MainActivity.kt`, view models | Match Flutter reference behavior/layout; keep route drafts, hide inactive modals/polling; repositories own persistence. Follow `ANDROID_DESIGN.md` and parity checklist. | native build, light/dark/font-scale screenshots and relevant flows |
 | Android relay and group membership | `clipy_android_native/.../nativeandroid/relay/` | Reuse Java SDK, verified membership, original secure-store aliases and journal records. Tunnel bytes through existing v3 sessions; never bypass durable ACK/file handling. | SDK cross-language vectors, secure-store/journal fixtures, opt-in isolated live server test |
-| Android build/signing | `build_android_apk.sh`, native Gradle and `scripts/lib/build_common.sh` | Production uses original ID/signer; preview stays separate. Explicit BUILD_NUMBER is actual versionCode, default source +2000. Never uninstall to bypass mismatch. | metadata tests, signed artifact identity/version/ABI/license checks |
+| Android build/signing | `build_android_apk.sh` (Flutter release), `build_android_native_apk.sh` (native alternative), `scripts/lib/build_common.sh` | Production uses original ID/signer; preview stays separate. Explicit BUILD_NUMBER is actual versionCode, default source +2000. Never uninstall to bypass mismatch. | metadata tests, signed artifact identity/version/ABI/license checks |
 | Windows desktop system integration | `clipy_android/windows/runner/`, `lib/clipboard_manager.dart` | C++ owns clipboard, screenshot selection, tray and system paths; Dart owns durable history and sync. | Windows CI build, ZIP extraction and real desktop screenshot smoke |
 | iOS app integration | `clipy_android/ios/Runner/`, `lib/app/bootstrap.dart`, `lib/storage_paths.dart` | User-initiated paste only; foreground sync lifecycle; no Android listener calls. | unsigned iOS build, simulator launch and device permission check |
 | iOS direct share / large files | `ios/ShareExtension/`, `ios/Shared/`, `lib/features/transfers/`, both file-transfer receivers | Share sheet sends directly with explicit peer choice; 1 GiB/file, bounded buffers and cancellable sockets; preserve same-group signing. | `scripts/test_ios_share_transfer.py`, Flutter flow-control tests, share-sheet send smoke, signed-device build |
@@ -62,9 +62,9 @@ Android: ClipyApplication → native managers/repositories → lifecycle-aware C
   off focus. `MenuController` creates it on first use; closed-menu data callbacks
   must not initialize it. `MenuBarOverflowManager` keeps a metadata snapshot while idle;
   its periodic AX refresh and image capture belong to a visible panel/menu only.
-- Native Android production lives in `clipy_android_native`; `clipy_android`
-  remains the Windows/iOS implementation and Android comparison reference.
-  Public Android builds do not invoke Flutter. Reuse existing database/preference
+- Android releases use Flutter (`clipy_android`); the native port in
+  `clipy_android_native` is a kept alternative built by
+  `build_android_native_apk.sh` and is not released. Reuse existing database/preference
   names and secure-storage aliases; corrupt credentials must remain intact and
   produce an error, never a reset/new identity. Group page polling is only active
   while visible/foregrounded with a pending join/invitation; accepted durable

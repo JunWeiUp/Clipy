@@ -19,7 +19,7 @@
 
 </div>
 
-Android source builds now use Kotlin/Compose: [migration and acceptance gates](docs/NATIVE_MIGRATION.md). The public build script uses the native production package; Flutter remains a comparison reference and the Windows/iOS implementation. Published releases retain their implementation until a new release is published.
+Android releases and the public build script use the Flutter app. A native Kotlin/Compose port is kept in `clipy_android_native` as an alternative ([migration and acceptance gates](docs/NATIVE_MIGRATION.md)); it uses the same package ID, signing key and data files, and is built only by `./build_android_native_apk.sh`.
 
 <br />
 
@@ -59,7 +59,7 @@ Organize reusable replies and code snippets in folders on Mac. Assign keyboard s
 | --- | --- | --- |
 | **macOS 13+ · Apple Silicon** | ZIP · native Swift/AppKit app | Clipboard history, snippets, LAN sync, file/folder transfer, screenshots, annotation, OCR, screen recording, Android notification mirroring, and Keep Awake. |
 | **Windows 10/11 · x64** | Portable ZIP · Flutter + Win32 | Text/image/file history, search, system tray, text sync, explicit file transfer, region/window/display screenshots and Android notification viewing. |
-| **Android · arm64-v8a** | APK · Kotlin/Compose source | Clipboard history and search, text sync, file transfer, notification forwarding and a native countdown widget. Clipboard capture is limited by Android's foreground-access rules. |
+| **Android · arm64-v8a** | APK · Flutter + Kotlin | Clipboard history and search, text sync, file transfer, notification forwarding and a native countdown widget. Clipboard capture is limited by Android's foreground-access rules. |
 | **iOS 15+** | Development target · no IPA/TestFlight release | History viewing, user-initiated paste, foreground LAN sync, file transfer and Android notification viewing; unsigned builds and simulator checks run in CI. |
 
 ## A closer look
@@ -254,27 +254,31 @@ After the Mac job succeeds, download its artifact from the run summary (GitHub s
 
 These are ad-hoc signed development builds, not published releases. See the [first-launch guide](docs/MACOS_INSTALL.md) for **Privacy & Security → Open Anyway** and permissions after updates. After the release checklist is complete, version tags trigger a three-platform public release.
 
-### Android (Kotlin/Compose)
+### Android (Flutter)
 
-Requirements: JDK 17 and Android SDK platform/build-tools 36. The checked-in Gradle wrapper resolves the native dependencies; Flutter is not required to build Android.
+Requirements: Flutter **3.41.7** (see `.fvmrc`), JDK 17 and the Android SDK.
 
-Configure the existing release keystore using the ignored `clipy_android/android/key.properties` or the signing environment variables in the [Android signing guide](docs/DEVELOPMENT.md#android). Build the original application ID with that signing identity:
+Configure a persistent release keystore once on each build machine, using the ignored `clipy_android/android/key.properties` or the signing environment variables in the [Android signing guide](docs/DEVELOPMENT.md#android). Once configured, build with:
 
 ```bash
 ./build_android_apk.sh
 ```
 
-Output: `dist/ClipyClone-Android-arm64-v8a-v<version>.apk` and `dist/ClipyClone-Android-armeabi-v7a-v<version>.apk`. The script builds `clipy_android_native` with `nativeProduction=true`; missing release signing fails instead of using a debug key. GitHub Releases include only arm64. Keep the same keystore for upgrades and never uninstall to bypass a signature or version mismatch.
+Output: `dist/ClipyClone-Android-arm64-v8a-v<version>.apk` and `dist/ClipyClone-Android-armeabi-v7a-v<version>.apk`. The script resolves locked dependencies and signs both release APKs with your configured key. GitHub Releases include only the arm64 APK. Keep the same key for future upgrades; never commit signing files or passwords.
 
-The existing `TARGET_PLATFORM=android-arm,android-arm64` and `SPLIT_PER_ABI=1` defaults remain. `SPLIT_PER_ABI=0` creates `ClipyClone-Android-v<version>.apk` for the comma-separated target set (`android-arm`, `android-arm64`, `android-x64`).
-
-For an isolated debug preview without release signing credentials:
+For a debug build without release signing credentials:
 
 ```bash
-(cd clipy_android_native && bash ./gradlew :app:assembleDebug)
+(
+  cd clipy_android
+  flutter pub get --enforce-lockfile
+  flutter build apk --debug --no-pub
+)
 ```
 
-Debug output: `clipy_android_native/app/build/outputs/apk/debug/app-debug.apk`. Its `.nativepreview` application ID keeps it separate from production data. Production upgrades use the original ID, signer and a higher **actual versionCode**; see the version rules below. Historical Flutter Android files remain available for comparison, but are not used by this build.
+Debug output: `clipy_android/build/app/outputs/flutter-apk/app-debug.apk`. Debug and release signing identities differ; do not assume in-place upgrades between them. Back up app data before any necessary uninstall/reinstall.
+
+Native alternative (same package ID and signer, not released): `./build_android_native_apk.sh` builds `clipy_android_native` with JDK 17 and Android SDK 36, no Flutter required. Its explicit `BUILD_NUMBER` is the actual versionCode (default source +2000); install it only over a lower versionCode, and switch back the same way with a higher Flutter build number.
 
 ### Windows (Flutter + Win32)
 
@@ -325,10 +329,7 @@ Run `bash scripts/check.sh all` from the root for local quality checks. On macOS
 - `NotificationManager` — phone-notification mirror.
 - `PreferencesManager`, `SettingsWindow`, `SnippetEditorWindow`, `LogWindow` — config & editing surfaces.
 
-**Android app** — native Kotlin/Compose (`clipy_android_native`):
-- Application-owned sync manager, v3 LAN sessions and relay byte streams share durable history/ACK/file semantics.
-- Compose pages, native notification listener, system share intake and countdown widgets preserve the existing data contracts.
-- Release builds retain the original package ID and keystore; isolated debug previews use a separate package.
+**Android app** — Flutter (`clipy_android`) with Kotlin platform channels, foreground service, notification listener and countdown widget. A native Kotlin/Compose alternative (`clipy_android_native`) keeps the same data contracts, package ID and keystore but is not used for releases.
 
 **Windows and iOS apps / Android comparison reference** — Flutter/Dart:
 - `lib/main.dart` — default entrypoint; `lib/app/` owns bootstrap and the headless bridge.
@@ -357,8 +358,8 @@ Current source also supports an opt-in [self-hosted Internet relay](docs/COMMON-
 
 ```
 clipy_macos/Sources/      # macOS Swift/AppKit source
-clipy_android_native/     # Android Kotlin/Compose production source
-clipy_android/lib/        # Windows/iOS Flutter source; Android comparison reference
+clipy_android/lib/        # Android, Windows & iOS Flutter/Dart source
+clipy_android_native/     # Native Kotlin/Compose Android alternative (not released)
 build_macos_app.sh        # macOS app bundle build script
 build_android_apk.sh      # Android split-APK build script
 .github/workflows/        # CI + public three-platform releases
