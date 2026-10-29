@@ -84,8 +84,12 @@ Future<void> main() async {
     }
   }
   if (notifications) {
-    await prefs.setStringList('notificationCollectedPackages', ['org.example.parity.notes']);
-    await prefs.setStringList('notificationSyncedPackages', ['org.example.parity.notes']);
+    await prefs.setStringList('notificationCollectedPackages', [
+      'org.example.parity.notes',
+    ]);
+    await prefs.setStringList('notificationSyncedPackages', [
+      'org.example.parity.notes',
+    ]);
     for (var index = 0; index < 2; index++) {
       await database.insert('notifications', {
         'id': 'parity-notification-$index',
@@ -94,7 +98,10 @@ Future<void> main() async {
         'app_name': 'Example Notes',
         'title': 'Synthetic notification ${index + 1}',
         'subtitle': 'Fixture subtitle',
-        'body': List.generate(index == 0 ? 30 : 1, (line) => 'Synthetic notification detail line ${line + 1}').join('\n'),
+        'body': List.generate(
+          index == 0 ? 30 : 1,
+          (line) => 'Synthetic notification detail line ${line + 1}',
+        ).join('\n'),
         'post_time': epoch - index * 60000,
         'is_clearable': 1,
         'is_archived': index,
@@ -106,30 +113,60 @@ Future<void> main() async {
   if (p1Fixtures) {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
-    canvas.drawRect(const Rect.fromLTWH(0, 0, 400, 200), Paint()..color = const Color(0xFF193967));
-    canvas.drawCircle(const Offset(100, 100), 60, Paint()..color = const Color(0xFFABC7FF));
-    canvas.drawRect(const Rect.fromLTWH(220, 40, 120, 120), Paint()..color = const Color(0xFFF2C36B));
+    canvas.drawRect(
+      const Rect.fromLTWH(0, 0, 400, 200),
+      Paint()..color = const Color(0xFF193967),
+    );
+    canvas.drawCircle(
+      const Offset(100, 100),
+      60,
+      Paint()..color = const Color(0xFFABC7FF),
+    );
+    canvas.drawRect(
+      const Rect.fromLTWH(220, 40, 120, 120),
+      Paint()..color = const Color(0xFFF2C36B),
+    );
     final picture = recorder.endRecording();
     final image = await picture.toImage(400, 200);
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
     final media = File('${directory.path}/parity-media.png');
     await media.writeAsBytes(bytes!.buffer.asUint8List());
-    image.dispose(); picture.dispose();
+    image.dispose();
+    picture.dispose();
     for (final item in [
       HistoryItem(type: 'image', value: media.path),
-      HistoryItem(type: 'fileURLs', value: ['/synthetic/alpha.txt', '/synthetic/beta.pdf']),
+      HistoryItem(
+        type: 'fileURLs',
+        value: ['/synthetic/alpha.txt', '/synthetic/beta.pdf'],
+      ),
     ]) {
-      await ClipboardRepository.instance.insert(HistoryEntry(item: item,
-        date: DateTime.fromMillisecondsSinceEpoch(epoch + (item.type == 'image' ? 2000 : 1000)),
-        sourceApp: 'Parity Media', contentHash: 'parity-${item.type}'));
+      await ClipboardRepository.instance.insert(
+        HistoryEntry(
+          item: item,
+          date: DateTime.fromMillisecondsSinceEpoch(
+            epoch + (item.type == 'image' ? 2000 : 1000),
+          ),
+          sourceApp: 'Parity Media',
+          contentHash: 'parity-${item.type}',
+        ),
+      );
     }
     for (var index = 0; index < 3; index++) {
-      await database.insert('app_logs', {'level': 'INFO', 'message': 'Synthetic parity log ${index + 1}', 'created_at': epoch + index});
+      await database.insert('app_logs', {
+        'level': 'INFO',
+        'message': 'Synthetic parity log ${index + 1}',
+        'created_at': epoch + index,
+      });
     }
   }
   await bootstrapApplication();
   if (p1Fixtures) {
-    SyncManager.instance.diagnostics.noteError('parity-diagnostic-peer', 'Synthetic connection error', name: 'Parity diagnostic peer', host: '192.0.2.10');
+    SyncManager.instance.diagnostics.noteError(
+      'parity-diagnostic-peer',
+      'Synthetic connection error',
+      name: 'Parity diagnostic peer',
+      host: '192.0.2.10',
+    );
   }
   await File('${directory.path}/ui-parity-fixture.json').writeAsString(
     jsonEncode({
