@@ -62,9 +62,6 @@ struct SettingsView: View {
     ]
       + ScreenshotSettingsView.settingsPages
       + [
-        .init(
-          id: "smartSwitch", title: L10n.t(.smartSwitchSettingsTitle),
-          symbol: "arrow.triangle.swap"),
         .init(id: "sync", title: L10n.t(.lanDevices), symbol: "network"),
         .init(id: "permissions", title: L10n.t(.designPermissions), symbol: "hand.raised"),
         .init(id: "about", title: L10n.t(.settingsAbout), symbol: "info.circle"),
@@ -230,9 +227,6 @@ struct SettingsView: View {
       if pageID.hasPrefix(ScreenshotSettingsView.pagePrefix) {
         ScreenshotSettingsView(
           pageID: String(pageID.dropFirst(ScreenshotSettingsView.pagePrefix.count)))
-      }
-      if pageID == "smartSwitch" {
-        SmartSwitchSettingsView()
       }
       if pageID == "sync" {
         SyncRelaySettingsView()

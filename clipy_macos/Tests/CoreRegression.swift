@@ -8,14 +8,12 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
 
 func runCoreRegressionTests() {
     runKeepAwakeRegressionTests()
-    runTokenUsageRegressionTests()
     runMenuBarPanelRegressionTests()
     runMenuBarOverflowRegressionTests()
     runSyncTransportRegressionTests()
     runFolderTransferRegressionTests()
     runHistoryCopyRegressionTests()
     runWordLookupRegressionTests()
-    runSmartSwitchRegressionTests()
     func entry(_ text: String, _ date: Double = 1) -> HistoryEntry {
         HistoryEntry(item: .text(text), date: Date(timeIntervalSince1970: date), sourceApp: nil, contentHash: nil)
     }

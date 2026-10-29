@@ -1,6 +1,8 @@
 # macOS 入口改版 · 设计记录
 
-用户已选择第一张「轻量控制面板」。已制作独立交互原型，见 [prototype/README.md](prototype/README.md)。用户已确认原型并授权实施；原生实现位于 `Sources/MenuBarPanel/`，仍未公开发布。
+> 历史设计资料；当前客户端已移除今日消耗和智能切换功能，以当前源码和主 README 为准。
+
+用户已选择第一张「轻量控制面板」。原交互原型和旧截图已完成设计验证，现已移除不再参与应用构建的原型代码与重复素材；历史可从 Git 提交 `620949d` 查看。当前原生实现位于 `clipy_macos/Sources/MenuBarPanel/`。
 
 ## 目标
 

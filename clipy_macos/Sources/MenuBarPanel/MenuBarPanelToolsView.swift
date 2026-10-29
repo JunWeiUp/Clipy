@@ -16,7 +16,7 @@ struct MenuBarPanelToolsView: View {
                     }.padding(.top, 10)
                     capture
                     group(.panelToolsLearning, tools: [.word, .wordBook], color: colorScheme == .dark ? Color(red: 0.53, green: 0.76, blue: 0.66) : Color(red: 0.16, green: 0.50, blue: 0.39))
-                    group(.panelToolsEfficiency, tools: [.smartSwitch, .password], color: colorScheme == .dark ? Color(red: 0.69, green: 0.67, blue: 0.87) : Color(red: 0.41, green: 0.39, blue: 0.65))
+                    group(.panelToolsEfficiency, tools: [.password], color: colorScheme == .dark ? Color(red: 0.69, green: 0.67, blue: 0.87) : Color(red: 0.41, green: 0.39, blue: 0.65))
                 }.padding(.bottom, 12)
             }.onChange(of: model.selectedID) { id in if let id { proxy.scrollTo(id) } }
         }

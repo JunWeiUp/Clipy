@@ -104,11 +104,9 @@ clipy_macos/
   Sources/Notifications/      notification storage and system routing
   Sources/MenuBarPanel/       native control panel, asynchronous queries and focus handoff
   Sources/MenuBarOverflow/    hidden status-item discovery, previews and AX actions
-  Sources/TokenUsage/         on-demand local agent usage import, pricing and macOS UI
   Sources/Screenshot/         capture/annotation/recording engine and adapters
   Sources/UI/                 shared SwiftUI views and window layouts
   Resources/Info.plist        reviewed bundle/permission metadata template
-  Resources/token-prices-*.json  bundled offline model-price snapshot and overrides
 clipy_android_native/
   app/src/main/java/com/clipyclone/
     nativeandroid/           Compose UI, repositories, LAN/files, relay, notifications
@@ -212,8 +210,8 @@ updates and repositions the visible panel under its status item.
 The Devices tab has a refresh button (prune + full /24 scan) and per-device Send Text /
 Send File buttons. Detail pages replace the home search/strip/tabs/footer with a
 Back/title row. Tools is the fourth home tab: a capture row directly launches region/window/full-screen,
-followed by Lookup/Vocabulary and Smart Switch/Password pairs. `MenuBarPanelToolsView`
-owns this layout and uses the same model/action handoff. Its header shares the same hidden-icon strip and Token summary as other home tabs;
+followed by Lookup/Vocabulary and a Password action. `MenuBarPanelToolsView`
+owns this layout and uses the same model/action handoff. Its header shares the same hidden-icon strip as other home tabs;
 Tools keeps the Clipboard/Snippets panel size, with its content scrolling independently. The footer contains named Keep Awake
 and Notifications controls; banner preferences remain in More. No new background work or persistence is introduced.
 Existing manager callbacks refresh only the open panel; there is no new idle polling.
@@ -273,13 +271,6 @@ retaining local history and user data. See PROTOCOL.md and SECURITY.md.
   Clipboard imports remain user initiated; remote items do not overwrite the
   iOS system clipboard automatically.
 
-Token usage refreshes stream up to 365 local calendar days from SQLite into daily
-agent/model aggregates on the existing worker. Individual events are released as
-they are read; the published report retains aggregates only. The detail view builds
-a bounded 365-day heatmap from that report, with at most 53 week columns and no
-additional log scans, timers or persisted chart state. Hover/click state belongs to
-the view and resets when the agent filter changes or the hosting view is released.
-
 - Native Android `ClipyApplication` initializes managers/repositories without a
   Flutter engine. Sync commits incoming history before ACK even without UI.
 - Android `MainActivity` retains `singleTask` and the application task affinity.
@@ -321,10 +312,6 @@ See [Development](DEVELOPMENT.md) for verification boundaries and
 [the AI change guide](AI_CHANGE_GUIDE.md) for ownership, lifecycle and memory
 checks. See also
 [third-party notices](../THIRD_PARTY_NOTICES.md) before updating the screenshot port.
-
-## Smart Switch paste-back target
-
-`SmartSwitchWindowFocusSession` captures a metadata-only `SmartSwitchDeliveryTarget` before presentation and validates it after closing. The bounded focus worker reads process launch identity, window and editable element identity; mismatches and unresolved targets retain copied text with a nonactivating hint. Clipboard versions and session generations also gate the final PID-addressed key pair. `keySent` records dispatch only, never verified insertion. The target is transient and cleared on close or handoff; no editor contents, persistent observer or polling is added.
 
 ## Optional Internet relay
 

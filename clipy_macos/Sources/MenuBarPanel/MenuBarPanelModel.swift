@@ -15,18 +15,17 @@ final class MenuBarPanelModel: ObservableObject {
         }
     }
     enum Page { case home, capture, notifications, settings }
-    enum Action { case search(String), snippets, preferences, syncSettings, notifications, word, wordBook, smartSwitch, password, tokenUsage, toggleKeepAwake
+    enum Action { case search(String), snippets, preferences, syncSettings, notifications, word, wordBook, password, toggleKeepAwake
         case region, window, fullscreen, screenshotSettings, permission, quit
         case sendText(String), sendFile(String)
     }
     enum Tool: String, CaseIterable {
-        case capture, word, wordBook, smartSwitch, password, keepAwake
+        case capture, word, wordBook, password, keepAwake
         var title: L10nKey {
             switch self {
             case .capture: return .panelCaptureShortcut
             case .word: return .panelLookupShortcut
             case .wordBook: return .panelToolsWordBook
-            case .smartSwitch: return .panelToolsSwitch
             case .password: return .generatePassword
             case .keepAwake: return .keepAwakeTitle
             }
@@ -36,7 +35,6 @@ final class MenuBarPanelModel: ObservableObject {
             case .capture: return .panelCaptureToolHint
             case .word: return .panelWordHint
             case .wordBook: return .panelBookHint
-            case .smartSwitch: return .panelSmartHint
             case .password: return .panelPasswordHint
             case .keepAwake: return .keepAwakeHint
             }
@@ -46,7 +44,6 @@ final class MenuBarPanelModel: ObservableObject {
             case .capture: return "camera"
             case .word: return "character.book.closed"
             case .wordBook: return "books.vertical"
-            case .smartSwitch: return "arrow.triangle.swap"
             case .password: return "key.horizontal"
             case .keepAwake: return "sun.max"
             }
@@ -89,7 +86,7 @@ final class MenuBarPanelModel: ObservableObject {
 
     var isSearching: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var visibleTools: [Tool] {
-        isSearching ? matchingTools : [.capture, .word, .wordBook, .smartSwitch, .password]
+        isSearching ? matchingTools : [.capture, .word, .wordBook, .password]
     }
     var visibleSnippets: [Snippet] {
         folders.filter { isSearching || folderID == nil || $0.id == folderID }
@@ -125,7 +122,6 @@ final class MenuBarPanelModel: ObservableObject {
         case .capture: navigate(.capture)
         case .word: onAction?(.word)
         case .wordBook: onAction?(.wordBook)
-        case .smartSwitch: onAction?(.smartSwitch)
         case .password: onAction?(.password)
         case .keepAwake: onAction?(.toggleKeepAwake)
         }

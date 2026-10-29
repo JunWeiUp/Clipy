@@ -178,9 +178,7 @@ class MenuController: NSObject {
         case .notifications: openNotifications()
         case .word: openWordLookup()
         case .wordBook: openWordBook()
-        case .smartSwitch: openSmartSwitch()
         case .password: openPasswordGenerator()
-        case .tokenUsage: openTokenUsage()
         case .toggleKeepAwake:
             if !KeepAwakeManager.shared.toggle() {
                 controlPanelStorage?.model.notice = L10n.t(.keepAwakeFailed)
@@ -265,18 +263,11 @@ class MenuController: NSObject {
         let keepAwake = actionItem(L10n.t(.keepAwakeTitle), symbol: "sun.max", action: #selector(toggleKeepAwake(_:)))
         keepAwake.state = KeepAwakeManager.shared.isActive ? .on : .off
         tools.addItem(keepAwake)
-        let smartSwitch = actionItem(L10n.t(.smartSwitchTitle), symbol: "arrow.triangle.swap", action: #selector(openSmartSwitch))
-        let switchConfig = SmartSwitchStore.shared.configuration
-        if switchConfig.shortcutEnabled {
-            AppMenuStyle.applyShortcut(switchConfig.shortcut, to: smartSwitch)
-        }
-        tools.addItem(smartSwitch)
         tools.addItem(.separator())
         let count = NotificationManager.shared.notificationCount
         tools.addItem(actionItem(L10n.t(.notificationSync) + (count > 0 ? " · \(count)" : ""),
                                  symbol: "bell", action: #selector(openNotifications), key: "N"))
         tools.addItem(actionItem(L10n.t(.generatePassword), symbol: "key.horizontal", action: #selector(openPasswordGenerator), key: "P"))
-        tools.addItem(actionItem(L10n.t(.tokenUsageTitle), symbol: "chart.bar.xaxis", action: #selector(openTokenUsage)))
         menu.addItem(submenuItem(L10n.t(.menuTools), symbol: "wrench.and.screwdriver", submenu: tools))
         appendOverflowItems(to: menu)
         menu.addItem(.separator())
@@ -892,17 +883,9 @@ class MenuController: NSObject {
         WordLookupWindow.shared.showWindow()
     }
 
-    @objc private func openSmartSwitch() {
-        DispatchQueue.main.async { SmartSwitchWindow.shared.show() }
-    }
-
     @objc private func openPasswordGenerator() {
         NSApp.activate(ignoringOtherApps: true)
         PasswordGeneratorWindow.show()
-    }
-
-    @objc private func openTokenUsage() {
-        TokenUsageWindow.shared.showWindow()
     }
 
     @objc private func toggleKeepAwake(_ sender: NSMenuItem) {
@@ -919,7 +902,6 @@ class MenuController: NSObject {
         SearchGlobalHotKeyManager.register()
         WordGlobalHotKeyManager.register()
         ScreenshotGlobalHotKeyManager.register()
-        SmartSwitchGlobalHotKeyManager.register()
     }
 
     @objc private func startScreenshotRegion() {

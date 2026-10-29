@@ -21,38 +21,6 @@ extension Notification.Name {
 }
 
 enum L10nKey: String {
-    case tokenUsageTitle
-    case tokenUsageHint
-    case tokenUsageToday
-    case tokenUsageEstimate
-    case tokenUsageTokens
-    case tokenUsageUnpriced
-    case tokenUsageNoData
-    case tokenUsageRefresh
-    case tokenUsageUpdatePrices
-    case tokenUsagePriceNote
-    case tokenUsagePriceSource
-    case tokenUsageBundledPrice
-    case tokenUsageAllAgents
-    case tokenUsageDay
-    case tokenUsageWeek
-    case tokenUsageMonth
-    case tokenUsageDaily
-    case tokenUsageModels
-    case tokenUsageStatusMissing
-    case tokenUsageStatusUnreadable
-    case tokenUsageStatusUnsupported
-    case tokenUsageStatusFailed
-    case tokenUsageStatusReady
-    case tokenUsageScanning
-    case tokenUsageUpdating
-    case tokenUsageActivity
-    case tokenUsageYear
-    case tokenUsageActiveDays
-    case tokenUsageHeatmapHint
-    case tokenUsageHeatmapScale
-    case tokenUsageLess
-    case tokenUsageMore
     case panelLookupShortcut
     case panelSwitchShortcut
     case panelCaptureShortcut
@@ -71,7 +39,6 @@ enum L10nKey: String {
     case panelCaptureHint
     case panelWordHint
     case panelBookHint
-    case panelSmartHint
     case panelPasswordHint
     case keepAwakeTitle
     case keepAwakeHint
@@ -79,7 +46,6 @@ enum L10nKey: String {
     case keepAwakeOff
     case keepAwakeFailed
     case panelToolsWordBook
-    case panelToolsSwitch
     case panelToolsHint
     case panelToolsLearning
     case panelToolsEfficiency
@@ -143,44 +109,6 @@ enum L10nKey: String {
     case smartVoiceActive
     case smartVoiceUnavailable
     case smartVoiceInterrupted
-    case smartSwitchTitle
-    case smartSwitchSettingsTitle
-    case smartSwitchInputLabel
-    case smartSwitchInputHint
-    case smartSwitchExecute
-    case smartSwitchWorking
-    case smartSwitchSetupHint
-    case smartSwitchShortcut
-    case smartSwitchShortcutConflict
-    case smartSwitchDoubaoUnavailable
-    case smartSwitchAPI
-    case smartSwitchModel
-    case smartSwitchAPIHint
-    case smartSwitchSaveAPI
-    case smartSwitchTest
-    case smartSwitchTestSuccess
-    case smartSwitchSaved
-    case smartSwitchPrivacy
-    case smartSwitchApplications
-    case smartSwitchAddApplication
-    case smartSwitchLocate
-    case smartSwitchAppName
-    case smartSwitchAliases
-    case smartSwitchDescription
-    case smartSwitchNoTargets
-    case smartSwitchNoMatch
-    case smartSwitchAmbiguous
-    case smartSwitchConfigurationError
-    case smartSwitchInputError
-    case smartSwitchResponseError
-    case smartSwitchInvalidApplication
-    case smartSwitchApplicationMissing
-    case smartSwitchActivationFailed
-    case smartSwitchKeychainError
-    case smartSwitchAuthenticationError
-    case smartSwitchHTTPError
-    case smartSwitchTimeout
-    case smartSwitchNetworkError
     case wordHideChinese
     case wordShowChinese
     case wordChineseVisible
@@ -613,38 +541,6 @@ struct L10n {
 
     private static let table: [AppLanguage: [L10nKey: String]] = [
         .zh: [
-            .tokenUsageTitle: "Token 费用",
-            .tokenUsageHint: "按 Agent 查看每日 Token 与估算费用",
-            .tokenUsageToday: "今日消耗",
-            .tokenUsageEstimate: "估算费用",
-            .tokenUsageTokens: "Token 数",
-            .tokenUsageUnpriced: "%d 条未定价",
-            .tokenUsageNoData: "暂无本地用量记录；可点击刷新重试。",
-            .tokenUsageRefresh: "刷新用量",
-            .tokenUsageUpdatePrices: "更新模型价格",
-            .tokenUsagePriceNote: "费用按当前模型标价估算，并非订阅账单或实际扣费。未定价的用量不计入金额。",
-            .tokenUsagePriceSource: "价格来源：%@",
-            .tokenUsageBundledPrice: "内置价格表",
-            .tokenUsageAllAgents: "全部 Agent",
-            .tokenUsageDay: "今日",
-            .tokenUsageWeek: "近 7 天",
-            .tokenUsageMonth: "近 30 天",
-            .tokenUsageDaily: "每日用量",
-            .tokenUsageModels: "模型明细",
-            .tokenUsageStatusMissing: "未找到记录",
-            .tokenUsageStatusUnreadable: "无法读取",
-            .tokenUsageStatusUnsupported: "格式暂不支持",
-            .tokenUsageStatusFailed: "读取失败",
-            .tokenUsageStatusReady: "已就绪",
-            .tokenUsageScanning: "正在读取用量…",
-            .tokenUsageUpdating: "正在更新价格…",
-            .tokenUsageActivity: "Token 用量热力图",
-            .tokenUsageYear: "近 365 天",
-            .tokenUsageActiveDays: "%d 天有用量 · 共 %@ Token",
-            .tokenUsageHeatmapHint: "悬停查看每日用量，点击保留详情；随 Agent 筛选。",
-            .tokenUsageHeatmapScale: "按每日 Token 总量分为四档，以当前 Agent 筛选下近 365 天的最高日用量为上限。灰色表示无用量记录。",
-            .tokenUsageLess: "少",
-            .tokenUsageMore: "多",
             .panelLookupShortcut: "查词",
             .panelSwitchShortcut: "智能切换",
             .panelCaptureShortcut: "截图",
@@ -663,7 +559,6 @@ struct L10n {
             .panelCaptureHint: "选择区域后，可在选区工具栏中开始长截图或录屏。",
             .panelWordHint: "词义、发音与中英翻译",
             .panelBookHint: "收藏与复习单词",
-            .panelSmartHint: "打开应用、搜索与翻译",
             .panelPasswordHint: "选择长度与字符类型",
             .keepAwakeTitle: "保持唤醒",
             .keepAwakeHint: "阻止闲置时屏幕关闭和 Mac 睡眠；合盖或手动睡眠仍有效",
@@ -672,7 +567,6 @@ struct L10n {
             .keepAwakeFailed: "无法更改保持唤醒状态，请稍后重试。",
             .panelCaptureToolHint: "区域、窗口、全屏、长截图与录屏",
             .panelToolsWordBook: "单词本",
-            .panelToolsSwitch: "智能切换",
             .panelToolsHint: "常用功能，触手可及",
             .panelToolsLearning: "语言与学习",
             .panelToolsEfficiency: "效率工具",
@@ -733,44 +627,6 @@ struct L10n {
             .smartVoiceActive: "自动入口已就绪：沿用豆包长按语音键，无需另按智能切换快捷键。",
             .smartVoiceUnavailable: "无法建立按键监听。请检查权限并重新启动 ClipyClone；普通语音输入保持可用。",
             .smartVoiceInterrupted: "本次语音准备已中断，窗口已保留。请再次长按语音键，或直接输入。",
-            .smartSwitchTitle: "智能切换应用",
-            .smartSwitchSettingsTitle: "智能切换",
-            .smartSwitchInputLabel: "输入文字或应用指令",
-            .smartSwitchInputHint: "直接说“打开软件名”优先切换；回车执行所选功能，Esc 粘贴回原应用。",
-            .smartSwitchExecute: "切换",
-            .smartSwitchWorking: "正在处理…",
-            .smartSwitchSetupHint: "呼出后自动切到豆包，语音落字后按回车。明确的打开应用指令优先本地匹配；其他功能可点击按钮，或用滚轮循环选择。",
-            .smartSwitchShortcut: "启用智能切换快捷键",
-            .smartSwitchShortcutConflict: "快捷键注册失败，可能已被占用。请换一个组合；仍可使用菜单栏入口。",
-            .smartSwitchDoubaoUnavailable: "豆包输入法不可用，请在系统设置中启用；现在仍可打字输入。",
-            .smartSwitchAPI: "大模型 API",
-            .smartSwitchModel: "模型名称",
-            .smartSwitchAPIHint: "使用兼容 Chat Completions 的接口。Base URL 包含版本路径（如 /v1），不要包含 /chat/completions。清空三项后保存可移除配置。",
-            .smartSwitchSaveAPI: "保存 API 配置",
-            .smartSwitchTest: "测试连接",
-            .smartSwitchTestSuccess: "连接成功，模型已返回有效应用选择。测试不会打开应用；请保存配置后使用。",
-            .smartSwitchSaved: "API 配置已保存。",
-            .smartSwitchPrivacy: "本地应用匹配、打开 Codex 和 ZCode 新对话不调用模型。模型判断仅发送本次输入、可用动作和已配置应用的信息，不发送路径或历史库；翻译发送你选择处理的文字。API Key 保存在钥匙串。",
-            .smartSwitchApplications: "应用与别名（自动保存）",
-            .smartSwitchAddApplication: "添加应用…",
-            .smartSwitchLocate: "重新选择…",
-            .smartSwitchAppName: "应用名称",
-            .smartSwitchAliases: "别名（例如：浏览器、查资料）",
-            .smartSwitchDescription: "用途描述（例如：日常写代码使用的编辑器）",
-            .smartSwitchNoTargets: "请在「偏好设置 → 智能切换」添加并启用至少一个应用。",
-            .smartSwitchNoMatch: "没有找到对应应用或动作。可换一种说法、选择功能按钮，或在设置中补充应用别名。",
-            .smartSwitchAmbiguous: "有多个可能的应用，请用上下方向键选择并回车，或点击目标应用。",
-            .smartSwitchConfigurationError: "请检查并保存 Base URL、模型名称和 API Key。地址须为 HTTPS（本机服务可用 HTTP），包含版本路径但不含 /chat/completions。",
-            .smartSwitchInputError: "请输入需要处理的文字（最多 8000 个字符），或选择可直接执行的功能。",
-            .smartSwitchResponseError: "模型返回了无效的应用选择。请重试，或检查接口与模型是否支持此格式。",
-            .smartSwitchInvalidApplication: "请选择有效的 macOS .app 应用。",
-            .smartSwitchApplicationMissing: "找不到该应用，请在设置中重新选择应用位置。",
-            .smartSwitchActivationFailed: "无法将应用切到前台，请重试或检查应用是否能正常启动。",
-            .smartSwitchKeychainError: "无法访问 API Key 钥匙串项目（%d）。请检查钥匙串访问权限后重新打开设置。",
-            .smartSwitchAuthenticationError: "API 鉴权失败。请检查密钥、地址及模型访问权限。",
-            .smartSwitchHTTPError: "服务返回 HTTP %d。请检查配置或稍后重试。",
-            .smartSwitchTimeout: "请求超时（15 秒），请检查网络或换用响应更快的模型。",
-            .smartSwitchNetworkError: "无法连接模型服务，请检查网络和 API 地址后重试。",
             .menuRecentHistory: "最近复制",
             .designDeviceName: "设备名称",
             .designGeneral: "通用",
@@ -1192,38 +1048,6 @@ struct L10n {
             .excludedAppsHint: "在这些应用中复制的内容不会写入历史，也不会同步到其他设备。",
         ],
         .en: [
-            .tokenUsageTitle: "Token Usage",
-            .tokenUsageHint: "Daily tokens and estimated cost by agent",
-            .tokenUsageToday: "Today's usage",
-            .tokenUsageEstimate: "Estimated cost",
-            .tokenUsageTokens: "Tokens",
-            .tokenUsageUnpriced: "%d unpriced events",
-            .tokenUsageNoData: "No local usage records yet. Try refreshing after an agent has run.",
-            .tokenUsageRefresh: "Refresh usage",
-            .tokenUsageUpdatePrices: "Update model prices",
-            .tokenUsagePriceNote: "Costs use current model list prices, not subscription bills or actual charges. Unpriced usage is excluded from the amount.",
-            .tokenUsagePriceSource: "Price source: %@",
-            .tokenUsageBundledPrice: "Bundled prices",
-            .tokenUsageAllAgents: "All agents",
-            .tokenUsageDay: "Today",
-            .tokenUsageWeek: "Last 7 days",
-            .tokenUsageMonth: "Last 30 days",
-            .tokenUsageDaily: "Daily usage",
-            .tokenUsageModels: "Model breakdown",
-            .tokenUsageStatusMissing: "No records found",
-            .tokenUsageStatusUnreadable: "Cannot read",
-            .tokenUsageStatusUnsupported: "Unsupported format",
-            .tokenUsageStatusFailed: "Read failed",
-            .tokenUsageStatusReady: "Ready",
-            .tokenUsageScanning: "Reading usage…",
-            .tokenUsageUpdating: "Updating prices…",
-            .tokenUsageActivity: "Token activity",
-            .tokenUsageYear: "Last 365 days",
-            .tokenUsageActiveDays: "%d active days · %@ tokens in total",
-            .tokenUsageHeatmapHint: "Hover for daily usage; click to keep details. Follows the agent filter.",
-            .tokenUsageHeatmapScale: "Four levels of daily tokens, relative to the current agent selection’s peak over 365 days. Gray means no usage records.",
-            .tokenUsageLess: "Less",
-            .tokenUsageMore: "More",
             .panelLookupShortcut: "Lookup",
             .panelSwitchShortcut: "Switch",
             .panelCaptureShortcut: "Capture",
@@ -1242,7 +1066,6 @@ struct L10n {
             .panelCaptureHint: "Select a region, then choose scrolling capture or recording in the capture toolbar.",
             .panelWordHint: "Definitions, pronunciation and translation",
             .panelBookHint: "Save and review vocabulary",
-            .panelSmartHint: "Open apps, search and translate",
             .panelPasswordHint: "Choose length and character types",
             .keepAwakeTitle: "Keep Awake",
             .keepAwakeHint: "Prevent idle display and system sleep; lid close and manual sleep still work",
@@ -1251,7 +1074,6 @@ struct L10n {
             .keepAwakeFailed: "Could not change Keep Awake. Please try again.",
             .panelCaptureToolHint: "Region, window, full screen, scrolling and recording",
             .panelToolsWordBook: "Vocabulary",
-            .panelToolsSwitch: "Smart Switch",
             .panelToolsHint: "Your everyday tools, together",
             .panelToolsLearning: "Language & Learning",
             .panelToolsEfficiency: "Productivity",
@@ -1312,44 +1134,6 @@ struct L10n {
             .smartVoiceActive: "Automatic entry is ready. Use Doubao’s hold-to-talk key; no extra Smart Switch shortcut is needed.",
             .smartVoiceUnavailable: "Could not start key monitoring. Check permissions and restart ClipyClone. Normal voice input remains available.",
             .smartVoiceInterrupted: "Voice preparation was interrupted. The window stays open; hold the voice key again or type.",
-            .smartSwitchTitle: "Smart App Switch",
-            .smartSwitchSettingsTitle: "Smart Switch",
-            .smartSwitchInputLabel: "Enter text or an application command",
-            .smartSwitchInputHint: "Explicit app launches come first. Return executes the selected action; Esc pastes back.",
-            .smartSwitchExecute: "Switch",
-            .smartSwitchWorking: "Working…",
-            .smartSwitchSetupHint: "The input window selects Doubao; dictate and press Return. Explicit app-launch commands match locally first. Click action buttons or scroll over them to cycle.",
-            .smartSwitchShortcut: "Enable Smart Switch shortcut",
-            .smartSwitchShortcutConflict: "The shortcut could not be registered. Choose another combination, or use the menu bar.",
-            .smartSwitchDoubaoUnavailable: "Doubao is unavailable. Enable it in System Settings, or continue typing.",
-            .smartSwitchAPI: "Model API",
-            .smartSwitchModel: "Model name",
-            .smartSwitchAPIHint: "Use a Chat Completions-compatible service. Include the version path (such as /v1) in Base URL, without /chat/completions. Clear all three fields and save to remove the configuration.",
-            .smartSwitchSaveAPI: "Save API configuration",
-            .smartSwitchTest: "Test connection",
-            .smartSwitchTestSuccess: "Connected and received a valid app selection. No app was opened. Save the configuration to use it.",
-            .smartSwitchSaved: "API configuration saved.",
-            .smartSwitchPrivacy: "Local app matching, Open Codex and New ZCode chat do not use the model. Intent requests send current input, allowed actions and configured app information, not paths or history. Translation sends the selected text. Keys stay in Keychain.",
-            .smartSwitchApplications: "Applications & aliases (saved automatically)",
-            .smartSwitchAddApplication: "Add applications…",
-            .smartSwitchLocate: "Locate…",
-            .smartSwitchAppName: "App name",
-            .smartSwitchAliases: "Aliases (for example: browser, research)",
-            .smartSwitchDescription: "Description (for example: my everyday code editor)",
-            .smartSwitchNoTargets: "Add and enable an application in Preferences → Smart Switch.",
-            .smartSwitchNoMatch: "No matching app or action. Try another request, select an action button, or add app aliases in settings.",
-            .smartSwitchAmbiguous: "Several apps match. Select with Up/Down and Return, or click an app.",
-            .smartSwitchConfigurationError: "Check and save Base URL, model and API key. Use HTTPS (HTTP is allowed for localhost), including the version path but without /chat/completions.",
-            .smartSwitchInputError: "Enter text to process (up to 8000 characters), or select an action that runs without text.",
-            .smartSwitchResponseError: "The model returned an invalid app selection. Retry, or check the service and model compatibility.",
-            .smartSwitchInvalidApplication: "Select a valid macOS .app application.",
-            .smartSwitchApplicationMissing: "App not found. Locate it again in settings.",
-            .smartSwitchActivationFailed: "Could not activate the app. Retry or check that the app can launch normally.",
-            .smartSwitchKeychainError: "Could not access the API key in Keychain (%d). Check Keychain permissions and reopen settings.",
-            .smartSwitchAuthenticationError: "API authentication failed. Check the key, endpoint and model access.",
-            .smartSwitchHTTPError: "The service returned HTTP %d. Check the configuration or retry later.",
-            .smartSwitchTimeout: "Request timed out (15 seconds). Check the network or use a faster model.",
-            .smartSwitchNetworkError: "Could not connect to the model service. Check the network and API URL, then retry.",
             .menuRecentHistory: "Recently Copied",
             .designDeviceName: "Device Name",
             .designGeneral: "General",
