@@ -58,6 +58,7 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
   bool _monitoring = false;
   bool _inBackground = false;
   bool _lifecycleObserverRegistered = false;
+  int _windowsClipboardGeneration = 0;
 
   int get historyLimit => _historyLimit;
   List<String> get excludedApps => List.unmodifiable(_excludedApps);
@@ -117,7 +118,8 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
 
   Future<dynamic> _handleClipboardMethodCall(MethodCall call) async {
     if (Platform.isWindows && call.method == 'onClipboardChanged') {
-      await _readWindowsClipboard();
+      final generation = ++_windowsClipboardGeneration;
+      await _readWindowsClipboard(generation);
       return null;
     }
     if (call.method == 'onClipboardChanged') {
@@ -152,12 +154,24 @@ class ClipboardManager with WidgetsBindingObserver, ChangeNotifier {
     );
   }
 
-  Future<void> _readWindowsClipboard() async {
+  Future<void> _readWindowsClipboard(int generation) async {
     try {
-      final data = await _clipboardChannel.invokeMethod<Map<dynamic, dynamic>>(
-        'getSnapshot',
-      );
-      if (data == null || data['ownedByClipy'] == true) return;
+      Map<dynamic, dynamic>? data;
+      for (var attempt = 0; attempt < 5; attempt++) {
+        if (generation != _windowsClipboardGeneration) return;
+        data = await _clipboardChannel.invokeMethod<Map<dynamic, dynamic>>(
+          'getSnapshot',
+        );
+        if (data?['type'] != 'busy') break;
+        if (attempt < 4) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+      }
+      if (generation != _windowsClipboardGeneration ||
+          data == null ||
+          data['ownedByClipy'] == true) {
+        return;
+      }
       final sourceApp = data['sourceApp'] as String? ?? 'Windows';
       if (_excludedApps.any(
         (app) => app.toLowerCase() == sourceApp.toLowerCase(),
