@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import '../lib/ui/app_theme.dart';
+import 'package:clipy_android/ui/app_theme.dart';
 
 void main() {
   test('export shipping theme tokens', () {

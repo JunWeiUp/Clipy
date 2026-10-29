@@ -7,11 +7,11 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:crypto/crypto.dart';
-import '../lib/app/bootstrap.dart';
-import '../lib/database/app_database.dart';
-import '../lib/database/clipboard_repository.dart';
-import '../lib/models.dart';
-import '../lib/storage_paths.dart';
+import 'package:clipy_android/app/bootstrap.dart';
+import 'package:clipy_android/database/app_database.dart';
+import 'package:clipy_android/database/clipboard_repository.dart';
+import 'package:clipy_android/models.dart';
+import 'package:clipy_android/storage_paths.dart';
 import 'package:clipy_android/sync_manager.dart';
 
 Future<void> main() async {
