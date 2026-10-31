@@ -200,6 +200,11 @@ class _HomePageState extends State<HomePage>
     final action = call.arguments;
     if (action is! String) return;
     _presentationRevision++;
+    if (action == 'capture') {
+      // The runner keeps the current window state; the capture hides it.
+      await _takeWindowsScreenshot('region');
+      return;
+    }
     if (action == 'resultClosed') {
       setState(() => _captureResult = null);
       return;
@@ -224,8 +229,8 @@ class _HomePageState extends State<HomePage>
         _select(1);
       case 'settings':
         _select(3);
-      case 'capture':
-        await _takeWindowsScreenshot('region');
+      case 'files':
+        _openFiles();
     }
   }
 
@@ -313,6 +318,29 @@ class _HomePageState extends State<HomePage>
     } finally {
       if (mounted) setState(() => _capturingScreenshot = false);
     }
+  }
+
+  /// Main-window page requested from the quick panel; the runner replies with
+  /// the matching tray action after restoring the normal window.
+  Future<void> _openMainWindow(String? target) async {
+    try {
+      await _trayChannel.invokeMethod<void>('openMainWindow', target);
+      if (mounted) setState(() => _quickPanel = false);
+    } catch (_) {
+      if (mounted) showClipyMessage(context, context.l10n.operationFailed);
+    }
+  }
+
+  /// Hide the flyout first so a delayed capture does not keep it on screen;
+  /// the result flyout replaces it and cancelling leaves Clipy in the tray.
+  Future<void> _captureFromQuickPanel(String mode, int delaySeconds) async {
+    if (_capturingScreenshot) return;
+    try {
+      await _trayChannel.invokeMethod<void>('dismissQuickPanel');
+    } catch (_) {
+      // The native capture request also leaves the panel before freezing.
+    }
+    await _takeWindowsScreenshot(mode, delaySeconds: delaySeconds);
   }
 
   Future<void> _chooseScreenshotOptions() async {
@@ -618,18 +646,11 @@ class _HomePageState extends State<HomePage>
     if (_quickPanel) {
       return WindowsQuickPanel(
         controller: widget.historyController,
-        onOpenFull: () async {
-          try {
-            await _trayChannel.invokeMethod<void>('openMainWindow');
-            if (mounted) {
-              setState(() => _quickPanel = false);
-            }
-          } catch (_) {
-            if (mounted) {
-              showClipyMessage(this.context, this.context.l10n.operationFailed);
-            }
-          }
-        },
+        capturing: _capturingScreenshot,
+        onCapture: (mode, delay) =>
+            unawaited(_captureFromQuickPanel(mode, delay)),
+        onNavigate: (target) => unawaited(_openMainWindow(target)),
+        onOpenFull: () => unawaited(_openMainWindow(null)),
       );
     }
     final l10n = context.l10n;

@@ -57,6 +57,20 @@ class WindowsHotkeys {
     }
   }
 
+  /// Display text such as `Ctrl + Shift + A`, or null when not configured.
+  static String? label(Map<String, Object?> status, String kind) {
+    final m = status['${kind}Modifiers'];
+    final k = status['${kind}Key'];
+    if (m is! int || k is! int) return null;
+    return [
+      if (m & 2 != 0) 'Ctrl',
+      if (m & 1 != 0) 'Alt',
+      if (m & 4 != 0) 'Shift',
+      if (m & 8 != 0) 'Win',
+      if (k >= 112 && k <= 123) 'F${k - 111}' else String.fromCharCode(k),
+    ].join(' + ');
+  }
+
   static Future<Map<String, Object?>> read() async {
     await initialize();
     return _readNative();
