@@ -41,6 +41,7 @@ clipy_flutter/android/local.properties
 /.dbg/
 .fvm/
 .gradle/
+.kotlin/
 coverage/
 __pycache__/
 *.pyc
