@@ -131,7 +131,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标和最�
 <details>
 <summary><b>版本、下载与源码构建</b></summary>
 
-当前源码版本：**1.0.34** · 源码构建号 **12331**（Android arm64 `versionCode` **14331**） · 最新正式版：**[v1.0.34](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.34)** · [构建版本配置](clipy_flutter/pubspec.yaml)
+当前源码版本：**1.0.35** · 源码构建号 **12366**（Android arm64 `versionCode` **14366**） · 最新正式版：**[v1.0.34](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.34)** · [构建版本配置](clipy_flutter/pubspec.yaml)
 
 安装包请前往[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，具体应用版本和构建号以发布说明为准。Android 改版已在 v1.0.19 发布；后续开发期间，源码版本可能领先于公开安装包。Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
 

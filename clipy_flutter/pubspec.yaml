@@ -1,7 +1,7 @@
 name: clipy_flutter
 description: Clipboard history, encrypted LAN sync, notification mirroring, and file transfer for Clipy.
 publish_to: none
-version: 1.0.34+12331
+version: 1.0.35+12366
 
 environment:
   sdk: ">=3.11.0 <4.0.0"
