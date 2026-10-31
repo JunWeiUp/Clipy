@@ -13,7 +13,7 @@ dependencies:
       url: https://github.com/JunWeiUp/common-relay.git
       ref: v0.1.3
       path: sdk/dart
-  cupertino_icons: ^1.0.9
+  cupertino_icons: ^2.0.0
   qr_flutter: 4.1.0
   mobile_scanner: 7.4.2
   sodium: 4.0.2
