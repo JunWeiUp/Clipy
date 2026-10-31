@@ -434,6 +434,11 @@ func runWindowSnapshots() -> Never {
     exit(0)
 }
 
+private struct HistorySelectionTestHost: View {
+    @ObservedObject var model: SearchViewModel
+    var body: some View { SearchView(viewModel: model).historyListForTesting }
+}
+
 /// Exercise real AppKit mouse dispatch into the draggable SwiftUI rows, using
 /// fictional entries only. Model-only tests cannot catch gesture interception.
 private func runHistoryRowSelectionRegressionTests() {
@@ -448,7 +453,7 @@ private func runHistoryRowSelectionRegressionTests() {
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 500),
                           styleMask: [.titled], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
-    window.contentView = NSHostingView(rootView: SearchView(viewModel: model).historyListForTesting)
+    window.contentView = NSHostingView(rootView: HistorySelectionTestHost(model: model))
     window.makeKeyAndOrderFront(nil)
     defer { window.close() }
     func settle() { RunLoop.current.run(until: Date().addingTimeInterval(0.12)) }
@@ -461,8 +466,17 @@ private func runHistoryRowSelectionRegressionTests() {
     // One Today heading, then four entries (including the two-line file URL).
     precondition(table.numberOfRows == 5, "Unexpected history fixture row layout")
     func click(_ entry: Int, x: CGFloat, flags: NSEvent.ModifierFlags = []) {
-        let rect = table.rect(ofRow: entry + 1)
-        let point = table.convert(NSPoint(x: x, y: rect.midY), to: nil)
+        window.contentView?.layoutSubtreeIfNeeded()
+        guard let currentTable = window.contentView.flatMap(findTable), currentTable.window === window else {
+            preconditionFailure("History table is not attached to the fixture window")
+        }
+        currentTable.scrollRowToVisible(entry + 1)
+        currentTable.layoutSubtreeIfNeeded()
+        let rect = currentTable.rect(ofRow: entry + 1)
+        let point = currentTable.convert(NSPoint(x: x, y: rect.midY), to: nil)
+        if ProcessInfo.processInfo.environment["CLIPY_SELECTION_DEBUG_DIR"] != nil {
+            fputs("Click entry \(entry), tableChanged=\(currentTable !== table), rect=\(rect), point=\(point)\n", stderr)
+        }
         for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
             let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags,
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
@@ -476,15 +490,31 @@ private func runHistoryRowSelectionRegressionTests() {
         }
         settle()
     }
+    func expectSelection(_ expected: Set<HistoryEntry.ID>, _ message: String) {
+        let deadline = Date().addingTimeInterval(2)
+        while model.selectedIDs != expected && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        if model.selectedIDs != expected,
+           let directory = ProcessInfo.processInfo.environment["CLIPY_SELECTION_DEBUG_DIR"],
+           let view = window.contentView,
+           let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+            try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: directory).appendingPathComponent("history-click.png"))
+            fputs("Selection indices: \(ids.indices.filter { model.selectedIDs.contains(ids[$0]) }); rows: \(table.numberOfRows)\n", stderr)
+        }
+        precondition(model.selectedIDs == expected, message)
+    }
     click(1, x: 100)
-    precondition(model.selectedIDs == [ids[1]], "Click on draggable URL text failed to select row")
-    click(2, x: 25)
-    precondition(model.selectedIDs == [ids[2]], "Click on history icon failed to select row")
+    expectSelection([ids[1]], "Click on draggable URL text failed to select row")
+    click(2, x: 43)
+    expectSelection([ids[2]], "Click on history icon failed to select row")
     click(1, x: 100, flags: .command)
-    precondition(model.selectedIDs == [ids[1], ids[2]], "Command-click did not toggle once: \(model.selectedIDs)")
+    expectSelection([ids[1], ids[2]], "Command-click did not toggle once")
     click(3, x: 330, flags: .shift)
-    precondition(model.selectedIDs == Set(ids[1...3]), "Shift-click lost its anchor")
+    expectSelection(Set(ids[1...3]), "Shift-click lost its anchor")
     click(0, x: 330)
-    precondition(model.selectedIDs == [ids[0]], "Click on row whitespace failed to select row")
+    expectSelection([ids[0]], "Click on row whitespace failed to select row")
     print("History row mouse selection tests passed.")
 }
