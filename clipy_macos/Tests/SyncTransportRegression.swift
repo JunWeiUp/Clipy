@@ -301,8 +301,14 @@ private func runNetworkHandoffChecks() {
         manager.sessions["replacement"]!.readSource = DispatchSource.makeReadSource(fileDescriptor:fd,queue:manager.syncQueue)
         manager.sessions["replacement"]!.readSource!.resume()
     }
-    Thread.sleep(forTimeInterval:0.15)
+    // A shared CI runner may not dispatch a 50ms timer within a fixed 150ms
+    // sleep. Wait for the probe itself, then assert the same session outcomes.
+    let deadline = Date().addingTimeInterval(3)
+    while manager.syncQueue.sync(execute: { manager.networkProbe != nil }) && Date() < deadline {
+        Thread.sleep(forTimeInterval: 0.01)
+    }
     manager.syncQueue.sync {
+        check(manager.networkProbe == nil, "network probe completes within deadline")
         check(manager.sessions["stale"] == nil,"network probe retires stale session")
         check(manager.sessions["healthy"] != nil,"pong preserves healthy LAN")
         check(manager.sessions["replacement"] != nil,"late probe preserves replacement")
