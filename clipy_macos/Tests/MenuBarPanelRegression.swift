@@ -9,7 +9,6 @@ func runMenuBarPanelRegressionTests() {
         check(DeviceConnectionInput.port(invalid) == nil, "invalid port accepted: \(invalid)")
     }
     _ = NSApplication.shared
-    runHistoryRowSelectionRegressionTests()
     let homeSize = MenuBarPanelPolicy.preferredSize(page: .home, tab: .clipboard)
     let toolsSize = MenuBarPanelPolicy.preferredSize(page: .home, tab: .tools)
     let devicesSize = MenuBarPanelPolicy.preferredSize(page: .home, tab: .devices)
@@ -434,6 +433,23 @@ func runWindowSnapshots() -> Never {
     exit(0)
 }
 
+/// Give mouse regressions a real AppKit lifecycle and target their own window.
+/// Hosted runners need not grant global activation. The shell checks success.
+func runHistorySelectionApplicationTests() {
+    guard let index = CommandLine.arguments.firstIndex(of: "--result-file"),
+          CommandLine.arguments.indices.contains(index + 1) else { exit(64) }
+    let resultPath = CommandLine.arguments[index + 1]
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    DispatchQueue.main.async {
+        runHistoryRowSelectionRegressionTests()
+        do { try "passed\n".write(toFile: resultPath, atomically: true, encoding: .utf8) }
+        catch { fputs("Unable to write UI regression result\n", stderr); exit(1) }
+        app.terminate(nil)
+    }
+    app.run()
+}
+
 private struct HistorySelectionTestHost: View {
     @ObservedObject var model: SearchViewModel
     var body: some View { SearchView(viewModel: model).historyListForTesting }
@@ -442,6 +458,9 @@ private struct HistorySelectionTestHost: View {
 /// Exercise real AppKit mouse dispatch into the draggable SwiftUI rows, using
 /// fictional entries only. Model-only tests cannot catch gesture interception.
 private func runHistoryRowSelectionRegressionTests() {
+    let previousPolicy = NSApp.activationPolicy()
+    NSApp.setActivationPolicy(.accessory)
+    defer { NSApp.setActivationPolicy(previousPolicy) }
     let model = SearchViewModel()
     model.results = (0..<4).map { index in
         HistorySearchResult(entry: HistoryEntry(item: .text(index == 1
@@ -454,8 +473,16 @@ private func runHistoryRowSelectionRegressionTests() {
                           styleMask: [.titled], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     window.contentView = NSHostingView(rootView: HistorySelectionTestHost(model: model))
+    NSApp.activate(ignoringOtherApps: true)
     window.makeKeyAndOrderFront(nil)
     defer { window.close() }
+    let activationDeadline = Date().addingTimeInterval(3)
+    while (!NSApp.isActive || !window.isKeyWindow) && Date() < activationDeadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+    }
+    fputs("History UI fixture active=\(NSApp.isActive) key=\(window.isKeyWindow) visible=\(window.isVisible)\n", stderr)
+    // The runner may prohibit focus stealing. Dispatch only to this fixture's
+    // window; process-global activation is not the gesture contract under test.
     func settle() { RunLoop.current.run(until: Date().addingTimeInterval(0.12)) }
     settle()
     func findTable(_ view: NSView) -> NSTableView? {
@@ -486,7 +513,7 @@ private func runHistoryRowSelectionRegressionTests() {
                 until: Date().addingTimeInterval(1), inMode: .default, dequeue: true) else {
                 fatalError("History click event was not dispatched")
             }
-            NSApp.sendEvent(queued)
+            window.sendEvent(queued)
         }
         settle()
     }

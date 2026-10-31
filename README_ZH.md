@@ -314,7 +314,7 @@ Android、iOS 和 Windows 在设置底部显示版本号与构建号，macOS 在
 
 公共 Flutter Android 脚本显式传入的 `BUILD_NUMBER` 是**基础构建号**，分包仍追加对应 ABI 偏移；只有原生 Android 备选工程将显式值作为最终 versionCode。Release CI 中 Android 使用 `N + 工作流运行序号 + 2000`，macOS/Windows 使用 `N + 工作流运行序号`。覆盖升级 Android 时须保留签名，并选择高于手机已装 APK 的实际构建号（包括旧 Flutter 分包偏移）；默认值可能低于已装的 CI 或本地包。修改源码版本时同步更新**中英文 README**；源码版本和最新正式版在上方分别列出。
 
-在仓库根目录运行 `bash scripts/check.sh all` 可执行质量检查。macOS 上还需运行 `bash scripts/test_macos_core.sh`，验证搜索、单词查询与 socket 回归用例；它使用临时测试程序，不安装或启动应用。
+在仓库根目录运行 `bash scripts/check.sh all` 可执行质量检查。macOS 上还需运行 `bash scripts/test_macos_core.sh`，验证搜索、单词查询与 socket 回归用例；它使用临时测试程序和隔离的 AppKit 鼠标测试宿主，不安装或启动你的 Clipy 实例。
 
 可选运行 `CLIPY_MENU_BAR_LIVE_TESTS=1 bash scripts/test_macos_core.sh`，在单个内置屏幕、已有辅助功能权限的环境中创建临时溢出图标，验证原生菜单和弹窗能否打开；不会安装应用或移动现有图标。
 
