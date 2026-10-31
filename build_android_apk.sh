@@ -8,7 +8,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/build_common.sh
 source "${REPO_ROOT}/scripts/lib/build_common.sh"
 resolve_build_version
-ANDROID_DIR="${REPO_ROOT}/clipy_android"
+ANDROID_DIR="${REPO_ROOT}/clipy_flutter"
 DIST_DIR="${REPO_ROOT}/dist"
 
 APP_NAME="ClipyClone"

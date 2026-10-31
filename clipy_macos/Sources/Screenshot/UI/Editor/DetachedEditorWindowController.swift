@@ -23,7 +23,7 @@ class DetachedEditorWindowController: NSObject, NSWindowDelegate {
 
     private var window: NSWindow?
     private var overlayView: OverlayView?
-    private var topBar: EditorTopBarView?
+    private var topBar: EditorChromeView?
     private var addCaptureHandler: AddCaptureOverlayHandler?
     private var ocrController: OCRResultController?
     private var zoomObserverTokens: [NSObjectProtocol] = []
@@ -79,13 +79,13 @@ class DetachedEditorWindowController: NSObject, NSWindowDelegate {
         let screenFrame = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
-        let minW: CGFloat = 800
+        let minW: CGFloat = 1000
         let minH: CGFloat = 400
         let maxW = screenFrame.width * 0.9
         let maxH = screenFrame.height * 0.9
         // Add space for top bar (32), bottom toolbar (44), options row (40), right toolbar (46), padding
-        let chromeW: CGFloat = 46 + 60    // right toolbar + horizontal padding
-        let chromeH: CGFloat = 32 + 44 + 40 + 40  // top bar + bottom toolbar + options row + padding
+        let chromeW: CGFloat = EditorChromeView.inspectorWidth + 60
+        let chromeH: CGFloat = EditorChromeView.toolbarHeight + EditorChromeView.footerHeight + 60
         let winW = min(maxW, max(minW, imgSize.width + chromeW))
         let winH = min(maxH, max(minH, imgSize.height + chromeH))
 
@@ -93,15 +93,21 @@ class DetachedEditorWindowController: NSObject, NSWindowDelegate {
             contentRect: NSRect(x: screenFrame.midX - winW/2,
                                 y: screenFrame.midY - winH/2,
                                 width: winW, height: winH),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         // Timestamp suffix so multiple editor windows are distinguishable
         // in the Dock menu, Window menu, and Mission Control.
         let dateFmt = DateFormatter()
-        dateFmt.dateFormat = "HH:mm:ss"
+        dateFmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
         win.title = "macshot Editor — \(dateFmt.string(from: Date()))"
+        // V3 unified title bar: an empty unified toolbar gives the 52pt row with
+        // centred traffic lights; EditorChromeView draws the title and tools in it.
+        win.titleVisibility = .hidden
+        win.titlebarAppearsTransparent = true
+        win.toolbar = NSToolbar(identifier: "ClipyEditorTitlebar")
+        win.toolbarStyle = .unified
         win.minSize = NSSize(width: minW, height: minH)
         win.maxSize = NSSize(width: screenFrame.width, height: screenFrame.height)
         win.isReleasedWhenClosed = false
@@ -128,8 +134,9 @@ class DetachedEditorWindowController: NSObject, NSWindowDelegate {
         // The scroll view is inset from the top by the top bar height (32pt) so the
         // scrollbar and content don't go behind the top bar. Bottom/right toolbars
         // are handled via content insets since their sizes are dynamic.
-        let topBarHeight: CGFloat = 32
-        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: winW, height: winH - topBarHeight))
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: EditorChromeView.toolbarHeight,
+                                                    width: winW - EditorChromeView.inspectorWidth,
+                                                    height: winH - EditorChromeView.toolbarHeight - EditorChromeView.footerHeight))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
@@ -148,24 +155,25 @@ class DetachedEditorWindowController: NSObject, NSWindowDelegate {
         // Insets so user can scroll past document edges to see content behind toolbars:
         // bottom=80 (bottom toolbar + options row), right=46 (right toolbar)
         scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 84, right: 50)
+        scrollView.contentInsets = NSEdgeInsetsZero
         // Extend scrollbar tracks to window edges (negate content insets effect on scrollers)
-        scrollView.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: -84, right: -50)
+        scrollView.scrollerInsets = NSEdgeInsetsZero
 
         let clipView = CenteringClipView(frame: scrollView.contentView.frame)
-        clipView.drawsBackground = false
+        clipView.drawsBackground = true
+        clipView.backgroundColor = NSColor(white: 0.15, alpha: 1.0)
         scrollView.contentView = clipView
         scrollView.documentView = view
 
         // Container holds scroll view + toolbars (toolbars are siblings, not inside scroll view)
-        let container = NSView(frame: NSRect(origin: .zero, size: NSSize(width: winW, height: winH)))
+        let container = EditorChromeView(frame: NSRect(origin: .zero, size: NSSize(width: winW, height: winH)))
+        container.overlayView = view
         container.autoresizingMask = [.width, .height]
         container.addSubview(scrollView)
 
-        // Top bar — real NSView pinned to top of container
-        let topBar = EditorTopBarView(frame: NSRect(x: 0, y: winH - 32, width: winW, height: 32))
-        topBar.overlayView = view
-        container.addSubview(topBar)
+        // The chrome owns the title-bar row, inspector and footer.
+        let topBar = container
+        topBar.setWindowTitle(win.title)
         self.topBar = topBar
 
         // "Done" commits edits back to history. It's only revealed once the user
@@ -173,9 +181,11 @@ class DetachedEditorWindowController: NSObject, NSWindowDelegate {
         // no Done until you draw). Wire the action now; visibility is driven by
         // refreshDoneButtonVisibility() via the view's onContentChanged hook.
         topBar.onDone = { [weak self] in self?.commitToHistory() }
-        view.onContentChanged = { [weak self] in self?.refreshDoneButtonVisibility() }
-        if let scale = NSScreen.main?.backingScaleFactor,
-           let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+        view.onContentChanged = { [weak self] in
+            self?.refreshDoneButtonVisibility()
+            self?.topBar?.scheduleRefresh()
+        }
+        if let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
             topBar.updateSizeLabel(width: cg.width, height: cg.height)
         }
 
@@ -648,14 +658,8 @@ extension DetachedEditorWindowController: OverlayViewDelegate {
         view.addCaptureImage(image)
 
         // Update top bar size label
-        if let cg = view.screenshotImage?.cgImage(forProposedRect: nil, context: nil, hints: nil),
-           let container = window?.contentView {
-            for sub in container.subviews {
-                if let topBar = sub as? EditorTopBarView {
-                    topBar.updateSizeLabel(width: cg.width, height: cg.height)
-                    break
-                }
-            }
+        if let cg = view.screenshotImage?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            topBar?.updateSizeLabel(width: cg.width, height: cg.height)
         }
 
         window?.makeKeyAndOrderFront(nil)

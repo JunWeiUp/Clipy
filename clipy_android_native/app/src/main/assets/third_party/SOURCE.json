@@ -1,12 +1,13 @@
 {
-  "scope": "Directly copied relay/storage sources and relay/scanner direct dependencies; Android/Compose framework notices are separate.",
+  "scope": "SDK packages, adapted secure-storage sources and scanner dependencies; Android/Compose notices are separate.",
   "components": [
     {
       "component": "common-relay",
-      "version": "794a2396266ee6f26ab7406f6d6466732a269dbf",
+      "version": "0.1.3",
       "license": "MIT",
-      "source": "https://github.com/JunWeiUp/common-relay/tree/794a2396266ee6f26ab7406f6d6466732a269dbf",
-      "license_file": "common-relay-LICENSE.txt"
+      "source": "https://github.com/JunWeiUp/common-relay/tree/v0.1.3",
+      "license_file": "common-relay-LICENSE.txt",
+      "maven": "com.github.JunWeiUp.common-relay:java:v0.1.3"
     },
     {
       "component": "flutter_secure_storage",

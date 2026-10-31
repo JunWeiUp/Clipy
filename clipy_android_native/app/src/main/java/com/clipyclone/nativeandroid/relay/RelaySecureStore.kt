@@ -3,7 +3,7 @@ package com.clipyclone.nativeandroid.relay
 import android.content.Context
 import com.clipyclone.nativeandroid.relay.securestorage.NativeSecureStorageAdapter
 import com.clipyclone.nativeandroid.relay.securestorage.SecurePreferencesCallback
-import com.clipyclone.nativeandroid.relay.sdk.Crypto
+import io.github.junweiup.commonrelay.Crypto
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex

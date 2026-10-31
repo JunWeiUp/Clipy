@@ -9,20 +9,20 @@ The source is authoritative when a guide and implementation disagree.
 
 | Request area | Start here | Boundary to preserve | Focused check |
 | --- | --- | --- | --- |
-| Menu-bar click, classic menu, action routing | `clipy_macos/Sources/App/MenuController.swift` | Left click is the nonactivating panel; right click is `NSMenu`. Do not rebuild a tracked menu. | `MenuBarPanelRegression`, native menu smoke |
+| Menu-bar click and action routing | `clipy_macos/Sources/App/MenuController.swift` | Only left click opens the nonactivating panel; right click has no action. Folder hotkeys retain their snippet menus. | `MenuBarPanelRegression`, left/right click smoke |
 | Compact panel layout and search | `Sources/MenuBarPanel/` | `MenuBarPanelController` owns show/dismiss/focus; `Model` owns transient state; `View` renders it. Clear results and monitors on dismiss. | `MenuBarPanelRegression`, light/dark snapshots |
 | Hidden menu-bar icons | `Sources/MenuBarOverflow/` | AX scan, image capture and AXPress have separate phases. Stale identity or an unconfirmed press must not trigger a guessed click. | `MenuBarOverflowRegression`, opt-in live tests |
 | Clipboard and history | `Sources/Clipboard/`, `Sources/History/` | `ClipboardManager` orchestrates; repositories own SQL; media paths live in `HistoryMediaStore`. Search pages and cancellations precede UI display. | search/history regressions |
 | Snippets and hotkeys | `Sources/Snippets/`, `App/HotKeyManager.swift` | Persist snippets through `SnippetManager`; unregister keys before reuse. | core regressions, keyboard check |
 | Screenshot, pin, recording | `Sources/Screenshot/`, `App/ScreenshotImageProcessor.swift` | `ScreenshotSessionCoordinator` is the integration point; capture/overlay/editor own their temporary images and monitors. | screenshot flow and settled footprint |
-| Notifications | `Sources/Notifications/`, `UI/NotificationView.swift` | Repository persists; manager routes; view model pages and clears data on close. | notification UI and sync checks |
-| Sync | `Sources/Sync/`, `clipy_android_native/.../nativeandroid/sync/`, `clipy_android/lib/sync/` | Wire changes require native Android, macOS and remaining Flutter peers plus `PROTOCOL.md`. Persist remote history before ACK. | native/Flutter socket and protocol tests |
+| Notifications | `Sources/Notifications/`, `UI/NotificationView.swift`, `App/MainWindow.swift` | Repository persists; manager routes; view model pages and clears data on close. | notification UI and sync checks |
+| Sync | `Sources/Sync/`, `clipy_android_native/.../nativeandroid/sync/`, `clipy_flutter/lib/sync/` | Wire changes require native Android, macOS and remaining Flutter peers plus `PROTOCOL.md`. Persist remote history before ACK. | native/Flutter socket and protocol tests |
 | Android startup and background work | `clipy_android_native/app/src/main/java/com/clipyclone/clipy_android/`, `nativeandroid/sync/` | Application-owned native managers; no Flutter engine. Preserve component names, FGS manifest types, identities and stored preferences. | native unit/instrumentation tests, device checks |
 | Android screens | `clipy_android_native/.../nativeandroid/ui/`, `MainActivity.kt`, view models | Match Flutter reference behavior/layout; keep route drafts, hide inactive modals/polling; repositories own persistence. Follow `ANDROID_DESIGN.md` and parity checklist. | native build, light/dark/font-scale screenshots and relevant flows |
 | Android relay and group membership | `clipy_android_native/.../nativeandroid/relay/` | Reuse Java SDK, verified membership, original secure-store aliases and journal records. Tunnel bytes through existing v3 sessions; never bypass durable ACK/file handling. | SDK cross-language vectors, secure-store/journal fixtures, opt-in isolated live server test |
 | Android build/signing | `build_android_apk.sh` (Flutter release), `build_android_native_apk.sh` (native alternative), `scripts/lib/build_common.sh` | Production uses original ID/signer; preview stays separate. Explicit BUILD_NUMBER is actual versionCode, default source +2000. Never uninstall to bypass mismatch. | metadata tests, signed artifact identity/version/ABI/license checks |
-| Windows desktop system integration | `clipy_android/windows/runner/`, `lib/clipboard_manager.dart` | C++ owns clipboard, screenshot selection, tray and system paths; Dart owns durable history and sync. | Windows CI build, ZIP extraction and real desktop screenshot smoke |
-| iOS app integration | `clipy_android/ios/Runner/`, `lib/app/bootstrap.dart`, `lib/storage_paths.dart` | User-initiated paste only; foreground sync lifecycle; no Android listener calls. | unsigned iOS build, simulator launch and device permission check |
+| Windows desktop system integration | `clipy_flutter/windows/runner/`, `lib/clipboard_manager.dart` | C++ owns clipboard, screenshot selection, tray and system paths; Dart owns durable history and sync. | Windows CI build, ZIP extraction and real desktop screenshot smoke |
+| iOS app integration | `clipy_flutter/ios/Runner/`, `lib/app/bootstrap.dart`, `lib/storage_paths.dart` | User-initiated paste only; foreground sync lifecycle; no Android listener calls. | unsigned iOS build, simulator launch and device permission check |
 | iOS direct share / large files | `ios/ShareExtension/`, `ios/Shared/`, `lib/features/transfers/`, both file-transfer receivers | Share sheet sends directly with explicit peer choice; 1 GiB/file, bounded buffers and cancellable sockets; preserve same-group signing. | `scripts/test_ios_share_transfer.py`, Flutter flow-control tests, share-sheet send smoke, signed-device build |
 
 `Sources/` in macOS rows means `clipy_macos/Sources/`. `build_macos_app.sh`
@@ -62,7 +62,7 @@ Android: ClipyApplication → native managers/repositories → lifecycle-aware C
   off focus. `MenuController` creates it on first use; closed-menu data callbacks
   must not initialize it. `MenuBarOverflowManager` keeps a metadata snapshot while idle;
   its periodic AX refresh and image capture belong to a visible panel/menu only.
-- Android releases use Flutter (`clipy_android`); the native port in
+- Android releases use Flutter (`clipy_flutter`); the native port in
   `clipy_android_native` is a kept alternative built by
   `build_android_native_apk.sh` and is not released. Reuse existing database/preference
   names and secure-storage aliases; corrupt credentials must remain intact and

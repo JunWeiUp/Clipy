@@ -1,7 +1,7 @@
 package com.clipyclone.nativeandroid.relay
 
 import android.content.Context
-import com.clipyclone.nativeandroid.relay.sdk.RelayGroups
+import io.github.junweiup.commonrelay.RelayGroups
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.json.JSONArray

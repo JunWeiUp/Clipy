@@ -159,6 +159,60 @@ final class NotificationRepository {
         }
     }
 
+    struct AppSummary: Equatable {
+        let packageName: String
+        let appName: String
+        let count: Int
+    }
+
+    /// Per-app totals for the notification window sidebar, most recent app first.
+    func fetchAppSummaries() -> [AppSummary] {
+        queue.sync {
+            guard let db else { return [] }
+            let sql = """
+            SELECT package_name, app_name, COUNT(*) FROM phone_notifications
+            GROUP BY package_name
+            ORDER BY MAX(post_time) DESC
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            var apps: [AppSummary] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let pkg = optionalString(stmt, 0), let name = optionalString(stmt, 1) {
+                    apps.append(AppSummary(packageName: pkg, appName: name, count: Int(sqlite3_column_int(stmt, 2))))
+                }
+            }
+            return apps
+        }
+    }
+
+    /// Paged rows of one app, newest first (sidebar app filter).
+    func fetch(packageName: String, offset: Int, limit: Int) -> [NotificationManager.NotificationEntry] {
+        queue.sync {
+            guard let db, limit > 0, offset >= 0 else { return [] }
+            let sql = """
+            SELECT id, notification_key, package_name, app_name, title, subtitle, body,
+                   post_time, group_key, is_clearable, extras_json
+            FROM phone_notifications
+            WHERE package_name = ?1
+            ORDER BY post_time DESC
+            LIMIT ?2 OFFSET ?3
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bindText(stmt, 1, packageName)
+            sqlite3_bind_int(stmt, 2, Int32(limit))
+            sqlite3_bind_int(stmt, 3, Int32(offset))
+            var entries: [NotificationManager.NotificationEntry] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let entry = entryFromStatement(stmt) { entries.append(entry) }
+            }
+            return entries
+        }
+    }
+
     @discardableResult
     func upsert(_ entry: NotificationManager.NotificationEntry) -> UpsertResult {
         queue.sync { upsertLocked(entry) }

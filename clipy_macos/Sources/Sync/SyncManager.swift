@@ -91,6 +91,7 @@ final class SyncManager: NSObject {
         var historyReplayRows: [Int64] = []
         var buffer = Data()
         var lastPong = Date()
+        var screenAuthorization: ScreenControlChallenge?
         let isClient: Bool
     }
     var sessions: [String: Session] = [:]
@@ -165,6 +166,15 @@ final class SyncManager: NSObject {
                 defaults.set(1, forKey: "lanDefaultKeyVersion")
             }
             PendingSyncRepository.shared.cleanOld(ttl: Self.pendingQueueTTL)
+            DispatchQueue.main.async {
+                ScreenControlManager.shared.start()
+                ScreenControlManager.shared.onChange = { [weak self] in
+                    self?.syncQueue.async { [weak self] in
+                        guard let self else { return }
+                        for id in self.sessions.keys { self.sendScreenState(to: id) }
+                    }
+                }
+            }
             self.startListening()
             self.startRelay()
             self.startPingTimer()
@@ -184,6 +194,7 @@ final class SyncManager: NSObject {
             guard let self else { return }
             self.relayClient?.stop(); self.relayClient = nil
             self.relayConnecting.removeAll()
+            DispatchQueue.main.async { ScreenControlManager.shared.stop() }
             self.stopPathMonitoring()
             self.pingTimer?.cancel(); self.pingTimer = nil
             self.pendingDiscoveryWork?.cancel(); self.pendingDiscoveryWork = nil
@@ -358,6 +369,10 @@ final class SyncManager: NSObject {
         }
         if env.type != SyncType.ping && env.type != SyncType.pong { diagnostics.noteReceived(peerId: remotePeerId) }
         switch env.type {
+        case "screen.query":
+            sendScreenState(to: remotePeerId)
+        case "screen.command":
+            handleScreenCommand(env, from: remotePeerId)
         case SyncType.ping:
             let pong = SyncEnvelope.make(type: SyncType.pong, peerId: peerId)
             if let data = encodeFrame(pong), let fd = sessions[remotePeerId]?.fd, !sendSessionFrame(fd, data) { appLog("pong send failed to \(remotePeerId.prefix(8))", level: .warning) }

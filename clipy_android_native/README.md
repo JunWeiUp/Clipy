@@ -1,5 +1,7 @@
 # Clipy native Android migration
 
+Android requires Android 8.0 (API 26) or newer.
+
 Kotlin + Jetpack Compose implementation of the existing Android app. The final
 contract is unchanged functionality, UI, interaction and upgrade data; this is
 not a redesign. The original Flutter Android app remains the visual reference.
@@ -35,7 +37,7 @@ Do not run fixture seeding against a production application ID.
 The reference UI uses the actual Flutter widgets in a separate `.reference` app:
 
 ```sh
-cd clipy_android
+cd clipy_flutter
 ORG_GRADLE_PROJECT_nativeParityReference=true flutter build apk --debug --no-pub -t tool/native_ui_reference.dart
 ```
 

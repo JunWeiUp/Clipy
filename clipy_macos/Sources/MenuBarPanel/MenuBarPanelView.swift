@@ -5,7 +5,6 @@ struct MenuBarPanelView: View {
     @ObservedObject var model: MenuBarPanelModel
     @ObservedObject var overflow: MenuBarOverflowManager
     @ObservedObject private var keepAwake = KeepAwakeManager.shared
-    @ObservedObject private var notificationPopups = NotificationPopupPreference.shared
     @EnvironmentObject private var language: AppLanguageObserver
     @State private var showingLastIcon = false
     @State private var refreshingDevices = false
@@ -51,7 +50,7 @@ struct MenuBarPanelView: View {
             search.frame(maxWidth: .infinity)
             iconButton(model.pinned ? .panelUnpin : .panelPin, symbol: model.pinned ? "pin.fill" : "pin") { model.pinned.toggle() }
                 .foregroundStyle(model.pinned ? AppColor.accent : Color.primary)
-            iconButton(.preferences, symbol: "gearshape") { model.navigate(model.page == .settings ? .home : .settings) }
+            iconButton(.preferences, symbol: "gearshape") { model.onAction?(.preferences) }
         }
     }
     private var detailHeader: some View {
@@ -63,12 +62,12 @@ struct MenuBarPanelView: View {
             Text(pageTitle).font(AppFont.section).lineLimit(1)
             Spacer(minLength: 0)
             iconButton(model.pinned ? .panelUnpin : .panelPin, symbol: model.pinned ? "pin.fill" : "pin") { model.pinned.toggle() }
-            iconButton(.preferences, symbol: "gearshape") { model.navigate(model.page == .settings ? .home : .settings) }
+            iconButton(.preferences, symbol: "gearshape") { model.onAction?(.preferences) }
         }.frame(height: 34)
     }
     private var search: some View {
         HStack(spacing: 9) {
-            Image(systemName: "magnifyingglass").font(.system(size: 17))
+            Image(systemName: "magnifyingglass").font(.system(size: 15))
             MenuBarPanelSearchField(model: model)
             if model.isSearching { iconButton(.clear, symbol: "xmark.circle.fill") { model.query = "" } }
             else { Text("⌘ F").font(AppFont.secondary).foregroundStyle(.secondary).padding(4).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 4)) }
@@ -170,14 +169,12 @@ struct MenuBarPanelView: View {
             }
         case .capture: captureContent
         case .notifications: notificationsContent
-        case .settings: settingsContent
         }
     }
     private var pageTitle: String {
         switch model.page {
         case .capture: return L10n.t(.panelCapture)
         case .notifications: return L10n.t(.notificationSync)
-        case .settings: return L10n.t(.preferences)
         case .home: return model.tab.title
         }
     }
@@ -247,7 +244,7 @@ struct MenuBarPanelView: View {
     private func snippetRow(_ snippet: Snippet) -> some View {
         Button { model.onSnippet?(snippet.id) } label: {
             HStack(spacing: 11) {
-                Image(systemName: "text.alignleft").font(.system(size: 19)).foregroundStyle(.secondary)
+                Image(systemName: "text.alignleft").font(.system(size: 16, weight: .light)).foregroundStyle(.tertiary)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(snippet.title).lineLimit(1)
                     Text(snippet.content).font(AppFont.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -323,7 +320,7 @@ struct MenuBarPanelView: View {
                         LazyVStack(spacing: 0) {
                             ForEach(model.devices, id: \.peerId) { device in
                                 HStack(spacing: 10) {
-                                    Image(systemName: "desktopcomputer").font(.system(size: 21)).foregroundStyle(.secondary)
+                                    Image(systemName: "display").font(.system(size: 18, weight: .light)).foregroundStyle(.tertiary).frame(width: 24)
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(device.displayName).lineLimit(2)
                                         Text(device.connectionDescription)
@@ -376,20 +373,6 @@ struct MenuBarPanelView: View {
             actionLink(.panelAllNotifications) { model.onAction?(.notifications) }
         }
     }
-    private var settingsContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Toggle(L10n.t(.overflowEnabled), isOn: Binding(get: { overflow.enabled }, set: { overflow.setEnabled($0) }))
-                Text(L10n.t(.overflowHint)).font(AppFont.caption).foregroundStyle(.secondary)
-                Divider()
-                Toggle(L10n.t(.panelPin), isOn: $model.pinned)
-                Text(L10n.t(.panelPinHint)).font(AppFont.caption).foregroundStyle(.secondary)
-                Divider()
-                actionLink(.overflowGrant) { model.onAction?(.permission) }
-                actionLink(.panelSettingsHint) { model.onAction?(.preferences) }
-            }.toggleStyle(.switch).padding(.vertical, 10)
-        }
-    }
     private var footer: some View {
         HStack(spacing: 10) {
             Button { model.useTool(.keepAwake) } label: {
@@ -422,17 +405,6 @@ struct MenuBarPanelView: View {
             Text("v" + AppVersion.displayString).font(.system(size: 10)).foregroundStyle(.secondary)
                 .lineLimit(1).minimumScaleFactor(0.8)
                 .accessibilityLabel(L10n.t(.settingsVersion) + " " + AppVersion.displayString)
-            Menu {
-                Toggle(L10n.t(.notificationPopups), isOn: Binding(
-                    get: { notificationPopups.enabled }, set: { notificationPopups.setEnabled($0) }))
-                Divider()
-                Button(L10n.t(.preferences)) { model.onAction?(.preferences) }
-                Button(L10n.t(.overflowRefresh)) { overflow.refreshForMenu() }
-                Divider()
-                Button(L10n.t(.quit)) { model.onAction?(.quit) }
-            } label: { Image(systemName: "ellipsis").frame(width: 20, height: 28) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help(L10n.t(.panelMore)).accessibilityLabel(L10n.t(.panelMore))
         }
     }
     private func iconButton(_ key: L10nKey, symbol: String, action: @escaping () -> Void) -> some View {
@@ -487,7 +459,7 @@ private struct MenuBarPanelHistoryRow: View {
         case .image: return "photo"
         case .files: return "doc"
         case .html: return "chevron.left.forwardslash.chevron.right"
-        case .rtf: return "doc.richtext"
+        case .rtf: return "doc.text"
         case .pdf: return "doc.text"
         case .text: return entry.isPinned ? "pin" : "text.alignleft"
         }
@@ -497,7 +469,7 @@ private struct MenuBarPanelHistoryRow: View {
             Button(action: use) {
                 HStack(spacing: 10) {
                     if let image = thumbnail.image { Image(nsImage: image).resizable().scaledToFit().frame(width: 42, height: 30) }
-                    else { Image(systemName: symbol).font(.system(size: 20)).foregroundStyle(.secondary).frame(width: 24) }
+                    else { Image(systemName: symbol).font(.system(size: 16, weight: .light)).foregroundStyle(.tertiary).frame(width: 24) }
                     Text(entry.listDisplayTitle).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
                     VStack(alignment: .trailing, spacing: 3) {
                         if let source = entry.sourceApp { Text(source).lineLimit(1) }

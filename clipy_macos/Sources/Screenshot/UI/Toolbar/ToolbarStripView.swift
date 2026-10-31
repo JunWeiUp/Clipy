@@ -6,10 +6,11 @@ class ToolbarStripView: NSView {
 
     enum Orientation { case horizontal, vertical }
 
-    let orientation: Orientation
+    var orientation: Orientation { didSet { layoutButtons() } }
     private(set) var buttonViews: [ToolbarButtonView] = []
     /// Set to true in editor mode so gap clicks pass through to the image beneath.
     var passesThrough = false
+    var usesWindowAppearance = false
     /// Suppress hover visuals/callbacks while a toolbar-initiated drag is moving
     /// the whole toolbar panel under the cursor.
     var suppressesHover = false {
@@ -65,6 +66,10 @@ class ToolbarStripView: NSView {
             bv.tintColor = data.tintColor
             bv.swatchColor = data.bgColor
             bv.hasContextMenu = data.hasContextMenu
+            bv.label = data.label
+            bv.style = data.style
+            bv.groupStart = data.groupStart
+            bv.fillColor = data.fillColor
             bv.onClick = { [weak self] action in self?.onClick?(action) }
             bv.onRightClick = { [weak self] action, view in self?.onRightClick?(action, view) }
             bv.onHover = { [weak self] action, hovered in self?.onHover?(action, hovered) }
@@ -98,13 +103,42 @@ class ToolbarStripView: NSView {
         for (i, data) in buttons.enumerated() where i < buttonViews.count {
             buttonViews[i].configure(with: data)
         }
+        layoutButtons()
     }
+
+    /// Bar chrome: `.standard` icon strip, or the V3 labelled capture / recording bars.
+    enum BarStyle { case standard, captureBar, recordBar }
+    var barStyle: BarStyle = .standard { didSet { if oldValue != barStyle { layoutButtons(); needsDisplay = true } } }
+    private var separatorXs: [CGFloat] = []
 
     private func layoutButtons() {
         let btnSize = ToolbarButtonView.size
         let count = CGFloat(buttonViews.count)
+        separatorXs = []
         guard count > 0 else {
             frame.size = .zero
+            return
+        }
+
+        let labelled = barStyle != .standard || buttonViews.contains { $0.style != .icon || $0.groupStart }
+        if orientation == .horizontal, labelled {
+            let pad: CGFloat = barStyle == .captureBar ? 7 : (barStyle == .recordBar ? 6 : padding)
+            let gap: CGFloat = barStyle == .captureBar ? 6 : (barStyle == .recordBar ? 4 : spacing)
+            let sizes = buttonViews.map { $0.preferredSize }
+            let h = (sizes.map(\.height).max() ?? btnSize) + pad * 2
+            var x = pad
+            for (i, bv) in buttonViews.enumerated() {
+                if bv.groupStart && i > 0 {
+                    // ".s" / ".sep": 4pt margins around a hairline, plus the regular gap.
+                    let sepX = x + 4
+                    separatorXs.append(sepX)
+                    x = sepX + 0.5 + 4 + gap
+                }
+                bv.frame = NSRect(x: x, y: (h - sizes[i].height) / 2, width: sizes[i].width, height: sizes[i].height)
+                x += sizes[i].width + gap
+            }
+            frame.size = NSSize(width: x - gap + pad, height: h)
+            needsDisplay = true
             return
         }
 
@@ -129,8 +163,26 @@ class ToolbarStripView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        ToolbarLayout.bgColor.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: ToolbarLayout.cornerRadius, yRadius: ToolbarLayout.cornerRadius).fill()
+        // The V3 editor hosts the strip inside its title-bar row, which draws its own material.
+        if usesWindowAppearance { return }
+        if barStyle != .standard {
+            // mac-capture.html .capbar / mac-recording.html .ctl: dark glass, hairline edge.
+            let radius: CGFloat = barStyle == .captureBar ? 16 : 14
+            let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.25, dy: 0.25), xRadius: radius, yRadius: radius)
+            NSColor(srgbRed: 30 / 255, green: 31 / 255, blue: 36 / 255, alpha: 0.9).setFill()
+            path.fill()
+            NSColor.white.withAlphaComponent(0.16).setStroke()
+            path.lineWidth = 0.5
+            path.stroke()
+        } else {
+            ToolbarLayout.bgColor.setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12).fill()
+        }
+        let sepH: CGFloat = barStyle == .captureBar ? 34 : (barStyle == .recordBar ? 24 : 20)
+        NSColor.white.withAlphaComponent(0.18).setFill()
+        for x in separatorXs {
+            NSRect(x: x, y: (bounds.height - sepH) / 2, width: 0.5, height: sepH).fill()
+        }
     }
 
     // Consume clicks on gaps between buttons so they don't fall through to OverlayView.

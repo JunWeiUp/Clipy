@@ -7,7 +7,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 val sourceVersion = Regex("(?m)^version: ([0-9.]+)\\+([0-9]+)$")
-    .find(rootProject.file("../clipy_android/pubspec.yaml").readText())
+    .find(rootProject.file("../clipy_flutter/pubspec.yaml").readText())
     ?: error("Missing source version")
 val nativeProduction = providers.gradleProperty("nativeProduction").orNull == "true"
 val nativeAbi = providers.gradleProperty("nativeAbi").orNull
@@ -20,7 +20,7 @@ val buildNumber = (System.getenv("BUILD_NUMBER")?.takeIf { it.isNotBlank() } ?: 
     ?: error("BUILD_NUMBER must be an integer")
 require(Regex("[0-9]+\\.[0-9]+\\.[0-9]+").matches(appVersion)) { "APP_VERSION must be X.Y.Z" }
 require(buildNumber in 1..2100000000L) { "BUILD_NUMBER is out of range" }
-val originalAndroidRoot = rootProject.file("../clipy_android/android")
+val originalAndroidRoot = rootProject.file("../clipy_flutter/android")
 val releaseProperties = Properties().apply {
     val source = originalAndroidRoot.resolve("key.properties")
     if (source.exists()) source.inputStream().use { load(it) }
@@ -41,7 +41,7 @@ android {
     defaultConfig {
         // Isolated preview: never replace the shipping app before parity gates pass.
         applicationId = if (nativeProduction) "com.clipyclone.clipy_android" else "com.clipyclone.clipy_android.nativepreview"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 36
         versionCode = buildNumber.toInt()
         versionName = appVersion + if (nativeProduction) "" else "-native-preview"
@@ -83,6 +83,7 @@ gradle.taskGraph.whenReady {
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 
 dependencies {
+    implementation("com.github.JunWeiUp.common-relay:java:v0.1.3")
     implementation("com.google.zxing:core:3.5.3")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")

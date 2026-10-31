@@ -7,8 +7,8 @@ import ImageIO
 enum ExportError: Error { case invalidImage, invalidContext, encodingFailed }
 
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-let sourceURL = root.appendingPathComponent("Clipy/Resources/AppIcon.png")
-let outputURL = root.appendingPathComponent("clipy_android/windows/runner/resources/app_icon.ico")
+let sourceURL = root.appendingPathComponent("clipy_macos/Resources/AppIcon.png")
+let outputURL = root.appendingPathComponent("clipy_flutter/windows/runner/resources/app_icon.ico")
 guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
       let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
     throw ExportError.invalidImage

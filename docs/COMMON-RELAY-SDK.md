@@ -1,6 +1,14 @@
-# Common Relay SDK 快照升级
+# Common Relay SDK 接入
 
-当前依赖以 `JunWeiUp/common-relay` 提交 `ff5ed1f29c7af1734016ab77c5a85c61acdbecd0` 为基线，包含本地自动入组与加密邀请短链接扩展。各语言 `vendor/common-relay/<language>/SOURCE.json` 保存源提交及逐文件 SHA-256；构建不依赖相邻仓库。
+Flutter 与 macOS 直接依赖官方 `JunWeiUp/common-relay` 的 `v0.1.3` SDK，不再复制 SDK 源码。两端锁文件记录提交 `00a9de180ce0986231a5ccc75b773164f64b5133`，构建不依赖相邻仓库。
+
+- Dart：`clipy_flutter/pubspec.yaml` 使用 Git 依赖（`path: sdk/dart`），`pubspec.lock` 锁定解析结果。
+- Swift：`packages/relay-swift/Package.swift` 固定 `0.1.3`；本地薄封装只导出静态链接产物，供现有 swiftc 构建使用；`Package.resolved` 锁定 SDK 与 Sodium。`scripts/common_relay_swift.sh` 供构建与核心测试共用。
+- 两套 Android 工程统一最低 API 26（Android 8.0）。原生备选版使用固定 JitPack 依赖 `com.github.JunWeiUp.common-relay:java:v0.1.3`，已删除应用内 `relay/sdk/` 实现和本地候选 AAR。JitPack 仓库只负责该 SDK 的 Maven group；来源与许可保留在 APK `assets/third_party/`。
+
+v0.1.3 修复 Java/Swift/Dart/Python 的组变更通知，以及签名载荷规范校验；Java 另修复 API 26 集合、JNA size_t、旧 journal 路径与流关闭行为。Kotlin 复用 Java。各端依赖都固定版本，更新时同时核对锁文件，不能依赖个人机器的相邻源码目录。
+
+官方发布版已经包含自动入组、加密邀请短链接和严格签名载荷校验。升级时修改依赖版本、更新锁文件，运行 Flutter 与 macOS 核心回归；不要直接跟随 main，也不在本仓库修改包缓存。分发方式见[官方 SDK 指南](https://github.com/JunWeiUp/common-relay/blob/v0.1.3/docs/REGISTRY.md)。
 
 所有接入端配置应用私有的持久化日志，重连复用日志；SDK 在启动和连接存续期间每小时分批清理，去重/终态保留7天。日志不含令牌、私钥或消息明文。Python原有状态数据库自动迁移，历史无有效期消息保留7天但不自动重发。
 
@@ -32,7 +40,7 @@ Mac 与 Flutter 的公网中继设置新增“管理公网设备组”：完整�
 
 首次初始化需要新版 common-relay 的 `group-bootstrap` 短时邀请；旧组通过可信邀请升级成员签名身份，保留已有传输密钥和令牌。旧服务器会拒绝新管理接口，不应把接口不存在解释为空设备组。完整协议与运维说明位于 common-relay 的 `docs/DEVICE-GROUPS.md`。
 
-本轮 SDK 快照保留原提交来源，并以 SOURCE.json 的 `working_tree_patch` 和逐文件 SHA-256 标注未提交扩展。组管理私有草稿/邀请在 Keychain 或 FlutterSecureStorage 中；页面关闭后可恢复，设备列表显式刷新，不新增后台轮询。连接前及带版本的 `group.changed` 通知后验证连续签名成员记录，更新可信公钥表并只重建中继连接。
+已发布 SDK 的来源由依赖清单与锁文件记录。组管理私有草稿/邀请在 Keychain 或 FlutterSecureStorage 中；页面关闭后可恢复，设备列表显式刷新，不新增后台轮询。连接前及带版本的 `group.changed` 通知后验证连续签名成员记录，更新可信公钥表并只重建中继连接。
 
 
 ## Relay invitation modes and short links

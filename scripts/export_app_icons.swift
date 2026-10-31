@@ -9,8 +9,8 @@ enum IconError: Error { case invalid(String) }
 
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
 let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-let android = "clipy_android/android/app/src/main/res"
-let ios = "clipy_android/ios/Runner/Assets.xcassets/AppIcon.appiconset"
+let android = "clipy_flutter/android/app/src/main/res"
+let ios = "clipy_flutter/ios/Runner/Assets.xcassets/AppIcon.appiconset"
 
 func canvas(_ width: Int, _ height: Int? = nil, opaque: Bool = false) throws -> CGContext {
     let alpha = opaque ? CGImageAlphaInfo.noneSkipLast : .premultipliedLast
@@ -177,7 +177,7 @@ func export() throws {
         throw IconError.invalid("Artwork changed: review color key, framing and safe area before exporting")
     }
     let tile = try roundedTile(master)
-    try save(tile, "Clipy/Resources/AppIcon.png")
+    try save(tile, "clipy_macos/Resources/AppIcon.png")
     try save(try resized(tile, to: 512), "Logo.png")
     try save(try resized(tile, to: 192), "assets/logo/logo_placeholder.png")
     for (density, size) in [("mdpi", 48), ("hdpi", 72), ("xhdpi", 96), ("xxhdpi", 144), ("xxxhdpi", 192)] {

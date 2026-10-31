@@ -16,6 +16,7 @@ final class FloatingThumbnailPresenter {
 
     /// Active thumbnails, newest last. Bottom-corner thumbnails stack upward.
     private var controllers: [FloatingThumbnailController] = []
+    private var ocrWindows: [OCRResultController] = []
 
     /// Hard cap so memory stays bounded even when auto-dismiss is disabled
     /// (`thumbnailAutoDismiss = 0`). Each thumbnail holds a full-display NSImage
@@ -46,26 +47,22 @@ final class FloatingThumbnailPresenter {
         let screen = NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
         let screenFrame = screen.visibleFrame
         let padding: CGFloat = 16
-        let gap: CGFloat = 8
         let corner = FloatingThumbnailCorner.bottomRight
         let thumbSize = FloatingThumbnailController.currentThumbnailSize()
 
         // X anchored to the right edge.
         let xOrigin = screenFrame.maxX - thumbSize.width - padding
 
-        // Bottom corner: first thumbnail sits at the bottom; later ones stack up.
-        var yOrigin = screenFrame.minY + padding
-        if let top = controllers.last {
-            yOrigin = top.windowFrame.maxY + gap
-        }
+        // Newest capture occupies the bottom slot; earlier captures move up.
+        let yOrigin = screenFrame.minY + padding
 
         let controller = FloatingThumbnailController(image: image)
         // `annotationData.rawImage` is a full-resolution capture (~30-50MB)
         // that nothing on the thumbnail consumes; retaining it pinned hundreds
         // of MB when stacking/auto-dismiss is off.
         controller.captureScreenRect = captureScreenRect
-        controller.onDismiss = { [weak self] in
-            guard let self = self else { return }
+        controller.onDismiss = { [weak self, weak controller] in
+            guard let self = self, let controller = controller else { return }
             self.controllers.removeAll { $0 === controller }
             self.reflow()
         }
@@ -94,8 +91,28 @@ final class FloatingThumbnailPresenter {
             NSApp.activate(ignoringOtherApps: true)
             DetachedEditorWindowController.open(image: img, fromCapture: false)
         }
+        controller.onOCR = { [weak self, weak controller] in
+            guard let self, let image = controller?.image,
+                  let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                VisionOCR.performTextAndQRCodeRecognition(cgImage: cgImage) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        if self.ocrWindows.count >= 8 { self.ocrWindows.first?.close() }
+                        let window = OCRResultController(text: result.text, image: image, qrCodes: result.qrCodes)
+                        window.onClose = { [weak self, weak window] in
+                            guard let window else { return }
+                            self?.ocrWindows.removeAll { $0 === window }
+                        }
+                        self.ocrWindows.append(window)
+                        window.show()
+                    }
+                }
+            }
+        }
         controller.show(at: NSPoint(x: xOrigin, y: yOrigin), corner: corner)
         controllers.append(controller)
+        reflow()
         // Bounded stack: if auto-dismiss was disabled and the user keeps
         // capturing, drop the oldest (first = bottommost = oldest) so memory
         // never grows past maxStackedThumbnails full-display images. The
@@ -125,7 +142,8 @@ final class FloatingThumbnailPresenter {
         let padding: CGFloat = 16
         let gap: CGFloat = 8
         var y = screenFrame.minY + padding
-        for controller in controllers {
+        for (index, controller) in controllers.reversed().enumerated() {
+            controller.setCompact(index != 0)
             let frame = controller.windowFrame
             let newOrigin = NSPoint(x: frame.minX, y: y)
             controller.moveTo(origin: newOrigin)

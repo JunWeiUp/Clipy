@@ -15,7 +15,7 @@ def signature(sql):
                       if not name.startswith("sqlite_"))
 
 def main():
-    dart = (ROOT / "clipy_android/lib/database/app_database.dart").read_text()
+    dart = (ROOT / "clipy_flutter/lib/database/app_database.dart").read_text()
     version = re.search(r"schemaVersion = (\d+)", dart)
     if version is None or version[1] != "6":
         raise SystemExit("Review native Android migrations for the new Dart schema version")

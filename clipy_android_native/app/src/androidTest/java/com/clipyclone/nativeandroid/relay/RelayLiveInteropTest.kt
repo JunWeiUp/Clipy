@@ -2,8 +2,8 @@ package com.clipyclone.nativeandroid.relay
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.clipyclone.nativeandroid.relay.sdk.Crypto
-import com.clipyclone.nativeandroid.relay.sdk.RelayGroups
+import io.github.junweiup.commonrelay.Crypto
+import io.github.junweiup.commonrelay.RelayGroups
 import com.clipyclone.nativeandroid.sync.NativeLanTransport
 import com.clipyclone.nativeandroid.sync.SyncCrypto
 import com.clipyclone.nativeandroid.sync.SyncEnvelope

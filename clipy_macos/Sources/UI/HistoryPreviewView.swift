@@ -2,80 +2,29 @@ import SwiftUI
 import AppKit
 import PDFKit
 
+/// Content card of the history window's preview column. The type badge,
+/// facts and actions around it live in `SearchView`.
 struct HistoryPreviewView: View {
     let entry: HistoryEntry?
+    /// Current (non-regex) search text, highlighted in the preview.
+    var query: String = ""
+    var onRevealInFinder: (HistoryEntry) -> Void = { _ in }
+
+    static let contentInsets = EdgeInsets(top: 22, leading: 26, bottom: 22, trailing: 26)
 
     var body: some View {
         Group {
             if let entry {
-                previewContent(for: entry)
+                previewBody(for: entry)
             } else {
                 EmptyStateView(message: L10n.t(.selectHistoryToPreview), symbol: "doc.text.magnifyingglass")
             }
         }
-        .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppColor.groupedBackground)
+        .frame(minWidth: 240, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    @ViewBuilder
-    private func previewContent(for entry: HistoryEntry) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            previewHeader(for: entry)
-            Divider()
-            previewBody(for: entry)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
-    /// Secondary header fact: host for a single URL, otherwise character
-    /// count for text and item count for files.
-    private func headerDetail(for entry: HistoryEntry) -> String? {
-        switch entry.item {
-        case .text:
-            guard let text = entry.resolvedText else { return nil }
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.contains(where: \.isWhitespace),
-               let url = URL(string: trimmed),
-               let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
-               let host = url.host
-            {
-                return host
-            }
-            return L10n.format(.historyCharacterCount, text.count)
-        case .files(let urls):
-            return L10n.format(.historyFileCount, urls.count)
-        default:
-            return nil
-        }
-    }
-
-    private func previewHeader(for entry: HistoryEntry) -> some View {
-        VStack(alignment: .leading, spacing: AppSpacing.xs) {
-            HStack(spacing: AppSpacing.xs) {
-                Text(typeLabel(for: entry.item)).font(AppFont.section)
-                if entry.isPinned {
-                    Image(systemName: "pin.fill")
-                        .foregroundStyle(.secondary)
-                        .help(L10n.t(.pinToTop))
-                }
-                Spacer()
-                Text(RelativeTimeFormatter.string(from: entry.date))
-                    .font(AppFont.caption)
-                    .foregroundStyle(.secondary)
-            }
-            HStack(spacing: AppSpacing.xs) {
-                if let source = entry.sourceApp {
-                    Text(source).lineLimit(1)
-                }
-                Spacer()
-                if let detail = headerDetail(for: entry) {
-                    Text(detail).lineLimit(1)
-                }
-            }
-            .font(AppFont.caption)
-            .foregroundStyle(.secondary)
-        }
-        .padding(AppSpacing.md)
+    private var trimmedQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     @ViewBuilder
@@ -89,7 +38,7 @@ struct HistoryPreviewView: View {
             }
 
         case .image(let path):
-            AsyncHistoryImagePreviewView(path: path)
+            AsyncHistoryImagePreviewView(path: path, ocrHit: ocrHit(for: entry))
 
         case .rtf(let path):
             AsyncRTFPreviewView(path: path)
@@ -101,8 +50,15 @@ struct HistoryPreviewView: View {
             AsyncHTMLHistoryPreviewView(path: path)
 
         case .files(let urls):
-            filesPreview(urls: urls)
+            filesPreview(entry: entry, urls: urls)
         }
+    }
+
+    private func ocrHit(for entry: HistoryEntry) -> String? {
+        let query = trimmedQuery
+        guard !query.isEmpty, let index = entry.searchIndex,
+              index.localizedCaseInsensitiveContains(query) else { return nil }
+        return query
     }
 
     @ViewBuilder
@@ -113,28 +69,28 @@ struct HistoryPreviewView: View {
                 .padding(AppSpacing.xs)
         } else {
             let payload = HistoryPreviewSupport.textPreviewPayload(for: str, kind: kind)
-            TextPreviewPanel(payload: payload)
+            TextPreviewPanel(payload: payload, highlight: trimmedQuery)
         }
     }
 
     @ViewBuilder
-    private func filesPreview(urls: [URL]) -> some View {
+    private func filesPreview(entry: HistoryEntry, urls: [URL]) -> some View {
         if urls.count == 1 {
-            singleFilePreview(url: urls[0])
+            singleFilePreview(entry: entry, url: urls[0])
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: AppSpacing.sm) {
                     ForEach(Array(urls.enumerated()), id: \.offset) { _, url in
-                        fileRow(for: url)
+                        fileCard(entry: entry, url: url)
                     }
                 }
-                .padding(AppSpacing.sm)
+                .padding(Self.contentInsets)
             }
         }
     }
 
     @ViewBuilder
-    private func singleFilePreview(url: URL) -> some View {
+    private func singleFilePreview(entry: HistoryEntry, url: URL) -> some View {
         let kind = HistoryPreviewSupport.fileKind(for: url)
         switch kind {
         case .image:
@@ -150,61 +106,76 @@ struct HistoryPreviewView: View {
             if HistoryPreviewSupport.isLikelyPlainTextFile(at: url) {
                 AsyncTextFilePreviewView(url: url, kind: .plainText)
             } else {
-                fileRow(for: url)
-                    .padding(AppSpacing.sm)
+                fileCard(entry: entry, url: url)
+                    .padding(Self.contentInsets)
             }
         }
     }
 
-    private func fileRow(for url: URL) -> some View {
-        HStack(alignment: .top, spacing: AppSpacing.xs) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                .resizable()
-                .frame(width: 32, height: 32)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(url.lastPathComponent)
-                    .font(AppFont.body)
-                    .lineLimit(2)
+    /// Design `.doc` file card: tile, highlighted name, path and Finder button.
+    private func fileCard(entry: HistoryEntry, url: URL) -> some View {
+        let archive = ["zip", "rar", "7z", "gz", "tar", "tgz", "xz", "bz2"].contains(url.pathExtension.lowercased())
+        return HStack(alignment: .center, spacing: 14) {
+            HistoryTypeTile(kind: .file, symbol: archive ? "doc.zipper" : "doc", size: 52)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(HistoryRowText.highlighted(
+                    title: url.lastPathComponent,
+                    ranges: HistorySearchRanker.highlightRanges(for: url.lastPathComponent, terms: trimmedQuery.split(whereSeparator: \.isWhitespace).map(String.init))
+                ))
+                .font(.system(size: 15, weight: .semibold))
+                .lineLimit(2)
                 Text(FilePathDisplay.string(for: url))
-                    .font(AppFont.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(HistoryV3.text3)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .help(url.path)
+                Button(L10n.t(.showInFinder)) { onRevealInFinder(entry) }
+                    .buttonStyle(HistoryActionButtonStyle(small: true))
+                    .padding(.top, 7)
             }
+            Spacer(minLength: 0)
         }
-        .padding(AppSpacing.xs)
-        .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.medium))
+        .padding(16)
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(HistoryV3.line, lineWidth: 0.5))
+    }
+}
+
+/// Secondary fact next to the preview's type badge: characters for text,
+/// pixel size for images, item count for files. Loaded off the main thread.
+struct HistoryPreviewDetailText: View {
+    let entry: HistoryEntry
+    @State private var detail: String?
+
+    var body: some View {
+        Text(detail ?? " ")
+            .font(.system(size: 11.5))
+            .foregroundStyle(HistoryV3.text3)
+            .lineLimit(1)
+            .task(id: entry.id) {
+                detail = nil
+                let entry = entry
+                detail = await Task.detached(priority: .utility) { Self.compute(entry) }.value
+            }
     }
 
-    private func typeLabel(for item: HistoryItem) -> String {
-        switch item {
-        case .text(let str):
-            switch HistoryPreviewSupport.resolvedTextKind(for: str) {
-            case .html: return L10n.t(.historyTypeHTML)
-            case .json: return L10n.t(.historyTypeJSON)
-            default: return L10n.t(.historyTypeText)
-            }
-        case .image: return L10n.t(.historyTypeImage)
-        case .rtf: return L10n.t(.historyTypeRTF)
-        case .pdf: return L10n.t(.historyTypePDF)
-        case .html: return L10n.t(.historyTypeHTML)
+    nonisolated private static func compute(_ entry: HistoryEntry) -> String? {
+        switch entry.item {
         case .files(let urls):
-            if urls.count == 1 {
-                switch HistoryPreviewSupport.fileKind(for: urls[0]) {
-                case .image: return L10n.t(.historyTypeImage)
-                case .pdf: return L10n.t(.historyTypePDF)
-                case .html: return L10n.t(.historyTypeHTML)
-                case .json: return L10n.t(.historyTypeJSON)
-                case .markdown: return L10n.t(.historyTypeMarkdown)
-                case .plainText: return L10n.t(.historyTypePlainText)
-                case .other:
-                    if HistoryPreviewSupport.isLikelyPlainTextFile(at: urls[0]) {
-                        return L10n.t(.historyTypePlainText)
-                    }
-                    return L10n.t(.historyTypeFile)
-                }
-            }
-            return L10n.t(.historyTypeFile)
+            return L10n.format(.historyFileCount, urls.count)
+        case .image(let path):
+            guard let data = HistoryMediaStore.shared.data(at: path),
+                  let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                  let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
+            return "\(width) × \(height)"
+        case .text:
+            guard let text = entry.resolvedText else { return nil }
+            return L10n.format(.historyCharacterCount, text.count)
+        case .rtf, .html, .pdf:
+            guard let text = ClipboardManager.shared.plainText(for: entry) else { return nil }
+            return L10n.format(.historyCharacterCount, text.count)
         }
     }
 }
@@ -226,8 +197,9 @@ private struct AsyncRTFPreviewView: View {
                     ScrollView {
                         Text(AttributedString(attributed))
                             .textSelection(.enabled)
+                            .lineSpacing(4)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(AppSpacing.sm)
+                            .padding(HistoryPreviewView.contentInsets)
                     }
                 }
             } else {
@@ -344,18 +316,28 @@ private func previewTypePlaceholder(icon: String, label: String) -> some View {
 
 private struct AsyncHistoryImagePreviewView: View {
     let path: String
+    /// Query text found in the image's recognised (OCR) text, if any.
+    var ocrHit: String?
     private let maxPixelSize = 1600
     @State private var image: NSImage?
 
     var body: some View {
         Group {
             if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: AppCornerRadius.small))
-                    .padding(AppSpacing.sm)
+                VStack(alignment: .leading, spacing: 10) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(HistoryV3.line, lineWidth: 0.5))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    if let ocrHit {
+                        Text(ocrCaption(ocrHit))
+                            .font(.system(size: 12))
+                            .foregroundStyle(HistoryV3.text3)
+                    }
+                }
+                .padding(HistoryPreviewView.contentInsets)
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -368,6 +350,13 @@ private struct AsyncHistoryImagePreviewView: View {
             }.value
             image = loaded
         }
+    }
+
+    private func ocrCaption(_ hit: String) -> AttributedString {
+        var mark = AttributedString(hit)
+        mark.backgroundColor = HistoryV3.mark
+        return AttributedString(HistoryV3.s("已识别图中文字，可按“", "Recognised text in this image; searching “"))
+            + mark + AttributedString(HistoryV3.s("”搜到此图。", "” finds it."))
     }
 }
 

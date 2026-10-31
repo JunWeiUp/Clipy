@@ -75,7 +75,7 @@ cp "${MACOS_PROJECT_DIR}/Resources/Info.plist" "${PLIST}"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER}" "${PLIST}"
 plutil -lint "${PLIST}"
 
-ICON_SOURCE="${REPO_ROOT}/Clipy/Resources/AppIcon.png"
+ICON_SOURCE="${REPO_ROOT}/clipy_macos/Resources/AppIcon.png"
 [ -f "${ICON_SOURCE}" ] || fail "App icon source is missing: ${ICON_SOURCE}"
 ICONSET="${BUILD_DIR}/AppIcon.iconset"
 mkdir -p "${ICONSET}"
@@ -85,7 +85,7 @@ for size in 16 32 128 256 512; do
   sips -z "${retina_size}" "${retina_size}" "${ICON_SOURCE}" --out "${ICONSET}/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "${ICONSET}" -o "${STAGED_APP}/Contents/Resources/AppIcon.icns"
-cp "${REPO_ROOT}/LICENSE" "${REPO_ROOT}/LICENSE.GPL-3.0" \
+cp "${REPO_ROOT}/LICENSE" "${REPO_ROOT}/LICENSE.GPL-3.0" "${REPO_ROOT}/LICENSE.VIBEPIER.MIT" \
    "${REPO_ROOT}/THIRD_PARTY_NOTICES.md" "${STAGED_APP}/Contents/Resources/"
 
 if [ "${GENERATE_DSYM}" = 1 ]; then

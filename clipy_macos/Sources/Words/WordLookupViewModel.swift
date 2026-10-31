@@ -5,6 +5,13 @@ import Combine
 /// UI-owned, like SearchViewModel. All mutations and completions run on main.
 final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate, NSSpeechSynthesizerDelegate {
     @Published var query = ""
+    @Published var usesModelTranslation = false {
+        didSet { if oldValue != usesModelTranslation { clearLookup() } }
+    }
+    @Published var translationToEnglish = false {
+        didSet { if oldValue != translationToEnglish { clearLookup() } }
+    }
+    @Published private(set) var modelError: String?
     @Published private(set) var translation: WordTranslation?
     @Published private(set) var entry: WordEntry?
     @Published private(set) var suggestions: [WordSuggestion] = []
@@ -62,11 +69,32 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
         translation = nil
         suggestions = []
         errorKey = nil
+        modelError = nil
         isLoading = false
         let term: String
         do { term = try WordQuery.normalize(query) }
         catch { errorKey = .wordInvalidQuery; return }
         query = term
+        if usesModelTranslation {
+            isLoading = true
+            let direction: WordTranslation.Direction = translationToEnglish ? .chineseToEnglish : .englishToChinese
+            lookupTask = Task { @MainActor [weak self] in
+                do {
+                    let result = try await ModelTranslationService().translate(term, direction: direction)
+                    guard !Task.isCancelled, let self, self.generation == token else { return }
+                    self.translation = result
+                    self.isLoading = false
+                    self.lookupTask = nil
+                } catch {
+                    guard !Task.isCancelled, let self, self.generation == token else { return }
+                    self.modelError = (error as? ModelTranslationError)?.message
+                        ?? ModelTranslationText.t("翻译连接失败或超时，请重试。", "Translation connection failed or timed out. Please retry.")
+                    self.isLoading = false
+                    self.lookupTask = nil
+                }
+            }
+            return
+        }
         let local = WordSearchMatcher.ranked(wordBook.words, query: term).prefix(10).map {
             WordSuggestion(word: $0.entry.word, detail: $0.entry.meanings.map(\.definition).joined(separator: "；"))
         }
@@ -97,6 +125,11 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
         if isSpeaking { stopSpeaking(); return }
         guard let text = entry?.word ?? translation?.englishText else { return }
         stopSpeaking()
+        if translation?.isModelTranslation == true {
+            speakWithSystemVoice(text)
+            isSpeaking = synthesizer != nil
+            return
+        }
         isSpeaking = true
         audioStatus = .wordAudioLoading
         let token = audioGeneration
@@ -170,6 +203,7 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
         suggestions = []
         isLoading = false
         errorKey = nil
+        modelError = nil
     }
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {

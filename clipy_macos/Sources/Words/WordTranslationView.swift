@@ -28,13 +28,18 @@ struct WordTranslationView: View {
         if let status = viewModel.audioStatus {
           Text(L10n.t(status)).font(.system(size: 14)).foregroundStyle(.secondary)
         }
-        Text(L10n.t(.wordMachineTranslation)).font(.system(size: 14)).foregroundStyle(.secondary)
-        Link(L10n.t(.wordSource), destination: translation.sourceURL).font(.system(size: 14))
+        Text(L10n.t(.wordMachineTranslation)).font(.system(size: 14)).foregroundStyle(WordsV3Style.text3)
+        if !translation.isModelTranslation {
+          Link(destination: translation.sourceURL) {
+            Label(L10n.t(.wordSource), systemImage: "arrow.up.right.square")
+              .font(.system(size: 14)).foregroundStyle(AppColor.accent)
+          }
+        }
       }
       .textSelection(.enabled)
       .frame(maxWidth: 680, alignment: .leading)
-      .padding(AppSpacing.xl)
-      .frame(maxWidth: .infinity)
+      .padding(.horizontal, 36).padding(.top, 24).padding(.bottom, 20)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 

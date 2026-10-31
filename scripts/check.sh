@@ -15,7 +15,7 @@ check_repo() {
 
 check_flutter() {
   (
-    cd clipy_android
+    cd clipy_flutter
     # Resolve dependencies first with flutter pub get --enforce-lockfile.
     dart format --output=none --set-exit-if-changed lib test tool
     flutter analyze --no-pub

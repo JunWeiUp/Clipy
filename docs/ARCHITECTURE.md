@@ -46,6 +46,11 @@ No new polling, network service or file-content duplication is introduced.
 
 ## Repository layout
 
+See [directory responsibilities and dependency policy](REPOSITORY_LAYOUT.md).
+The Flutter directory and Dart package are named `clipy_flutter`; installed
+application IDs, Kotlin namespaces, channel names and storage keys retain their
+historical names for upgrade compatibility.
+
 ### Mobile incoming shares
 
 - Android `SharedFileInbox` accepts `SEND` / `SEND_MULTIPLE` with `*/*` through
@@ -110,11 +115,11 @@ clipy_macos/
 clipy_android_native/
   app/src/main/java/com/clipyclone/
     nativeandroid/           Compose UI, repositories, LAN/files, relay, notifications
-    clipy_android/           Application, original service/widget component names
+    clipy_flutter/           Application, original service/widget component names
   app/src/main/assets/       icons/fonts and packaged third-party notices
   app/src/test/              deterministic native JVM tests
   app/src/androidTest/       Android storage/crypto/socket/integration checks
-clipy_android/               Windows/iOS implementation; Android parity reference
+clipy_flutter/               Windows/iOS implementation; Android parity reference
   lib/main.dart              default Dart entrypoint only
   lib/app/                   bootstrap, headless bridge, application root
   lib/features/              devices, history, settings, logs, transfers
@@ -197,7 +202,7 @@ integration protocol instead of reaching directly into unrelated controllers.
 ## Menu-bar control panel (macOS)
 
 `MenuController` owns the status item and routes left clicks to `MenuBarPanelController`,
-while right clicks retain the native menu. The controller uses a nonactivating panel,
+with no right-click action or classic status-item menu. The controller uses a nonactivating panel,
 closes before external actions, and validates caller/clipboard/generation before paste.
 The panel controller is created on first left click; background clipboard/device
 updates must not force its initialization.
@@ -213,7 +218,7 @@ Back/title row. Tools is the fourth home tab: a capture row directly launches re
 followed by Lookup/Vocabulary and a Password action. `MenuBarPanelToolsView`
 owns this layout and uses the same model/action handoff. Its header shares the same hidden-icon strip as other home tabs;
 Tools keeps the Clipboard/Snippets panel size, with its content scrolling independently. The footer contains named Keep Awake
-and Notifications controls; banner preferences remain in More. No new background work or persistence is introduced.
+and Notifications controls. The Settings gear dismisses the panel and opens Preferences directly. Banner preferences remain in Notifications, hidden-icon controls in Preferences, and Quit in the application menu; the footer has no More menu. No new background work or persistence is introduced.
 Existing manager callbacks refresh only the open panel; there is no new idle polling.
 Native menu tracking defers those refreshes. Dismissal cancels queries and releases the view.
 
@@ -236,10 +241,10 @@ many hosted status windows on macOS 26; `MenuBarSystemBridge` optionally correla
 those windows by geometry instead of treating the hosting PID as app identity.
 Missing private symbols leave the AX/application-icon path available.
 
-Background checks read metadata only. Opening the panel or classic menu requests
+Background checks read metadata only. Opening the panel requests
 bounded ScreenCaptureKit previews of matched windows (macOS 14+ with existing
 Screen Recording permission); failures retain application icons and names. The
-classic menu remains a snapshot; the panel observes the published state. Clicking closes the panel or ends menu tracking before issuing
+panel observes the published state. Clicking closes the panel before issuing
 one AXPress; unsupported or stale targets are not replaced with coordinates or
 application launches. An AX timeout is an unconfirmed result because native menu
 tracking can delay the reply even after the menu opens. Never automatically retry
@@ -250,7 +255,7 @@ Each attached display is evaluated against its own menu-bar geometry. `menuBarOv
 window IDs, images and AX elements are never persisted or synchronized. Ordinary
 regressions mock lifecycle races; the explicitly enabled live tests use temporary
 status items and test original menus/popovers without moving existing icons.
-The 15-second AX refresh timer exists only while a panel or classic menu is open;
+The 15-second AX refresh timer exists only while the panel is open;
 closing it cancels outstanding preview work. Workspace/display events can still
 refresh metadata while idle without starting a polling timer.
 
@@ -298,7 +303,7 @@ retaining local history and user data. See PROTOCOL.md and SECURITY.md.
 - Wire fields, ACK rules, framing: update both sync implementations and
   [PROTOCOL.md](PROTOCOL.md), then run protocol tests and bidirectional device checks.
 - Android native navigation/pages: `nativeandroid/MainActivity.kt`, `ui/` and
-  view models; lifecycle/managers: `clipy_android/ClipyApplication.kt` within the
+  view models; lifecycle/managers: `clipy_flutter/ClipyApplication.kt` within the
   native Java source root. Read `NATIVE_MIGRATION_PARITY.md` before changing contracts.
 - Flutter Windows/iOS and reference navigation/pages: `lib/features/`; bootstrap:
   `lib/app/bootstrap.dart` (not a feature widget).
@@ -319,7 +324,7 @@ checks. See also
 Flutter `sync/relay_client.dart` own authenticated WSS presence
 and bounded per-peer byte bridges; SyncManager starts/stops them with sync and
 validates peer identity/generation before adoption. Private LAN probes take
-priority; relay addresses never overwrite the LAN cache. The vendored Common Relay SDK provides authenticated, end-to-end encrypted streams and verified group membership. Android reuses its Java SDK through loopback socket bridges into the same v3 session/ACK/file pipeline; `NativeRelayController` owns settings and group state. The original secure-storage aliases and Dart journal format are preserved. Packaged provenance and licenses are in APK `assets/third_party/`. `relay/server.py` documents the retired service only. See [COMMON-RELAY-SDK.md](COMMON-RELAY-SDK.md) for current setup and the separate LAN trust boundary.
+priority; relay addresses never overwrite the LAN cache. The version-pinned Common Relay SDK provides authenticated, end-to-end encrypted streams and verified group membership. Android reuses its Java SDK through loopback socket bridges into the same v3 session/ACK/file pipeline; `NativeRelayController` owns settings and group state. The original secure-storage aliases and Dart journal format are preserved. Packaged provenance and licenses are in APK `assets/third_party/`. The retired Python relay implementation has been removed. See [COMMON-RELAY-SDK.md](COMMON-RELAY-SDK.md) for current setup and the separate LAN trust boundary.
 
 ## Internet relay configuration and routing
 
@@ -358,3 +363,65 @@ Relay invitations default to automatic joining after scanning, with manual pairi
 ## Fast LAN / relay handoff
 
 Network-interface changes, peer reconnection and explicit device refresh trigger a bounded 3-second ping check. A fresh pong preserves a healthy session; only the captured session without a newer pong is retired, then relay discovery runs immediately. Repeated refreshes share the deadline; stop cancels the probe and lifecycle checks reject stale callbacks. Relay refresh wakes a pending retry, uses known presence immediately, coalesces roster requests and reconnects after a 3-second roster timeout. Wi-Fi/cellular changes are handled without requiring an offline interval. No new permanent poller is added; LAN preference and trust checks remain.
+
+## Model sentence translation (macOS)
+
+The lookup window has a separate explicit model mode. `ModelTranslationConfiguration`
+stores endpoint/model in UserDefaults; `ModelTranslationKeychain` stores only the
+API key in a dedicated generic-password item. Saving settings sends no request.
+`ModelTranslationService` posts non-streaming Chat Completions messages to the
+configured URL (HTTPS remotely; HTTP permitted only on localhost/127.0.0.1/::1), refuses redirects, bounds responses to 256 KiB and
+uses 45/60-second request/resource timeouts with an ephemeral session.
+The window owns a single cancellable task and generation guard; new submissions,
+mode/target changes and close cancel it and clear transient results. No polling
+or translation persistence is added. English speech for model results is local,
+so model input/output is not forwarded to the dictionary audio service.
+
+Model discovery is an explicit GET to the sibling `models` endpoint with the draft or saved API key. Bare hosts default to `/v1/chat/completions`; base paths append `/chat/completions`. `ModelListViewModel` owns one sheet-scoped task, clears on endpoint/key changes and cancels on dismiss; IDs are deduplicated/sorted, limited to 5,000 rows and the shared 256 KiB response bound. Selection remains explicit, manual input stays available, and discovery sends no translation text.
+
+## Mac screen control (source preview)
+
+`Sources/ScreenControl/` owns the Mac-local Keychain login credential,
+OpenDirectory local verification, lock notifications and bounded command-state
+confirmation. `SyncScreenControl` permits all connected sync peers to issue optional commands
+when Mac-local credentials are configured. Per-session one-use challenges suppress
+duplicates; no phone control secret or independent device authentication exists. Sync start/stop
+registers/releases observers; there is no permanent lock polling. Flutter
+`sync/screen_control.dart` owns bounded cancellable query/result waits and clears
+state on disconnect; `features/devices/mac_screen_controls.dart` renders the phone
+controls. `ScreenControlAXUnlock` and `ScreenControlAXTraversal` adapt VibePier’s verified
+system secure-field path using this signed app’s Accessibility permission.
+`ScreenControlUnlockSubmission` revalidates the same field/window before writing
+and targeted confirmation. No root helper or global credential events are used. Real locked-screen compatibility is
+still unverified; see [Screen control](SCREEN_CONTROL.md) for setup, trust boundary,
+platform limits and acceptance requirements.
+
+## V3 presentation boundary
+
+The V3 alignment keeps existing data owners and wire formats. Platform navigation and view styling are presentation adapters: Cupertino chrome for iOS, Material 3 for Android, and a Fluent-style Windows shell over the existing Flutter managers. macOS reuses WindowSession and existing feature models; device and word-library entry points share their existing services. Editor controls retain annotation handlers and undo semantics while moving to top tools, a right inspector, and bottom output actions. See [macOS design](MACOS_DESIGN.md), [Android design](ANDROID_DESIGN.md) and [development checks](DEVELOPMENT.md) for platform contracts and validation. Detailed device evidence remains local.
+
+### macOS device configuration navigation
+
+The main window Devices module owns LAN settings, relay connections/groups,
+phone control of this Mac, and sync diagnostics. `DeviceConnectionSettingsView`
+holds only the active configuration draft; device permissions and sending remain
+in `DevicesView`. Preferences no longer loads device rows or triggers discovery.
+`SettingsWindow.show(page: "sync")` redirects legacy callers to Devices → LAN.
+Name drafts commit on blur/leave; validated port and relay drafts commit explicitly.
+No new background polling is added. Leaving a subpage removes its view, including
+its diagnostic subscription or relay group's existing close/cancellation hook.
+
+### macOS main-window entry ownership
+
+`App/MainWindow.swift` owns history search handoff, prefilled snippet selection,
+notification refresh and Devices subpage routing. Callers address it directly;
+legacy Search/Snippet/Devices/Notification window forwarding classes are removed.
+`UI/DevicesView.swift` owns the Devices module presentation. All four module
+sidebars use `MainWindowMetrics.sidebarWidth`; there is no standalone-window
+layout branch. Snippet selection uses the owned view model directly rather than
+an unused notification observer. The obsolete settings diagnostics section is
+removed; Devices retains `SyncDiagnosticsPage` with its visible-page subscription.
+
+Windows screenshot sessions own an original desktop bitmap and a pre-dimmed 32-bit DIB (each bounded to 64 million pixels; combined base frames up to 512 MB). The dimmed pixels are generated once per capture so WM_PAINT only blits opaque pixels. Both frames are released on completion, cancellation, or destruction. OnCreate resets the shutdown guard because the shared Win32 Create path calls virtual OnDestroy before creating the first HWND. Capture phase logging is bounded to approximately 64 KiB and contains only monotonic timing and stage names.
+
+Windows window presentation is owned by one native WindowMode (main, quick clipboard panel, capture result). Publish the mode before changing native geometry; suppress focus-dismissal during the transition. Flutter mirrors native mode updates, queries once on attach/resume, and rejects stale query responses. Desktop/main always uses the desktop sidebar; panel content never contains the main page navigation. Main close hides to tray, tray selection toggles only the quick panel, and explicit Exit terminates the process. A repeated executable launch asks the existing owner to restore main mode, including style and placement.

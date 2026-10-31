@@ -20,7 +20,7 @@ validate_boolean() {
 
 resolve_build_version() {
   local package_version
-  package_version="$(awk '/^version:/ {print $2; exit}' "${REPO_ROOT}/clipy_android/pubspec.yaml")"
+  package_version="$(awk '/^version:/ {print $2; exit}' "${REPO_ROOT}/clipy_flutter/pubspec.yaml")"
   APP_VERSION="${APP_VERSION:-${package_version%%+*}}"
   BUILD_NUMBER="${BUILD_NUMBER:-${package_version##*+}}"
   [[ "${APP_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "APP_VERSION must be X.Y.Z"

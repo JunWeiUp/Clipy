@@ -14,9 +14,9 @@ final class MenuBarPanelModel: ObservableObject {
             }
         }
     }
-    enum Page { case home, capture, notifications, settings }
+    enum Page { case home, capture, notifications }
     enum Action { case search(String), snippets, preferences, syncSettings, notifications, word, wordBook, password, toggleKeepAwake
-        case region, window, fullscreen, screenshotSettings, permission, quit
+        case region, window, fullscreen, screenshotSettings, permission
         case sendText(String), sendFile(String)
     }
     enum Tool: String, CaseIterable {
@@ -186,7 +186,6 @@ enum MenuBarPanelPolicy {
             return CGSize(width: 520, height: CGFloat(height))
         case .capture: return CGSize(width: 520, height: 350)
         case .notifications: return CGSize(width: 520, height: 560)
-        case .settings: return CGSize(width: 520, height: 440)
         }
     }
     static func nextSelection(ids: [String], selected: String?, delta: Int) -> String? {

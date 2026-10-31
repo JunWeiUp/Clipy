@@ -10,6 +10,7 @@ class ToolOptionsRowView: NSView {
     private(set) var editingAnnotation: Annotation?
     /// Snapshot taken before the first property edit, for undo.
     private var editingSnapshot: Annotation?
+    override var isFlipped: Bool { overlayView?.isEditorMode == true }
     private let rowHeight: CGFloat = 34
     private let padding: CGFloat = 8
     /// The natural content width calculated during rebuild, before any external resizing.
@@ -43,14 +44,336 @@ class ToolOptionsRowView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.cornerRadius = 6
+        // mac-capture.html `.orow`: 10pt radius dark glass with a hairline edge.
+        layer?.cornerRadius = 10
         layer?.backgroundColor = ToolbarLayout.bgColor.cgColor
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.16).cgColor
         // Match appearance to toolbar background brightness so system controls
         // (NSSegmentedControl labels, NSTextField, NSButton titles) stay readable.
         appearance = ToolbarLayout.appearance
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        if overlayView?.isEditorMode == true {
+            layer?.backgroundColor = NSColor.clear.cgColor
+        }
+    }
+
+
+    /// Called after the inspector reflow so the editor chrome can resize its scroll document.
+    var onInspectorResize: (() -> Void)?
+    private var inspectorSwitchProxies: [InspectorSwitchProxy] = []
+    private var inspectorDecorations: [NSView] = []
+    /// The V3 inspector shows bare numbers ("3"), the floating row keeps "3px".
+    private var unitSuffix: String { overlayView?.isEditorMode == true ? "" : "px" }
+
+    private enum InspectorRowKind { case labeled, header, toggle, plain, emoji }
+    private final class InspectorRow {
+        var kind: InspectorRowKind
+        var title: String?
+        var label: NSTextField?
+        var controls: [NSView] = []
+        var value: NSView?
+        var toggle: NSButton?
+        init(kind: InspectorRowKind, title: String? = nil) { self.kind = kind; self.title = title }
+    }
+
+    /// V3 inspector: reflow the existing property controls into labelled rows
+    /// (label column + flexible control + value), header rows and switch rows.
+    /// Targets, actions and undo snapshots of the original controls stay intact;
+    /// switches only proxy the original toggle buttons.
+    func layoutAsInspector(width: CGFloat) {
+        appearance = nil
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.borderWidth = 0
+        inspectorSwitchProxies.removeAll()
+        inspectorDecorations.forEach { $0.removeFromSuperview() }
+        inspectorDecorations.removeAll()
+        let controls = subviews
+        let inset: CGFloat = 16
+        let labelW: CGFloat = 52
+        let contentW = width - inset * 2
+        let valueTags: Set<Int> = [989, 993, 994, 996, 997]
+        func selectorName(_ v: NSView) -> String? {
+            (v as? NSControl)?.action.map { NSStringFromSelector($0) }
+        }
+        let labeledStarts: [String: String] = [
+            "lineStyleChanged:": L("Line Style"), "shapeFillChanged:": L("Fill"),
+            "numberFormatChanged:": L("Format"), "measureUnitChanged:": L("Unit"),
+            "highlightBorderChanged:": L("Border"), "pencilSmoothModeChanged:": L("Smoothing"),
+            "fontFamilyClicked:": L("Font"), "boldToggled": L("Style"),
+            "alignmentChanged:": L("Alignment"), "fontSizeDecreased": L("Size"),
+        ]
+        let headerStarts: [String: String] = [
+            "arrowStyleChanged:": L("Arrow Style"), "censorModeChanged:": L("Mode"),
+            "redactAllTextClicked": L("Auto-Redact"),
+        ]
+        let toggleActions: Set<String> = [
+            "toggled:", "textBgToggled:", "textOutlineToggled:", "textGlyphStrokeToggled:",
+            "annotationOutlineToggled:", "loupeOutlineToggled:",
+        ]
+        var rows: [InspectorRow] = []
+        var current: InspectorRow?
+        var currentStartAction: String?
+        func close() {
+            if let row = current {
+                if row.kind == .labeled && row.controls.isEmpty && row.value == nil {
+                    row.label?.isHidden = true
+                } else {
+                    rows.append(row)
+                }
+            }
+            current = nil
+        }
+        for control in controls {
+            if !(control is NSControl) && control.frame.width <= 1 {
+                control.isHidden = true
+                close()
+                continue
+            }
+            let action = selectorName(control)
+            if let field = control as? NSTextField, !field.isEditable {
+                if valueTags.contains(field.tag) {
+                    if current == nil { current = InspectorRow(kind: .plain) }
+                    current?.value = field
+                    continue
+                }
+                if field.tag == 0 {
+                    close()
+                    if field.intrinsicContentSize.width > 120 {
+                        // Hint text spans the full width.
+                        let row = InspectorRow(kind: .plain)
+                        row.controls = [field]
+                        rows.append(row)
+                    } else {
+                        var title = field.stringValue
+                        if title == L("Stroke") { title = L("Line Width") }
+                        if title == L("Radius") && currentTool == .rectangle { title = L("Corner Radius") }
+                        let row = InspectorRow(kind: .labeled, title: title.trimmingCharacters(in: CharacterSet(charactersIn: ":：")))
+                        row.label = field
+                        current = row
+                    }
+                    continue
+                }
+            }
+            if let button = control as? NSButton, let action, toggleActions.contains(action) {
+                close()
+                var toggleTitle = button.attributedTitle.string.isEmpty ? button.title : button.attributedTitle.string
+                if action == "textBgToggled:" { toggleTitle = L("Background") }
+                let row = InspectorRow(kind: .toggle, title: toggleTitle)
+                row.toggle = button
+                current = row
+                continue
+            }
+            if (975...978).contains(control.tag), current?.kind == .toggle {
+                current?.controls.append(control)
+                continue
+            }
+            if let action, let title = headerStarts[action] {
+                close()
+                current = InspectorRow(kind: .header, title: title)
+            } else if let action, let title = labeledStarts[action], action != currentStartAction,
+                      !(current?.kind == .labeled && current?.controls.isEmpty == true) {
+                close()
+                current = InspectorRow(kind: .labeled, title: title)
+                currentStartAction = action
+            } else if action == "quickEmojiClicked:" {
+                if current?.kind != .emoji { close(); current = InspectorRow(kind: .emoji) }
+            } else if action == "moreEmojisClicked:" || control.tag == 990 {
+                close()
+                current = InspectorRow(kind: .plain)
+            } else if current == nil || current?.kind == .emoji || current?.kind == .toggle {
+                close()
+                current = InspectorRow(kind: .plain)
+            }
+            current?.controls.append(control)
+        }
+        close()
+        if currentTool == .text {
+            // mac-annotation.html order: 字体 · 尺寸 · 样式 · 对齐, then the switches.
+            let order = [L("Font"): 0, L("Size"): 1, L("Style"): 2, L("Alignment"): 3]
+            rows = rows.enumerated().sorted {
+                (order[$0.element.title ?? ""] ?? 10 + $0.offset, $0.offset) < (order[$1.element.title ?? ""] ?? 10 + $1.offset, $1.offset)
+            }.map(\.element)
+        }
+
+        // Restyle original controls for the light/dark inspector surface.
+        for control in controls {
+            if let label = control as? NSTextField {
+                label.textColor = valueTags.contains(label.tag) || label.tag >= 998 ? .labelColor : .secondaryLabelColor
+                label.font = valueTags.contains(label.tag)
+                    ? .monospacedDigitSystemFont(ofSize: 12, weight: .regular) : .systemFont(ofSize: 12)
+                label.sizeToFit()
+            }
+            if let button = control as? NSButton, button.tag < 990 {
+                button.contentTintColor = .secondaryLabelColor
+                if button.attributedTitle.length > 0, button.image == nil {
+                    let title = NSMutableAttributedString(attributedString: button.attributedTitle)
+                    title.addAttribute(.foregroundColor, value: NSColor.labelColor, range: NSRange(location: 0, length: title.length))
+                    button.attributedTitle = title
+                }
+            }
+            if let segmented = control as? NSSegmentedControl {
+                (segmented.cell as? NSSegmentedCell)?.segmentStyle = .automatic
+                // mac.css .seg: selected segment is a raised control tile, not an accent fill.
+                if segmented.trackingMode == .selectOne { segmented.selectedSegmentBezelColor = .controlColor }
+                segmented.font = .systemFont(ofSize: 12)
+                for index in 0..<segmented.segmentCount {
+                    if let image = segmented.image(forSegment: index), !image.isTemplate,
+                       let template = image.copy() as? NSImage {
+                        template.isTemplate = true
+                        segmented.setImage(template, forSegment: index)
+                    }
+                }
+            }
+            if let segmented = control as? NSSegmentedControl, segmented.trackingMode == .momentary {
+                // Auto-redact chips keep their natural (now 12pt) width.
+                let fixed = (0..<segmented.segmentCount).map { segmented.width(forSegment: $0) }
+                for index in 0..<segmented.segmentCount where fixed[index] == 0 { segmented.setWidth(0, forSegment: index) }
+                segmented.sizeToFit()
+            }
+            if let slider = control as? NSSlider { slider.controlSize = .small }
+        }
+        if let more = controls.first(where: { selectorName($0) == "moreEmojisClicked:" }) as? NSButton {
+            more.image = nil; more.title = L("More Emojis"); more.bezelStyle = .rounded; more.isBordered = true
+            more.controlSize = .small; more.font = .systemFont(ofSize: 12); more.sizeToFit()
+        }
+        if let load = controls.first(where: { selectorName($0) == "loadImageClicked" }) as? NSButton {
+            load.image = nil; load.title = L("Load Image"); load.bezelStyle = .rounded; load.isBordered = true
+            load.controlSize = .small; load.font = .systemFont(ofSize: 12); load.sizeToFit()
+        }
+
+        var y: CGFloat = 0
+        let rowGap: CGFloat = 12
+        func place(_ views: [NSView], startX: CGFloat, maxX: CGFloat, top: CGFloat, stretchSingle: Bool) -> CGFloat {
+            var x = startX
+            var lineTop = top
+            var lineH: CGFloat = 0
+            let sliders = views.filter { $0 is NSSlider }
+            let fixed = views.filter { !($0 is NSSlider) }.reduce(CGFloat(0)) { $0 + $1.frame.width } + CGFloat(max(0, views.count - 1)) * 8
+            for view in views {
+                if view is NSSlider {
+                    view.frame.size.width = max(60, (maxX - startX - fixed) / CGFloat(max(1, sliders.count)))
+                } else if stretchSingle, views.count == 1, view is NSSegmentedControl {
+                    view.frame.size.width = maxX - startX
+                }
+                if let segmented = view as? NSSegmentedControl {
+                    if stretchSingle, views.count == 1 {
+                        let count = max(1, segmented.segmentCount)
+                        let font = segmented.font ?? .systemFont(ofSize: 12)
+                        let natural = (0..<segmented.segmentCount).map { index -> CGFloat in
+                            guard let label = segmented.label(forSegment: index), !label.isEmpty else { return 0 }
+                            return ceil((label as NSString).size(withAttributes: [.font: font]).width) + 12
+                        }
+                        let extra = max(0, view.frame.width - natural.reduce(0, +)) / CGFloat(count)
+                        for index in 0..<segmented.segmentCount { segmented.setWidth(natural[index] + extra - 1, forSegment: index) }
+                    }
+                    segmented.frame.size.height = 24
+                }
+                if x + view.frame.width > maxX + 0.5 && x > startX {
+                    x = startX; lineTop += lineH + 8; lineH = 0
+                }
+                view.frame.size.width = min(view.frame.width, maxX - startX)
+                lineH = max(lineH, view.frame.height)
+                view.frame.origin = NSPoint(x: x, y: lineTop)
+                x += view.frame.width + 8
+            }
+            // Vertically centre controls on their line.
+            for view in views where abs(view.frame.minY - lineTop) < 0.5 {
+                view.frame.origin.y = lineTop + (lineH - view.frame.height) / 2
+            }
+            return lineTop + lineH - top
+        }
+        for row in rows {
+            let title = row.title.map { NSTextField(labelWithString: $0) }
+            switch row.kind {
+            case .header:
+                guard let header = title else { continue }
+                header.font = .systemFont(ofSize: 11, weight: .semibold)
+                header.textColor = .tertiaryLabelColor
+                header.sizeToFit()
+                header.frame.origin = NSPoint(x: inset, y: y)
+                super.addSubview(header); inspectorDecorations.append(header)
+                y += header.frame.height + 8
+                y += place(row.controls, startX: inset, maxX: width - inset, top: y, stretchSingle: true) + rowGap
+            case .toggle:
+                guard let button = row.toggle else { continue }
+                button.isHidden = true
+                let label = title ?? NSTextField(labelWithString: "")
+                label.font = .systemFont(ofSize: 12)
+                label.textColor = .secondaryLabelColor
+                label.sizeToFit()
+                let toggle = NSSwitch()
+                toggle.controlSize = .mini
+                toggle.state = button.state
+                toggle.sizeToFit()
+                let proxy = InspectorSwitchProxy(button: button)
+                toggle.target = proxy
+                toggle.action = #selector(InspectorSwitchProxy.changed(_:))
+                inspectorSwitchProxies.append(proxy)
+                let h: CGFloat = 24
+                label.frame.origin = NSPoint(x: inset, y: y + (h - label.frame.height) / 2)
+                toggle.frame.origin = NSPoint(x: width - inset - toggle.frame.width, y: y + (h - toggle.frame.height) / 2)
+                var accessoryX = toggle.frame.minX - 10
+                for accessory in row.controls.reversed() {
+                    accessoryX -= accessory.frame.width
+                    accessory.frame.origin = NSPoint(x: accessoryX, y: y + (h - accessory.frame.height) / 2)
+                    accessoryX -= 6
+                }
+                super.addSubview(label)
+                super.addSubview(toggle)
+                inspectorDecorations += [label, toggle]
+                y += h + rowGap
+            case .labeled:
+                let label = row.label ?? title
+                guard let label else { continue }
+                if row.label != nil, let title { label.stringValue = title.stringValue }
+                label.font = .systemFont(ofSize: 12)
+                label.textColor = .secondaryLabelColor
+                label.sizeToFit()
+                label.frame.size.width = labelW
+                if row.label == nil { super.addSubview(label); inspectorDecorations.append(label) }
+                var maxX = width - inset
+                if let value = row.value {
+                    value.frame.size = NSSize(width: 38, height: 16)
+                    (value as? NSTextField)?.alignment = .right
+                    maxX -= 38 + 8
+                }
+                let h = max(24, place(row.controls, startX: inset + labelW + 10, maxX: maxX, top: y, stretchSingle: true))
+                label.frame.origin = NSPoint(x: inset, y: y + min(h, 24) / 2 - label.frame.height / 2)
+                if let value = row.value {
+                    value.frame.origin = NSPoint(x: width - inset - 38, y: y + (min(h, 24) - value.frame.height) / 2)
+                }
+                y += h + rowGap
+            case .emoji:
+                let cols = 6
+                let cell = contentW / CGFloat(cols)
+                for (index, view) in row.controls.enumerated() {
+                    view.frame = NSRect(x: inset + CGFloat(index % cols) * cell, y: y + CGFloat(index / cols) * 34,
+                                        width: cell - 4, height: 32)
+                }
+                y += CGFloat((row.controls.count + cols - 1) / cols) * 34 + rowGap
+            case .plain:
+                if let value = row.value { row.controls.append(value) }
+                guard !row.controls.isEmpty else { continue }
+                for field in row.controls.compactMap({ $0 as? NSTextField }) where field.intrinsicContentSize.width > 120 {
+                    field.preferredMaxLayoutWidth = contentW
+                    field.lineBreakMode = .byWordWrapping
+                    field.maximumNumberOfLines = 0
+                    field.font = .systemFont(ofSize: 11.5)
+                    field.textColor = .tertiaryLabelColor
+                    field.frame.size = field.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: contentW, height: 400)) ?? field.frame.size
+                }
+                y += place(row.controls, startX: inset, maxX: width - inset, top: y, stretchSingle: false) + rowGap
+            }
+        }
+        frame.size = NSSize(width: width, height: max(0, y - rowGap))
+        onInspectorResize?()
+    }
 
     /// Rebuild the options row for a selected annotation's tool, reading values from the annotation.
     func rebuild(forAnnotation ann: Annotation) {
@@ -103,6 +426,7 @@ class ToolOptionsRowView: NSView {
 
     /// Rebuild the options row for the given tool. Call when tool or state changes.
     func rebuild(for tool: AnnotationTool) {
+        defer { if overlayView?.isEditorMode == true { layoutAsInspector(width: 268) } }
         // Remove old subviews
         subviews.forEach { $0.removeFromSuperview() }
         guard let ov = overlayView else { return }
@@ -321,7 +645,7 @@ class ToolOptionsRowView: NSView {
         curX += sliderW + 4
 
         let val = Int(currentVal)
-        let valStr = tool == .loupe ? "\(val)" : "\(val)px"
+        let valStr = tool == .loupe ? "\(val)" : "\(val)\(unitSuffix)"
         let labelW: CGFloat = tool == .loupe ? 32 : 28
         let label = NSTextField(labelWithString: valStr)
         label.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
@@ -743,7 +1067,7 @@ class ToolOptionsRowView: NSView {
         }
     }
 
-    private static func gradientSwatchImage(styleIndex: Int, size: CGFloat) -> NSImage {
+    static func gradientSwatchImage(styleIndex: Int, size: CGFloat) -> NSImage {
         // Custom image background swatch
         if styleIndex == -1 {
             if let data = UserDefaults.standard.data(forKey: "beautifyCustomBgImageData"),
@@ -820,7 +1144,7 @@ class ToolOptionsRowView: NSView {
         addSubview(slider)
         curX += 80 + 4
 
-        let valLabel = NSTextField(labelWithString: "\(Int(radiusVal))px")
+        let valLabel = NSTextField(labelWithString: "\(Int(radiusVal))\(unitSuffix)")
         valLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
         valLabel.textColor = ToolbarLayout.iconColor.withAlphaComponent(0.6)
         valLabel.alignment = .right
@@ -1168,7 +1492,7 @@ class ToolOptionsRowView: NSView {
             addSubview(sizeSlider)
             curX += 80 + 4
 
-            let sizeValLabel = NSTextField(labelWithString: "\(Int(currentSize))px")
+            let sizeValLabel = NSTextField(labelWithString: "\(Int(currentSize))\(unitSuffix)")
             sizeValLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
             sizeValLabel.textColor = ToolbarLayout.iconColor.withAlphaComponent(0.6)
             sizeValLabel.alignment = .right
@@ -1477,7 +1801,7 @@ class ToolOptionsRowView: NSView {
         // for the next capture, whether or not an annotation was being edited.
         if let tool = currentTool { ov.setActiveStrokeWidth(val, for: tool) }
         if let label = viewWithTag(997) as? NSTextField {
-            label.stringValue = currentTool == .loupe ? "\(Int(val))" : "\(Int(val))px"
+            label.stringValue = currentTool == .loupe ? "\(Int(val))" : "\(Int(val))\(unitSuffix)"
         }
         ov.needsDisplay = true
     }
@@ -1500,7 +1824,7 @@ class ToolOptionsRowView: NSView {
         // Always update the default so the next stamp is placed at this size.
         ov.setActiveStampSize(val)
         if let label = viewWithTag(989) as? NSTextField {
-            label.stringValue = "\(Int(val))px"
+            label.stringValue = "\(Int(val))\(unitSuffix)"
         }
         ov.needsDisplay = true
     }
@@ -1624,7 +1948,7 @@ class ToolOptionsRowView: NSView {
         ov.currentRectCornerRadius = val
         UserDefaults.standard.set(sender.doubleValue, forKey: "currentRectCornerRadius")
         if let label = viewWithTag(996) as? NSTextField {
-            label.stringValue = "\(Int(val))px"
+            label.stringValue = "\(Int(val))\(unitSuffix)"
         }
         ov.needsDisplay = true
     }
@@ -1997,6 +2321,18 @@ class ToolOptionsRowView: NSView {
 
     @objc private func textConfirmClicked() {
         overlayView?.commitTextFieldIfNeeded()
+    }
+}
+
+/// Mirrors an inspector NSSwitch onto the original toggle/checkbox button and
+/// sends that button's action, so every existing handler keeps its semantics.
+private final class InspectorSwitchProxy: NSObject {
+    weak var button: NSButton?
+    init(button: NSButton) { self.button = button }
+    @objc func changed(_ sender: NSSwitch) {
+        guard let button, let action = button.action else { return }
+        button.state = sender.state
+        NSApp.sendAction(action, to: button.target, from: button)
     }
 }
 

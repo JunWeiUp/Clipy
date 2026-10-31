@@ -159,6 +159,40 @@ final class EffectsBandView: NSView {
         }
     }
 
+    /// Add the same effect as the timeline context menu at the playhead.
+    func addEffect(_ kind: Int, at time: Double) {
+        let t = max(0, min(duration, time))
+        switch kind {
+        case 0:
+            guard let gap = zoomGapAtClickTime(t) else {
+                delegate?.effectsBand(self, showStatus: L("Not enough room here"), isError: true); return
+            }
+            addZoomSegment(clickTime: t, gapStart: gap.0, gapEnd: gap.1)
+        case 1: addCensorSegment(clickTime: t)
+        case 2: addTextSegment(clickTime: t)
+        case 3:
+            guard let gap = speedGapAtClickTime(t) else {
+                delegate?.effectsBand(self, showStatus: L("Not enough room here"), isError: true); return
+            }
+            addSpeedSegment(clickTime: t, gapStart: gap.0, gapEnd: gap.1)
+        case 4: addFreezeSegment(atTime: t)
+        case 5: addCutSegment(clickTime: t)
+        default: break
+        }
+    }
+
+    /// Reuse the complete context menus in the inspector so every existing
+    /// text, fade and color option remains available from either surface.
+    func showSelectedSettings(event: NSEvent) {
+        guard let id = selectedSegmentID else { return }
+        if let seg = zoomSegments.first(where: { $0.id == id }) { showZoomPillContextMenu(for: seg, at: event) }
+        else if let seg = censorSegments.first(where: { $0.id == id }) { showCensorPillContextMenu(for: seg, at: event) }
+        else if let seg = textSegments.first(where: { $0.id == id }) { showTextPillContextMenu(for: seg, at: event) }
+        else if let seg = speedSegments.first(where: { $0.id == id }) { showSpeedPillContextMenu(for: seg, at: event) }
+        else if let seg = freezeSegments.first(where: { $0.id == id }) { showFreezePillContextMenu(for: seg, at: event) }
+        else if let seg = cutSegments.first(where: { $0.id == id }) { showCutPillContextMenu(for: seg, at: event) }
+    }
+
     // MARK: - Geometry helpers
 
     /// The track rect where row 0 sits — the bottom row of the stack, offset
@@ -339,12 +373,12 @@ final class EffectsBandView: NSView {
             height: CGFloat(effectRowCount) * rowStride - rowGap
         )
         let bgPath = NSBezierPath(roundedRect: bandRect, xRadius: 5, yRadius: 5)
-        ToolbarLayout.iconColor.withAlphaComponent(0.06).setFill()
+        NSColor.labelColor.withAlphaComponent(0.035).setFill()
         bgPath.fill()
 
         // Separator lines between stacked rows.
         if effectRowCount >= 2 {
-            NSColor.white.withAlphaComponent(0.10).setFill()
+            NSColor.separatorColor.withAlphaComponent(0.5).setFill()
             for i in 1..<effectRowCount {
                 let y = row0.minY + CGFloat(i) * rowStride - 1
                 NSBezierPath(rect: NSRect(x: row0.minX, y: y, width: row0.width, height: 1)).fill()
@@ -378,7 +412,7 @@ final class EffectsBandView: NSView {
             drawEffectPill(
                 rect: rect,
                 isSelected: seg.id == selectedSegmentID,
-                baseFillColor: NSColor(calibratedRed: 0.95, green: 0.35, blue: 0.35, alpha: 1.0),
+                baseFillColor: NSColor.systemGray,
                 fadeInFrac: seg.effectiveFadeIn / max(seg.duration, 0.001),
                 fadeOutFrac: seg.effectiveFadeOut / max(seg.duration, 0.001),
                 iconSymbol: styleIcon,
@@ -458,7 +492,7 @@ final class EffectsBandView: NSView {
             let hint = L("Click to add effects") as NSString
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                .foregroundColor: ToolbarLayout.iconColor.withAlphaComponent(0.55),
+                .foregroundColor: NSColor.tertiaryLabelColor,
             ]
             let size = hint.size(withAttributes: attrs)
             hint.draw(at: NSPoint(x: bandRect.midX - size.width / 2,
@@ -495,6 +529,56 @@ final class EffectsBandView: NSView {
         NSGraphicsContext.restoreGraphicsState()
     }
 
+    /// V3 pill (mac-video.html `.pill`): tinted fill + 1pt tinted edge + tinted
+    /// label; the selected pill is a solid accent capsule with grab handles.
+    private func pillTextColor(_ base: NSColor) -> NSColor {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return (base.usingColorSpace(.sRGB) ?? base).blended(withFraction: dark ? 0.35 : 0.3, of: dark ? .white : .black) ?? base
+    }
+
+    private func drawPillContent(rect: NSRect, iconSymbol: String, label: String, color: NSColor, iconLabelGap: CGFloat) {
+        let labelAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .semibold),
+            .foregroundColor: color,
+        ]
+        let labelNS = label as NSString
+        let labelSize = labelNS.size(withAttributes: labelAttrs)
+        let iconSize: CGFloat = 11
+        let contentW = iconSize + iconLabelGap + labelSize.width
+        guard let icon = NSImage(systemSymbolName: iconSymbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: iconSize, weight: .semibold)) else { return }
+        let tinted = NSImage(size: icon.size, flipped: false) { r in
+            icon.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1)
+            color.setFill()
+            r.fill(using: .sourceAtop)
+            return true
+        }
+        if rect.width > contentW + 14 {
+            let startX = rect.minX + 9
+            tinted.draw(in: NSRect(x: startX, y: rect.midY - icon.size.height / 2, width: icon.size.width, height: icon.size.height))
+            labelNS.draw(at: NSPoint(x: startX + iconSize + iconLabelGap, y: rect.midY - labelSize.height / 2), withAttributes: labelAttrs)
+        } else if rect.width > iconSize + 4 {
+            tinted.draw(in: NSRect(x: rect.midX - icon.size.width / 2, y: rect.midY - icon.size.height / 2,
+                                   width: icon.size.width, height: icon.size.height))
+        }
+    }
+
+    private func drawSelectedHandles(_ rect: NSRect) {
+        let handleW: CGFloat = 6
+        let handleH: CGFloat = rect.height + 6
+        let handleY = rect.minY - 3
+        for x in [rect.minX - handleW / 2 + 1, rect.maxX - handleW / 2 - 1] {
+            let handle = NSRect(x: x, y: handleY, width: handleW, height: handleH)
+            NSColor.white.setFill()
+            NSBezierPath(roundedRect: handle, xRadius: 2, yRadius: 2).fill()
+            NSColor.controlAccentColor.setStroke()
+            let edge = NSBezierPath(roundedRect: handle.insetBy(dx: 0.5, dy: 0.5), xRadius: 2, yRadius: 2)
+            edge.lineWidth = 1
+            edge.stroke()
+            drawHandleGrip(in: handle)
+        }
+    }
+
     private func drawEffectPill(rect: NSRect,
                                  isSelected: Bool,
                                  baseFillColor: NSColor,
@@ -502,13 +586,13 @@ final class EffectsBandView: NSView {
                                  fadeOutFrac: Double,
                                  iconSymbol: String,
                                  label: String,
-                                 iconLabelGap: CGFloat = 4) {
-        let fillColor = baseFillColor.withAlphaComponent(isSelected ? 1.0 : 0.88)
+                                 iconLabelGap: CGFloat = 5) {
         let path = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
-        fillColor.setFill()
+        (isSelected ? NSColor.controlAccentColor : baseFillColor.withAlphaComponent(0.16)).setFill()
         path.fill()
 
-        let fadeColor = NSColor.black.withAlphaComponent(0.18)
+        // Fade ramps stay visible as darker end caps.
+        let fadeColor = (isSelected ? NSColor.black : baseFillColor).withAlphaComponent(isSelected ? 0.18 : 0.14)
         let fadeInW = CGFloat(fadeInFrac) * rect.width
         let fadeOutW = CGFloat(fadeOutFrac) * rect.width
         NSGraphicsContext.saveGraphicsState()
@@ -522,148 +606,47 @@ final class EffectsBandView: NSView {
         }
         NSGraphicsContext.restoreGraphicsState()
 
-        let labelAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: NSColor.white,
-        ]
-        let labelNS = label as NSString
-        let labelSize = labelNS.size(withAttributes: labelAttrs)
-        let iconSize: CGFloat = 11
-        let contentW = iconSize + iconLabelGap + labelSize.width
-        if rect.width > contentW + 6 {
-            let startX = rect.midX - contentW / 2
-            if let icon = NSImage(systemSymbolName: iconSymbol, accessibilityDescription: nil)?
-                    .withSymbolConfiguration(.init(pointSize: iconSize, weight: .semibold)) {
-                let tinted = NSImage(size: icon.size, flipped: false) { r in
-                    icon.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1)
-                    NSColor.white.setFill()
-                    r.fill(using: .sourceAtop)
-                    return true
-                }
-                tinted.draw(in: NSRect(x: startX, y: rect.midY - icon.size.height / 2,
-                                        width: icon.size.width, height: icon.size.height))
-            }
-            labelNS.draw(at: NSPoint(x: startX + iconSize + iconLabelGap, y: rect.midY - labelSize.height / 2),
-                          withAttributes: labelAttrs)
-        } else if rect.width > iconSize + 4 {
-            if let icon = NSImage(systemSymbolName: iconSymbol, accessibilityDescription: nil)?
-                    .withSymbolConfiguration(.init(pointSize: iconSize, weight: .semibold)) {
-                let tinted = NSImage(size: icon.size, flipped: false) { r in
-                    icon.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1)
-                    NSColor.white.setFill()
-                    r.fill(using: .sourceAtop)
-                    return true
-                }
-                tinted.draw(in: NSRect(x: rect.midX - icon.size.width / 2,
-                                        y: rect.midY - icon.size.height / 2,
-                                        width: icon.size.width, height: icon.size.height))
-            }
+        if !isSelected {
+            baseFillColor.withAlphaComponent(0.55).setStroke()
+            let edge = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
+            edge.lineWidth = 1
+            edge.stroke()
         }
-
-        if isSelected {
-            NSColor.white.withAlphaComponent(0.95).setStroke()
-            let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), xRadius: 6, yRadius: 6)
-            border.lineWidth = 1.5
-            border.stroke()
-        }
-
-        let handleW: CGFloat = 6
-        let handleH: CGFloat = rect.height + 6
-        let handleY = rect.minY - 3
-        let handleColor = NSColor.white.withAlphaComponent(isSelected ? 1.0 : 0.9)
-        let left = NSRect(x: rect.minX - handleW / 2 + 1, y: handleY, width: handleW, height: handleH)
-        handleColor.setFill()
-        NSBezierPath(roundedRect: left, xRadius: 2, yRadius: 2).fill()
-        drawHandleGrip(in: left)
-        let right = NSRect(x: rect.maxX - handleW / 2 - 1, y: handleY, width: handleW, height: handleH)
-        handleColor.setFill()
-        NSBezierPath(roundedRect: right, xRadius: 2, yRadius: 2).fill()
-        drawHandleGrip(in: right)
+        drawPillContent(rect: rect, iconSymbol: iconSymbol, label: label,
+                        color: isSelected ? .white : pillTextColor(baseFillColor), iconLabelGap: iconLabelGap)
+        if isSelected { drawSelectedHandles(rect) }
     }
 
     /// Draw a cut pill. Distinct visual from zoom/censor: dark-red base with
     /// diagonal hatching to signal "this span is being removed."
     private func drawCutPill(rect: NSRect, isSelected: Bool, label: String) {
-        let base = NSColor(calibratedRed: 0.35, green: 0.08, blue: 0.10, alpha: isSelected ? 1.0 : 0.95)
+        let red = NSColor.systemRed
         let path = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
-        base.setFill()
+        (isSelected ? NSColor.controlAccentColor : red.withAlphaComponent(0.05)).setFill()
         path.fill()
-
-        // Diagonal stripes inside the pill — film-strip deletion cue.
+        // Diagonal hatching — deletion cue (mac-video.html `.pill.cut`).
         NSGraphicsContext.saveGraphicsState()
         path.addClip()
-        NSColor.white.withAlphaComponent(0.10).setStroke()
+        (isSelected ? NSColor.white.withAlphaComponent(0.12) : red.withAlphaComponent(0.12)).setStroke()
         let stripe = NSBezierPath()
-        stripe.lineWidth = 1
-        let step: CGFloat = 6
+        stripe.lineWidth = 5
         var x = rect.minX - rect.height
         while x < rect.maxX + rect.height {
-            stripe.move(to: NSPoint(x: x, y: rect.minY))
-            stripe.line(to: NSPoint(x: x + rect.height, y: rect.maxY))
-            x += step
+            stripe.move(to: NSPoint(x: x, y: rect.maxY))
+            stripe.line(to: NSPoint(x: x + rect.height, y: rect.minY))
+            x += 10
         }
         stripe.stroke()
         NSGraphicsContext.restoreGraphicsState()
-
-        let labelAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: NSColor.white,
-        ]
-        let labelNS = label as NSString
-        let labelSize = labelNS.size(withAttributes: labelAttrs)
-        let iconSize: CGFloat = 11
-        // Scissors glyph is narrower than "+" / drop / square so its trailing
-        // whitespace looks smaller against the label — bump the gap explicitly.
-        let iconLabelGap: CGFloat = 7
-        let contentW = iconSize + iconLabelGap + labelSize.width
-        if rect.width > contentW + 6,
-           let icon = NSImage(systemSymbolName: "scissors", accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: iconSize, weight: .semibold)) {
-            let startX = rect.midX - contentW / 2
-            let tinted = NSImage(size: icon.size, flipped: false) { r in
-                icon.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1)
-                NSColor.white.setFill()
-                r.fill(using: .sourceAtop)
-                return true
-            }
-            tinted.draw(in: NSRect(x: startX, y: rect.midY - icon.size.height / 2,
-                                    width: icon.size.width, height: icon.size.height))
-            labelNS.draw(at: NSPoint(x: startX + iconSize + iconLabelGap, y: rect.midY - labelSize.height / 2),
-                          withAttributes: labelAttrs)
-        } else if rect.width > iconSize + 4,
-                  let icon = NSImage(systemSymbolName: "scissors", accessibilityDescription: nil)?
-                    .withSymbolConfiguration(.init(pointSize: iconSize, weight: .semibold)) {
-            let tinted = NSImage(size: icon.size, flipped: false) { r in
-                icon.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1)
-                NSColor.white.setFill()
-                r.fill(using: .sourceAtop)
-                return true
-            }
-            tinted.draw(in: NSRect(x: rect.midX - icon.size.width / 2,
-                                    y: rect.midY - icon.size.height / 2,
-                                    width: icon.size.width, height: icon.size.height))
+        if !isSelected {
+            red.withAlphaComponent(0.55).setStroke()
+            let edge = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
+            edge.lineWidth = 1
+            edge.stroke()
         }
-
-        if isSelected {
-            NSColor.white.withAlphaComponent(0.95).setStroke()
-            let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), xRadius: 6, yRadius: 6)
-            border.lineWidth = 1.5
-            border.stroke()
-        }
-
-        // Same grab handles as other pills so drag-to-resize feels uniform.
-        let handleW: CGFloat = 6
-        let handleH: CGFloat = rect.height + 6
-        let handleY = rect.minY - 3
-        let handleColor = NSColor.white.withAlphaComponent(isSelected ? 1.0 : 0.9)
-        let left = NSRect(x: rect.minX - handleW / 2 + 1, y: handleY, width: handleW, height: handleH)
-        handleColor.setFill()
-        NSBezierPath(roundedRect: left, xRadius: 2, yRadius: 2).fill()
-        drawHandleGrip(in: left)
-        let right = NSRect(x: rect.maxX - handleW / 2 - 1, y: handleY, width: handleW, height: handleH)
-        handleColor.setFill()
-        NSBezierPath(roundedRect: right, xRadius: 2, yRadius: 2).fill()
-        drawHandleGrip(in: right)
+        drawPillContent(rect: rect, iconSymbol: "scissors", label: label,
+                        color: isSelected ? .white : pillTextColor(red), iconLabelGap: 6)
+        if isSelected { drawSelectedHandles(rect) }
     }
 
     private func formatCutLabel(duration: Double) -> String {

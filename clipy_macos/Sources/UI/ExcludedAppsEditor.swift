@@ -19,10 +19,28 @@ struct ExcludedAppsEditor: View {
   ]
 
   var body: some View {
-    VStack(alignment: .leading, spacing: AppSpacing.xs) {
-      HStack {
-        Text(L10n.t(.excludedApps))
-        Spacer()
+    SettingsCard {
+      ForEach(bundleIDs, id: \.self) { bundleID in
+        let name = Self.displayName(for: bundleID)
+        SettingsRow(image: Self.icon(for: bundleID), title: name, detail: bundleID) {
+          Button {
+            remove(bundleID)
+          } label: {
+            Image(systemName: "minus.circle")
+              .font(.system(size: 15))
+              .foregroundStyle(SettingsPalette.text2)
+              .frame(width: 28, height: 28)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .help(L10n.t(.delete))
+          .accessibilityLabel("\(L10n.t(.delete)) \(name)")
+        }
+      }
+      if bundleIDs.isEmpty {
+        SettingsCaptionRow(L10n.t(.excludedAppsEmpty))
+      }
+      SettingsCardFooter(note: L10n.t(.excludedAppsHint)) {
         Menu {
           Button(L10n.t(.excludedAppsChooseApp)) { chooseApplication() }
           let running = runningApps
@@ -43,41 +61,8 @@ struct ExcludedAppsEditor: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help(L10n.t(.excludedAppsAdd))
+        .accessibilityLabel(L10n.t(.excludedAppsAdd))
       }
-
-      if bundleIDs.isEmpty {
-        Text(L10n.t(.excludedAppsEmpty))
-          .font(AppFont.caption)
-          .foregroundStyle(.secondary)
-      } else {
-        ForEach(bundleIDs, id: \.self) { bundleID in
-          HStack(spacing: AppSpacing.sm) {
-            Image(nsImage: Self.icon(for: bundleID))
-              .resizable()
-              .frame(width: 20, height: 20)
-            VStack(alignment: .leading, spacing: 1) {
-              Text(Self.displayName(for: bundleID)).lineLimit(1)
-              Text(bundleID)
-                .font(AppFont.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            }
-            Spacer()
-            Button {
-              remove(bundleID)
-            } label: {
-              Image(systemName: "minus.circle")
-            }
-            .buttonStyle(.borderless)
-            .help(L10n.t(.delete))
-          }
-        }
-      }
-
-      Text(L10n.t(.excludedAppsHint))
-        .font(AppFont.caption)
-        .foregroundStyle(.secondary)
     }
   }
 

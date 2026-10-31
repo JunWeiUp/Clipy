@@ -431,6 +431,8 @@ class OverlayView: NSView {
     /// Overlay-space frame of the resolution box (for chrome hit-test / cursor /
     /// zoom-badge anchoring). .zero when not shown.
     private var resolutionBoxRect: NSRect = .zero
+    private var captureModeBar: CaptureModeBarView?
+    private var captureHintView: CaptureHintView?
     private var preSelectionPresetButton: PreSelectionPresetButton?
     private var preSelectionPresetButtonRect: NSRect = .zero
 
@@ -506,6 +508,8 @@ class OverlayView: NSView {
     }
 
     var showBeautifyInOptionsRow: Bool = false
+    /// V3 capture bar "标注" mode: show the annotation strip + options row.
+    var annotationToolsVisible = true
 
     // Image effects
     var effectsPreset: ImageEffectPreset =
@@ -1417,9 +1421,9 @@ class OverlayView: NSView {
     }
 
     /// Re-evaluate the cursor for the current tool (e.g. after toggling smart marker).
-    /// Find the EditorTopBarView in the chrome parent (for updating zoom label from keyboard shortcuts).
-    private func findTopBar() -> EditorTopBarView? {
-        chromeParentView?.subviews.compactMap { $0 as? EditorTopBarView }.first
+    /// Find the editor chrome (for updating zoom label from keyboard shortcuts).
+    private func findTopBar() -> EditorChromeView? {
+        chromeParentView as? EditorChromeView
     }
 
     func updateCursorForCurrentTool() {
@@ -1651,6 +1655,7 @@ class OverlayView: NSView {
 
         // Window snap highlight (drawn before helper text so text appears on top)
         drawWindowSnapHighlight()
+        updateCaptureModeBar()
 
         // Helper text (capture instructions). Suppressed when the user has
         // enabled "Hide capture instructions" in Settings (issue #226).
@@ -2327,7 +2332,8 @@ class OverlayView: NSView {
     /// so the dimensions read as centered on the selection — the trailing presets
     /// button just overhangs to the right (not counted in the centering).
     private func resolutionBoxFrame(size: NSSize, dimsCenterX: CGFloat) -> NSRect {
-        let x = selectionRect.midX - dimsCenterX
+        // mac-capture.html `.size`: left-aligned with the selection, just above it.
+        let x = selectionRect.minX - 1
         let clampedX = max(bounds.minX + 2, min(x, bounds.maxX - size.width - 2))
         let edgeGap = handleSize / 2 + 3
         let above = selectionRect.maxY + edgeGap
@@ -2501,10 +2507,22 @@ class OverlayView: NSView {
             box.onPresets = { [weak self] anchor in self?.showResolutionPresets(from: anchor) }
             resolutionBox = box
         }
-        let frame = resolutionBoxFrame(size: box.preferredSize, dimsCenterX: box.dimensionsCenterX)
-        resolutionBoxRect = frame  // overlay-space rect (for chrome/cursor/zoom anchor)
         let px = selectionDisplaySize
         box.setDimensions(w: px.w, h: px.h)
+        // V3 info pills: the other unit on Retina screens, and the edge-snap state.
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        var retinaText: String?
+        if scale > 1.01, !isRecording {
+            if resolutionUnitIsPoints {
+                let pixels = selectionPixelSize
+                retinaText = "Retina · \(pixels.w) × \(pixels.h)"
+            } else {
+                retinaText = "Retina · \(Int(selectionRect.width.rounded())) × \(Int(selectionRect.height.rounded())) pt"
+            }
+        }
+        box.setInfo(retina: retinaText, snapped: !isRecording && (boundarySnapGuideX != nil || boundarySnapGuideY != nil))
+        let frame = resolutionBoxFrame(size: box.preferredSize, dimsCenterX: box.dimensionsCenterX)
+        resolutionBoxRect = frame  // overlay-space rect (for chrome/cursor/zoom anchor)
         box.setActivePresetLabel(preSelectionPresetDisplayLabel)
 
         // Inline: a solid-bg overlay subview at the overlay-space frame.
@@ -2748,6 +2766,65 @@ class OverlayView: NSView {
             && !autoOCRMode
             && remoteSelectionRect.width < 1
             && remoteSelectionRect.height < 1
+    }
+
+    private func updateCaptureModeBar() {
+        guard !isEditorMode, state == .idle, screenshotImage != nil,
+              remoteSelectionRect.width < 1, remoteSelectionRect.height < 1 else {
+            captureModeBar?.isHidden = true
+            return
+        }
+        if captureModeBar == nil {
+            // mac-capture.html idle "#modebar": 区域 / 窗口 / 全屏 | ×, dark capture-bar chrome.
+            let bar = CaptureModeBarView()
+            for (tag, symbol, title) in [
+                (0, "square.dashed", L("Region")), (1, "macwindow", L("Window")),
+                (2, "display", L("Full Screen")), (4, "xmark", L("Cancel"))
+            ] {
+                let button = CaptureModeBarButton(title: title, symbol: symbol, isClose: tag == 4)
+                button.target = self
+                button.action = #selector(captureModeClicked(_:))
+                button.tag = tag
+                button.toolTip = title
+                bar.addSubview(button)
+            }
+            addSubview(bar)
+            captureModeBar = bar
+        }
+        guard let bar = captureModeBar else { return }
+        for case let button as CaptureModeBarButton in bar.subviews {
+            button.isOn = (button.tag == 1 && windowSnapEnabled) || (button.tag == 0 && !windowSnapEnabled)
+        }
+        bar.layoutButtons()
+        bar.frame.origin = NSPoint(x: bounds.midX - bar.frame.width / 2, y: bounds.minY + 34)
+        bar.isHidden = false
+    }
+
+    @objc private func captureModeClicked(_ sender: NSButton) {
+        guard state == .idle else { return }
+        switch sender.tag {
+        case 0, 1:
+            windowSnapEnabled = sender.tag == 1
+            hoveredWindowRect = nil
+            overlayDelegate?.overlayViewDidChangeWindowSnapState()
+            window?.makeFirstResponder(self)
+            updateCaptureModeBar()
+            needsDisplay = true
+        case 2:
+            selectionRect = bounds
+            state = .selected
+            hoveredWindowRect = nil
+            captureModeBar?.isHidden = true
+            if autoQuickSaveMode {
+                autoQuickSaveMode = false
+                overlayDelegate?.overlayViewDidRequestQuickSave()
+            } else {
+                showToolbars = true
+                overlayDelegate?.overlayViewDidFinishSelection(selectionRect)
+                needsDisplay = true
+            }
+        default: overlayDelegate?.overlayViewDidCancel()
+        }
     }
 
     private func showPreSelectionPresetButton(frame: NSRect) {
@@ -3594,7 +3671,7 @@ class OverlayView: NSView {
 
         // Keep the editor top-bar size label in sync (the canvas may have grown).
         if let cg = screenshotImage?.cgImage(forProposedRect: nil, context: nil, hints: nil),
-           let topBar = chromeParentView?.subviews.compactMap({ $0 as? EditorTopBarView }).first {
+           let topBar = chromeParentView as? EditorChromeView {
             topBar.updateSizeLabel(width: cg.width, height: cg.height)
         }
 
@@ -4291,7 +4368,7 @@ class OverlayView: NSView {
             frame.size = croppedPointSize
             enclosingScrollView?.magnification = 1.0
             // Update top bar size label
-            if let topBar = chromeParentView?.subviews.compactMap({ $0 as? EditorTopBarView }).first
+            if let topBar = chromeParentView as? EditorChromeView
             {
                 topBar.updateSizeLabel(width: croppedCG.width, height: croppedCG.height)
                 topBar.updateZoom(1.0)
@@ -5002,7 +5079,19 @@ class OverlayView: NSView {
             beautifyEnabled: beautifyEnabled, beautifyStyleIndex: beautifyStyleIndex,
             hasAnnotations: movableAnnotations, translateEnabled: translateEnabled,
             isRecording: isRecording,
-            isEditorMode: isEditorMode)
+            isEditorMode: isEditorMode,
+            annotationToolsVisible: annotationToolsVisible)
+
+        if isEditorMode {
+            // V3 editor: the title-bar row only hosts drawing tools. Color, undo/redo,
+            // image actions and outputs live in the window chrome (inspector/footer),
+            // which calls the same handleToolbarAction commands.
+            bottomButtons = bottomButtons.filter { if case .tool = $0.action { return true }; return false }
+            for i in bottomButtons.indices where bottomButtons[i].bgColor == nil {
+                bottomButtons[i].tintColor = .secondaryLabelColor
+            }
+            rightButtons = []
+        }
 
         // Create strip views if needed — add to chrome parent (window content) when in scroll view
         let parent = chromeParentView ?? self
@@ -5012,11 +5101,15 @@ class OverlayView: NSView {
             bottomStripView = strip
         }
         if rightStripView == nil {
-            let strip = ToolbarStripView(orientation: .vertical)
+            let strip = ToolbarStripView(orientation: isEditorMode ? .horizontal : .vertical)
             parent.addSubview(strip)
             rightStripView = strip
         }
 
+        rightStripView?.orientation = .horizontal
+        rightStripView?.barStyle = isEditorMode ? .standard : (isRecording ? .recordBar : .captureBar)
+        bottomStripView?.usesWindowAppearance = isEditorMode
+        rightStripView?.usesWindowAppearance = isEditorMode
         // Update existing buttons if count matches, rebuild only if structure changed
         if bottomStripView?.buttonViews.count == bottomButtons.count && bottomStripView?.buttonViews.count ?? 0 > 0 {
             bottomStripView?.updateState(from: bottomButtons)
@@ -5054,7 +5147,11 @@ class OverlayView: NSView {
             if toolOptionsRowView == nil {
                 let row = ToolOptionsRowView()
                 row.overlayView = self
-                parent.addSubview(row)
+                if isEditorMode, let chrome = parent as? EditorChromeView {
+                    chrome.installOptions(row)
+                } else {
+                    parent.addSubview(row)
+                }
                 toolOptionsRowView = row
             }
             // Don't overwrite annotation-specific options when editing a selected annotation
@@ -5067,11 +5164,30 @@ class OverlayView: NSView {
 
         repositionToolbars()
         updateResolutionBox()
+        updateCaptureHint()
+    }
+
+    /// mac-capture.html `.hint`: top-right shortcut reminder in the selected state.
+    private func updateCaptureHint() {
+        let visible = !isEditorMode && !isRecording && !isScrollCapturing && showToolbars && state == .selected
+        guard visible else { captureHintView?.isHidden = true; return }
+        let hint = captureHintView ?? {
+            let view = CaptureHintView(items: [
+                ("Space", L("Hold to move selection")), ("⇧", L("Square")),
+                ("↩", L("Quick capture")), ("esc", L("Cancel")),
+            ])
+            addSubview(view)
+            captureHintView = view
+            return view
+        }()
+        hint.frame.origin = NSPoint(x: bounds.maxX - 28 - hint.frame.width, y: bounds.maxY - 44 - hint.frame.height)
+        hint.isHidden = false
     }
 
     /// Reposition toolbar strips based on current selection/bounds. Cheap — safe to call from draw().
     private func repositionToolbars() {
         guard let bottomStrip = bottomStripView, let rightStrip = rightStripView else { return }
+        if captureHintView != nil { updateCaptureHint() }
 
         // In editor mode, let toolbar gap clicks pass through to the image beneath
         bottomStrip.passesThrough = isEditorMode
@@ -5123,166 +5239,27 @@ class OverlayView: NSView {
         let bottomSize = bottomStrip.frame.size
 
         if isEditorMode {
-            let cb = chromeParentView?.bounds ?? bounds
-            bottomStrip.frame.origin = NSPoint(x: cb.midX - bottomSize.width / 2, y: 20)
-            bottomStrip.autoresizingMask = [.minXMargin, .maxXMargin, .maxYMargin]
-            rightStrip.frame.origin = NSPoint(
-                x: cb.maxX - rightSize.width - 20, y: cb.maxY - rightSize.height - 36)
-            rightStrip.autoresizingMask = [.minXMargin, .minYMargin]
+            // EditorChromeView owns the editor layout (tool row, inspector, footer).
+            if let chrome = chromeParentView as? EditorChromeView {
+                if chrome.toolStrip !== bottomStrip { chrome.toolStrip = bottomStrip }
+                chrome.scheduleRefresh()
+            }
+            _ = (rightSize, bottomSize)
+        } else if isRecording {
+            // mac-recording.html "录制准备": one labelled control bar, bottom-centre of the screen.
+            let x = max(bounds.minX + 8, min(bounds.midX - rightSize.width / 2, bounds.maxX - rightSize.width - 8))
+            rightStrip.frame.origin = NSPoint(x: x, y: bounds.minY + 84)
         } else {
-            let optRowH: CGFloat = 38  // options row height + gap
-
-            // ── 1. Position right bar (anchored to selection edge) ──
-            let rightMargin: CGFloat = 50
-            let rightFitsRight = anchorRect.maxX < bounds.maxX - rightMargin
-            let rightFitsLeft = anchorRect.minX > bounds.minX + rightMargin
-
-            // For very narrow selections, put the right bar below instead of to the side
-            let selectionTooNarrow = !rightFitsRight && !rightFitsLeft
-                && anchorRect.width < bounds.width * 0.5
-
-            var rx: CGFloat
-            var ry: CGFloat
-
-            if selectionTooNarrow {
-                // Place right bar below the selection, right-aligned
-                rx = anchorRect.maxX - rightSize.width
-                rx = max(bounds.minX + 4, min(rx, bounds.maxX - rightSize.width - 4))
-                ry = anchorRect.minY - rightSize.height - 6
-                ry = max(bounds.minY + 4, min(ry, bounds.maxY - rightSize.height - 4))
-            } else {
-                if rightFitsRight {
-                    rx = anchorRect.maxX + 6
-                } else if rightFitsLeft {
-                    rx = anchorRect.minX - rightSize.width - 6
-                } else {
-                    rx = selectionRect.maxX - rightSize.width - 6
-                }
-                rx = max(bounds.minX + 4, min(rx, bounds.maxX - rightSize.width - 4))
-
-                ry = anchorRect.maxY - rightSize.height
-                ry = max(bounds.minY + 4, min(ry, bounds.maxY - rightSize.height - 4))
+            // mac-capture.html: capture bar bottom-centre, annotation strip and options row
+            // stacked above it, all centred on the screen (not on the selection).
+            let capX = max(bounds.minX + 8, min(bounds.midX - rightSize.width / 2, bounds.maxX - rightSize.width - 8))
+            rightStrip.frame.origin = NSPoint(x: capX, y: bounds.minY + 34)
+            let toolsX = max(bounds.minX + 8, min(bounds.midX - bottomSize.width / 2, bounds.maxX - bottomSize.width - 8))
+            bottomStrip.frame.origin = NSPoint(x: toolsX, y: rightStrip.frame.maxY + 12)
+            if !annotationToolsVisible {
+                bottomStrip.isHidden = true
+                toolOptionsRowView?.isHidden = true
             }
-
-            // ── 2. Choose bottom bar Y, preferring positions that don't overlap right bar ──
-            let belowY = anchorRect.minY - bottomSize.height - 6
-            let belowFits = (belowY - optRowH) >= bounds.minY + 4
-            let aboveY = anchorRect.maxY + optRowH + 6
-            let aboveFits = (aboveY + bottomSize.height) <= bounds.maxY - 4
-
-            // Helper: does a bottom bar at candidate Y (centered) overlap the right bar?
-            let centeredBx = anchorRect.midX - bottomSize.width / 2
-            let clampedCenteredBx = max(bounds.minX + 4, min(centeredBx, bounds.maxX - bottomSize.width - 4))
-            func wouldOverlapRight(candidateY: CGFloat) -> Bool {
-                let bMinY = candidateY - optRowH
-                let bMaxY = candidateY + bottomSize.height
-                guard bMaxY > ry && bMinY < ry + rightSize.height else { return false }
-                let bMaxX = clampedCenteredBx + bottomSize.width
-                let bMinX = clampedCenteredBx
-                return bMaxX > rx && bMinX < rx + rightSize.width
-            }
-
-            var by: CGFloat
-            if belowFits && !wouldOverlapRight(candidateY: belowY) {
-                by = belowY
-            } else if aboveFits && !wouldOverlapRight(candidateY: aboveY) {
-                by = aboveY
-            } else if belowFits {
-                by = belowY  // overlaps but at least fits vertically
-            } else if aboveFits {
-                by = aboveY
-            } else {
-                by = selectionRect.minY + optRowH + 6
-                by = max(bounds.minY + optRowH + 4, min(by, bounds.maxY - bottomSize.height - 4))
-            }
-
-            // ── 3. Position bottom bar X, avoiding right bar if they overlap vertically ──
-            var bx = clampedCenteredBx
-            let bottomMinY = by - optRowH
-            let bottomMaxY = by + bottomSize.height
-            let overlapsVertically = bottomMaxY > ry && bottomMinY < ry + rightSize.height
-
-            if overlapsVertically {
-                // Check if centered bottom bar already clears the right bar horizontally
-                if bx + bottomSize.width <= rx - 4 || bx >= rx + rightSize.width + 4 {
-                    // No overlap — keep both as-is
-                } else {
-                    // Overlap: move the RIGHT bar out of the way, keep bottom bar centered.
-                    // Try pushing right bar further right (past bottom bar's right edge).
-                    let pushRight = bx + bottomSize.width + 4
-                    // Try pushing right bar to the left (before bottom bar's left edge).
-                    let pushLeft = bx - rightSize.width - 4
-
-                    if pushRight + rightSize.width <= bounds.maxX - 4 {
-                        rx = pushRight
-                    } else if pushLeft >= bounds.minX + 4 {
-                        rx = pushLeft
-                    } else {
-                        // Right bar can't dodge horizontally — push it vertically.
-                        // Try below the bottom bar + options row zone.
-                        let rightPushDown = by - optRowH - rightSize.height - 4
-                        if rightPushDown >= bounds.minY + 4 {
-                            ry = rightPushDown
-                        } else {
-                            // Try above the bottom bar
-                            let rightPushUp = by + bottomSize.height + 4
-                            if rightPushUp + rightSize.height <= bounds.maxY - 4 {
-                                ry = rightPushUp
-                            }
-                            // else: truly no room, accept overlap
-                        }
-                    }
-                }
-            }
-
-            // The resolution box is positioned independently from the toolbar
-            // strips. During live selection/annotation resizing it can already
-            // be visible when this method runs, so make the side toolbar treat
-            // it as an obstacle too. Prefer moving the side toolbar farther to
-            // the right; that preserves the user's mental model of "actions sit
-            // beside the selection" when there is still room on that side.
-            if shouldShowResolutionBox(), resolutionBoxRect.width > 1, resolutionBoxRect.height > 1 {
-                let gap: CGFloat = 6
-                let avoidRect = resolutionBoxRect.insetBy(dx: -gap, dy: -gap)
-                let candidate = NSRect(x: rx, y: ry, width: rightSize.width, height: rightSize.height)
-                if candidate.intersects(avoidRect) {
-                    let pushRight = avoidRect.maxX + gap
-                    let pushLeft = avoidRect.minX - rightSize.width - gap
-                    let pushUp = avoidRect.maxY + gap
-                    let pushDown = avoidRect.minY - rightSize.height - gap
-
-                    if pushRight + rightSize.width <= bounds.maxX - 4 {
-                        rx = pushRight
-                    } else if pushLeft >= bounds.minX + 4 {
-                        rx = pushLeft
-                    } else if pushUp + rightSize.height <= bounds.maxY - 4 {
-                        ry = pushUp
-                    } else if pushDown >= bounds.minY + 4 {
-                        ry = pushDown
-                    }
-                }
-            }
-
-            bx = max(bounds.minX + 4, min(bx, bounds.maxX - bottomSize.width - 4))
-            rx = max(bounds.minX + 4, min(rx, bounds.maxX - rightSize.width - 4))
-            ry = max(bounds.minY + 4, min(ry, bounds.maxY - rightSize.height - 4))
-
-            // Keep the right bar clear of the notch / camera housing. The
-            // resolution box already does this (loweredBelowTopObstructions); the
-            // right strip had no such limit, so its top button could land under
-            // the notch. Push it down so its top edge sits below any top
-            // obstruction it would overlap (using the final rx so the horizontal
-            // overlap test matches the placed strip).
-            let topObstructions = screenTopObstructionRects().map { $0.insetBy(dx: -4, dy: -2) }
-            for obstruction in topObstructions {
-                let rightFrame = NSRect(x: rx, y: ry, width: rightSize.width, height: rightSize.height)
-                guard rightFrame.intersects(obstruction) else { continue }
-                ry = min(ry, obstruction.minY - rightSize.height - 2)
-            }
-            ry = max(bounds.minY + 4, ry)
-
-            bottomStrip.frame.origin = NSPoint(x: bx, y: by)
-            rightStrip.frame.origin = NSPoint(x: rx, y: ry)
         }
 
         // bottomBarRect is the intended OVERLAY-space rect. Build it from the
@@ -5295,19 +5272,17 @@ class OverlayView: NSView {
         if let row = toolOptionsRowView, !row.isHidden {
             // Use the wider of the bottom bar and the row's natural content width
             let rowW = max(bottomBarRect.width, row.contentWidth)
-            row.frame.size.width = rowW
+            if !isEditorMode { row.frame.size.width = rowW }
             let rowY: CGFloat
             if isEditorMode {
                 // In editor mode, center the options row the same way as the bottom bar
-                let cb = chromeParentView?.bounds ?? bounds
-                let rowX = max(4, cb.midX - rowW / 2)
-                row.frame.origin = NSPoint(x: rowX, y: bottomBarRect.maxY + 2)
-                row.autoresizingMask = [.minXMargin, .maxXMargin, .maxYMargin]
+                // The inspector reflow already ran in rebuild(for:); EditorChromeView places it.
+                row.autoresizingMask = []
             } else {
-                // Center the options row relative to the bottom bar, clamped to view bounds
+                // Centered above the annotation strip (mac-capture.html .orow), clamped to view bounds
                 var rowX = bottomBarRect.midX - rowW / 2
                 rowX = max(4, min(rowX, bounds.maxX - rowW - 4))
-                rowY = bottomBarRect.minY - row.frame.height - 2
+                rowY = isRecording ? bottomBarRect.minY - row.frame.height - 2 : bottomBarRect.maxY + 6
                 row.frame.origin = NSPoint(x: rowX, y: rowY)
             }
             optionsRowRect = NSRect(origin: row.frame.origin, size: row.frame.size)
@@ -6986,7 +6961,7 @@ class OverlayView: NSView {
                         timer.invalidate()
                         self.editorZoomAnimTimer = nil
                         self.needsDisplay = true
-                        if let topBar = sv.superview?.subviews.compactMap({ $0 as? EditorTopBarView }).first {
+                        if let topBar = sv.superview as? EditorChromeView {
                             topBar.updateZoom(target)
                         }
                         return
@@ -6994,7 +6969,7 @@ class OverlayView: NSView {
                     // Ease toward target: move 25% of remaining distance per frame
                     let next = current + diff * 0.25
                     sv.setMagnification(next, centeredAt: self.editorZoomCursorDoc)
-                    if let topBar = sv.superview?.subviews.compactMap({ $0 as? EditorTopBarView }).first {
+                    if let topBar = sv.superview as? EditorChromeView {
                         topBar.updateZoom(next)
                     }
                 }
@@ -7017,7 +6992,7 @@ class OverlayView: NSView {
             self?.needsDisplay = true
         }
 
-        if let topBar = sv.superview?.subviews.compactMap({ $0 as? EditorTopBarView }).first {
+        if let topBar = sv.superview as? EditorChromeView {
             topBar.updateZoom(newMag)
         }
     }
@@ -7568,7 +7543,7 @@ class OverlayView: NSView {
         tip.needsDisplay = true
     }
 
-    private func handleToolbarButtonRightClick(_ action: ToolbarButtonAction, anchorView: NSView) {
+    func handleToolbarButtonRightClick(_ action: ToolbarButtonAction, anchorView: NSView) {
         switch action {
         case .autoRedact:
             showRedactTypePopover(
@@ -8114,6 +8089,10 @@ class OverlayView: NSView {
             overlayDelegate?.overlayViewDidRequestScrollCapture(rect: selectionRect)
         case .addCapture:
             overlayDelegate?.overlayViewDidRequestAddCapture()
+        case .toggleAnnotationTools:
+            commitTextFieldIfNeeded()
+            annotationToolsVisible.toggle()
+            needsDisplay = true
         case .recordSettings:
             let gearBtn = rightStripView?.buttonViews.first { if case .recordSettings = $0.action { return true }; return false }
             showRecordingSettingsPopover(anchorView: gearBtn)
@@ -9908,6 +9887,7 @@ class OverlayView: NSView {
 
     func reset() {
         state = .idle
+        annotationToolsVisible = true
         selectionRect = .zero
         selectionIsWindowSnap = false
         snappedWindowID = nil
@@ -9986,6 +9966,10 @@ class OverlayView: NSView {
         textEditor.dismiss()
         dismissResolutionBox()
         hidePreSelectionPresetButton()
+        captureModeBar?.removeFromSuperview()
+        captureModeBar = nil
+        captureHintView?.removeFromSuperview()
+        captureHintView = nil
         lockedAspect = activePreSelectionRatio
         isResizingAnnotation = false
         loupeCursorPoint = .zero
@@ -10172,5 +10156,185 @@ private final class PreSelectionPresetButton: NSButton {
         border.stroke()
 
         super.draw(dirtyRect)
+    }
+}
+
+// MARK: - V3 editor inspector bridge
+
+/// Narrow accessors used by `EditorChromeView`. They route through the same
+/// private state and helpers as the color popover and toolbar buttons.
+extension OverlayView {
+    var inspectorSelectedAnnotationCount: Int { selectedAnnotations.count }
+    var inspectorColorOpacity: CGFloat { currentColorOpacity }
+    var inspectorCanUndo: Bool { !undoStack.isEmpty }
+    var inspectorCanRedo: Bool { !redoStack.isEmpty }
+
+    func applyInspectorColor(_ color: NSColor) {
+        colorPickerTarget = .drawColor
+        applyPickedColor(color)
+        toolOptionsRowView?.updateSwatchColors()
+        needsDisplay = true
+        rebuildToolbarLayout()
+    }
+
+    #if CLIPY_CORE_TESTS
+    func selectAnnotationForSnapshot(_ annotation: Annotation?) {
+        selectedAnnotations = annotation.map { [$0] } ?? []
+        rebuildToolbarLayout()
+    }
+    #endif
+
+    func applyInspectorOpacity(_ opacity: CGFloat) {
+        currentColorOpacity = opacity
+        OverlayView.lastUsedOpacity = opacity
+        UserDefaults.standard.set(Double(opacity), forKey: "lastUsedColorOpacity")
+        applyColorToSelectedAnnotation()
+        needsDisplay = true
+    }
+}
+
+// MARK: - V3 idle capture mode bar
+
+/// Dark capture-bar chrome (mac-capture.html `.capbar`) for the idle mode buttons.
+final class CaptureModeBarView: NSView {
+    private var separatorX: CGFloat = 0
+    func layoutButtons() {
+        let buttons = subviews.compactMap { $0 as? CaptureModeBarButton }
+        var x: CGFloat = 7
+        for button in buttons {
+            if button.isClose {
+                separatorX = x + 4
+                x = separatorX + 0.5 + 4 + 6
+            }
+            let size = button.preferredSize
+            button.frame = NSRect(x: x, y: 7 + (50 - size.height) / 2, width: size.width, height: size.height)
+            x += size.width + 6
+        }
+        frame.size = NSSize(width: x - 6 + 7, height: 64)
+        needsDisplay = true
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.25, dy: 0.25), xRadius: 16, yRadius: 16)
+        NSColor(srgbRed: 30 / 255, green: 31 / 255, blue: 36 / 255, alpha: 0.9).setFill()
+        path.fill()
+        NSColor.white.withAlphaComponent(0.16).setStroke()
+        path.lineWidth = 0.5
+        path.stroke()
+        NSColor.white.withAlphaComponent(0.18).setFill()
+        if separatorX > 0 { NSRect(x: separatorX, y: (bounds.height - 34) / 2, width: 0.5, height: 34).fill() }
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self ? self : hit
+    }
+    override func mouseDown(with event: NSEvent) {}
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+}
+
+/// Icon-over-label mode button (`.capbar .m`) or the round close button (`.x`).
+final class CaptureModeBarButton: NSButton {
+    let isClose: Bool
+    private let symbol: String
+    var isOn = false { didSet { needsDisplay = true } }
+    private var hovering = false { didSet { needsDisplay = true } }
+    private var area: NSTrackingArea?
+
+    init(title: String, symbol: String, isClose: Bool) {
+        self.isClose = isClose
+        self.symbol = symbol
+        super.init(frame: .zero)
+        self.title = title
+        isBordered = false
+        setAccessibilityLabel(title)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    var preferredSize: NSSize {
+        if isClose { return NSSize(width: 32, height: 32) }
+        let width = ceil((title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width)
+        return NSSize(width: max(62, width + 16), height: 50)
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area { removeTrackingArea(area) }
+        let next = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self, userInfo: nil)
+        addTrackingArea(next)
+        area = next
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let white = NSColor.white
+        let radius: CGFloat = isClose ? bounds.height / 2 : 10
+        if isOn || hovering || isHighlighted {
+            white.withAlphaComponent(isOn ? 0.14 : 0.08).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
+        }
+        let iconColor = isClose ? white.withAlphaComponent(0.7) : white
+        if let symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?
+            .withSymbolConfiguration(.init(pointSize: isClose ? 14 : 17, weight: .regular)) {
+            let tinted = NSImage(size: symbolImage.size, flipped: false) { rect in
+                symbolImage.draw(in: rect); iconColor.setFill(); rect.fill(using: .sourceAtop); return true
+            }
+            let y = isClose ? bounds.midY - symbolImage.size.height / 2
+                : (isFlipped ? bounds.midY - symbolImage.size.height - 1 : bounds.midY + 1)
+            tinted.draw(in: NSRect(x: bounds.midX - symbolImage.size.width / 2, y: y,
+                                   width: symbolImage.size.width, height: symbolImage.size.height),
+                        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+        guard !isClose else { return }
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11),
+                                                    .foregroundColor: isOn ? white : white.withAlphaComponent(0.72)]
+        let size = (title as NSString).size(withAttributes: attrs)
+        let y = isFlipped ? bounds.midY + 3 : bounds.midY - size.height - 3
+        (title as NSString).draw(at: NSPoint(x: bounds.midX - size.width / 2, y: y), withAttributes: attrs)
+    }
+}
+
+/// Non-interactive shortcut reminder (`Space 按住移动选区 · ⇧ 正方形 · ↩ 快速截图 · esc 取消`).
+final class CaptureHintView: NSView {
+    private let items: [(String, String)]
+    private let font = NSFont.systemFont(ofSize: 12)
+    private let keyFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+
+    init(items: [(String, String)]) {
+        self.items = items
+        super.init(frame: .zero)
+        var width: CGFloat = 12
+        for (index, item) in items.enumerated() {
+            width += keyWidth(item.0) + 5 + ceil((item.1 as NSString).size(withAttributes: [.font: font]).width)
+            if index < items.count - 1 { width += 14 }
+        }
+        frame.size = NSSize(width: width + 12, height: 34)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func keyWidth(_ key: String) -> CGFloat {
+        max(20, ceil((key as NSString).size(withAttributes: [.font: keyFont]).width) + 12)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(srgbRed: 20 / 255, green: 22 / 255, blue: 28 / 255, alpha: 0.72).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10).fill()
+        var x: CGFloat = 12
+        let textAttrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white.withAlphaComponent(0.85)]
+        let keyAttrs: [NSAttributedString.Key: Any] = [.font: keyFont, .foregroundColor: NSColor.white]
+        for (key, text) in items {
+            let kw = keyWidth(key)
+            let keyRect = NSRect(x: x, y: (bounds.height - 20) / 2, width: kw, height: 20)
+            NSColor.white.withAlphaComponent(0.15).setFill()
+            NSBezierPath(roundedRect: keyRect, xRadius: 5, yRadius: 5).fill()
+            let ks = (key as NSString).size(withAttributes: keyAttrs)
+            (key as NSString).draw(at: NSPoint(x: keyRect.midX - ks.width / 2, y: keyRect.midY - ks.height / 2), withAttributes: keyAttrs)
+            x += kw + 5
+            let ts = (text as NSString).size(withAttributes: textAttrs)
+            (text as NSString).draw(at: NSPoint(x: x, y: (bounds.height - ts.height) / 2), withAttributes: textAttrs)
+            x += ceil(ts.width) + 14
+        }
     }
 }

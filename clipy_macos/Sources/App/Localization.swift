@@ -58,11 +58,8 @@ enum L10nKey: String {
     case panelCaptureToolHint
     case panelManageSnippets
     case panelDevices
-    case panelMore
     case panelEnable
-    case panelSettingsHint
     case panelNoHistoryHint
-    case panelPinHint
     case panelSyncHint
     case panelSyncSettings
     case panelAllNotifications
@@ -175,6 +172,11 @@ enum L10nKey: String {
     case preferences
     case screenshotPreferences
     case language
+    case appearance
+    case searchSettings
+    case appearanceSystem
+    case appearanceLight
+    case appearanceDark
     case deviceNameForSync
     case enterDeviceName
     case save
@@ -215,7 +217,6 @@ enum L10nKey: String {
     case clearHistory
     case clearHistoryConfirm
     case showLogs
-    case quit
     case chooseFileToSend
     case send
     case sendFailed
@@ -322,6 +323,23 @@ enum L10nKey: String {
     case macNotificationGranted
     case macNotificationDenied
     case notificationArchivedBadge
+    case notifSidebarApps
+    case notifDetailApp
+    case notifDetailTime
+    case notifDetailPhone
+    case notifClearable
+    case notifOngoing
+    case notifActionHint
+    case notifBannerOn
+    case notifBannerOff
+    case notifYesterday
+    case notifMore
+    case notifClearLocalTitle
+    case notifClearLocalMessage
+    case notifClearLocalConfirm
+    case notifClearPhoneTitle
+    case notifClearPhoneMessage
+    case notifClearPhoneConfirm
     case openNotificationSettings
     case launchAtLogin
     case launchAtLoginFailed
@@ -578,11 +596,8 @@ struct L10n {
             .panelNotificationsShort: "通知",
             .panelManageSnippets: "管理片段",
             .panelDevices: "设备",
-            .panelMore: "更多操作",
             .panelEnable: "开启",
-            .panelSettingsHint: "更多设置与权限管理",
             .panelNoHistoryHint: "复制的内容会出现在这里。",
-            .panelPinHint: "点击外部时保持面板打开",
             .panelSyncHint: "发现设备后可发送文字或文件",
             .panelSyncSettings: "连接与同步设置",
             .panelAllNotifications: "查看全部通知",
@@ -693,6 +708,11 @@ struct L10n {
             .preferences: "偏好设置",
             .screenshotPreferences: "截图偏好设置",
             .language: "语言",
+            .appearance: "主题",
+            .searchSettings: "搜索设置",
+            .appearanceSystem: "跟随系统",
+            .appearanceLight: "浅色",
+            .appearanceDark: "深色",
             .deviceNameForSync: "设备名称（用于同步）：",
             .enterDeviceName: "输入设备名称",
             .save: "保存",
@@ -733,7 +753,6 @@ struct L10n {
             .clearHistory: "清空历史记录",
             .clearHistoryConfirm: "将删除全部历史记录，此操作不可撤销。",
             .showLogs: "显示日志...",
-            .quit: "退出",
             .chooseFileToSend: "选择要发送到 %@ 的文件或文件夹",
             .fileReceivedTitle: "已接收文件",
             .fileReceivedBody: "来自 %@：%@（已存入“下载/Clipy”）",
@@ -842,6 +861,23 @@ struct L10n {
             .macNotificationGranted: "已授权",
             .macNotificationDenied: "已拒绝，请在系统设置中允许",
             .notificationArchivedBadge: "历史",
+            .notifSidebarApps: "应用",
+            .notifDetailApp: "应用",
+            .notifDetailTime: "时间",
+            .notifDetailPhone: "手机端",
+            .notifClearable: "可清除",
+            .notifOngoing: "常驻通知（手机端可能不允许清除）",
+            .notifActionHint: "“在手机上清除”向手机发送清除请求；“删除”只移除 Mac 上的这条记录。",
+            .notifBannerOn: "横幅已开启",
+            .notifBannerOff: "横幅已关闭",
+            .notifYesterday: "昨天",
+            .notifMore: "更多",
+            .notifClearLocalTitle: "清空通知？",
+            .notifClearLocalMessage: "将删除 Mac 上保存的全部 %d 条手机通知。手机通知栏不受影响。",
+            .notifClearLocalConfirm: "清空",
+            .notifClearPhoneTitle: "清除所有手机通知？",
+            .notifClearPhoneMessage: "将请求已连接的手机清除通知栏中的所有通知。Mac 上保存的记录不受影响，可另行“清空通知”。",
+            .notifClearPhoneConfirm: "清除",
             .openNotificationSettings: "前往系统设置",
             .launchAtLogin: "登录时启动",
             .launchAtLoginFailed: "无法更新登录时启动设置，请重试。",
@@ -859,10 +895,10 @@ struct L10n {
             .error: "错误",
             .clearShortcut: "清除",
             .searchResultCount: "%d 条历史",
-            .historyTotalCount: "共 %d 条历史",
-            .historyShownOfTotal: "显示 %d / 共 %d 条",
+            .historyTotalCount: "共 %@ 条历史",
+            .historyShownOfTotal: "显示 %@ / 共 %@ 条",
             .historyLoadMore: "加载更多",
-            .noSearchResultsWithTotal: "没有匹配的结果（共 %d 条）",
+            .noSearchResultsWithTotal: "没有匹配的结果（共 %@ 条）",
             .historyCurrentCount: "当前已保存 %d 条",
             .historyWithCount: "历史记录（%d）",
             .location: "位置",
@@ -1085,11 +1121,8 @@ struct L10n {
             .panelNotificationsShort: "Notifications",
             .panelManageSnippets: "Manage Snippets",
             .panelDevices: "Devices",
-            .panelMore: "More Actions",
             .panelEnable: "Enable",
-            .panelSettingsHint: "More settings and permissions",
             .panelNoHistoryHint: "Your copied content appears here.",
-            .panelPinHint: "Keep the panel open when clicking outside",
             .panelSyncHint: "Send text or files to discovered devices",
             .panelSyncSettings: "Connection & Sync Settings",
             .panelAllNotifications: "View All Notifications",
@@ -1200,6 +1233,11 @@ struct L10n {
             .preferences: "Preferences",
             .screenshotPreferences: "Screenshot Preferences",
             .language: "Language",
+            .appearance: "Appearance",
+            .searchSettings: "Search settings",
+            .appearanceSystem: "System",
+            .appearanceLight: "Light",
+            .appearanceDark: "Dark",
             .deviceNameForSync: "Device Name (for Sync):",
             .enterDeviceName: "Enter device name",
             .save: "Save",
@@ -1240,7 +1278,6 @@ struct L10n {
             .clearHistory: "Clear History",
             .clearHistoryConfirm: "All history will be deleted. This cannot be undone.",
             .showLogs: "Show Logs...",
-            .quit: "Quit",
             .chooseFileToSend: "Choose a file or folder to send to %@",
             .fileReceivedTitle: "File Received",
             .fileReceivedBody: "From %@: %@ (saved to Downloads/Clipy)",
@@ -1349,6 +1386,23 @@ struct L10n {
             .macNotificationGranted: "Granted",
             .macNotificationDenied: "Denied; please allow in System Settings",
             .notificationArchivedBadge: "History",
+            .notifSidebarApps: "Apps",
+            .notifDetailApp: "App",
+            .notifDetailTime: "Time",
+            .notifDetailPhone: "Phone",
+            .notifClearable: "Can be cleared",
+            .notifOngoing: "Ongoing (the phone may not allow clearing)",
+            .notifActionHint: "“Clear on Phone” asks the phone to dismiss it; “Delete” only removes this record from the Mac.",
+            .notifBannerOn: "Banners on",
+            .notifBannerOff: "Banners off",
+            .notifYesterday: "Yesterday",
+            .notifMore: "More",
+            .notifClearLocalTitle: "Clear notifications?",
+            .notifClearLocalMessage: "All %d phone notifications saved on this Mac will be deleted. The phone’s notification shade is not affected.",
+            .notifClearLocalConfirm: "Clear",
+            .notifClearPhoneTitle: "Clear all phone notifications?",
+            .notifClearPhoneMessage: "Connected phones will be asked to clear every notification in their shade. Records saved on this Mac are kept; use “Clear Notifications” separately.",
+            .notifClearPhoneConfirm: "Clear",
             .openNotificationSettings: "Open System Settings",
             .launchAtLogin: "Launch at Login",
             .launchAtLoginFailed: "Unable to update launch at login settings. Please try again.",
@@ -1366,10 +1420,10 @@ struct L10n {
             .error: "Error",
             .clearShortcut: "Clear",
             .searchResultCount: "%d history items",
-            .historyTotalCount: "%d items total",
-            .historyShownOfTotal: "Showing %d / %d items",
+            .historyTotalCount: "%@ items total",
+            .historyShownOfTotal: "Showing %@ / %@ items",
             .historyLoadMore: "Load More",
-            .noSearchResultsWithTotal: "No results (%d items total)",
+            .noSearchResultsWithTotal: "No results (%@ items total)",
             .historyCurrentCount: "%d items saved",
             .historyWithCount: "History (%d)",
             .location: "Location",

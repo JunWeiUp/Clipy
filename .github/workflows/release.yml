@@ -41,7 +41,7 @@ jobs:
         run: |
           REPO_ROOT="$GITHUB_WORKSPACE"
           source scripts/lib/build_common.sh
-          SOURCE_VERSION="$(awk '/^version:/ {split($2, v, "+"); print v[1]; exit}' clipy_android/pubspec.yaml)"
+          SOURCE_VERSION="$(awk '/^version:/ {split($2, v, "+"); print v[1]; exit}' clipy_flutter/pubspec.yaml)"
           APP_VERSION="${RAW_VERSION#v}"
           test "$APP_VERSION" = "$SOURCE_VERSION" || {
             echo "Requested version $APP_VERSION does not match source $SOURCE_VERSION" >&2
@@ -54,7 +54,7 @@ jobs:
               exit 1
             fi
           fi
-          BASE_BUILD="$(awk '/^version:/ {split($2, v, "+"); print v[2]; exit}' clipy_android/pubspec.yaml)"
+          BASE_BUILD="$(awk '/^version:/ {split($2, v, "+"); print v[2]; exit}' clipy_flutter/pubspec.yaml)"
           BUILD_NUMBER="$((BASE_BUILD + GITHUB_RUN_NUMBER))"
           resolve_build_version
           {
@@ -160,7 +160,7 @@ jobs:
           APP_VERSION: ${{ needs.metadata.outputs.version }}
           BUILD_NUMBER: ${{ needs.metadata.outputs.build }}
         run: |
-          Push-Location clipy_android
+          Push-Location clipy_flutter
           flutter pub get --enforce-lockfile
           flutter build windows --release --no-pub -t lib/main_windows.dart --build-name=$env:APP_VERSION --build-number=$env:BUILD_NUMBER
           Pop-Location

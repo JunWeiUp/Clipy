@@ -1,10 +1,10 @@
 package com.clipyclone.nativeandroid.relay
 
 import android.util.Base64
-import com.clipyclone.nativeandroid.relay.sdk.Crypto
-import com.clipyclone.nativeandroid.relay.sdk.RelayClient
-import com.clipyclone.nativeandroid.relay.sdk.RelayGroups
-import com.clipyclone.nativeandroid.relay.sdk.RelayJournal
+import io.github.junweiup.commonrelay.Crypto
+import io.github.junweiup.commonrelay.RelayClient
+import io.github.junweiup.commonrelay.RelayGroups
+import io.github.junweiup.commonrelay.RelayJournal
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.selects.select
@@ -147,7 +147,7 @@ internal class NativeRelayTransport(
                 val ready = CompletableDeferred<Unit>()
                 val closed = CompletableDeferred<Unit>()
                 val events = Channel<JSONObject>(256)
-                val persistedJournal = withContext(io) { journal ?: RelayJournal(journalDirectory).also { journal = it } }
+                val persistedJournal = withContext(io) { journal ?: RelayJournal(journalDirectory.toPath()).also { journal = it } }
                 connected.client = RelayClient(http, crypto, object : RelayClient.Listener {
                     override fun onReady() { ready.complete(Unit) }
                     override fun onEvent(event: JSONObject) { if (!events.trySend(event).isSuccess) connected.close() }

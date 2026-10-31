@@ -15,7 +15,7 @@ class RepositoryPrivacyTests(unittest.TestCase):
             'cache/history.db', 'cache/history.db-wal', 'cache/history.db-shm',
             'cache/history.sqlite', 'cache/history.sqlite3',
             'cache/history.sqlite3-wal', 'cache/history.sqlite-shm',
-            'res/search.png', 'clipy_android/android/key.properties',
+            'res/search.png', 'clipy_flutter/android/key.properties',
         ):
             with self.subTest(path=path):
                 self.assertIsNotNone(check_path(path))

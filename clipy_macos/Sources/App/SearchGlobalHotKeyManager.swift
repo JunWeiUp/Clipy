@@ -2,7 +2,6 @@ import AppKit
 
 extension Notification.Name {
     static let globalHotKeysShouldRegister = Notification.Name("globalHotKeysShouldRegister")
-    static let snippetEditorSelectSnippet = Notification.Name("snippetEditorSelectSnippet")
 }
 
 enum SearchGlobalHotKeyManager {
@@ -17,7 +16,7 @@ enum SearchGlobalHotKeyManager {
 
         HotKeyManager.shared.register(keyCode: combo.keyCode, modifiers: combo.modifierFlags, id: hotKeyID) {
             DispatchQueue.main.async {
-                SearchWindow.shared.showWindow()
+                MainWindow.shared.show(.history)
             }
         }
     }

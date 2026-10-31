@@ -71,7 +71,7 @@ class RelaySecureStorageTest {
             })
             withTimeout(10000) { initialized.await() }
             val secret = "02".repeat(32)
-            val public = com.clipyclone.nativeandroid.relay.sdk.Crypto("clipy", "", "", secret, emptyMap()).publicKey()
+            val public = io.github.junweiup.commonrelay.Crypto("clipy", "", "", secret, emptyMap()).publicKey()
             val identity = org.json.JSONObject().put("secret_key", secret).put("public_key", public).toString()
             val prefKey = shipping.addPrefixToKey("commonRelayIdentity")
             shipping.write(prefKey, identity)
@@ -123,7 +123,7 @@ class RelaySecureStorageTest {
         try {
             val store = RelaySecureStore(context)
             val secret = "01".repeat(32)
-            val public = com.clipyclone.nativeandroid.relay.sdk.Crypto("clipy", "", "", secret, emptyMap()).publicKey()
+            val public = io.github.junweiup.commonrelay.Crypto("clipy", "", "", secret, emptyMap()).publicKey()
             val raw = org.json.JSONObject().put("secret_key", secret).put("public_key", public).put("device", "fixture").toString()
             store.write("commonRelayConfig", raw)
             val identity = store.identity()

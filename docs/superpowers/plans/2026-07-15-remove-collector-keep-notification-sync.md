@@ -33,7 +33,7 @@
 ### Task 1: Decouple notification broadcast (Android)
 
 **Files:**
-- Modify: `clipy_android/lib/notification_manager.dart`
+- Modify: `clipy_flutter/lib/notification_manager.dart`
 
 - [ ] Change `_broadcastToSync` to send `notification/post` with `NotificationEntry` JSON (not CollectorEvent / collector/event)
 

@@ -10,6 +10,10 @@ class ToolbarButtonView: NSView {
     var tintColor: NSColor = ToolbarLayout.iconColor { didSet { cachedIcon = nil; cachedIconIsOn = nil; needsDisplay = true } }
     var swatchColor: NSColor? { didSet { needsDisplay = true } }
     var hasContextMenu: Bool = false
+    var label: String? { didSet { needsDisplay = true } }
+    var style: ToolbarButtonStyle = .icon { didSet { needsDisplay = true } }
+    var groupStart = false
+    var fillColor: NSColor? { didSet { needsDisplay = true } }
     /// Mic input level (0–1). When > 0, draws a green fill from the bottom of the button.
     var micLevel: Float = 0 { didSet { if abs(oldValue - micLevel) > 0.005 { needsDisplay = true } } }
 
@@ -56,6 +60,14 @@ class ToolbarButtonView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        cachedIcon = nil
+        cachedIconIsOn = nil
+        needsDisplay = true
+    }
+
+
     func configure(with data: ToolbarButton) {
         action = data.action
         isOn = data.isSelected
@@ -64,6 +76,10 @@ class ToolbarButtonView: NSView {
         sfSymbol = data.sfSymbol
         tooltipText = data.tooltip
         hasContextMenu = data.hasContextMenu
+        label = data.label
+        style = data.style
+        groupStart = data.groupStart
+        fillColor = data.fillColor
         if case .micAudio = action {
             // Preserve the live mic meter while this reused view is still the
             // mic button.
@@ -80,7 +96,137 @@ class ToolbarButtonView: NSView {
         needsDisplay = true
     }
 
+    // MARK: - Labelled styles (V3 capture / recording bars)
+
+    private static let labelFont = NSFont.systemFont(ofSize: 12.5)
+    private static let modeFont = NSFont.systemFont(ofSize: 11)
+    private static let primaryFont = NSFont.systemFont(ofSize: 13.5, weight: .semibold)
+    private static let toggleFont = NSFont.systemFont(ofSize: 12)
+
+    /// Natural size for the current style (icon buttons stay 32×32).
+    var preferredSize: NSSize {
+        func textWidth(_ font: NSFont) -> CGFloat {
+            ceil(((label ?? "") as NSString).size(withAttributes: [.font: font]).width)
+        }
+        switch style {
+        case .icon: return NSSize(width: Self.size, height: Self.size)
+        case .mode: return NSSize(width: max(62, textWidth(Self.modeFont) + 16), height: 50)
+        case .option: return NSSize(width: 10 + 16 + 6 + textWidth(Self.labelFont) + 10, height: 32)
+        case .primary:
+            let height: CGFloat = fillColor == nil ? 40 : 36
+            let pad: CGFloat = fillColor == nil ? 18 : 14
+            return NSSize(width: pad + 16 + 7 + textWidth(Self.primaryFont) + pad, height: height)
+        case .toggle: return NSSize(width: 10 + 17 + 6 + textWidth(Self.toggleFont) + 10, height: 36)
+        case .square: return NSSize(width: 36, height: 36)
+        case .close: return NSSize(width: 32, height: 32)
+        }
+    }
+
+    private func symbolImage(pointSize: CGFloat, weight: NSFont.Weight = .regular, color: NSColor) -> NSImage? {
+        guard let name = sfSymbol,
+              let symbol = NSImage(systemSymbolName: name, accessibilityDescription: tooltipText)?
+                .withSymbolConfiguration(.init(pointSize: pointSize, weight: weight)) else { return nil }
+        return NSImage(size: symbol.size, flipped: false) { rect in
+            symbol.draw(in: rect)
+            color.setFill()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+    }
+
+    private func drawLabelled() {
+        let white = NSColor.white
+        var background: NSColor?
+        switch style {
+        case .primary:
+            let base = fillColor ?? ToolbarLayout.accentColor
+            background = isPressed ? base.withAlphaComponent(0.75) : (isHovered ? base.withAlphaComponent(0.9) : base)
+        case .mode, .toggle, .square:
+            if isOn { background = white.withAlphaComponent(isPressed ? 0.2 : 0.14) }
+            else if isHovered || isPressed { background = white.withAlphaComponent(0.08) }
+        default:
+            if isHovered || isPressed { background = white.withAlphaComponent(0.1) }
+        }
+        let radius: CGFloat
+        switch style {
+        case .mode, .primary: radius = 10
+        case .option: radius = 8
+        case .toggle, .square: radius = 9
+        case .close: radius = bounds.height / 2
+        case .icon: radius = Self.radius
+        }
+        if let background {
+            background.setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
+        }
+        let title = label ?? ""
+        switch style {
+        case .mode:
+            let iconColor = tintColor == ToolbarLayout.iconColor ? white : tintColor
+            let textColor = isOn ? white : white.withAlphaComponent(0.72)
+            let attrs: [NSAttributedString.Key: Any] = [.font: Self.modeFont, .foregroundColor: textColor]
+            let textSize = (title as NSString).size(withAttributes: attrs)
+            if let icon = symbolImage(pointSize: 17, color: iconColor) {
+                icon.draw(in: NSRect(x: bounds.midX - icon.size.width / 2, y: bounds.midY + 1, width: icon.size.width, height: icon.size.height))
+            }
+            (title as NSString).draw(at: NSPoint(x: bounds.midX - textSize.width / 2, y: bounds.midY - textSize.height - 3), withAttributes: attrs)
+        case .option, .toggle, .primary:
+            let font = style == .primary ? Self.primaryFont : (style == .toggle ? Self.toggleFont : Self.labelFont)
+            let textColor: NSColor = style == .primary ? white
+                : style == .toggle ? (isOn ? white : white.withAlphaComponent(0.55))
+                : white.withAlphaComponent(0.85)
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: textColor]
+            let textSize = (title as NSString).size(withAttributes: attrs)
+            let iconPoint: CGFloat = style == .toggle ? 15 : (style == .primary ? 14 : 14)
+            let iconColor = (style == .option || style == .primary) ? textColor
+                : (tintColor == ToolbarLayout.iconColor ? textColor : tintColor)
+            let icon: NSImage? = (style == .primary && sfSymbol == "_record.dot") ? nil
+                : symbolImage(pointSize: iconPoint, weight: style == .primary ? .semibold : .regular, color: iconColor)
+            let iconW = icon?.size.width ?? 12
+            let gap: CGFloat = style == .primary ? 7 : 6
+            var x = (bounds.width - (iconW + gap + textSize.width)) / 2
+            if let icon {
+                icon.draw(in: NSRect(x: x, y: bounds.midY - icon.size.height / 2, width: icon.size.width, height: icon.size.height))
+            } else {
+                // Recording "start" dot (mac-recording.html .start i.dot).
+                let dot = NSRect(x: x, y: bounds.midY - 6, width: 12, height: 12)
+                white.withAlphaComponent(0.35).setFill(); NSBezierPath(ovalIn: dot.insetBy(dx: -2, dy: -2)).fill()
+                white.setFill(); NSBezierPath(ovalIn: dot).fill()
+            }
+            x += iconW + gap
+            (title as NSString).draw(at: NSPoint(x: x, y: bounds.midY - textSize.height / 2), withAttributes: attrs)
+        case .square, .close:
+            let color = style == .close ? white.withAlphaComponent(0.7) : (tintColor == ToolbarLayout.iconColor ? white.withAlphaComponent(0.9) : tintColor)
+            if let icon = symbolImage(pointSize: style == .close ? 14 : 16, color: color) {
+                icon.draw(in: NSRect(x: bounds.midX - icon.size.width / 2, y: bounds.midY - icon.size.height / 2, width: icon.size.width, height: icon.size.height))
+            }
+        case .icon:
+            break
+        }
+        if hasContextMenu, style == .mode || style == .toggle || style == .square {
+            // Corner triangle (".ctx::after").
+            let s: CGFloat = 4
+            let path = NSBezierPath()
+            if style == .mode {
+                path.move(to: NSPoint(x: bounds.maxX - 6 - s, y: bounds.maxY - 6))
+                path.line(to: NSPoint(x: bounds.maxX - 6, y: bounds.maxY - 6))
+                path.line(to: NSPoint(x: bounds.maxX - 6, y: bounds.maxY - 6 - s))
+            } else {
+                path.move(to: NSPoint(x: bounds.maxX - 3 - s, y: bounds.minY + 3))
+                path.line(to: NSPoint(x: bounds.maxX - 3, y: bounds.minY + 3))
+                path.line(to: NSPoint(x: bounds.maxX - 3, y: bounds.minY + 3 + s))
+            }
+            path.close()
+            white.withAlphaComponent(0.5).setFill()
+            path.fill()
+        }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
+        if style != .icon {
+            drawLabelled()
+            return
+        }
         // Background
         let bg: NSColor
         if isPressed {
@@ -88,12 +234,28 @@ class ToolbarButtonView: NSView {
         } else if isOn {
             bg = ToolbarLayout.accentColor
         } else if isHovered {
-            bg = ToolbarLayout.iconColor.withAlphaComponent(0.12)
+            bg = (superview as? ToolbarStripView)?.usesWindowAppearance == true
+                ? NSColor.labelColor.withAlphaComponent(0.06)
+                : ToolbarLayout.iconColor.withAlphaComponent(0.12)
         } else {
             bg = NSColor.clear
         }
         bg.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: Self.radius, yRadius: Self.radius).fill()
+        let inWindowChrome = (superview as? ToolbarStripView)?.usesWindowAppearance == true
+        let radius = inWindowChrome ? 8 : Self.radius
+        if inWindowChrome && isOn && !isPressed {
+            // V3 editor tool row: selected tool is a brand tile with a soft shadow.
+            NSGraphicsContext.saveGraphicsState()
+            let shadow = NSShadow()
+            shadow.shadowColor = ToolbarLayout.accentColor.withAlphaComponent(0.4)
+            shadow.shadowBlurRadius = 3
+            shadow.shadowOffset = NSSize(width: 0, height: -1)
+            shadow.set()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: radius, yRadius: radius).fill()
+            NSGraphicsContext.restoreGraphicsState()
+        } else {
+            NSBezierPath(roundedRect: inWindowChrome ? bounds.insetBy(dx: 1, dy: 1) : bounds, xRadius: radius, yRadius: radius).fill()
+        }
 
         // Mic level fill — green bar rising from the bottom inside the button
         if micLevel > 0.001 {

@@ -4,7 +4,18 @@ import Foundation
 class PreferencesManager {
     static let shared = PreferencesManager()
     
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults = {
+        #if CLIPY_CORE_TESTS
+        if let directory = ProcessInfo.processInfo.environment["CLIPY_WINDOW_SNAPSHOT_DIR"] {
+            let name = "clipy.snapshot." + String(directory.hashValue)
+            let fixture = UserDefaults(suiteName: name)!
+            fixture.removePersistentDomain(forName: name)
+            fixture.register(defaults: ["appLanguage": "zh", "deviceName": "Example Mac", "syncPeerId": "fixture-peer", "excludedApps": ["example.private"], "manualSyncPeers": [], "authorizedPeerIds": [], "clipboardSyncPeerIds": [], "notificationSyncPeerIds": [], "authorizedPeerIdsMigrated": true, "dualSyncAuthMigrated": true])
+            return fixture
+        }
+        #endif
+        return .standard
+    }()
     private let historyLimitKey = "historyLimit"
     private let historyLoadCountKey = "historyLoadCount"
     private let excludedAppsKey = "excludedApps"
@@ -66,6 +77,14 @@ class PreferencesManager {
     var deviceName: String {
         get { defaults.string(forKey: deviceNameKey) ?? Self.fallbackDeviceName }
         set { defaults.set(newValue, forKey: deviceNameKey) }
+    }
+
+    var appAppearance: AppAppearancePreference {
+        get { AppAppearancePreference.read(from: defaults) }
+        set {
+            newValue.store(in: defaults)
+            newValue.apply()
+        }
     }
 
     var appLanguage: AppLanguage {

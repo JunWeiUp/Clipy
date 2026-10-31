@@ -6,12 +6,12 @@ updates:
       interval: monthly
     open-pull-requests-limit: 5
   - package-ecosystem: pub
-    directory: /clipy_android
+    directory: /clipy_flutter
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
   - package-ecosystem: gradle
-    directory: /clipy_android/android
+    directory: /clipy_flutter/android
     schedule:
       interval: monthly
     open-pull-requests-limit: 5

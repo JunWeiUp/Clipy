@@ -5,6 +5,9 @@ AGENTS.md
 build/
 Kim_AGENTS.md
 
+# Local HTML UI designs
+/UI/
+
 # Build artifacts (distribute via CI/release assets, not git)
 dist/
 *.apk
@@ -14,15 +17,15 @@ dist/
 AppIcon.iconset/
 
 # Flutter generated (machine-specific paths)
-clipy_android/.flutter-plugins
-clipy_android/.flutter-plugins-dependencies
+clipy_flutter/.flutter-plugins
+clipy_flutter/.flutter-plugins-dependencies
 
 # Android signing keys
 *.keystore
 *.jks
 
 # Android local SDK paths
-clipy_android/android/local.properties
+clipy_flutter/android/local.properties
 
 # IDE / tool metadata (machine-generated, not project source)
 .zcode/
@@ -48,7 +51,7 @@ __pycache__/
 .env.*
 !.env.example
 **/key.properties
-clipy_android/ios/Signing.local.xcconfig
+clipy_flutter/ios/Signing.local.xcconfig
 *.p12
 *.pfx
 *.mobileprovision
