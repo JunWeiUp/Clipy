@@ -1,7 +1,15 @@
 import AppKit
 
 #if CLIPY_CORE_TESTS
-if CommandLine.arguments.contains("--clipy-panel-snapshot") {
+if CommandLine.arguments.contains("--clipy-capture-results-snapshot") {
+    MainActor.assumeIsolated { runCaptureResultsLayoutSnapshot() }
+} else if CommandLine.arguments.contains("--clipy-video-editor-snapshot") {
+    MainActor.assumeIsolated { runVideoEditorLayoutSnapshot() }
+} else if CommandLine.arguments.contains("--clipy-editor-snapshot") {
+    MainActor.assumeIsolated { runEditorLayoutSnapshot() }
+} else if CommandLine.arguments.contains("--clipy-window-snapshot") {
+    runWindowSnapshots()
+} else if CommandLine.arguments.contains("--clipy-panel-snapshot") {
     runMenuBarPanelSnapshot()
 } else if CommandLine.arguments.contains("--clipy-overflow-fixture-menu") {
     runMenuBarOverflowFixture(popover: false)
@@ -81,6 +89,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var menuController: MenuController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        PreferencesManager.shared.appAppearance.apply()
+        // Existing installations already have a database or sync identity. Only
+        // seed the first-run guide for a new installation; it remains available
+        // from About for everyone, including users upgrading from older builds.
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: OnboardingWindow.completedKey) == nil {
+            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("ClipyClone", isDirectory: true)
+            let hasExistingData = ["clipy.db", "history_v2.json", "snippets.json"].contains {
+                FileManager.default.fileExists(atPath: support.appendingPathComponent($0).path)
+            }
+            let hasIdentity = defaults.string(forKey: "syncPeerId") != nil
+            if !hasExistingData && !hasIdentity { defaults.set(false, forKey: OnboardingWindow.completedKey) }
+        }
         LogManager.shared.startSession()
         CrashReporter.install()
         SystemNotificationRouter.shared.install()
@@ -95,6 +117,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         MemoryFootprintReclaimer.registerIdleHandlers()
         LaunchAtLoginManager.syncWithPreference()
         SyncManager.shared.start()
+        if defaults.object(forKey: OnboardingWindow.completedKey) != nil && !defaults.bool(forKey: OnboardingWindow.completedKey) {
+            DispatchQueue.main.async { OnboardingWindow.shared.show() }
+        }
         print("Clipy clone started!")
     }
 
@@ -114,6 +139,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(appMenuItem)
 
         let appMenu = NSMenu()
+        let preferencesItem = NSMenuItem(
+            title: L10n.t(.preferences) + "…",
+            action: #selector(openPreferencesFromMenu),
+            keyEquivalent: ","
+        )
+        preferencesItem.target = self
+        appMenu.addItem(preferencesItem)
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(
             NSMenuItem(
                 title: L10n.t(.quitClipy),
@@ -136,7 +169,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(NSMenuItem(title: L10n.t(.selectAll), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
         editMenuItem.submenu = editMenu
 
+        // 主窗口四个模块（⌥⌘1–4），偏好设置仍是独立窗口。
+        let windowMenuItem = NSMenuItem()
+        mainMenu.addItem(windowMenuItem)
+        let windowMenu = NSMenu(title: PreferencesManager.shared.appLanguage == .zh ? "窗口" : "Window")
+        MainWindow.makeWindowMenuItems(target: self, action: #selector(showMainWindowSection(_:)))
+            .forEach(windowMenu.addItem)
+        windowMenuItem.submenu = windowMenu
+        NSApp.windowsMenu = windowMenu
+
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func openPreferencesFromMenu() {
+        NSApp.activate(ignoringOtherApps: true)
+        SettingsWindow.shared.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func showMainWindowSection(_ sender: NSMenuItem) {
+        guard let section = MainWindow.section(forMenuTag: sender.tag) else { return }
+        MainWindow.shared.show(section)
     }
 
     @objc private func languageDidChange() {

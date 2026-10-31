@@ -120,10 +120,10 @@ enum CensorMode: Int, CaseIterable {
 
     var label: String {
         switch self {
-        case .pixelate: return "Pixelate"
-        case .blur: return "Blur"
-        case .solid: return "Solid"
-        case .erase: return "Erase"
+        case .pixelate: return L("Pixelate")
+        case .blur: return L("Blur")
+        case .solid: return L("Solid")
+        case .erase: return L("Erase")
         }
     }
 }

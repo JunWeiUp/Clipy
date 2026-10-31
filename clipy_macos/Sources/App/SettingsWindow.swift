@@ -13,6 +13,11 @@ final class SettingsWindow {
 
     /// Opens preferences and scrolls the settings document to `page`.
     func show(page: String) {
+        // Compatibility for menu/panel callers that still request the old category.
+        if page == "sync" {
+            MainWindow.shared.showDevices(page: .lan)
+            return
+        }
         show()
         // Wait for newly-created settings anchors to be attached before scrolling.
         DispatchQueue.main.async {
@@ -28,6 +33,7 @@ final class SettingsWindow {
                     size: AppWindowSize.settings,
                     minSize: AppWindowSize.settingsMin,
                     resizable: true,
+                    fullSizeContent: true,
                     frameAutosaveName: "SettingsWindow"
                 ) {
                     SettingsView()

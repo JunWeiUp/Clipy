@@ -50,7 +50,7 @@ API-layer aliases on Android (`notification/post`, …) map to `notif.*` before 
 - hello/welcome only exchange protocol version and device metadata. A v2 peer is rejected with `versionMismatch`; both endpoints must run v3 source builds.
 - The default key is public and built into the application. Encryption does not authenticate devices or provide confidentiality against other LAN participants who know the key. See [SECURITY.md](../SECURITY.md).
 - On the first v3 startup (and once when upgrading from experimental private-LAN-key builds), old encoded pending frames are discarded because their ciphertext cannot be replayed under the new key. Local history, received files and outgoing sharing choices are retained. Subsequent v3 restarts preserve pending delivery.
-- Regression vectors: `clipy_android/test/default_key_parity_test.dart`, `sync_crypto_test.dart`, and `clipy_macos/Tests/SyncTransportRegression.swift`. Binary chunks retain the native Android AES-GCM fast path.
+- Regression vectors: `clipy_flutter/test/default_key_parity_test.dart`, `sync_crypto_test.dart`, and `clipy_macos/Tests/SyncTransportRegression.swift`. Binary chunks retain the native Android AES-GCM fast path.
 
 ## Discovery
 
@@ -222,3 +222,41 @@ after testing with `adb forward --remove tcp:15566`.
 ## Relay invitation modes and short links
 
 Relay invitations default to automatic joining after scanning, with manual pairing-code approval available by turning the option off. Automatic admission verifies a time-limited manager-signed delegation and grants ordinary membership; the inviter need not remain online. QR codes and copied invitations use encrypted short links, while legacy invitations remain supported. Existing members must upgrade to the delegation-aware SDK; the server must support automatic admission and invitation-link endpoints.
+
+## Optional Mac screen control (source preview)
+
+Old peers ignore these v3 types. Flutter phones send `screen.query` after session
+adoption and before commands. Mac replies with encrypted `screen.state` JSON:
+`controlMode: "connected-v1"`, `configured: bool`, `locked: bool|null`, `helper: bool` (legacy field name: now indicates app Accessibility readiness),
+`challenge: UUID`. The direct mode capability distinguishes this version from the
+previous manual-key preview; new phones require a direct-capable Mac. State changes
+push fresh state to connected sessions. Unknown is distinct from unlocked.
+
+Mac-local login credential configuration enables **all connected sync peers** to
+lock/unlock without entering a phone control key. LAN and relay use this same
+access rule. The public LAN encryption key does not authenticate devices. No
+separate HMAC/manual control secret remains; session binding/nonces only suppress
+duplicates, they do not protect against malicious peers on the trusted network.
+
+`screen.command` is encrypted JSON `{action, challenge}` with actions exactly
+`lock` and `unlock`. The Mac requires the envelope peerId to match the current
+session, a matching unconsumed challenge less than 120 seconds old, and local
+credential configuration still enabled at execution. Consume before dispatch;
+commands have no offline persistence or retries. The login credential is read
+only on Mac, and never included in any sync frame.
+
+`screen.result` is encrypted JSON `{status, challenge}` with `hash = command.msgId`.
+Phones match the current peer, pending request ID and command challenge. `ok`
+means actual requested session state was observed, not merely that input was sent.
+Other statuses: `unavailable`, `helperMissing`, `permissionOrHelper`, `cancelled`,
+`notConfirmed`, `invalidAction`, `busy`, `cooldown`, `notConfigured`,
+`sessionUnavailable`, `accessibilityRequired`, `secureFieldUnavailable`,
+`secureFieldWriteFailed`, `secureConfirmFailed`, `credentialInvalid`,
+`credentialUnavailable`. The five-second cooldown applies only to repeated unlock
+attempts, never to a lock-then-unlock sequence. Phone waits up to 16 seconds. Old manual-key
+clients must upgrade; they do not understand direct-mode receipts.
+
+At most 32 query/result waits and 128 phone screen states exist. Disconnect/stop
+releases them. There is no permanent extra poller: Mac observes lock notifications,
+phone queries on connect/action, and Mac checks at most 20 times at 500ms only
+while confirming a command. See [setup and acceptance limits](SCREEN_CONTROL.md).

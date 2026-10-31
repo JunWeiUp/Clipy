@@ -143,25 +143,29 @@ extension OverlayView {
         }
     }
 
+    /// Shared by the gradient popover and the editor inspector swatches.
+    func selectBeautifyStyle(_ idx: Int) {
+        beautifyStyleIndex = idx
+        UserDefaults.standard.set(idx, forKey: "beautifyStyleIndex")
+        if idx >= 0 {
+            // Gradient selected — clear custom background
+            customBeautifyBackground = nil
+        } else {
+            // Custom image selected — load from storage
+            loadCustomBeautifyBackground()
+        }
+        cachedCompositedImage = nil
+        needsDisplay = true
+        updateBeautifySwatch(styleIndex: idx)
+        onContentChanged?()
+        // Rebuild options row so blur slider appears/disappears
+        rebuildToolbarLayout()
+    }
+
     func showBeautifyGradientPopover(anchorView: NSView? = nil, anchorRect: NSRect = .zero) {
         let picker = GradientPickerView(selectedIndex: beautifyStyleIndex)
         picker.onSelect = { [weak self] idx in
-            guard let self = self else { return }
-            self.beautifyStyleIndex = idx
-            UserDefaults.standard.set(idx, forKey: "beautifyStyleIndex")
-            if idx >= 0 {
-                // Gradient selected — clear custom background
-                self.customBeautifyBackground = nil
-            } else {
-                // Custom image selected — load from storage
-                self.loadCustomBeautifyBackground()
-            }
-            self.cachedCompositedImage = nil
-            self.needsDisplay = true
-            self.updateBeautifySwatch(styleIndex: idx)
-            self.onContentChanged?()
-            // Rebuild options row so blur slider appears/disappears
-            self.rebuildToolbarLayout()
+            self?.selectBeautifyStyle(idx)
         }
         picker.onCustomImage = { [weak self] in
             PopoverHelper.dismiss()
@@ -565,26 +569,30 @@ extension OverlayView {
         }
     }
 
+    /// Shared by the effects popover and the editor inspector.
+    func applyEffectsConfig(_ config: ImageEffectsConfig) {
+        effectsPreset = config.preset
+        effectsBrightness = config.brightness
+        effectsContrast = config.contrast
+        effectsSaturation = config.saturation
+        effectsSharpness = config.sharpness
+        UserDefaults.standard.set(config.preset.rawValue, forKey: "effectsPreset")
+        UserDefaults.standard.set(Double(config.brightness), forKey: "effectsBrightness")
+        UserDefaults.standard.set(Double(config.contrast), forKey: "effectsContrast")
+        UserDefaults.standard.set(Double(config.saturation), forKey: "effectsSaturation")
+        UserDefaults.standard.set(Double(config.sharpness), forKey: "effectsSharpness")
+        cachedCompositedImage = nil
+        cachedEffectsScreenshot = nil
+        rebuildToolbarLayout()
+        needsDisplay = true
+        onContentChanged?()
+    }
+
     func showEffectsPopover(anchorView: NSView? = nil, anchorRect: NSRect = .zero) {
         if PopoverHelper.toggleClosedIfOpen() { return }
         let picker = EffectsPickerView(config: effectsConfig)
         picker.onConfigChanged = { [weak self] config in
-            guard let self = self else { return }
-            self.effectsPreset = config.preset
-            self.effectsBrightness = config.brightness
-            self.effectsContrast = config.contrast
-            self.effectsSaturation = config.saturation
-            self.effectsSharpness = config.sharpness
-            UserDefaults.standard.set(config.preset.rawValue, forKey: "effectsPreset")
-            UserDefaults.standard.set(Double(config.brightness), forKey: "effectsBrightness")
-            UserDefaults.standard.set(Double(config.contrast), forKey: "effectsContrast")
-            UserDefaults.standard.set(Double(config.saturation), forKey: "effectsSaturation")
-            UserDefaults.standard.set(Double(config.sharpness), forKey: "effectsSharpness")
-            self.cachedCompositedImage = nil
-            self.cachedEffectsScreenshot = nil
-            self.rebuildToolbarLayout()
-            self.needsDisplay = true
-            self.onContentChanged?()
+            self?.applyEffectsConfig(config)
         }
         let size = picker.preferredSize
         if let anchor = anchorView {

@@ -216,6 +216,7 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
     private var offloadWorkItem: DispatchWorkItem?
     /// Small copy actually rendered by the panel.
     private var previewImage: NSImage
+    private let capturedAt = Date()
 
     /// Full-resolution image for copy / save / pin / edit / drag. Read back from
     /// disk when it has been offloaded; falls back to the preview only if that
@@ -274,7 +275,8 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
 
     static func currentThumbnailSize() -> NSSize {
         let scale = CGFloat(UserDefaults.standard.object(forKey: "thumbnailScale") as? Double ?? 1.0)
-        return NSSize(width: round(240 * scale), height: round(160 * scale))
+        // V3 card: 268pt wide, 150pt image + 6pt inset + 32pt name/size footer.
+        return NSSize(width: round(268 * scale), height: round(188 * scale))
     }
 
     /// Downsamples for on-screen display. Sized at 2x the largest thumbnail the
@@ -420,7 +422,8 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
         panel.acceptsMouseMovedEvents = true
 
-        let view = ThumbnailView(image: previewImage, thumbSize: thumbSize)
+        let view = ThumbnailView(image: previewImage, thumbSize: thumbSize,
+                                 caption: caption(for: image))
         view.frame = NSRect(origin: .zero, size: thumbSize)
         view.autoresizingMask = [.width, .height]
         view.dismissesTowardLeft = corner.isLeft
@@ -518,8 +521,16 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
     /// it — the editor opens with just the composited image.
     func updateImage(_ newImage: NSImage, annotationData: CaptureAnnotationData? = nil) {
         image = newImage
-        thumbnailView?.updateImage(previewImage)
+        thumbnailView?.updateImage(previewImage, caption: caption(for: newImage))
         offloadFullImage()
+    }
+
+    private func caption(for image: NSImage) -> String {
+        let pixels = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        let dimensions = pixels.map { "\($0.width) × \($0.height)" } ?? ""
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH.mm.ss"
+        return "\(L("Screenshot")) \(formatter.string(from: capturedAt)) · \(dimensions)"
     }
 
     private func makeCurrentImageFileURL() -> URL? {
@@ -638,6 +649,27 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
             ctx.duration = 0.25
             ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             window.animator().setFrame(newFrame, display: true)
+        }
+    }
+
+    #if CLIPY_CORE_TESTS
+    func showHoverForSnapshot() { thumbnailView?.showHoverForSnapshot() }
+    #endif
+
+    /// Earlier captures use a compact card; expanding restores the same
+    /// controller, backing image, drag gestures and context menu.
+    func setCompact(_ compact: Bool) {
+        guard let window, let view = thumbnailView, !isInteractiveDismissActive,
+              view.isCompact != compact else { return }
+        let full = Self.currentThumbnailSize()
+        let size = NSSize(width: full.width, height: compact ? 64 : full.height)
+        view.setCompact(compact, size: size)
+        targetFrame.size = size
+        // Override any in-flight slide-in animation as well as the model frame.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            window.animator().setFrame(targetFrame, display: true)
         }
     }
 
@@ -860,7 +892,9 @@ private class ThumbnailView: NSView {
     }
 
     private var image: NSImage
-    private let thumbSize: NSSize
+    private var caption: String
+    private var thumbSize: NSSize
+    private(set) var isCompact = false
     private var dragStartScreenPoint: NSPoint?
     private var dragMode: DragMode = .idle
     private var dismissDragOffset: CGFloat = 0
@@ -913,9 +947,25 @@ private class ThumbnailView: NSView {
         needsDisplay = true
     }
 
+    #if CLIPY_CORE_TESTS
+    func showHoverForSnapshot() { isHovering = true; needsDisplay = true }
+    #endif
+
+    func setCompact(_ compact: Bool, size: NSSize) {
+        isCompact = compact
+        thumbSize = size
+        closeBtnRect = .zero; pinBtnRect = .zero; editBtnRect = .zero
+        copyBtnRect = .zero; saveBtnRect = .zero
+        #if !OFFLINE
+        uploadBtnRect = .zero
+        #endif
+        frame.size = size
+        needsDisplay = true
+    }
+
     private var controlScale: CGFloat {
         guard thumbSize.width > 0, thumbSize.height > 0 else { return 1 }
-        let baseScale = min(bounds.width / 240, bounds.height / 160)
+        let baseScale = min(bounds.width / 268, bounds.height / 188)
         return min(max(baseScale, 0.55), 2.0)
     }
 
@@ -932,16 +982,18 @@ private class ThumbnailView: NSView {
         max(minimum, round(value * controlScale))
     }
 
-    init(image: NSImage, thumbSize: NSSize) {
+    init(image: NSImage, thumbSize: NSSize, caption: String) {
         self.image = image
         self.thumbSize = thumbSize
+        self.caption = caption
         super.init(frame: .zero)
         updateTrackingArea()
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func updateImage(_ newImage: NSImage) {
+    func updateImage(_ newImage: NSImage, caption: String) {
         image = newImage
+        self.caption = caption
         needsDisplay = true
     }
 
@@ -990,137 +1042,165 @@ private class ThumbnailView: NSView {
 
     // MARK: - Drawing
 
+    /// V3 card surface (mac.css --m-glass): light/dark translucent glass.
+    private static let cardFill = NSColor(name: nil) {
+        $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.17, green: 0.17, blue: 0.19, alpha: 0.94) : NSColor(white: 1, alpha: 0.92)
+    }
+
+    private var captionParts: (name: String, detail: String) {
+        guard let range = caption.range(of: " · ") else { return (caption, "") }
+        return (String(caption[..<range.lowerBound]), String(caption[range.upperBound...]))
+    }
+
+    private func drawCardBackground(_ card: NSRect, radius: CGFloat) {
+        let path = NSBezierPath(roundedRect: card.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+        Self.cardFill.setFill()
+        path.fill()
+        (effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: 0.12) : NSColor(white: 0, alpha: 0.1)).setStroke()
+        path.lineWidth = 0.5
+        path.stroke()
+    }
+
+    private func drawAspectFill(in rect: NSRect, radius: CGFloat) {
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).addClip()
+        NSColor(white: 0.12, alpha: 1).setFill()
+        rect.fill()
+        let imgAspect = image.size.width / max(1, image.size.height)
+        let viewAspect = rect.width / max(1, rect.height)
+        let drawSize = imgAspect > viewAspect
+            ? NSSize(width: rect.height * imgAspect, height: rect.height)
+            : NSSize(width: rect.width, height: rect.width / max(0.0001, imgAspect))
+        image.draw(in: NSRect(x: rect.midX - drawSize.width / 2, y: rect.midY - drawSize.height / 2,
+                              width: drawSize.width, height: drawSize.height),
+                   from: .zero, operation: .sourceOver, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        let r = thumbnailDrawRect
-        let cr: CGFloat = 12
-
-        // Rounded clip for entire thumbnail
-        let path = NSBezierPath(roundedRect: r, xRadius: cr, yRadius: cr)
-        path.addClip()
-
-        // Dark background (visible as letterbox bars for extreme aspect ratios)
-        NSColor(white: 0.12, alpha: 1.0).setFill()
-        NSBezierPath(roundedRect: r, xRadius: cr, yRadius: cr).fill()
-
-        // Draw image with aspect fill (cropped to fill, no letterboxing)
-        let imgAspect = image.size.width / image.size.height
-        let viewAspect = r.width / r.height
-        var drawW: CGFloat
-        var drawH: CGFloat
-        if imgAspect > viewAspect {
-            // Image is wider than view — fill height, crop sides
-            drawH = r.height
-            drawW = drawH * imgAspect
-        } else {
-            // Image is taller than view — fill width, crop top/bottom
-            drawW = r.width
-            drawH = drawW / imgAspect
+        let card = thumbnailDrawRect
+        let parts = captionParts
+        if isCompact {
+            // Earlier capture: 72×48 thumbnail + name / size (mac-capture-results.html `.th.small`).
+            drawCardBackground(card, radius: 14)
+            let thumbRect = NSRect(x: card.minX + 8, y: card.midY - 24, width: 72, height: 48)
+            drawAspectFill(in: thumbRect, radius: 8)
+            let style = NSMutableParagraphStyle()
+            style.lineBreakMode = .byTruncatingTail
+            let textX = thumbRect.maxX + 10
+            let textW = max(0, card.maxX - textX - 10)
+            (parts.name as NSString).draw(in: NSRect(x: textX, y: card.midY + 1, width: textW, height: 16),
+                                          withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+                                                           .foregroundColor: NSColor.labelColor, .paragraphStyle: style])
+            (parts.detail as NSString).draw(in: NSRect(x: textX, y: card.midY - 17, width: textW, height: 15),
+                                            withAttributes: [.font: NSFont.systemFont(ofSize: 11),
+                                                             .foregroundColor: NSColor.tertiaryLabelColor, .paragraphStyle: style])
+            return
         }
-        let drawRect = NSRect(
-            x: r.midX - drawW / 2,
-            y: r.midY - drawH / 2,
-            width: drawW,
-            height: drawH
-        )
-        image.draw(in: drawRect, from: .zero, operation: .copy, fraction: 1.0)
 
-        // White border
-        NSColor.white.withAlphaComponent(0.4).setStroke()
-        let border = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: cr, yRadius: cr)
-        border.lineWidth = 1.5
-        border.stroke()
+        let cr: CGFloat = 14
+        let footerH = scaled(32, minimum: 24)
+        drawCardBackground(card, radius: cr)
+        let inset: CGFloat = 6
+        let r = NSRect(x: card.minX + inset, y: card.minY + footerH, width: card.width - inset * 2,
+                       height: max(1, card.height - footerH - inset))
+        drawAspectFill(in: r, radius: 10)
+
+        // Footer: name · size … ⠿ drag out
+        let fontSize = scaled(11.5, minimum: 9)
+        let nameAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: fontSize, weight: .semibold), .foregroundColor: NSColor.labelColor]
+        let detailAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: fontSize), .foregroundColor: NSColor.secondaryLabelColor]
+        let dragTitle = L("Drag Out")
+        let dragSize = (dragTitle as NSString).size(withAttributes: detailAttrs)
+        let textY = card.minY + (footerH - dragSize.height) / 2 + 1
+        var x = card.minX + 12
+        let dragX = card.maxX - 10 - dragSize.width
+        (dragTitle as NSString).draw(at: NSPoint(x: dragX, y: textY), withAttributes: detailAttrs)
+        if let grip = NSImage(systemSymbolName: "line.3.horizontal", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: fontSize, weight: .regular)) {
+            let tinted = NSImage(size: grip.size, flipped: false) { rect in
+                grip.draw(in: rect); NSColor.secondaryLabelColor.setFill(); rect.fill(using: .sourceAtop); return true
+            }
+            tinted.draw(in: NSRect(x: dragX - 4 - grip.size.width, y: card.minY + (footerH - grip.size.height) / 2,
+                                   width: grip.size.width, height: grip.size.height))
+        }
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        let nameW = min((parts.name as NSString).size(withAttributes: nameAttrs).width, dragX - 30 - x)
+        (parts.name as NSString).draw(in: NSRect(x: x, y: textY, width: max(0, nameW), height: dragSize.height + 2),
+                                      withAttributes: nameAttrs.merging([.paragraphStyle: style]) { $1 })
+        x += nameW + 4
+        if !parts.detail.isEmpty, x < dragX - 30 {
+            ("· " + parts.detail as NSString).draw(in: NSRect(x: x, y: textY, width: dragX - 30 - x, height: dragSize.height + 2),
+                                                  withAttributes: detailAttrs.merging([.paragraphStyle: style]) { $1 })
+        }
 
         guard isHovering else { return }
 
-        // Semi-transparent dark overlay
-        NSColor.black.withAlphaComponent(0.45).setFill()
-        NSBezierPath(roundedRect: r, xRadius: cr, yRadius: cr).fill()
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(roundedRect: r, xRadius: 10, yRadius: 10).addClip()
+        NSColor(srgbRed: 8 / 255, green: 10 / 255, blue: 16 / 255, alpha: 0.42).setFill()
+        r.fill()
+        NSGraphicsContext.restoreGraphicsState()
 
-        let pad = scaled(10, minimum: 5)
-        let cornerD = scaled(28, minimum: 18)
+        // Close: 22pt dark circle in the top-left corner.
+        let cornerD = scaled(22, minimum: 16)
+        let closeRect = NSRect(x: r.minX + 8, y: r.maxY - 8 - cornerD, width: cornerD, height: cornerD)
+        closeBtnRect = closeRect
+        NSColor(srgbRed: 20 / 255, green: 22 / 255, blue: 28 / 255, alpha: closeRect == hoveredRect ? 0.9 : 0.7).setFill()
+        NSBezierPath(ovalIn: closeRect).fill()
+        drawSymbol("xmark", in: closeRect, pointSize: scaled(9, minimum: 7))
 
-        // Corner button definitions: (center, symbol, keyPath to write rect)
-        var cornerDefs: [(NSPoint, String)] = [
-            (NSPoint(x: r.minX + pad + cornerD/2, y: r.maxY - pad - cornerD/2), "xmark"),
-            (NSPoint(x: r.maxX - pad - cornerD/2, y: r.maxY - pad - cornerD/2), "pin.fill"),
-            (NSPoint(x: r.minX + pad + cornerD/2, y: r.minY + pad + cornerD/2), "pencil"),
-        ]
         #if !OFFLINE
-        cornerDefs.append((NSPoint(x: r.maxX - pad - cornerD/2, y: r.minY + pad + cornerD/2), "icloud.and.arrow.up"))
+        let uploadRect = NSRect(x: r.maxX - 8 - cornerD, y: r.maxY - 8 - cornerD, width: cornerD, height: cornerD)
+        uploadBtnRect = uploadRect
+        NSColor(srgbRed: 20 / 255, green: 22 / 255, blue: 28 / 255, alpha: uploadRect == hoveredRect ? 0.9 : 0.7).setFill()
+        NSBezierPath(ovalIn: uploadRect).fill()
+        drawSymbol("icloud.and.arrow.up", in: uploadRect, pointSize: scaled(9, minimum: 7))
         #endif
 
-        var cornerRects: [NSRect] = []
-        for (center, symbol) in cornerDefs {
-            let circleRect = NSRect(x: center.x - cornerD/2, y: center.y - cornerD/2, width: cornerD, height: cornerD)
-            cornerRects.append(circleRect)
-            let isHit = circleRect == hoveredRect
-
-            let circlePath = NSBezierPath(ovalIn: circleRect)
-            (isHit ? NSColor.white.withAlphaComponent(0.35) : NSColor.white.withAlphaComponent(0.18)).setFill()
-            circlePath.fill()
-            NSColor.white.withAlphaComponent(0.5).setStroke()
-            circlePath.lineWidth = 1
-            circlePath.stroke()
-
-            if let sym = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
-                let cfg = NSImage.SymbolConfiguration(pointSize: scaled(11, minimum: 8), weight: .semibold)
-                let colored = sym.withSymbolConfiguration(cfg) ?? sym
-                let tinted = tintedWhite(colored)
-                let iconSide = scaled(13, minimum: 9)
-                let iconSize = NSSize(width: iconSide, height: iconSide)
-                let iconRect = NSRect(x: center.x - iconSize.width/2, y: center.y - iconSize.height/2,
-                                     width: iconSize.width, height: iconSize.height)
-                tinted.draw(in: iconRect, from: NSRect.zero, operation: .sourceOver, fraction: 1.0)
-            }
-        }
-        if cornerRects.count >= 3 {
-            closeBtnRect  = cornerRects[0]
-            pinBtnRect    = cornerRects[1]
-            editBtnRect   = cornerRects[2]
-            #if !OFFLINE
-            uploadBtnRect = cornerRects[3]
-            #endif
-        }
-
-        // Center action buttons: Copy + Save
-        let centerBtnH = scaled(32, minimum: 18)
-        let centerGap = scaled(8, minimum: 4)
-        let fontSize = scaled(13, minimum: 9)
-        let titleFont = NSFont.systemFont(ofSize: fontSize, weight: .medium)
-        let titleAttrs: [NSAttributedString.Key: Any] = [.font: titleFont]
-        let maxTitleW = max(
-            (L("Copy") as NSString).size(withAttributes: titleAttrs).width,
-            (L("Save") as NSString).size(withAttributes: titleAttrs).width
-        )
-        let horizontalTextPadding = scaled(32, minimum: 18)
-        let preferredCenterW = max(scaled(110, minimum: 64), ceil(maxTitleW + horizontalTextPadding))
-        let centerBtnW = min(r.width - pad * 2, preferredCenterW)
-        let totalH = centerBtnH * 2 + centerGap
-        let btnsY = r.midY - totalH/2
-
-        let copyRect = NSRect(x: r.midX - centerBtnW/2, y: btnsY + centerBtnH + centerGap, width: centerBtnW, height: centerBtnH)
-        let saveRect = NSRect(x: r.midX - centerBtnW/2, y: btnsY,                  width: centerBtnW, height: centerBtnH)
-        copyBtnRect = copyRect
-        saveBtnRect = saveRect
-
-        for (rect, title) in [(copyRect, L("Copy")), (saveRect, L("Save"))] {
-            let isHit = rect == hoveredRect
-            let bg = NSBezierPath(roundedRect: rect, xRadius: centerBtnH/2, yRadius: centerBtnH/2)
-            if isHit {
-                NSColor.white.withAlphaComponent(0.95).setFill()
-            } else {
-                NSColor.white.withAlphaComponent(0.85).setFill()
-            }
+        // 2×2 action grid: Copy (primary) / Save / Edit / Pin.
+        let gap = scaled(6, minimum: 4)
+        let side = scaled(10, minimum: 6)
+        let grid = NSRect(x: r.minX + side, y: r.minY + side, width: r.width - side * 2,
+                          height: max(20, r.height - side - scaled(38, minimum: 26)))
+        let cellW = (grid.width - gap) / 2, cellH = (grid.height - gap) / 2
+        let cells: [(NSRect, String, String, Bool)] = [
+            (NSRect(x: grid.minX, y: grid.minY + cellH + gap, width: cellW, height: cellH), "doc.on.doc", L("Copy"), true),
+            (NSRect(x: grid.minX + cellW + gap, y: grid.minY + cellH + gap, width: cellW, height: cellH), "square.and.arrow.down", L("Save"), false),
+            (NSRect(x: grid.minX, y: grid.minY, width: cellW, height: cellH), "pencil", L("Edit"), false),
+            (NSRect(x: grid.minX + cellW + gap, y: grid.minY, width: cellW, height: cellH), "pin", L("Pin"), false),
+        ]
+        copyBtnRect = cells[0].0; saveBtnRect = cells[1].0; editBtnRect = cells[2].0; pinBtnRect = cells[3].0
+        let titleFont = NSFont.systemFont(ofSize: scaled(12, minimum: 9), weight: .semibold)
+        for (rect, symbol, title, primary) in cells {
+            let hit = rect == hoveredRect
+            let bg = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
+            (primary ? NSColor.controlAccentColor.withAlphaComponent(hit ? 0.9 : 1)
+                     : NSColor.white.withAlphaComponent(hit ? 0.28 : 0.18)).setFill()
             bg.fill()
-
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: titleFont,
-                .foregroundColor: isHit ? NSColor.black : NSColor(white: 0.1, alpha: 1),
-            ]
-            let str = title as NSString
-            let strSize = str.size(withAttributes: attrs)
-            str.draw(at: NSPoint(x: rect.midX - strSize.width/2, y: rect.midY - strSize.height/2), withAttributes: attrs)
+            NSColor.white.withAlphaComponent(0.3).setStroke()
+            bg.lineWidth = 0.5
+            if !primary { bg.stroke() }
+            let attrs: [NSAttributedString.Key: Any] = [.font: titleFont, .foregroundColor: NSColor.white]
+            let textSize = (title as NSString).size(withAttributes: attrs)
+            let iconW = scaled(12, minimum: 9)
+            let total = iconW + 6 + textSize.width
+            let startX = rect.midX - total / 2
+            drawSymbol(symbol, in: NSRect(x: startX, y: rect.midY - iconW / 2, width: iconW, height: iconW), pointSize: scaled(10.5, minimum: 8))
+            (title as NSString).draw(at: NSPoint(x: startX + iconW + 6, y: rect.midY - textSize.height / 2), withAttributes: attrs)
         }
+    }
+
+    private func drawSymbol(_ name: String, in rect: NSRect, pointSize: CGFloat) {
+        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: pointSize, weight: .semibold)) else { return }
+        let tinted = tintedWhite(symbol)
+        tinted.draw(in: NSRect(x: rect.midX - symbol.size.width / 2, y: rect.midY - symbol.size.height / 2,
+                               width: symbol.size.width, height: symbol.size.height),
+                    from: .zero, operation: .sourceOver, fraction: 1)
     }
 
     private func tintedWhite(_ img: NSImage) -> NSImage {

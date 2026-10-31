@@ -10,7 +10,7 @@ android {
     compileSdk = 36
     defaultConfig {
         applicationId = "com.clipyclone.clipy_android.upgradeprobe"
-        // The inspection tool uses SQLite VACUUM INTO; the actual app remains API 24+.
+        // The inspection tool uses SQLite VACUUM INTO; the actual app requires API 26+.
         minSdk = 30
         targetSdk = 36
         versionCode = 1

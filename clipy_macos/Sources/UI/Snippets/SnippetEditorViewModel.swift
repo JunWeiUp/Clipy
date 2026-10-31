@@ -16,27 +16,6 @@ final class SnippetEditorViewModel: ObservableObject {
     @Published var folderSettingsRequest = 0
 
     private var sidebarRefreshWorkItem: DispatchWorkItem?
-    private var selectSnippetObserver: NSObjectProtocol?
-
-    init() {
-        selectSnippetObserver = NotificationCenter.default.addObserver(
-            forName: .snippetEditorSelectSnippet,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let snippetID = notification.object as? UUID else { return }
-            self?.searchQuery = ""
-            self?.selectSnippet(snippetID)
-            self?.reloadSidebar()
-        }
-    }
-
-    deinit {
-        if let selectSnippetObserver {
-            NotificationCenter.default.removeObserver(selectSnippetObserver)
-        }
-    }
-
     func prepareForClose() {
         sidebarRefreshWorkItem?.cancel()
         sidebarRefreshWorkItem = nil

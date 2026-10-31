@@ -34,7 +34,7 @@ class ColorPickerView: NSView {
 
     // MARK: - Constants
 
-    private static let presetColors: [NSColor] = [
+    static let presetColors: [NSColor] = [
         .systemRed, .systemOrange, .systemYellow, .systemGreen, .systemBlue, .systemPurple,
         .systemPink, .white, .lightGray, .gray, .darkGray, .black,
     ]

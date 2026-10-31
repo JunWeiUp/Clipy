@@ -6,8 +6,9 @@ The component versions correspond to the bundled source snapshot or declared
 Maven artifacts; libsodium 1.0.20 is the version embedded in the four native
 libraries distributed in lazysodium-android 5.2.0.
 
-The common-relay and flutter_secure_storage Java sources are adapted; details
-are recorded in their adjacent SOURCE.json files. These ports do not include a
+The common-relay SDK is a version-pinned Maven SDK package; flutter_secure_storage
+Java sources retain the storage compatibility adaptation. Details are recorded
+in the adjacent SOURCE.json files. These ports do not include a
 Flutter engine. Dependencies are used as published, without source modification.
 
 Lazysodium covered source is available under Mozilla Public License 2.0 at:
@@ -23,9 +24,9 @@ some notices in the full upstream distribution may concern modules not used
 by this application. OkHttp public suffix data retains its upstream notice
 at okhttp3/internal/publicsuffix/NOTICE inside the APK.
 
-common-relay — 794a2396266ee6f26ab7406f6d6466732a269dbf
+common-relay — 0.1.3
 License: MIT
-Source: https://github.com/JunWeiUp/common-relay/tree/794a2396266ee6f26ab7406f6d6466732a269dbf
+Source: https://github.com/JunWeiUp/common-relay
 License file: common-relay-LICENSE.txt
 
 flutter_secure_storage — 10.0.0

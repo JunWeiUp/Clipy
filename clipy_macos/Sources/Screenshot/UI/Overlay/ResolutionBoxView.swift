@@ -26,33 +26,42 @@ final class ResolutionBoxView: NSView, NSTextFieldDelegate {
     private let timesLabel = CenteredGlyphView(glyph: "\u{00D7}")
     private let presetsButton = NSButton()
 
-    private let fieldW: CGFloat = 56
-    private let fieldH: CGFloat = 22
-    private let gap: CGFloat = 4
-    private let pad: CGFloat = 6
-    private let btnW: CGFloat = 30
+    // mac-capture.html `.pillx.blue`: 24pt brand pill, 18pt fields, chevron preset button.
+    private var widthFieldW: CGFloat = 34
+    private var heightFieldW: CGFloat = 34
+    private let fieldH: CGFloat = 18
+    private let gap: CGFloat = 2
+    private let pad: CGFloat = 3
+    private let btnW: CGFloat = 20
+    private let pillH: CGFloat = 24
+    private let pillGap: CGFloat = 6
+    /// Pill background drawn behind the editable W × H fields.
+    private let dimensionPill = NSView()
+    /// Read-only info pills (`.pillx`): Retina pixel size, snapped-to-edge state.
+    private var infoPills: [NSView] = []
     private var suppressNextEndEditingCommit = false
 
     init() {
         super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 6
-        layer?.backgroundColor = ToolbarLayout.bgColor.cgColor
-        appearance = ToolbarLayout.appearance
+        appearance = NSAppearance(named: .darkAqua)
+        dimensionPill.wantsLayer = true
+        dimensionPill.layer?.cornerRadius = 7
+        dimensionPill.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        addSubview(dimensionPill)
 
         configureField(widthField)
         configureField(heightField)
 
-        timesLabel.font = NSFont.systemFont(ofSize: 13, weight: .regular)
-        timesLabel.color = ToolbarLayout.iconColor.withAlphaComponent(0.55)
+        timesLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        timesLabel.color = NSColor.white.withAlphaComponent(0.7)
         addSubview(timesLabel)
 
         presetsButton.bezelStyle = .regularSquare
         presetsButton.isBordered = false
         presetsButton.imagePosition = .imageOnly
-        presetsButton.image = NSImage(systemSymbolName: "aspectratio", accessibilityDescription: L("Aspect ratio & resolution presets"))
-            ?? NSImage(systemSymbolName: "rectangle.ratio.16.to.9", accessibilityDescription: nil)
-        presetsButton.contentTintColor = ToolbarLayout.iconColor
+        presetsButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: L("Aspect ratio & resolution presets"))?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+        presetsButton.contentTintColor = .white
         presetsButton.target = self
         presetsButton.action = #selector(presetsClicked)
         presetsButton.toolTip = L("Aspect ratio & resolution presets")
@@ -64,9 +73,9 @@ final class ResolutionBoxView: NSView, NSTextFieldDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     private func configureField(_ f: NSTextField) {
-        f.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        f.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
         f.alignment = .center
-        f.textColor = ToolbarLayout.iconColor
+        f.textColor = .white
         f.delegate = self
         f.isEditable = true
         f.isSelectable = true
@@ -78,8 +87,8 @@ final class ResolutionBoxView: NSView, NSTextFieldDelegate {
         f.drawsBackground = false
         f.focusRingType = .none
         f.wantsLayer = true
-        f.layer?.cornerRadius = 5
-        f.layer?.backgroundColor = ToolbarLayout.iconColor.withAlphaComponent(0.12).cgColor
+        f.layer?.cornerRadius = 4
+        f.layer?.backgroundColor = NSColor.clear.cgColor
         f.formatter = ResolutionBoxView.intFormatter()
         addSubview(f)
     }
@@ -97,33 +106,81 @@ final class ResolutionBoxView: NSView, NSTextFieldDelegate {
 
     /// Natural size of the control.
     var preferredSize: NSSize {
-        NSSize(width: pad + fieldW + gap + timesWidth + gap + fieldW + gap + btnW + pad,
-               height: fieldH + pad * 2)
+        var width = dimensionPillWidth
+        for pill in infoPills { width += pillGap + pill.frame.width }
+        return NSSize(width: width, height: pillH)
+    }
+
+    private var dimensionPillWidth: CGFloat {
+        4 + widthFieldW + gap + timesWidth + gap + heightFieldW + gap + btnW + pad
     }
 
     /// X (in this view's coords) of the midpoint of the W↔H pair — i.e. the center
     /// of the "×". OverlayView aligns this with the selection center so the box
     /// reads as centered on the dimensions, ignoring the trailing presets button.
     var dimensionsCenterX: CGFloat {
-        pad + fieldW + gap + timesWidth / 2
+        4 + widthFieldW + gap + timesWidth / 2
     }
 
     private func layoutPieces() {
-        let h = fieldH + pad * 2
-        var x = pad
-        let y = pad
-        widthField.frame = NSRect(x: x, y: y, width: fieldW, height: fieldH)
-        x += fieldW + gap
+        let h = pillH
+        var x: CGFloat = 4
+        let y = (pillH - fieldH) / 2
+        widthField.frame = NSRect(x: x, y: y, width: widthFieldW, height: fieldH)
+        x += widthFieldW + gap
         // Vertically center the "×" against the fields' text. A label is
         // bottom-baseline; give it the full field height and center its glyph by
         // matching the field font's vertical metrics.
         timesLabel.frame = NSRect(x: x, y: y, width: timesWidth, height: fieldH)
         x += timesWidth + gap
-        heightField.frame = NSRect(x: x, y: y, width: fieldW, height: fieldH)
-        x += fieldW + gap
+        heightField.frame = NSRect(x: x, y: y, width: heightFieldW, height: fieldH)
+        x += heightFieldW + gap
         presetsButton.frame = NSRect(x: x, y: y, width: btnW, height: fieldH)
         x += btnW + pad
+        dimensionPill.frame = NSRect(x: 0, y: 0, width: x, height: h)
+        for pill in infoPills {
+            x += pillGap
+            pill.frame.origin = NSPoint(x: x, y: 0)
+            x += pill.frame.width
+        }
         frame.size = NSSize(width: x, height: h)
+    }
+
+    /// Show the read-only info pills next to the size: pixel size on Retina
+    /// screens and the "snapped to element edge" state while a snap guide is active.
+    func setInfo(retina: String?, snapped: Bool) {
+        let key = "\(retina ?? "")|\(snapped)"
+        guard key != infoKey else { return }
+        infoKey = key
+        infoPills.forEach { $0.removeFromSuperview() }
+        infoPills = []
+        if let retina { infoPills.append(Self.makeInfoPill(symbol: "display", text: retina)) }
+        if snapped { infoPills.append(Self.makeInfoPill(symbol: "dot.squareshape.split.2x2", text: L("Snapped to element edge"))) }
+        infoPills.forEach { addSubview($0) }
+        layoutPieces()
+    }
+    private var infoKey = ""
+
+    private static func makeInfoPill(symbol: String, text: String) -> NSView {
+        let pill = NSView()
+        pill.wantsLayer = true
+        pill.layer?.cornerRadius = 7
+        pill.layer?.backgroundColor = NSColor(srgbRed: 20 / 255, green: 22 / 255, blue: 28 / 255, alpha: 0.82).cgColor
+        pill.layer?.borderWidth = 0.5
+        pill.layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .medium)) ?? NSImage())
+        icon.contentTintColor = NSColor.white.withAlphaComponent(0.75)
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.textColor = .white
+        label.sizeToFit()
+        icon.frame = NSRect(x: 9, y: 5, width: 14, height: 14)
+        label.frame.origin = NSPoint(x: 9 + 14 + 5, y: (24 - label.frame.height) / 2)
+        pill.addSubview(icon)
+        pill.addSubview(label)
+        pill.frame.size = NSSize(width: label.frame.maxX + 9, height: 24)
+        return pill
     }
 
     /// Update displayed dimensions from the selection. Skips a field only while it
@@ -136,6 +193,15 @@ final class ResolutionBoxView: NSView, NSTextFieldDelegate {
         }
         if !isEditing(heightField) {
             heightField.stringValue = "\(h)"
+        }
+        let font = widthField.font ?? .systemFont(ofSize: 12)
+        func fieldWidth(_ text: String) -> CGFloat {
+            max(34, ceil((text as NSString).size(withAttributes: [.font: font]).width) + 8)
+        }
+        let newW = fieldWidth(widthField.stringValue), newH = fieldWidth(heightField.stringValue)
+        if newW != widthFieldW || newH != heightFieldW {
+            widthFieldW = newW; heightFieldW = newH
+            layoutPieces()
         }
     }
 
@@ -156,7 +222,7 @@ final class ResolutionBoxView: NSView, NSTextFieldDelegate {
     /// Reflect the active ratio/resolution preset in the presets button.
     func setActivePresetLabel(_ label: String?) {
         presetsButton.toolTip = label.map { "\(L("Presets")) — \($0)" } ?? L("Aspect ratio & resolution presets")
-        presetsButton.contentTintColor = label == nil ? ToolbarLayout.iconColor : ToolbarLayout.accentColor
+        presetsButton.contentTintColor = label == nil ? NSColor.white.withAlphaComponent(0.85) : .white
     }
 
     @objc private func presetsClicked() {
@@ -195,8 +261,13 @@ final class ResolutionBoxView: NSView, NSTextFieldDelegate {
         return false
     }
 
+    func controlTextDidBeginEditing(_ obj: Notification) {
+        (obj.object as? NSTextField)?.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.22).cgColor
+    }
+
     // Commit on focus loss too.
     func controlTextDidEndEditing(_ obj: Notification) {
+        (obj.object as? NSTextField)?.layer?.backgroundColor = NSColor.clear.cgColor
         if suppressNextEndEditingCommit {
             suppressNextEndEditingCommit = false
             return

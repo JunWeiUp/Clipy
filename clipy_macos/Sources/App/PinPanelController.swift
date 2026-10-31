@@ -51,6 +51,7 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
     private let pinView = PinImageView()
     private let closeButton = NSButton()
     private let editButton = NSButton()
+    private let statusLabel = NSTextField(labelWithString: "")
     private let panelID: UUID
     private let onClose: (UUID) -> Void
 
@@ -156,6 +157,15 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
         container.addSubview(pinView)
         container.addSubview(closeButton)
         container.addSubview(editButton)
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+        statusLabel.textColor = .white
+        statusLabel.alignment = .center
+        statusLabel.wantsLayer = true
+        statusLabel.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.62).cgColor
+        statusLabel.layer?.cornerRadius = 5
+        statusLabel.toolTip = ScreenshotLocalization.active["Zoom"] == nil ? "Scroll to zoom · Command-scroll to change opacity" : "滚轮缩放 · ⌘滚轮调整透明度"
+        container.addSubview(statusLabel)
         contentView = container
 
         NSLayoutConstraint.activate([
@@ -171,8 +181,16 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
             editButton.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
             editButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -6),
             editButton.widthAnchor.constraint(equalToConstant: 24),
-            editButton.heightAnchor.constraint(equalToConstant: 24)
+            editButton.heightAnchor.constraint(equalToConstant: 24),
+            statusLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            statusLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -8),
+            statusLabel.heightAnchor.constraint(equalToConstant: 20)
         ])
+        let preferredStatusWidth = statusLabel.widthAnchor.constraint(equalToConstant: 130)
+        preferredStatusWidth.priority = .defaultHigh
+        preferredStatusWidth.isActive = true
+        statusLabel.lineBreakMode = .byTruncatingTail
 
         // Semi-transparent dark disc behind each control glyph so the white icon
         // stays readable on any capture background — including pure-white pins,
@@ -276,6 +294,7 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
         }
 
         setFrame(NSRect(origin: newOrigin, size: newSize), display: true, animate: false)
+        updatePinViewTransform()
         updateTrackingArea()
     }
 
@@ -305,6 +324,8 @@ final class PinPanel: PinFloatingPanel, NSWindowDelegate {
         pinView.imageScale = 1
         pinView.imageOpacity = imageOpacity
         pinView.rotationDegrees = rotationDegrees
+        let chinese = ScreenshotLocalization.active["Zoom"] != nil
+        statusLabel.stringValue = "\(chinese ? "贴图" : "Pin") \(Int((imageScale * 100).rounded()))% · α \(Int((imageOpacity * 100).rounded()))%"
     }
 
     // MARK: Edit mode

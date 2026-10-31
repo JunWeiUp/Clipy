@@ -11,9 +11,9 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ANDROID = ROOT / 'clipy_android/android/app/src/main/res'
-IOS = ROOT / 'clipy_android/ios/Runner/Assets.xcassets/AppIcon.appiconset'
-WINDOWS = ROOT / 'clipy_android/windows/runner/resources/app_icon.ico'
+ANDROID = ROOT / 'clipy_flutter/android/app/src/main/res'
+IOS = ROOT / 'clipy_flutter/ios/Runner/Assets.xcassets/AppIcon.appiconset'
+WINDOWS = ROOT / 'clipy_flutter/windows/runner/resources/app_icon.ico'
 ATTR = '{http://schemas.android.com/apk/res/android}'
 
 
@@ -71,7 +71,7 @@ def png(path, size, alpha):
 
 
 def main():
-    for relative, size in [('Clipy/Resources/AppIcon.png', 1024), ('Logo.png', 512),
+    for relative, size in [('clipy_macos/Resources/AppIcon.png', 1024), ('Logo.png', 512),
                            ('assets/logo/logo_placeholder.png', 192)]:
         rows = png(ROOT / relative, size, True)
         require(rows[0][3] == rows[-1][-1] == 0, f'{relative}: corners must be transparent')

@@ -19,10 +19,13 @@ struct SnippetEditorSidebarRepresentable: NSViewRepresentable {
         table.addTableColumn(column)
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         table.headerView = nil
-        table.style = pane == .folders ? .sourceList : .inset
+        table.style = .plain
         table.backgroundColor = .clear
-        table.intercellSpacing = .init(width: 0, height: 4)
-        table.rowHeight = pane == .folders ? 36 : 64
+        table.gridStyleMask = []
+        table.rowSizeStyle = .custom
+        table.selectionHighlightStyle = .regular
+        table.intercellSpacing = .init(width: 0, height: 2)
+        table.rowHeight = pane == .folders ? 34 : 60
         table.delegate = context.coordinator
         table.dataSource = context.coordinator
         table.registerForDraggedTypes([Coordinator.dragType])
@@ -90,6 +93,10 @@ struct SnippetEditorSidebarRepresentable: NSViewRepresentable {
             return cell
         }
 
+        func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+            SnippetNavigationRowView(isFolder: pane == .folders)
+        }
+
         func tableViewSelectionDidChange(_ notification: Notification) {
             guard !changingSelection, let table, ids.indices.contains(table.selectedRow) else { return }
             if pane == .folders { viewModel.selectFolder(ids[table.selectedRow]) }
@@ -136,46 +143,47 @@ private final class SnippetNavigationCell: NSTableCellView {
         self.isFolder = isFolder
         super.init(frame: .zero)
         let title = NSTextField(labelWithString: "")
-        title.font = .systemFont(ofSize: 13, weight: isFolder ? .regular : .medium)
+        title.font = .systemFont(ofSize: 13, weight: isFolder ? .regular : .semibold)
         title.lineBreakMode = .byTruncatingTail
         title.translatesAutoresizingMaskIntoConstraints = false
         addSubview(title)
         textField = title
         if isFolder {
             let icon = NSImageView()
-            icon.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
-            icon.contentTintColor = .secondaryLabelColor
+            icon.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
+            icon.contentTintColor = SnippetNavigationPalette.text2
             icon.translatesAutoresizingMaskIntoConstraints = false
             addSubview(icon)
             imageView = icon
             countLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-            countLabel.textColor = .secondaryLabelColor
+            countLabel.textColor = SnippetNavigationPalette.text3
             countLabel.translatesAutoresizingMaskIntoConstraints = false
             countLabel.setContentHuggingPriority(.required, for: .horizontal)
             addSubview(countLabel)
             NSLayoutConstraint.activate([
-                icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+                icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
                 icon.centerYAnchor.constraint(equalTo: centerYAnchor),
                 icon.widthAnchor.constraint(equalToConstant: 16), icon.heightAnchor.constraint(equalToConstant: 16),
                 title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
                 title.centerYAnchor.constraint(equalTo: centerYAnchor),
                 title.trailingAnchor.constraint(lessThanOrEqualTo: countLabel.leadingAnchor, constant: -6),
-                countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+                countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
                 countLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             ])
         } else {
             subtitleLabel.font = .systemFont(ofSize: 12)
-            subtitleLabel.textColor = .secondaryLabelColor
+            subtitleLabel.textColor = SnippetNavigationPalette.text3
             subtitleLabel.lineBreakMode = .byTruncatingTail
             subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
             addSubview(subtitleLabel)
             NSLayoutConstraint.activate([
                 title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
                 title.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-                title.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+                title.bottomAnchor.constraint(equalTo: centerYAnchor, constant: -1),
                 subtitleLabel.leadingAnchor.constraint(equalTo: title.leadingAnchor),
                 subtitleLabel.trailingAnchor.constraint(equalTo: title.trailingAnchor),
-                subtitleLabel.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 5),
+                subtitleLabel.topAnchor.constraint(equalTo: centerYAnchor, constant: 3),
             ])
         }
     }
@@ -190,13 +198,65 @@ private final class SnippetNavigationCell: NSTableCellView {
         toolTip = title
     }
 
-    override var backgroundStyle: NSView.BackgroundStyle {
-        didSet {
-            let selected = backgroundStyle == .emphasized
-            textField?.textColor = selected ? .selectedMenuItemTextColor : .labelColor
-            subtitleLabel.textColor = selected ? .selectedMenuItemTextColor : .secondaryLabelColor
-            countLabel.textColor = selected ? .selectedMenuItemTextColor : .secondaryLabelColor
-            imageView?.contentTintColor = selected ? .selectedMenuItemTextColor : .secondaryLabelColor
+    /// Folder rows keep normal text on a soft fill with an accent folder icon;
+    /// snippet rows invert to white on the accent fill (design `.fo.on` / `.sn.on`).
+    func applySelection(_ selected: Bool) {
+        if isFolder {
+            textField?.textColor = .labelColor
+            textField?.font = .systemFont(ofSize: 13, weight: selected ? .medium : .regular)
+            imageView?.contentTintColor = selected ? .controlAccentColor : SnippetNavigationPalette.text2
+            countLabel.textColor = SnippetNavigationPalette.text3
+        } else {
+            textField?.textColor = selected ? .white : .labelColor
+            subtitleLabel.textColor = selected ? NSColor.white.withAlphaComponent(0.82) : SnippetNavigationPalette.text3
         }
+    }
+}
+
+private enum SnippetNavigationPalette {
+    private static func dynamic(light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
+    }
+    static let text2 = dynamic(light: NSColor(srgbRed: 29 / 255, green: 29 / 255, blue: 31 / 255, alpha: 0.66),
+                               dark: NSColor(srgbRed: 242 / 255, green: 242 / 255, blue: 245 / 255, alpha: 0.66))
+    static let text3 = dynamic(light: NSColor(srgbRed: 29 / 255, green: 29 / 255, blue: 31 / 255, alpha: 0.42),
+                               dark: NSColor(srgbRed: 242 / 255, green: 242 / 255, blue: 245 / 255, alpha: 0.40))
+    static let fill2 = dynamic(light: NSColor(white: 0, alpha: 0.07), dark: NSColor(white: 1, alpha: 0.10))
+}
+
+/// Draws the design's rounded selection regardless of key-window state so the
+/// active snippet stays accent-filled while editing its body.
+private final class SnippetNavigationRowView: NSTableRowView {
+    private let isFolder: Bool
+
+    init(isFolder: Bool) {
+        self.isFolder = isFolder
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var isSelected: Bool {
+        didSet { updateCells() }
+    }
+
+    override var interiorBackgroundStyle: NSView.BackgroundStyle {
+        isSelected && !isFolder ? .emphasized : .normal
+    }
+
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        (subview as? SnippetNavigationCell)?.applySelection(isSelected)
+    }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        let path = NSBezierPath(roundedRect: bounds, xRadius: isFolder ? 8 : 10, yRadius: isFolder ? 8 : 10)
+        (isFolder ? SnippetNavigationPalette.fill2 : NSColor.controlAccentColor).setFill()
+        path.fill()
+    }
+
+    private func updateCells() {
+        for case let cell as SnippetNavigationCell in subviews { cell.applySelection(isSelected) }
+        needsDisplay = true
     }
 }

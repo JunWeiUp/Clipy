@@ -16,6 +16,12 @@ class EditorView: OverlayView {
         layerContentsRedrawPolicy = .onSetNeedsDisplay
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        cachedCompositedImage = nil
+        needsDisplay = true
+    }
+
     // MARK: - Background drawing (simple — NSScrollView handles centering/zoom)
 
     override func drawEditorBackground(context: NSGraphicsContext) {
@@ -81,5 +87,5 @@ class EditorView: OverlayView {
 
     override var captureDrawRect: NSRect { selectionRect }
 
-    // Top bar is handled by EditorTopBarView (real NSView in the container)
+    // Title-bar row, inspector and footer are handled by EditorChromeView.
 }

@@ -6,7 +6,7 @@ source "${REPO_ROOT}/scripts/lib/build_common.sh"
 
 unset APP_VERSION BUILD_NUMBER
 resolve_build_version
-[ "${APP_VERSION}+${BUILD_NUMBER}" = "$(awk '/^version:/ {print $2; exit}' "${REPO_ROOT}/clipy_android/pubspec.yaml")" ]
+[ "${APP_VERSION}+${BUILD_NUMBER}" = "$(awk '/^version:/ {print $2; exit}' "${REPO_ROOT}/clipy_flutter/pubspec.yaml")" ]
 
 expect_invalid() {
   if (APP_VERSION="$1" BUILD_NUMBER="$2"; resolve_build_version) >/dev/null 2>&1; then

@@ -157,8 +157,8 @@ def main():
         temp = Path(directory)
         binary = temp / "share-probe"
         subprocess.run(["xcrun", "swiftc", "-O", "-parse-as-library",
-                        str(ROOT / "clipy_android/ios/Shared/ShareTransferClient.swift"),
-                        str(ROOT / "clipy_android/ios/Tests/ShareTransferProbe.swift"),
+                        str(ROOT / "clipy_flutter/ios/Shared/ShareTransferClient.swift"),
+                        str(ROOT / "clipy_flutter/ios/Tests/ShareTransferProbe.swift"),
                         "-o", str(binary)], check=True)
         source = temp / "fixture.bin"
         source.write_bytes(os.urandom(CHUNK + 17))

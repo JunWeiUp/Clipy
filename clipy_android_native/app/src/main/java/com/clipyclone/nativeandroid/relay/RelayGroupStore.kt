@@ -2,9 +2,9 @@ package com.clipyclone.nativeandroid.relay
 
 import android.content.Context
 import android.util.Base64
-import com.clipyclone.nativeandroid.relay.sdk.Crypto
-import com.clipyclone.nativeandroid.relay.sdk.RelayGroups
-import com.clipyclone.nativeandroid.relay.sdk.InvitationLinks
+import io.github.junweiup.commonrelay.Crypto
+import io.github.junweiup.commonrelay.RelayGroups
+import io.github.junweiup.commonrelay.InvitationLinks
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock

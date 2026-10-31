@@ -84,6 +84,14 @@ struct ScreenshotSettingsView: View {
     _screenshotResolution = State(initialValue: prefs.screenshotResolution)
     _screenshotPostCaptureAction = State(initialValue: prefs.screenshotPostCaptureAction)
     _screenshotOCRLanguage = State(initialValue: prefs.screenshotOCRLanguage)
+    #if CLIPY_CORE_TESTS
+    if ProcessInfo.processInfo.environment["CLIPY_WINDOW_SNAPSHOT_DIR"] != nil {
+      _screenCaptureGranted = State(initialValue: false)
+      _accessibilityGranted = State(initialValue: false)
+      _inputMonitoringGranted = State(initialValue: false)
+      _microphoneGranted = State(initialValue: false)
+      _cameraGranted = State(initialValue: false)
+    } else {
     _screenCaptureGranted = State(initialValue: ScreenCapturePermissionManager.isAuthorized)
     _accessibilityGranted = State(initialValue: AccessibilityManager.isTrusted)
     _inputMonitoringGranted = State(initialValue: KeystrokeOverlay.hasInputMonitoringPermission)
@@ -91,6 +99,16 @@ struct ScreenshotSettingsView: View {
       initialValue: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
     _cameraGranted = State(
       initialValue: AVCaptureDevice.authorizationStatus(for: .video) == .authorized)
+    }
+    #else
+    _screenCaptureGranted = State(initialValue: ScreenCapturePermissionManager.isAuthorized)
+    _accessibilityGranted = State(initialValue: AccessibilityManager.isTrusted)
+    _inputMonitoringGranted = State(initialValue: KeystrokeOverlay.hasInputMonitoringPermission)
+    _microphoneGranted = State(
+      initialValue: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
+    _cameraGranted = State(
+      initialValue: AVCaptureDevice.authorizationStatus(for: .video) == .authorized)
+    #endif
 
     _recordingOnStop = State(initialValue: prefs.recordingOnStop)
     _recordingFPS = State(initialValue: prefs.recordingFPS)
@@ -157,488 +175,12 @@ struct ScreenshotSettingsView: View {
     let _ = languageObserver.revision
 
     Group {
-
-      if pageID == "permissions" {
-        // MARK: - 权限
-        Section {
-          permissionRow(
-            name: L("Screen Recording"),
-            hint: L("Required for screenshots and recording"),
-            granted: screenCaptureGranted,
-            onRequest: { ScreenCapturePermissionManager.requestAccess() },
-            onOpenSettings: { ScreenCapturePermissionManager.openSettings() }
-          )
-          permissionRow(
-            name: L("Accessibility"),
-            hint: L("Paste simulation and element snap"),
-            granted: accessibilityGranted,
-            onRequest: { AccessibilityManager.requestSystemPrompt() },
-            onOpenSettings: { AccessibilityManager.openSettings() }
-          )
-          permissionRow(
-            name: L("Input Monitoring"),
-            hint: L("Keystroke display and mouse click highlight"),
-            granted: inputMonitoringGranted,
-            onRequest: { KeystrokeOverlay.requestInputMonitoringPermission() },
-            onOpenSettings: { PermissionDeepLink.openInputMonitoringSettings() }
-          )
-          permissionRow(
-            name: L("Microphone"),
-            hint: L("Record voice during screen recording"),
-            granted: microphoneGranted,
-            onRequest: {
-              AVCaptureDevice.requestAccess(for: .audio) { _ in refreshPermissionStatuses() }
-            },
-            onOpenSettings: { PermissionDeepLink.openMicrophoneSettings() }
-          )
-          permissionRow(
-            name: L("Camera"),
-            hint: L("Webcam overlay during recording"),
-            granted: cameraGranted,
-            onRequest: {
-              AVCaptureDevice.requestAccess(for: .video) { _ in refreshPermissionStatuses() }
-            },
-            onOpenSettings: { PermissionDeepLink.openCameraSettings() }
-          )
-        } footer: {
-          Text(L10n.t(.screenCapturePermissionHint))
-            .font(AppFont.caption)
-        }
-
-      }
-      if pageID == "capture" {
-        // MARK: - 截图(原有)
-        Section {
-          Toggle(L10n.t(.screenshotShortcut), isOn: $screenshotShortcutEnabled)
-            .onChange(of: screenshotShortcutEnabled) { newValue in
-              PreferencesManager.shared.isScreenshotShortcutEnabled = newValue
-              ScreenshotGlobalHotKeyManager.register()
-            }
-          ShortcutRecorderRepresentable(combo: $screenshotShortcut) { combo in
-            PreferencesManager.shared.screenshotShortcut = combo
-            ScreenshotGlobalHotKeyManager.register()
-          }
-          .frame(height: 30)
-
-          Picker(L10n.t(.screenshotDefaultMode), selection: $screenshotDefaultMode) {
-            Text(L10n.t(.screenshotRegion)).tag(ScreenshotCaptureMode.region)
-            Text(L10n.t(.screenshotWindow)).tag(ScreenshotCaptureMode.window)
-            Text(L10n.t(.screenshotFullscreen)).tag(ScreenshotCaptureMode.fullscreen)
-          }
-          .onChange(of: screenshotDefaultMode) { newValue in
-            PreferencesManager.shared.screenshotDefaultMode = newValue
-          }
-
-          Picker(L10n.t(.screenshotPostAction), selection: $screenshotPostCaptureAction) {
-            ForEach(ScreenshotPostCaptureAction.allCases) { action in
-              Text(action.displayName()).tag(action)
-            }
-          }
-          .onChange(of: screenshotPostCaptureAction) { newValue in
-            PreferencesManager.shared.screenshotPostCaptureAction = newValue
-          }
-
-          Picker(L10n.t(.screenshotResolution), selection: $screenshotResolution) {
-            ForEach(ScreenshotResolution.allCases) { resolution in
-              Text(resolution.displayName()).tag(resolution)
-            }
-          }
-          .onChange(of: screenshotResolution) { newValue in
-            PreferencesManager.shared.screenshotResolution = newValue
-          }
-
-          Picker(L10n.t(.screenshotOCRLanguage), selection: $screenshotOCRLanguage) {
-            ForEach(ScreenshotOCRLanguage.allCases) { language in
-              Text(language.displayName()).tag(language)
-            }
-          }
-          .onChange(of: screenshotOCRLanguage) { newValue in
-            PreferencesManager.shared.screenshotOCRLanguage = newValue
-          }
-
-          Toggle(L10n.t(.screenshotMagnifier), isOn: $screenshotMagnifierEnabled)
-            .onChange(of: screenshotMagnifierEnabled) { newValue in
-              PreferencesManager.shared.isScreenshotMagnifierEnabled = newValue
-            }
-          Toggle(L10n.t(.screenshotElementSnap), isOn: $screenshotElementSnapEnabled)
-            .onChange(of: screenshotElementSnapEnabled) { newValue in
-              PreferencesManager.shared.isScreenshotElementSnapEnabled = newValue
-            }
-          if screenshotElementSnapEnabled && !accessibilityGranted {
-            Text(L10n.t(.screenshotElementSnapAccessibilityHint))
-              .font(AppFont.caption)
-              .foregroundStyle(.secondary)
-          }
-
-          Toggle(L10n.t(.screenshotAutoSave), isOn: $screenshotAutoSaveEnabled)
-            .onChange(of: screenshotAutoSaveEnabled) { newValue in
-              PreferencesManager.shared.isScreenshotAutoSaveEnabled = newValue
-            }
-          HStack(alignment: .firstTextBaseline, spacing: AppSpacing.sm) {
-            VStack(alignment: .leading, spacing: 4) {
-              Text(L10n.t(.screenshotSavePath)).font(AppFont.body)
-              Text(screenshotSaveDirectoryPath)
-                .font(AppFont.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .truncationMode(.middle)
-            }
-            Spacer(minLength: 8)
-            Button(L10n.t(.screenshotChooseSavePath)) {
-              chooseScreenshotSaveDirectory()
-            }
-            .buttonStyle(.bordered)
-          }
-          .disabled(!screenshotAutoSaveEnabled)
-          .opacity(screenshotAutoSaveEnabled ? 1 : 0.55)
-        } header: {
-          Text(L("Screenshot"))
-        } footer: {
-          VStack(alignment: .leading, spacing: 4) {
-            Text(L10n.t(.screenshotShortcutDescription))
-            Text(L10n.t(.screenshotResolutionHint))
-            Text(L10n.t(.screenshotPostActionHint))
-            Text(L10n.t(.screenshotOCRLanguageHint))
-          }
-          .font(AppFont.caption)
-        }
-
-      }
-      if pageID == "recording" {
-        // MARK: - 录屏
-        Section(L("Recording")) {
-          Picker(L("After Recording"), selection: $recordingOnStop) {
-            Text(L("Open editor")).tag("editor")
-            Text(L("Show in Finder")).tag("finder")
-            Text(L("Copy to clipboard")).tag("clipboard")
-          }
-          .onChange(of: recordingOnStop) { newValue in
-            PreferencesManager.shared.recordingOnStop = newValue
-          }
-          Picker(L("Frame Rate (FPS)"), selection: $recordingFPS) {
-            ForEach([15, 24, 30, 60], id: \.self) { fps in
-              Text("\(fps)").tag(fps)
-            }
-          }
-          .onChange(of: recordingFPS) { newValue in
-            PreferencesManager.shared.recordingFPS = newValue
-          }
-          Toggle(L("Hide Recording Timer HUD"), isOn: $hideRecordingHUD)
-            .onChange(of: hideRecordingHUD) { newValue in
-              PreferencesManager.shared.hideRecordingHUD = newValue
-            }
-          Toggle(L("Record System Audio"), isOn: $recordSystemAudio)
-            .onChange(of: recordSystemAudio) { newValue in
-              PreferencesManager.shared.recordSystemAudio = newValue
-            }
-          Toggle(L("Record Microphone"), isOn: $recordMicAudio)
-            .onChange(of: recordMicAudio) { newValue in
-              PreferencesManager.shared.recordMicAudio = newValue
-            }
-          Toggle(L("Webcam Overlay"), isOn: $recordWebcam)
-            .onChange(of: recordWebcam) { newValue in
-              PreferencesManager.shared.recordWebcam = newValue
-            }
-          if recordWebcam {
-            Picker(L("Webcam Position"), selection: $webcamPosition) {
-              Text(L("Bottom Right")).tag("bottomRight")
-              Text(L("Bottom Left")).tag("bottomLeft")
-              Text(L("Top Right")).tag("topRight")
-              Text(L("Top Left")).tag("topLeft")
-            }
-            .onChange(of: webcamPosition) { newValue in
-              PreferencesManager.shared.webcamPosition = newValue
-            }
-            Picker(L("Webcam Size"), selection: $webcamSize) {
-              Text(L("Small")).tag("small")
-              Text(L("Medium")).tag("medium")
-              Text(L("Large")).tag("large")
-              Text(L("Huge")).tag("xlarge")
-            }
-            .onChange(of: webcamSize) { newValue in
-              PreferencesManager.shared.webcamSize = newValue
-            }
-            Picker(L("Webcam Shape"), selection: $webcamShape) {
-              Text(L("Circle")).tag("circle")
-              Text(L("Rounded Rectangle")).tag("roundedRect")
-            }
-            .onChange(of: webcamShape) { newValue in
-              PreferencesManager.shared.webcamShape = newValue
-            }
-          }
-          Toggle(L("Mouse Click Highlight"), isOn: $recordMouseHighlight)
-            .onChange(of: recordMouseHighlight) { newValue in
-              PreferencesManager.shared.recordMouseHighlight = newValue
-            }
-          Toggle(L("Keystroke Display"), isOn: $recordKeystroke)
-            .onChange(of: recordKeystroke) { newValue in
-              PreferencesManager.shared.recordKeystroke = newValue
-            }
-          if recordKeystroke {
-            Picker(L("Keystroke Mode"), selection: $keystrokeShowAll) {
-              Text(L("Shortcuts Only")).tag(false)
-              Text(L("All Keystrokes")).tag(true)
-            }
-            .onChange(of: keystrokeShowAll) { newValue in
-              PreferencesManager.shared.keystrokeShowAll = newValue
-            }
-          }
-        }
-
-      }
-      if pageID == "output" {
-        // MARK: - 输出与缩略图
-        Section(L("Output & Thumbnails")) {
-          Toggle(L("Show Floating Thumbnail After Capture"), isOn: $showFloatingThumbnail)
-            .onChange(of: showFloatingThumbnail) { newValue in
-              PreferencesManager.shared.showFloatingThumbnail = newValue
-            }
-          if showFloatingThumbnail {
-            Toggle(L("Stack Thumbnails for Consecutive Captures"), isOn: $thumbnailStacking)
-              .onChange(of: thumbnailStacking) { newValue in
-                PreferencesManager.shared.thumbnailStacking = newValue
-              }
-            Picker(L("Thumbnail Position"), selection: $thumbnailCorner) {
-              Text(L("Bottom Right")).tag("bottomRight")
-              Text(L("Bottom Left")).tag("bottomLeft")
-              Text(L("Top Right")).tag("topRight")
-              Text(L("Top Left")).tag("topLeft")
-            }
-            .onChange(of: thumbnailCorner) { newValue in
-              PreferencesManager.shared.thumbnailCorner = newValue
-            }
-            HStack {
-              Text(L("Thumbnail Size"))
-              Spacer()
-              Slider(value: $thumbnailScale, in: 0.5...2.0, step: 0.1) { editing in
-                if !editing {
-                  PreferencesManager.shared.thumbnailScale = thumbnailScale
-                }
-              }
-              Text(String(format: "%.1f×", thumbnailScale))
-                .font(AppFont.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 36, alignment: .trailing)
-            }
-          }
-          Picker(L("Quick Capture Action"), selection: $quickCaptureMode) {
-            Text(L("Save Only")).tag(0)
-            Text(L("Copy to clipboard")).tag(1)
-            Text(L("Save and Copy")).tag(2)
-            Text(L("Thumbnail Only")).tag(3)
-          }
-          .onChange(of: quickCaptureMode) { newValue in
-            PreferencesManager.shared.quickCaptureMode = newValue
-          }
-          Toggle(L("Capture Mouse Cursor"), isOn: $captureCursor)
-            .onChange(of: captureCursor) { newValue in
-              PreferencesManager.shared.captureCursor = newValue
-            }
-          Toggle(L("Downscale Retina Screenshots to 1×"), isOn: $downscaleRetina)
-            .onChange(of: downscaleRetina) { newValue in
-              PreferencesManager.shared.downscaleRetina = newValue
-            }
-          Toggle(L("Play Sound After Capture"), isOn: $playCopySound)
-            .onChange(of: playCopySound) { newValue in
-              PreferencesManager.shared.playCopySound = newValue
-            }
-          Picker(L("Save Format"), selection: $imageFormat) {
-            Text("PNG").tag("png")
-            Text("JPEG").tag("jpeg")
-            Text("HEIC").tag("heic")
-            Text("WebP").tag("webp")
-          }
-          .onChange(of: imageFormat) { newValue in
-            PreferencesManager.shared.imageFormat = newValue
-          }
-          if imageFormat != "png" {
-            HStack {
-              Text(L("Quality"))
-              Spacer()
-              Slider(value: $imageQuality, in: 0.1...1.0, step: 0.05) { editing in
-                if !editing {
-                  PreferencesManager.shared.imageQuality = imageQuality
-                }
-              }
-              Text(String(format: "%.0f%%", imageQuality * 100))
-                .font(AppFont.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 44, alignment: .trailing)
-            }
-          }
-        }
-
-      }
-      if pageID == "scroll" {
-        // MARK: - 滚动与绘制辅助
-        Section(L("Scroll Capture & Drawing Aids")) {
-          Text(L("Scroll Capture")).font(AppFont.body)
-          Stepper(
-            String(format: L("Max Height: %d px"), scrollMaxHeight), value: $scrollMaxHeight,
-            in: 2000...40000, step: 1000
-          )
-          .onChange(of: scrollMaxHeight) { newValue in
-            PreferencesManager.shared.scrollMaxHeight = newValue
-          }
-          Toggle(L("Auto Scroll"), isOn: $scrollAutoScrollEnabled)
-            .onChange(of: scrollAutoScrollEnabled) { newValue in
-              PreferencesManager.shared.scrollAutoScrollEnabled = newValue
-            }
-          if scrollAutoScrollEnabled {
-            Picker(L("Auto Scroll Speed"), selection: $scrollAutoScrollSpeed) {
-              ForEach(1...5, id: \.self) { s in
-                Text("\(s)").tag(s)
-              }
-            }
-            .onChange(of: scrollAutoScrollSpeed) { newValue in
-              PreferencesManager.shared.scrollAutoScrollSpeed = newValue
-            }
-          }
-          Toggle(L("Detect Frozen Headers"), isOn: $scrollFrozenDetection)
-            .onChange(of: scrollFrozenDetection) { newValue in
-              PreferencesManager.shared.scrollFrozenDetection = newValue
-            }
-          Divider()
-          Toggle(L("Show Alignment Guides"), isOn: $snapGuidesEnabled)
-            .onChange(of: snapGuidesEnabled) { newValue in
-              PreferencesManager.shared.snapGuidesEnabled = newValue
-            }
-          Toggle(L("Remember Last Used Tool"), isOn: $rememberLastTool)
-            .onChange(of: rememberLastTool) { newValue in
-              PreferencesManager.shared.rememberLastTool = newValue
-            }
-          Toggle(L("Show Shortcuts in Tooltips"), isOn: $showToolShortcutsInTooltips)
-            .onChange(of: showToolShortcutsInTooltips) { newValue in
-              PreferencesManager.shared.showToolShortcutsInTooltips = newValue
-            }
-          Toggle(L("Pencil Pressure (Apple Pencil)"), isOn: $pencilPressureEnabled)
-            .onChange(of: pencilPressureEnabled) { newValue in
-              PreferencesManager.shared.pencilPressureEnabled = newValue
-            }
-          Picker(L("Pencil Smoothing"), selection: $pencilSmoothMode) {
-            Text(L("None")).tag(0)
-            Text(L("Smooth")).tag(1)
-            Text(L("Refined")).tag(2)
-          }
-          .onChange(of: pencilSmoothMode) { newValue in
-            PreferencesManager.shared.pencilSmoothMode = newValue
-          }
-          Toggle(L("Smart Marker (Fit Text Line Height)"), isOn: $smartMarkerEnabled)
-            .onChange(of: smartMarkerEnabled) { newValue in
-              PreferencesManager.shared.smartMarkerEnabled = newValue
-            }
-        }
-
-      }
-      if pageID == "effects" {
-        // MARK: - 美化与特效
-        Section(L("Beautify & Image Effects (Defaults)")) {
-          Toggle(L("Enable Beautify Wrap by Default"), isOn: $beautifyEnabled)
-            .onChange(of: beautifyEnabled) { newValue in
-              PreferencesManager.shared.beautifyEnabled = newValue
-            }
-          Picker(L("Beautify Mode"), selection: $beautifyMode) {
-            Text(L("Window (with Traffic Lights)")).tag(0)
-            Text(L("Rounded")).tag(1)
-          }
-          .onChange(of: beautifyMode) { newValue in
-            PreferencesManager.shared.beautifyMode = newValue
-          }
-          HStack {
-            Text(L("Margin"))
-            Spacer()
-            Slider(value: $beautifyPadding, in: 0...120, step: 2) { editing in
-              if !editing {
-                PreferencesManager.shared.beautifyPadding = beautifyPadding
-              }
-            }
-            Text("\(Int(beautifyPadding))")
-              .font(AppFont.caption)
-              .foregroundStyle(.secondary)
-              .frame(width: 32, alignment: .trailing)
-          }
-          HStack {
-            Text(L("Rounded"))
-            Spacer()
-            Slider(value: $beautifyCornerRadius, in: 0...40, step: 1) { editing in
-              if !editing {
-                PreferencesManager.shared.beautifyCornerRadius = beautifyCornerRadius
-              }
-            }
-            Text("\(Int(beautifyCornerRadius))")
-              .font(AppFont.caption)
-              .foregroundStyle(.secondary)
-              .frame(width: 32, alignment: .trailing)
-          }
-          HStack {
-            Text(L("Shadow"))
-            Spacer()
-            Slider(value: $beautifyShadowRadius, in: 0...60, step: 1) { editing in
-              if !editing {
-                PreferencesManager.shared.beautifyShadowRadius = beautifyShadowRadius
-              }
-            }
-            Text("\(Int(beautifyShadowRadius))")
-              .font(AppFont.caption)
-              .foregroundStyle(.secondary)
-              .frame(width: 32, alignment: .trailing)
-          }
-          Divider()
-          HStack {
-            Text(L("Brightness"))
-            Spacer()
-            Slider(value: $effectsBrightness, in: -0.5...0.5) { editing in
-              if !editing {
-                PreferencesManager.shared.effectsBrightness = effectsBrightness
-              }
-            }
-            Text(String(format: "%+.2f", effectsBrightness))
-              .font(AppFont.caption)
-              .foregroundStyle(.secondary)
-              .frame(width: 44, alignment: .trailing)
-          }
-          HStack {
-            Text(L("Contrast"))
-            Spacer()
-            Slider(value: $effectsContrast, in: 0.5...1.5) { editing in
-              if !editing {
-                PreferencesManager.shared.effectsContrast = effectsContrast
-              }
-            }
-            Text(String(format: "%.2f", effectsContrast))
-              .font(AppFont.caption)
-              .foregroundStyle(.secondary)
-              .frame(width: 44, alignment: .trailing)
-          }
-          HStack {
-            Text(L("Saturation"))
-            Spacer()
-            Slider(value: $effectsSaturation, in: 0...2) { editing in
-              if !editing {
-                PreferencesManager.shared.effectsSaturation = effectsSaturation
-              }
-            }
-            Text(String(format: "%.2f", effectsSaturation))
-              .font(AppFont.caption)
-              .foregroundStyle(.secondary)
-              .frame(width: 44, alignment: .trailing)
-          }
-          HStack {
-            Text(L("Sharpness"))
-            Spacer()
-            Slider(value: $effectsSharpness, in: 0...1) { editing in
-              if !editing {
-                PreferencesManager.shared.effectsSharpness = effectsSharpness
-              }
-            }
-            Text(String(format: "%.2f", effectsSharpness))
-              .font(AppFont.caption)
-              .foregroundStyle(.secondary)
-              .frame(width: 44, alignment: .trailing)
-          }
-        }
-      }
-
+      if pageID == "permissions" { permissionsPage }
+      if pageID == "capture" { capturePage }
+      if pageID == "recording" { recordingPage }
+      if pageID == "output" { outputPage }
+      if pageID == "scroll" { scrollPage }
+      if pageID == "effects" { effectsPage }
     }
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification))
     { _ in
@@ -646,8 +188,330 @@ struct ScreenshotSettingsView: View {
     }
   }
 
+  // MARK: - 权限
+
+  @ViewBuilder private var permissionsPage: some View {
+    SettingsSubheader(settingsText("系统权限", "System Permissions"))
+    SettingsCard {
+      permissionRow(
+        symbol: "display", tint: .blue,
+        name: L("Screen Recording"),
+        hint: L("Required for screenshots and recording"),
+        granted: screenCaptureGranted,
+        onRequest: { ScreenCapturePermissionManager.requestAccess() },
+        onOpenSettings: { ScreenCapturePermissionManager.openSettings() }
+      )
+      permissionRow(
+        symbol: "accessibility", tint: .purple,
+        name: L("Accessibility"),
+        hint: L("Paste simulation and element snap"),
+        granted: accessibilityGranted,
+        onRequest: { AccessibilityManager.requestSystemPrompt() },
+        onOpenSettings: { AccessibilityManager.openSettings() }
+      )
+      permissionRow(
+        symbol: "keyboard", tint: .orange,
+        name: L("Input Monitoring"),
+        hint: L("Keystroke display and mouse click highlight"),
+        granted: inputMonitoringGranted,
+        onRequest: { KeystrokeOverlay.requestInputMonitoringPermission() },
+        onOpenSettings: { PermissionDeepLink.openInputMonitoringSettings() }
+      )
+      permissionRow(
+        symbol: "mic", tint: .red,
+        name: L("Microphone"),
+        hint: L("Record voice during screen recording"),
+        granted: microphoneGranted,
+        onRequest: {
+          AVCaptureDevice.requestAccess(for: .audio) { _ in
+            DispatchQueue.main.async { refreshPermissionStatuses() }
+          }
+        },
+        onOpenSettings: { PermissionDeepLink.openMicrophoneSettings() }
+      )
+      permissionRow(
+        symbol: "camera", tint: .green,
+        name: L("Camera"),
+        hint: L("Webcam overlay during recording"),
+        granted: cameraGranted,
+        onRequest: {
+          AVCaptureDevice.requestAccess(for: .video) { _ in
+            DispatchQueue.main.async { refreshPermissionStatuses() }
+          }
+        },
+        onOpenSettings: { PermissionDeepLink.openCameraSettings() }
+      )
+    }
+    SettingsFootnote(L10n.t(.screenCapturePermissionHint))
+  }
+
+  // MARK: - 截图
+
+  @ViewBuilder private var capturePage: some View {
+    SettingsCard {
+      SettingsRow(title: L10n.t(.screenshotShortcut), detail: L10n.t(.screenshotShortcutDescription)) {
+        ShortcutRecorderRepresentable(combo: $screenshotShortcut) { combo in
+          PreferencesManager.shared.screenshotShortcut = combo
+          ScreenshotGlobalHotKeyManager.register()
+        }
+        .frame(width: 150, height: 26)
+        SettingsSwitch(isOn: $screenshotShortcutEnabled)
+      }
+      .onChange(of: screenshotShortcutEnabled) { newValue in
+        PreferencesManager.shared.isScreenshotShortcutEnabled = newValue
+        ScreenshotGlobalHotKeyManager.register()
+      }
+      SettingsRow(title: L10n.t(.screenshotDefaultMode)) {
+        Picker("", selection: $screenshotDefaultMode) {
+          Text(L10n.t(.screenshotRegion)).tag(ScreenshotCaptureMode.region)
+          Text(L10n.t(.screenshotWindow)).tag(ScreenshotCaptureMode.window)
+          Text(L10n.t(.screenshotFullscreen)).tag(ScreenshotCaptureMode.fullscreen)
+        }
+        .labelsHidden().fixedSize()
+      }
+      .onChange(of: screenshotDefaultMode) { newValue in
+        PreferencesManager.shared.screenshotDefaultMode = newValue
+      }
+      SettingsRow(title: L10n.t(.screenshotPostAction), detail: L10n.t(.screenshotPostActionHint)) {
+        Picker("", selection: $screenshotPostCaptureAction) {
+          ForEach(ScreenshotPostCaptureAction.allCases) { action in
+            Text(action.displayName()).tag(action)
+          }
+        }
+        .labelsHidden().fixedSize()
+      }
+      .onChange(of: screenshotPostCaptureAction) { newValue in
+        PreferencesManager.shared.screenshotPostCaptureAction = newValue
+      }
+      SettingsRow(title: L10n.t(.screenshotResolution), detail: L10n.t(.screenshotResolutionHint)) {
+        Picker("", selection: $screenshotResolution) {
+          ForEach(ScreenshotResolution.allCases) { resolution in
+            Text(resolution.displayName()).tag(resolution)
+          }
+        }
+        .labelsHidden().fixedSize()
+      }
+      .onChange(of: screenshotResolution) { newValue in
+        PreferencesManager.shared.screenshotResolution = newValue
+      }
+      SettingsRow(title: L10n.t(.screenshotOCRLanguage), detail: L10n.t(.screenshotOCRLanguageHint)) {
+        Picker("", selection: $screenshotOCRLanguage) {
+          ForEach(ScreenshotOCRLanguage.allCases) { language in
+            Text(language.displayName()).tag(language)
+          }
+        }
+        .labelsHidden().fixedSize()
+      }
+      .onChange(of: screenshotOCRLanguage) { newValue in
+        PreferencesManager.shared.screenshotOCRLanguage = newValue
+      }
+      SettingsRow(title: L10n.t(.screenshotMagnifier)) { SettingsSwitch(isOn: $screenshotMagnifierEnabled) }
+        .onChange(of: screenshotMagnifierEnabled) { newValue in
+          PreferencesManager.shared.isScreenshotMagnifierEnabled = newValue
+        }
+      SettingsRow(title: L10n.t(.screenshotElementSnap), detail: L10n.t(.screenshotElementSnapAccessibilityHint)) {
+        SettingsSwitch(isOn: $screenshotElementSnapEnabled)
+      }
+      .onChange(of: screenshotElementSnapEnabled) { newValue in
+        PreferencesManager.shared.isScreenshotElementSnapEnabled = newValue
+      }
+      SettingsRow(title: L10n.t(.screenshotAutoSave)) { SettingsSwitch(isOn: $screenshotAutoSaveEnabled) }
+        .onChange(of: screenshotAutoSaveEnabled) { newValue in
+          PreferencesManager.shared.isScreenshotAutoSaveEnabled = newValue
+        }
+      if screenshotAutoSaveEnabled {
+        SettingsRow(title: L10n.t(.screenshotSavePath), detail: screenshotSaveDirectoryPath) {
+          Button(L10n.t(.screenshotChooseSavePath)) { chooseScreenshotSaveDirectory() }
+            .buttonStyle(SettingsButtonStyle())
+        }
+      }
+    }
+  }
+
+  // MARK: - 录屏
+
+  @ViewBuilder private var recordingPage: some View {
+    SettingsCard {
+      pickerRow(L("After Recording"), selection: $recordingOnStop, options: [
+        ("editor", L("Open editor")), ("finder", L("Show in Finder")), ("clipboard", L("Copy to clipboard")),
+      ]) { PreferencesManager.shared.recordingOnStop = $0 }
+      pickerRow(L("Frame Rate (FPS)"), selection: $recordingFPS, options: [15, 24, 30, 60].map { ($0, "\($0)") }) {
+        PreferencesManager.shared.recordingFPS = $0
+      }
+      toggleRow(L("Hide Recording Timer HUD"), isOn: $hideRecordingHUD) { PreferencesManager.shared.hideRecordingHUD = $0 }
+      toggleRow(L("Record System Audio"), isOn: $recordSystemAudio) { PreferencesManager.shared.recordSystemAudio = $0 }
+      toggleRow(L("Record Microphone"), isOn: $recordMicAudio) { PreferencesManager.shared.recordMicAudio = $0 }
+      toggleRow(L("Webcam Overlay"), isOn: $recordWebcam) { PreferencesManager.shared.recordWebcam = $0 }
+      if recordWebcam {
+        pickerRow(L("Webcam Position"), selection: $webcamPosition, options: Self.cornerOptions) {
+          PreferencesManager.shared.webcamPosition = $0
+        }
+        pickerRow(L("Webcam Size"), selection: $webcamSize, options: [
+          ("small", L("Small")), ("medium", L("Medium")), ("large", L("Large")), ("xlarge", L("Huge")),
+        ]) { PreferencesManager.shared.webcamSize = $0 }
+        pickerRow(L("Webcam Shape"), selection: $webcamShape, options: [
+          ("circle", L("Circle")), ("roundedRect", L("Rounded Rectangle")),
+        ]) { PreferencesManager.shared.webcamShape = $0 }
+      }
+      toggleRow(L("Mouse Click Highlight"), isOn: $recordMouseHighlight) { PreferencesManager.shared.recordMouseHighlight = $0 }
+      toggleRow(L("Keystroke Display"), isOn: $recordKeystroke) { PreferencesManager.shared.recordKeystroke = $0 }
+      if recordKeystroke {
+        pickerRow(L("Keystroke Mode"), selection: $keystrokeShowAll, options: [
+          (false, L("Shortcuts Only")), (true, L("All Keystrokes")),
+        ]) { PreferencesManager.shared.keystrokeShowAll = $0 }
+      }
+    }
+  }
+
+  // MARK: - 输出与缩略图
+
+  @ViewBuilder private var outputPage: some View {
+    SettingsSubheader(L("Output & Thumbnails"))
+    SettingsCard {
+      toggleRow(L("Show Floating Thumbnail After Capture"), isOn: $showFloatingThumbnail) {
+        PreferencesManager.shared.showFloatingThumbnail = $0
+      }
+      if showFloatingThumbnail {
+        toggleRow(L("Stack Thumbnails for Consecutive Captures"), isOn: $thumbnailStacking) {
+          PreferencesManager.shared.thumbnailStacking = $0
+        }
+        pickerRow(L("Thumbnail Position"), selection: $thumbnailCorner, options: Self.cornerOptions) {
+          PreferencesManager.shared.thumbnailCorner = $0
+        }
+        SettingsRow(title: L("Thumbnail Size")) {
+          SettingsSlider(value: $thumbnailScale, range: 0.5...2.0, step: 0.1, format: { String(format: "%.1f×", $0) }) {
+            PreferencesManager.shared.thumbnailScale = thumbnailScale
+          }
+        }
+      }
+      pickerRow(L("Quick Capture Action"), selection: $quickCaptureMode, options: [
+        (0, L("Save Only")), (1, L("Copy to clipboard")), (2, L("Save and Copy")), (3, L("Thumbnail Only")),
+      ]) { PreferencesManager.shared.quickCaptureMode = $0 }
+      toggleRow(L("Capture Mouse Cursor"), isOn: $captureCursor) { PreferencesManager.shared.captureCursor = $0 }
+      toggleRow(L("Downscale Retina Screenshots to 1×"), isOn: $downscaleRetina) { PreferencesManager.shared.downscaleRetina = $0 }
+      toggleRow(L("Play Sound After Capture"), isOn: $playCopySound) { PreferencesManager.shared.playCopySound = $0 }
+      pickerRow(L("Save Format"), selection: $imageFormat, options: [
+        ("png", "PNG"), ("jpeg", "JPEG"), ("heic", "HEIC"), ("webp", "WebP"),
+      ]) { PreferencesManager.shared.imageFormat = $0 }
+      if imageFormat != "png" {
+        SettingsRow(title: L("Quality")) {
+          SettingsSlider(value: $imageQuality, range: 0.1...1.0, step: 0.05, format: { String(format: "%.0f%%", $0 * 100) }) {
+            PreferencesManager.shared.imageQuality = imageQuality
+          }
+        }
+      }
+    }
+  }
+
+  // MARK: - 滚动与绘制辅助
+
+  @ViewBuilder private var scrollPage: some View {
+    SettingsSubheader(L("Scroll Capture & Drawing Aids"))
+    SettingsCard {
+      SettingsRow(title: L("Scroll Capture"))
+      SettingsRow(title: String(format: L("Max Height: %d px"), scrollMaxHeight)) {
+        Stepper("", value: $scrollMaxHeight, in: 2000...40000, step: 1000).labelsHidden().controlSize(.small)
+      }
+      .onChange(of: scrollMaxHeight) { newValue in
+        PreferencesManager.shared.scrollMaxHeight = newValue
+      }
+      toggleRow(L("Auto Scroll"), isOn: $scrollAutoScrollEnabled) { PreferencesManager.shared.scrollAutoScrollEnabled = $0 }
+      if scrollAutoScrollEnabled {
+        pickerRow(L("Auto Scroll Speed"), selection: $scrollAutoScrollSpeed, options: (1...5).map { ($0, "\($0)") }) {
+          PreferencesManager.shared.scrollAutoScrollSpeed = $0
+        }
+      }
+      toggleRow(L("Detect Frozen Headers"), isOn: $scrollFrozenDetection) { PreferencesManager.shared.scrollFrozenDetection = $0 }
+      toggleRow(L("Show Alignment Guides"), isOn: $snapGuidesEnabled) { PreferencesManager.shared.snapGuidesEnabled = $0 }
+      toggleRow(L("Remember Last Used Tool"), isOn: $rememberLastTool) { PreferencesManager.shared.rememberLastTool = $0 }
+      toggleRow(L("Show Shortcuts in Tooltips"), isOn: $showToolShortcutsInTooltips) {
+        PreferencesManager.shared.showToolShortcutsInTooltips = $0
+      }
+      toggleRow(L("Pencil Pressure (Apple Pencil)"), isOn: $pencilPressureEnabled) {
+        PreferencesManager.shared.pencilPressureEnabled = $0
+      }
+      pickerRow(L("Pencil Smoothing"), selection: $pencilSmoothMode, options: [
+        (0, L("None")), (1, L("Smooth")), (2, L("Refined")),
+      ]) { PreferencesManager.shared.pencilSmoothMode = $0 }
+      toggleRow(L("Smart Marker (Fit Text Line Height)"), isOn: $smartMarkerEnabled) {
+        PreferencesManager.shared.smartMarkerEnabled = $0
+      }
+    }
+  }
+
+  // MARK: - 美化与特效
+
+  @ViewBuilder private var effectsPage: some View {
+    SettingsSubheader(L("Beautify & Image Effects (Defaults)"))
+    SettingsCard {
+      toggleRow(L("Enable Beautify Wrap by Default"), isOn: $beautifyEnabled) { PreferencesManager.shared.beautifyEnabled = $0 }
+      pickerRow(L("Beautify Mode"), selection: $beautifyMode, options: [
+        (0, L("Window (with Traffic Lights)")), (1, L("Rounded")),
+      ]) { PreferencesManager.shared.beautifyMode = $0 }
+      sliderRow(L("Margin"), value: $beautifyPadding, range: 0...120, step: 2, format: { "\(Int($0))" }) {
+        PreferencesManager.shared.beautifyPadding = beautifyPadding
+      }
+      sliderRow(L("Rounded"), value: $beautifyCornerRadius, range: 0...40, step: 1, format: { "\(Int($0))" }) {
+        PreferencesManager.shared.beautifyCornerRadius = beautifyCornerRadius
+      }
+      sliderRow(L("Shadow"), value: $beautifyShadowRadius, range: 0...60, step: 1, format: { "\(Int($0))" }) {
+        PreferencesManager.shared.beautifyShadowRadius = beautifyShadowRadius
+      }
+      sliderRow(L("Brightness"), value: $effectsBrightness, range: -0.5...0.5, format: { String(format: "%.1f", $0) }) {
+        PreferencesManager.shared.effectsBrightness = effectsBrightness
+      }
+      sliderRow(L("Contrast"), value: $effectsContrast, range: 0.5...1.5, format: { String(format: "%.1f", $0) }) {
+        PreferencesManager.shared.effectsContrast = effectsContrast
+      }
+      sliderRow(L("Saturation"), value: $effectsSaturation, range: 0...2, format: { String(format: "%.1f", $0) }) {
+        PreferencesManager.shared.effectsSaturation = effectsSaturation
+      }
+      sliderRow(L("Sharpness"), value: $effectsSharpness, range: 0...1, format: { String(format: "%.1f", $0) }) {
+        PreferencesManager.shared.effectsSharpness = effectsSharpness
+      }
+    }
+  }
+
+  // MARK: - Row helpers
+
+  private static var cornerOptions: [(String, String)] {
+    [("bottomRight", L("Bottom Right")), ("bottomLeft", L("Bottom Left")),
+     ("topRight", L("Top Right")), ("topLeft", L("Top Left"))]
+  }
+
+  private func toggleRow(_ title: String, isOn: Binding<Bool>, save: @escaping (Bool) -> Void) -> some View {
+    SettingsRow(title: title) { SettingsSwitch(isOn: isOn) }
+      .onChange(of: isOn.wrappedValue) { save($0) }
+  }
+
+  private func pickerRow<Value: Hashable>(
+    _ title: String, selection: Binding<Value>, options: [(Value, String)], save: @escaping (Value) -> Void
+  ) -> some View {
+    SettingsRow(title: title) {
+      Picker("", selection: selection) {
+        ForEach(options.indices, id: \.self) { index in
+          Text(options[index].1).tag(options[index].0)
+        }
+      }
+      .labelsHidden().fixedSize()
+    }
+    .onChange(of: selection.wrappedValue) { save($0) }
+  }
+
+  private func sliderRow(
+    _ title: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double? = nil,
+    format: @escaping (Double) -> String, commit: @escaping () -> Void
+  ) -> some View {
+    SettingsRow(title: title) {
+      SettingsSlider(value: value, range: range, step: step, format: format, onCommit: commit)
+    }
+  }
+
   /// Re-read every permission status (called on activate + after a request dialog closes).
   private func refreshPermissionStatuses() {
+    #if CLIPY_CORE_TESTS
+    if ProcessInfo.processInfo.environment["CLIPY_WINDOW_SNAPSHOT_DIR"] != nil { return }
+    #endif
     screenCaptureGranted = ScreenCapturePermissionManager.isAuthorized
     accessibilityGranted = AccessibilityManager.isTrusted
     inputMonitoringGranted = KeystrokeOverlay.hasInputMonitoringPermission
@@ -655,36 +519,30 @@ struct ScreenshotSettingsView: View {
     cameraGranted = AVCaptureDevice.authorizationStatus(for: .video) == .authorized
   }
 
-  /// Compact single-line permission row — exactly four elements horizontally:
-  /// status dot · name · hint · status text. No buttons: clicking the row
-  /// requests the permission (first time) or opens System Settings (already
-  /// granted). This keeps the 5-row permission block minimal.
-  @ViewBuilder
+  /// Permission row (V3): tinted icon, name + purpose, and either a green
+  /// "granted" tag (click opens System Settings) or a Request button.
   private func permissionRow(
+    symbol: String,
+    tint: SettingsPalette.Tint,
     name: String,
     hint: String,
     granted: Bool,
     onRequest: @escaping () -> Void,
     onOpenSettings: @escaping () -> Void
   ) -> some View {
-    HStack(spacing: AppSpacing.sm) {
-      Circle()
-        .fill(granted ? Color.green : Color.orange)
-        .frame(width: 8, height: 8)
-      Text(name).font(AppFont.body)
-      Text(hint)
-        .font(AppFont.caption)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .truncationMode(.middle)
-      Spacer(minLength: AppSpacing.sm)
-      Text(granted ? L10n.t(.accessibilityGranted) : L10n.t(.accessibilityNotGranted))
-        .font(AppFont.caption)
-        .foregroundStyle(granted ? .green : .orange)
+    SettingsRow(icon: SettingsRowIcon(symbol: symbol, tint: tint), title: name, detail: hint) {
+      if granted {
+        Button(action: onOpenSettings) {
+          SettingsStatusTag(text: L10n.t(.accessibilityGranted))
+        }
+        .buttonStyle(.plain)
+        .help(L10n.t(.openSystemSettings))
+      } else {
+        Button(L("Request Permission"), action: onRequest)
+          .buttonStyle(SettingsButtonStyle(prominent: true))
+          .help(L("Request Permission"))
+      }
     }
-    .contentShape(Rectangle())
-    .onTapGesture { granted ? onOpenSettings() : onRequest() }
-    .help(granted ? L10n.t(.openSystemSettings) : L("Request Permission"))
   }
 
   private func chooseScreenshotSaveDirectory() {

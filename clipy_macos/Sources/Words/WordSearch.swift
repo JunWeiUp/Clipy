@@ -26,6 +26,7 @@ struct WordTranslation: Equatable {
     let original: String
     let text: String
     let direction: Direction
+    var isModelTranslation = false
     var englishText: String { direction == .chineseToEnglish ? text : original }
 
     var sourceURL: URL {

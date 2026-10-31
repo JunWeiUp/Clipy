@@ -79,12 +79,6 @@ extension AppFont {
     }
 }
 
-enum AppRowHeight {
-    static let compact: CGFloat = 30
-    static let standard: CGFloat = 40
-    static let group: CGFloat = 44
-}
-
 enum AppCornerRadius {
     static let small: CGFloat = 6
     static let medium: CGFloat = 8
@@ -92,27 +86,15 @@ enum AppCornerRadius {
     static let badge: CGFloat = 10
 }
 
-enum ScreenshotChrome {
-    static let toolbarHeight: CGFloat = 44
-    static let barHeight: CGFloat = 40
-    static let secondaryBarHeight: CGFloat = 32
-    static let floatingRadius: CGFloat = 12
-    static let magnifierSize: CGFloat = 120
-    static let snapThreshold: CGFloat = 8
-    static let presetColors: [NSColor] = [.systemRed, .systemOrange, .systemYellow, .systemGreen, .systemBlue]
-}
-
 enum AppWindowSize {
-    static let settings = CGSize(width: 760, height: 620)
-    static let settingsMin = CGSize(width: 660, height: 480)
-    static let list = CGSize(width: 720, height: 500)
+    static let settings = CGSize(width: 980, height: 726)
+    static let settingsMin = CGSize(width: 760, height: 480)
     static let search = CGSize(width: 1080, height: 720)
-    static let editor = CGSize(width: 1120, height: 720)
     static let log = CGSize(width: 800, height: 500)
     static let passwordGenerator = CGSize(width: 460, height: 520)
     static let passwordGeneratorMin = CGSize(width: 420, height: 470)
     static let listMin = CGSize(width: 480, height: 320)
-    static let searchMin = CGSize(width: 800, height: 520)
+    static let searchMin = CGSize(width: 900, height: 520)
     static let notificationMin = CGSize(width: 560, height: 360)
     static let editorMin = CGSize(width: 920, height: 540)
 }

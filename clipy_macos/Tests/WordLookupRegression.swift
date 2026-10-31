@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Foundation
 
 private let wordFixture = Data(#"""
@@ -81,6 +82,85 @@ private final class WordHTTPStub: URLProtocol {
 }
 
 func runWordLookupRegressionTests() {
+    if let directory = ProcessInfo.processInfo.environment["CLIPY_WORD_SNAPSHOT_DIR"] {
+        try! FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        let model = WordLookupViewModel(wordBook: WordBookStore(fileURL: URL(fileURLWithPath: directory).appendingPathComponent("fixture.json")))
+        model.usesModelTranslation = true
+        model.query = "Small details make a big difference. Please keep the original meaning and tone."
+        for dark in [false, true] {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 600),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            let host = NSHostingController(rootView: WordLookupView(viewModel: model).environmentObject(AppLanguageObserver.shared))
+            host.sizingOptions = []
+            window.contentViewController = host
+            window.setContentSize(NSSize(width: 480, height: 600))
+            window.orderFrontRegardless()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            let view = window.contentView!
+            view.layoutSubtreeIfNeeded()
+            let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+            view.cacheDisplay(in: view.bounds, to: rep)
+            try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: directory).appendingPathComponent(dark ? "dark.png" : "light.png"))
+            window.close()
+        }
+        model.prepareForClose()
+    }
+
+    if ProcessInfo.processInfo.environment["CLIPY_MODEL_LIST_LOCAL_PROBE"] == "1" {
+        var completed = false
+        var fetched: [String] = []
+        Task { @MainActor in
+            do {
+                fetched = try await ModelTranslationService().models(
+                    configuration: .init(endpoint: "http://127.0.0.1:3425", model: ""), key: "")
+            } catch { print("Local model list probe failed: \(error)") }
+            completed = true
+        }
+        wordWait { completed }
+        wordCheck(!fetched.isEmpty, "Real local model discovery returns models")
+        print("Local model discovery passed (\(fetched.count) models).")
+    }
+    // Model protocol tests never touch real credentials or send user text.
+    let modelConfiguration = ModelTranslationConfiguration(endpoint: "https://example.invalid/v1/chat/completions", model: "translation-model")
+    let modelRequest = try! ModelTranslationService.request("Hello world.", configuration: modelConfiguration, key: "fixture-key", direction: .englishToChinese)
+    wordCheck(modelRequest.httpMethod == "POST", "Model translation uses POST")
+    wordCheck(modelRequest.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-key", "Model key header")
+    let modelBody = try! JSONSerialization.jsonObject(with: modelRequest.httpBody!) as! [String: Any]
+    wordCheck(modelBody["model"] as? String == "translation-model", "Configured model")
+    let messages = modelBody["messages"] as! [[String: String]]
+    wordCheck(messages.last?["content"] == "Hello world.", "Input remains isolated from system instructions")
+    wordCheck(messages.first?["content"]?.contains("Simplified Chinese") == true, "Explicit target language")
+    for (base, expected) in [
+        ("http://127.0.0.1:3425", "http://127.0.0.1:3425/v1/models"),
+        ("http://localhost:3425/v1/", "http://localhost:3425/v1/models"),
+        ("http://[::1]:3425", "http://[::1]:3425/v1/models"),
+        ("https://example.invalid/custom/v1/chat/completions", "https://example.invalid/custom/v1/models")
+    ] {
+        let config = ModelTranslationConfiguration(endpoint: base, model: "")
+        wordCheck((try? config.modelsURL().absoluteString) == expected, "Model discovery derives base path without requiring a selected model")
+        let request = try! ModelTranslationService.modelsRequest(configuration: config, key: "fixture-key")
+        wordCheck(request.httpMethod == "GET" && request.httpBody == nil, "Model discovery sends no translation text")
+        wordCheck(request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-key", "Discovery authenticates")
+    }
+    for address in ["http://example.invalid", "http://127.0.0.1.example.invalid", "http://192.168.1.1"] {
+        wordCheck((try? ModelTranslationConfiguration(endpoint: address, model: "m").validatedURL()) == nil, "Plain HTTP is loopback only")
+    }
+    let models = try! ModelTranslationService.parseModels(Data(#"{"data":[{"id":"beta"},{"id":"alpha"},{"id":"beta"},{"id":""},{"name":"invalid"}]}"#.utf8))
+    wordCheck(models == ["alpha", "beta"], "Model IDs sorted and deduplicated")
+    for data in [#"{"data":[]}"#, #"{"unexpected":[]}"#] {
+        wordCheck((try? ModelTranslationService.parseModels(Data(data.utf8))) == nil, "Empty/invalid model list is actionable")
+    }
+    let parsedModel = try! ModelTranslationService.parse(Data(#"{"choices":[{"finish_reason":"stop","message":{"content":"你好世界。"}}]}"#.utf8))
+    wordCheck(parsedModel == "你好世界。", "Model response decoded")
+    for endpoint in ["http://example.invalid/v1/chat/completions", "https://user:password@example.invalid/api", "https://example.invalid/api?key=secret", ""] {
+        wordCheck((try? ModelTranslationConfiguration(endpoint: endpoint, model: "model").validatedURL()) == nil, "Reject unsafe endpoint")
+    }
+    for fixture in [#"{"choices":[]}"#, #"{"choices":[{"message":{"content":""}}]}"#, #"{"choices":[{"finish_reason":"length","message":{"content":"truncated"}}]}"#] {
+        wordCheck((try? ModelTranslationService.parse(Data(fixture.utf8))) == nil, "Reject empty or truncated translations")
+    }
+
     let entry = try! YoudaoWordParser.parse(wordFixture, query: "take")
     wordCheck(entry.americanIPA == "teɪk", "Wrong regional IPA")
     wordCheck(entry.meanings.count == 2 && entry.meanings[0].partOfSpeech == "v.", "Part of speech lost")

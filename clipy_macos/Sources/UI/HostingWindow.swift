@@ -7,12 +7,16 @@ final class HostingWindow<Content: View>: EscapeClosingWindow, NSWindowDelegate,
         size: CGSize,
         minSize: CGSize? = nil,
         resizable: Bool = true,
+        fullSizeContent: Bool = false,
         frameAutosaveName: String? = nil,
         @ViewBuilder content: () -> Content
     ) {
         var styleMask: StyleMask = [.titled, .closable, .miniaturizable]
         if resizable {
             styleMask.insert(.resizable)
+        }
+        if fullSizeContent {
+            styleMask.insert(.fullSizeContentView)
         }
 
         super.init(
@@ -50,7 +54,7 @@ final class HostingWindow<Content: View>: EscapeClosingWindow, NSWindowDelegate,
         backgroundColor = .windowBackgroundColor
         isOpaque = true
         titlebarAppearsTransparent = true
-        titleVisibility = .visible
+        titleVisibility = fullSizeContent ? .hidden : .visible
         if #available(macOS 13.0, *) {
             titlebarSeparatorStyle = .none
         }

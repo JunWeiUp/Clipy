@@ -1,17 +1,7 @@
 import AppKit
 
 class MenuController: NSObject {
-    private static let menuDisplayLimit = 50
-    private static let menuShortcutHistoryLimit = 50
-    private static let menuIndent = ""
-    private weak var devicesMenu: NSMenu?
-
-    private static func indentedMenuTitle(_ title: String) -> String {
-        menuIndent + title
-    }
-
     private var statusItem: NSStatusItem!
-    private var legacyMenu: NSMenu!
     private var controlPanelStorage: MenuBarPanelController?
     private var controlPanel: MenuBarPanelController {
         if let controlPanelStorage { return controlPanelStorage }
@@ -25,27 +15,14 @@ class MenuController: NSObject {
     }
     private let clipboardManager = ClipboardManager.shared
     private let snippetManager = SnippetManager.shared
-    private lazy var notificationWindow = NotificationWindow()
-    private var menuUpdateWorkItem: DispatchWorkItem?
 
-    /// 菜单是否正在显示（menuNeedsUpdate 进入到 menuDidClose 之间为 true）。
-    /// 打开期间禁止全量 removeAllItems 重建——重建会销毁正在 hover/展开的 item
-    /// 导致"无法选中"，并重新发起所有缩略图/HTML 标题异步加载导致布局抖动。
-    private var isMenuOpen = false
-    /// Read-only exposure for the idle memory monitor — it must skip a
-    /// reclaim while the menu is being tracked without touching menu state.
-    var isMenuBarMenuOpen: Bool { isMenuOpen || controlPanelStorage?.isVisible == true }
+    /// Skip idle memory reclamation while the control panel is visible.
+    var isMenuBarMenuOpen: Bool { controlPanelStorage?.isVisible == true }
     /// The live instance (MenuController is created by AppDelegate, not a
-    /// singleton). The idle memory monitor reads the menu-open flag through
+    /// singleton). The idle memory monitor reads the panel visibility through
     /// it, from the main thread only.
     private(set) static weak var active: MenuController?
-    /// 打开期间发生过数据变化（历史/片段/通知），关闭后再重建一次保证下次最新。
-    private var isMenuDirtyWhileOpen = false
 
-    /// 标识 Network 区段的固定 tag，便于设备区增量更新时定位区间。
-    private static let networkSectionHeaderTag = 0x4E45_5457 // "NETW"
-    private static let networkLocalIPItemTag = 0x4C4F_4350   // "LOCP"
-    
     override init() {
         super.init()
         MenuController.active = self
@@ -61,15 +38,9 @@ class MenuController: NSObject {
             object: nil
         )
         registerGlobalHotKeys()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(languageDidChange),
-            name: .appLanguageDidChange,
-            object: nil
-        )
         NotificationManager.shared.onNotificationsChanged = { [weak self] in
             DispatchQueue.main.async {
-                self?.scheduleMenuUpdate()
+                self?.refreshControlPanel()
             }
         }
     }
@@ -114,7 +85,7 @@ class MenuController: NSObject {
 
     private func setupSnippetObserver() {
         snippetManager.onSnippetsChanged = { [weak self] _ in
-            self?.scheduleMenuUpdate()
+            self?.refreshControlPanel()
         }
     }
     
@@ -131,22 +102,13 @@ class MenuController: NSObject {
             button.image?.isTemplate = true
             button.target = self
             button.action = #selector(statusButtonClicked(_:))
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            button.sendAction(on: [.leftMouseUp])
         }
-
-        // 常驻菜单对象：靠 menuNeedsUpdate 在每次打开前就地刷新内容。
-        let menu = NSMenu()
-        menu.delegate = self
-        legacyMenu = menu
 
         SyncManager.shared.onDevicesChanged = { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self else { return }
-                // 菜单打开期间只做设备区增量更新；关闭时无需处理，下次打开自然最新。
                 self.controlPanelStorage?.refreshSnapshots()
-                if self.isMenuOpen {
-                    self.applyDeviceIncrementalUpdate()
-                }
             }
         }
     }
@@ -157,24 +119,19 @@ class MenuController: NSObject {
     }
 
     @objc private func statusButtonClicked(_ sender: NSStatusBarButton) {
-        if NSApp.currentEvent?.type == .rightMouseUp {
-            controlPanelStorage?.dismiss()
-            legacyMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.minY), in: sender)
-        } else {
-            controlPanel.toggle(from: sender)
-        }
+        controlPanel.toggle(from: sender)
     }
 
     private func performPanelAction(_ action: MenuBarPanelModel.Action) {
         switch action {
         case .search(let query):
             NSApp.activate(ignoringOtherApps: true)
-            SearchWindow.shared.showWindow(initialQuery: query)
+            MainWindow.shared.showHistory(initialQuery: query)
         case .snippets: openSnippetEditor()
         case .preferences: openPreferences()
         case .syncSettings:
             NSApp.activate(ignoringOtherApps: true)
-            SettingsWindow.shared.show(page: "sync")
+            MainWindow.shared.showDevices(page: .devices)
         case .notifications: openNotifications()
         case .word: openWordLookup()
         case .wordBook: openWordBook()
@@ -190,215 +147,30 @@ class MenuController: NSObject {
         case .fullscreen: startScreenshotFullscreen()
         case .screenshotSettings: openScreenshotPreferences()
         case .permission: grantOverflowPermission()
-        case .quit: NSApp.terminate(nil)
         case .sendText(let peerID):
-            let item = NSMenuItem(); item.representedObject = peerID
-            sendTextClicked(item)
+            sendText(to: peerID)
         case .sendFile(let peerID):
-            let item = NSMenuItem(); item.representedObject = peerID
-            sendFileClicked(item)
+            sendFile(to: peerID)
         }
     }
 
     private func setupClipboardObserver() {
         clipboardManager.onHistoryChanged = { [weak self] in
             DispatchQueue.main.async {
-                self?.scheduleMenuUpdate()
+                self?.refreshControlPanel()
             }
         }
     }
 
-    private func scheduleMenuUpdate() {
+    private func refreshControlPanel() {
         controlPanelStorage?.refreshHistory()
         controlPanelStorage?.refreshSnapshots()
-        // 菜单未打开：什么都不做，下次 menuNeedsUpdate 会整建。
-        // 菜单已打开：禁止全量 removeAllItems 重建（会销毁正在交互的 item 并重新发起
-        // 缩略图/HTML 标题异步加载，导致抖动与无法选中）。仅标记 dirty，
-        // 下次打开再统一重建；设备变化走 applyDeviceIncrementalUpdate 局部更新。
-        guard isMenuOpen else { return }
-        isMenuDirtyWhileOpen = true
     }
 
-    private func refreshMenuForOpen(_ menu: NSMenu) {
-        clipboardManager.refreshFromPasteboardIfNeeded()
-        clipboardManager.ensureMenuSummariesLoaded()
-        rebuildMenuContents(menu, with: clipboardManager.recentSummaries)
-        // On-demand device discovery: the menu is the primary place users view
-        // the device list, so a single subnet scan is triggered here (async,
-        // non-blocking). Results refresh the menu via onPeersChanged. This
-        // replaces the old 30s periodic rescan to save power.
-        SyncManager.shared.triggerCrossBandDiscovery()
-    }
-
-    private func rebuildMenuContents(_ menu: NSMenu, with summaries: [HistorySummary]) {
-        menu.removeAllItems()
-        populateMenu(menu, with: summaries)
-    }
-
-    private func populateMenu(_ menu: NSMenu, with summaries: [HistorySummary]) {
-        AppMenuStyle.configure(menu)
-
-        // Frequently used tools stay at a stable position above changing history.
-        let search = actionItem(L10n.t(.searchHistory), symbol: "magnifyingglass", action: #selector(openSearch))
-        if PreferencesManager.shared.isSearchGlobalShortcutEnabled {
-            AppMenuStyle.applyShortcut(PreferencesManager.shared.searchHistoryShortcut, to: search)
-        }
-        menu.addItem(search)
-        let capture = AppMenuStyle.menu()
-        capture.addItem(actionItem(L10n.t(.screenshotRegion), symbol: "viewfinder", action: #selector(startScreenshotRegion)))
-        capture.addItem(actionItem(L10n.t(.screenshotWindow), symbol: "macwindow", action: #selector(startScreenshotWindow)))
-        capture.addItem(actionItem(L10n.t(.screenshotFullscreen), symbol: "rectangle.inset.filled", action: #selector(startScreenshotFullscreen)))
-        capture.addItem(.separator())
-        capture.addItem(actionItem(L10n.t(.screenshotPreferences), symbol: "slider.horizontal.3", action: #selector(openScreenshotPreferences)))
-        menu.addItem(submenuItem(L10n.t(.screenshot), symbol: "camera", submenu: capture))
-
-        // Less frequent tools live in one submenu so history stays near the top.
-        let tools = AppMenuStyle.menu()
-        let word = actionItem(L10n.t(.wordLookup), symbol: "character.book.closed", action: #selector(openWordLookup))
-        if PreferencesManager.shared.isWordShortcutEnabled {
-            AppMenuStyle.applyShortcut(PreferencesManager.shared.wordLookupShortcut, to: word)
-        }
-        tools.addItem(word)
-        tools.addItem(actionItem(L10n.t(.wordBook), symbol: "books.vertical", action: #selector(openWordBook)))
-        let keepAwake = actionItem(L10n.t(.keepAwakeTitle), symbol: "sun.max", action: #selector(toggleKeepAwake(_:)))
-        keepAwake.state = KeepAwakeManager.shared.isActive ? .on : .off
-        tools.addItem(keepAwake)
-        tools.addItem(.separator())
-        let count = NotificationManager.shared.notificationCount
-        tools.addItem(actionItem(L10n.t(.notificationSync) + (count > 0 ? " · \(count)" : ""),
-                                 symbol: "bell", action: #selector(openNotifications), key: "N"))
-        tools.addItem(actionItem(L10n.t(.generatePassword), symbol: "key.horizontal", action: #selector(openPasswordGenerator), key: "P"))
-        menu.addItem(submenuItem(L10n.t(.menuTools), symbol: "wrench.and.screwdriver", submenu: tools))
-        appendOverflowItems(to: menu)
-        menu.addItem(.separator())
-
-        menu.addItem(AppMenuStyle.header(L10n.t(.menuRecentHistory)))
-        let recent = Array(summaries.prefix(Self.menuDisplayLimit))
-        if recent.isEmpty {
-            menu.addItem(AppMenuStyle.detail(L10n.t(.noHistory)))
-        } else {
-            let visibleCount = min(6, recent.count)
-            for index in 0..<visibleCount {
-                menu.addItem(makeHistoryMenuItem(summary: recent[index], indexInGroup: index, startIndex: 0))
-            }
-            if recent.count > visibleCount {
-                let older = AppMenuStyle.menu()
-                addHistoryGroups(to: older, summaries: Array(recent.dropFirst(visibleCount)), startIndex: visibleCount)
-                menu.addItem(submenuItem(L10n.t(.moreHistory), symbol: "clock.arrow.circlepath", submenu: older))
-            }
-        }
-        menu.addItem(.separator())
-
-        let snippets = AppMenuStyle.menu()
-        snippets.addItem(actionItem(L10n.t(.editSnippets), symbol: "square.and.pencil", action: #selector(openSnippetEditor), key: "S"))
-        snippets.addItem(.separator())
-        if snippetManager.folders.isEmpty {
-            snippets.addItem(AppMenuStyle.detail(L10n.t(.noSnippets)))
-        }
-        for folder in snippetManager.folders {
-            let contents = AppMenuStyle.menu()
-            for (index, snippet) in folder.snippets.enumerated() {
-                let item = actionItem(AppMenuStyle.compactTitle(snippet.title), symbol: "text.alignleft",
-                                      action: #selector(menuItemClicked(_:)), key: index < 10 ? "\((index + 1) % 10)" : "")
-                item.representedObject = SnippetMenuReference(snippetId: snippet.id)
-                item.toolTip = snippet.title
-                contents.addItem(item)
-            }
-            if folder.snippets.isEmpty { contents.addItem(AppMenuStyle.detail(L10n.t(.noSnippets))) }
-            snippets.addItem(submenuItem(AppMenuStyle.compactTitle(folder.title), symbol: "folder", submenu: contents))
-        }
-        menu.addItem(submenuItem(L10n.t(.snippets), symbol: "square.on.square", submenu: snippets))
-
-        let devices = AppMenuStyle.menu()
-        devicesMenu = devices
-        let refresh = actionItem(L10n.t(.refreshDevices), symbol: "arrow.clockwise", action: #selector(refreshLanDevices), key: "r")
-        refresh.isEnabled = PreferencesManager.shared.isSyncEnabled
-        refresh.tag = Self.networkSectionHeaderTag
-        devices.addItem(refresh)
-        addDeviceItems(to: devices, entries: SyncManager.shared.availableDeviceEntries)
-        let localIPs = SyncManager.shared.enumerateLocalIPv4s()
-        if let primary = localIPs.first {
-            let local = AppMenuStyle.detail(L10n.format(.myIPAddress, primary))
-            local.tag = Self.networkLocalIPItemTag
-            local.toolTip = localIPs.joined(separator: "\n")
-            devices.addItem(local)
-        }
-        menu.addItem(submenuItem(L10n.t(.lanDevices), symbol: "network", submenu: devices))
-
-        menu.addItem(.separator())
-        menu.addItem(actionItem(L10n.t(.preferences), symbol: "gearshape", action: #selector(openPreferences), key: ","))
-        menu.addItem(.separator())
-        let quit = actionItem(L10n.t(.quit), symbol: "power", action: #selector(NSApplication.terminate(_:)), key: "q")
-        quit.target = NSApp
-        menu.addItem(quit)
-    }
-
-    private func appendOverflowItems(to menu: NSMenu) {
-        let manager = MenuBarOverflowManager.shared
-        if manager.enabled {
-            let title = L10n.t(.overflowTitle) + (manager.items.isEmpty ? "" : " · \(manager.items.count)")
-            menu.addItem(.separator())
-            menu.addItem(AppMenuStyle.header(title))
-            if manager.items.isEmpty {
-                menu.addItem(AppMenuStyle.detail(L10n.t(manager.status == .ready ? .overflowEmpty : manager.status.messageKey)))
-            } else {
-                for entry in manager.items {
-                    let row = actionItem(AppMenuStyle.compactTitle(entry.title), symbol: "app.dashed",
-                                         action: #selector(openOverflowItem(_:)))
-                    row.representedObject = entry
-                    if let icon = entry.image?.copy() as? NSImage {
-                        let size = NSSize(width: 16, height: 16)
-                        row.image = NSImage(size: size, flipped: false) { bounds in
-                            let scale = min(bounds.width / max(1, icon.size.width), bounds.height / max(1, icon.size.height))
-                            let fitted = NSSize(width: icon.size.width * scale, height: icon.size.height * scale)
-                            icon.draw(in: NSRect(x: (bounds.width - fitted.width) / 2, y: (bounds.height - fitted.height) / 2,
-                                                 width: fitted.width, height: fitted.height))
-                            return true
-                        }
-                    }
-                    row.isEnabled = entry.canPress
-                    row.toolTip = entry.title + "\n" + L10n.t(entry.canPress ? .overflowClickHint : .overflowUnavailable)
-                    menu.addItem(row)
-                }
-                if manager.status == .failed || manager.status == .partial || manager.status == .unconfirmed {
-                    menu.addItem(AppMenuStyle.detail(L10n.t(manager.status.messageKey)))
-                }
-            }
-            if manager.status == .needsPermission {
-                menu.addItem(actionItem(L10n.t(.overflowGrant), symbol: "hand.raised", action: #selector(grantOverflowPermission)))
-            }
-            menu.addItem(.separator())
-            menu.addItem(actionItem(L10n.t(.overflowRefresh), symbol: "arrow.clockwise", action: #selector(refreshOverflowItems)))
-        }
-        let toggle = actionItem(L10n.t(.overflowEnabled), symbol: "menubar.rectangle", action: #selector(toggleOverflowItems))
-        toggle.state = manager.enabled ? .on : .off
-        menu.addItem(toggle)
-    }
-
-    @objc private func toggleOverflowItems() {
-        let manager = MenuBarOverflowManager.shared
-        manager.setEnabled(!manager.enabled)
-    }
-
-    @objc private func refreshOverflowItems() { MenuBarOverflowManager.shared.refresh() }
-
-    @objc private func grantOverflowPermission() {
+    private func grantOverflowPermission() {
         DispatchQueue.main.async {
             AccessibilityManager.requestSystemPrompt()
             AccessibilityManager.openSettings()
-        }
-    }
-
-    @objc private func openOverflowItem(_ sender: NSMenuItem) {
-        guard let entry = sender.representedObject as? MenuBarOverflowItem else { return }
-        legacyMenu?.cancelTracking()
-        // Preserve the captured entry across menuDidClose releasing the complete tree.
-        DispatchQueue.main.async {
-            MenuBarOverflowManager.shared.activate(entry) { result in
-                if result == .unavailable {
-                    AlertPresenter.showWarning(title: L10n.t(.overflowTitle), message: L10n.t(.overflowUnavailable))
-                }
-            }
         }
     }
 
@@ -409,362 +181,14 @@ class MenuController: NSObject {
         return item
     }
 
-    private func submenuItem(_ title: String, symbol: String, submenu: NSMenu) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.image = AppMenuStyle.icon(symbol)
-        item.submenu = submenu
-        return item
-    }
-
-    private func addHistoryGroups(to menu: NSMenu, summaries: [HistorySummary], startIndex: Int) {
-        let groupSize = 10
-        for start in stride(from: 0, to: summaries.count, by: groupSize) {
-            let end = min(start + groupSize, summaries.count)
-            let groupMenu = AppMenuStyle.menu()
-            let groupTitle = "\(startIndex + start + 1)–\(startIndex + end)"
-            let groupFolderItem = NSMenuItem(
-                title: Self.indentedMenuTitle(groupTitle),
-                action: nil,
-                keyEquivalent: ""
-            )
-
-            for i in start..<end {
-                let summary = summaries[i]
-                let menuItem = makeHistoryMenuItem(summary: summary, indexInGroup: i - start, startIndex: startIndex + start)
-                groupMenu.addItem(menuItem)
-            }
-
-            groupFolderItem.image = AppMenuStyle.icon("clock")
-            groupFolderItem.submenu = groupMenu
-            menu.addItem(groupFolderItem)
-        }
-    }
-
-    // MARK: - Network device section (incremental update)
-
-    /// 构造单个设备项（含 sendText/sendFile 子菜单）。
-    /// 在 populateMenu 初始构建与设备区增量更新时共用，保证一致。
-    private func makeDeviceMenuItem(for entry: DeviceEntry) -> NSMenuItem {
-        let deviceItem = NSMenuItem(
-            title: Self.indentedMenuTitle(entry.displayName),
-            action: nil,
-            keyEquivalent: ""
-        )
-        deviceItem.image = AppMenuStyle.icon("desktopcomputer")
-        let deviceSubmenu = AppMenuStyle.menu()
-
-        let sendTextItem = NSMenuItem(
-            title: L10n.t(.sendText),
-            action: #selector(sendTextClicked(_:)),
-            keyEquivalent: ""
-        )
-        sendTextItem.image = AppMenuStyle.icon("text.bubble")
-        sendTextItem.target = self
-        sendTextItem.representedObject = entry.peerId
-        deviceSubmenu.addItem(sendTextItem)
-
-        let sendFileItem = NSMenuItem(
-            title: L10n.t(.sendFile),
-            action: #selector(sendFileClicked(_:)),
-            keyEquivalent: ""
-        )
-        sendFileItem.image = AppMenuStyle.icon("doc")
-        sendFileItem.target = self
-        sendFileItem.representedObject = entry.peerId
-        deviceSubmenu.addItem(sendFileItem)
-
-        deviceItem.submenu = deviceSubmenu
-        deviceItem.representedObject = entry.peerId
-        return deviceItem
-    }
-
-    /// 在 Network section header 之后、本机 IP 项之前，添加设备项或空状态占位。
-    /// 空状态占位项也带 peerId sentinel，便于增量更新时识别。
-    private func addDeviceItems(to menu: NSMenu, entries: [DeviceEntry]) {
-        if entries.isEmpty {
-            let emptyItem = NSMenuItem(
-                title: Self.indentedMenuTitle(L10n.t(.noDevicesFound)),
-                action: nil,
-                keyEquivalent: ""
-            )
-            emptyItem.isEnabled = false
-            emptyItem.representedObject = "__no_devices__"
-            menu.addItem(emptyItem)
-        } else {
-            for entry in entries {
-                menu.addItem(makeDeviceMenuItem(for: entry))
-            }
-        }
-    }
-
-    /// 设备区增量更新：菜单打开期间，设备扫描陆续返回时只调整 Network 区的设备项，
-    /// 不触发整张菜单 removeAllItems 重建——避免历史/片段/工具区被销毁导致抖动与无法选中。
-    /// 区间定位：从 networkSectionHeaderTag 之后第一个 item 起，到 networkLocalIPItemTag（含）
-    /// 之前的所有 item 视为设备项（含可能的空状态占位）。
-    private func applyDeviceIncrementalUpdate() {
-        guard isMenuOpen, let menu = devicesMenu else { return }
-
-        // 找到 Network section header 的索引。
-        guard let headerIndex = menu.items.firstIndex(where: { $0.tag == Self.networkSectionHeaderTag }) else {
-            return
-        }
-        let deviceStart = headerIndex + 1
-
-        let newEntries = SyncManager.shared.availableDeviceEntries
-        let newPeerIds = Set(newEntries.map(\.peerId))
-
-        // 1) 从后往前移除消失的设备项与空状态占位（设备列表非空时占位必须清除）。
-        //    从后往前避免移除导致索引前移的错位。
-        for i in stride(from: deviceSectionEnd(menu, deviceStart: deviceStart) - 1,
-                        through: deviceStart,
-                        by: -1) where i < menu.items.count {
-            guard i >= 0 else { break }
-            let item = menu.items[i]
-            let peerId = item.representedObject as? String
-            if peerId == "__no_devices__" || (peerId.map { !newPeerIds.contains($0) } ?? false) {
-                menu.removeItem(at: i)
-            }
-        }
-
-        // 2) 以新 entries 为准，逐个校正位置：已存在则改 title，否则插入。
-        //    这样新增设备会按新顺序依次出现在 deviceStart 处。
-        var insertAt = deviceStart
-        for entry in newEntries {
-            if let existing = indexInDeviceSection(menu, peerId: entry.peerId, deviceStart: deviceStart) {
-                let desired = Self.indentedMenuTitle(entry.displayName)
-                if menu.items[existing].title != desired {
-                    menu.items[existing].title = desired
-                }
-                // 已存在的项保持原位，新项的插入游标顺序推进即可。
-            } else {
-                menu.insertItem(makeDeviceMenuItem(for: entry), at: insertAt)
-            }
-            insertAt += 1
-        }
-
-        // 3) 最终设备列表为空则补一个空状态占位。
-        if newEntries.isEmpty, deviceSectionEnd(menu, deviceStart: deviceStart) == deviceStart {
-            let emptyItem = NSMenuItem(
-                title: Self.indentedMenuTitle(L10n.t(.noDevicesFound)),
-                action: nil,
-                keyEquivalent: ""
-            )
-            emptyItem.isEnabled = false
-            emptyItem.representedObject = "__no_devices__"
-            menu.insertItem(emptyItem, at: deviceStart)
-        }
-    }
-
-    /// 设备区区间末尾索引（ exclusive）：从 deviceStart 扫到 local IP 项或 separator。
-    private func deviceSectionEnd(_ menu: NSMenu, deviceStart: Int) -> Int {
-        var i = deviceStart
-        while i < menu.items.count {
-            let item = menu.items[i]
-            if item.tag == Self.networkLocalIPItemTag || item.isSeparatorItem { return i }
-            i += 1
-        }
-        return i
-    }
-
-    /// 在设备区区间内查找指定 peerId 的 item 索引。
-    private func indexInDeviceSection(_ menu: NSMenu, peerId: String, deviceStart: Int) -> Int? {
-        var i = deviceStart
-        while i < menu.items.count {
-            let item = menu.items[i]
-            if item.tag == Self.networkLocalIPItemTag || item.isSeparatorItem { return nil }
-            if (item.representedObject as? String) == peerId { return i }
-            i += 1
-        }
-        return nil
-    }
-
-    
-    private func makeHistoryMenuItem(summary: HistorySummary, indexInGroup: Int, startIndex: Int) -> NSMenuItem {
-        let displayTitle = AppMenuStyle.compactTitle(summaryDisplayTitle(for: summary))
-
-        let menuIndex = (indexInGroup + 1) % 10
-        let prefix = ""
-        let keyEquivalent = startIndex + indexInGroup < Self.menuShortcutHistoryLimit ? "\(menuIndex)" : ""
-
-        if summary.item.isFile, let urls = summary.item.fileURLs {
-            let fileItem = NSMenuItem(title: prefix + displayTitle, action: nil, keyEquivalent: keyEquivalent)
-            let fileSubmenu = NSMenu()
-
-            let pasteNameItem = NSMenuItem(title: L10n.t(.pasteFileName), action: #selector(pasteFileNameClicked(_:)), keyEquivalent: "")
-            pasteNameItem.target = self
-            pasteNameItem.representedObject = summary
-            fileSubmenu.addItem(pasteNameItem)
-
-            let pasteFileItem = NSMenuItem(title: L10n.t(.pasteFile), action: #selector(pasteFileClicked(_:)), keyEquivalent: "")
-            pasteFileItem.target = self
-            pasteFileItem.representedObject = summary
-            fileSubmenu.addItem(pasteFileItem)
-
-            let revealItem = NSMenuItem(title: L10n.t(.showInFinder), action: #selector(revealHistoryFileInFinder(_:)), keyEquivalent: "")
-            revealItem.target = self
-            revealItem.representedObject = summary
-            fileSubmenu.addItem(revealItem)
-
-            fileItem.submenu = fileSubmenu
-            fileItem.toolTip = historyFileToolTip(for: summary, urls: urls)
-            fileItem.image = Self.cachedFileIcon(forPath: urls[0].path)
-            return fileItem
-        }
-
-        if case .html = summary.item {
-            // Show the fast title immediately; resolving plain text reads and parses
-            // the HTML file from disk, so do it off the main thread and patch the title.
-            let htmlItem = NSMenuItem(title: prefix + displayTitle, action: nil, keyEquivalent: keyEquivalent)
-            let entry = summary.asEntry()
-            let manager = clipboardManager
-            DispatchQueue.global(qos: .userInitiated).async { [weak htmlItem] in
-                guard let plainTitle = manager.plainText(for: entry), !plainTitle.isEmpty else { return }
-                let htmlDisplayTitle = AppMenuStyle.compactTitle(plainTitle)
-                DispatchQueue.main.async {
-                    htmlItem?.title = prefix + htmlDisplayTitle
-                }
-            }
-            let htmlSubmenu = NSMenu()
-
-            let pastePlainItem = NSMenuItem(title: L10n.t(.pastePlainText), action: #selector(pasteHTMLPlainTextClicked(_:)), keyEquivalent: "")
-            pastePlainItem.target = self
-            pastePlainItem.representedObject = summary
-            htmlSubmenu.addItem(pastePlainItem)
-
-            let pasteFormattedItem = NSMenuItem(title: L10n.t(.copyContent), action: #selector(pasteHTMLFormattedClicked(_:)), keyEquivalent: "")
-            pasteFormattedItem.target = self
-            pasteFormattedItem.representedObject = summary
-            htmlSubmenu.addItem(pasteFormattedItem)
-
-            htmlItem.submenu = htmlSubmenu
-            htmlItem.toolTip = historyToolTip(for: summary)
-            htmlItem.image = NSImage(systemSymbolName: "chevron.left.forwardslash.chevron.right", accessibilityDescription: L10n.t(.historyTypeHTML))
-            return htmlItem
-        }
-
-        let menuItem = NSMenuItem(title: prefix + displayTitle, action: #selector(menuItemClicked(_:)), keyEquivalent: keyEquivalent)
-        menuItem.target = self
-        menuItem.representedObject = summary
-        menuItem.toolTip = historyToolTip(for: summary)
-        menuItem.image = AppMenuStyle.icon(summary.asEntry().isPinned ? "pin" : "text.alignleft")
-
-        if case .image(let path) = summary.item {
-            // Thumbnails come from disk (possibly with decrypt + downsample on miss);
-            // never block menu construction on that IO. 先挂一个与最终缩略图同尺寸的
-            // 占位图标，使菜单项首次渲染即具备正确高度/左侧宽度，避免缩略图异步回来后
-            // 项的高度/排版跳变。
-            menuItem.image = AppMenuStyle.icon("photo")
-            DispatchQueue.global(qos: .userInitiated).async { [weak menuItem] in
-                let thumbnail = HistoryThumbnailCache.thumbnail(for: path, size: NSSize(width: 16, height: 16))
-                DispatchQueue.main.async {
-                    menuItem?.image = thumbnail
-                }
-            }
-        }
-
-        return menuItem
-    }
-
-    private static let fileIconCache: NSCache<NSString, NSImage> = {
-        let cache = NSCache<NSString, NSImage>()
-        cache.countLimit = 64
-        return cache
-    }()
-
-    private static func cachedFileIcon(forPath path: String) -> NSImage {
-        let key = (path as NSString).pathExtension.lowercased() as NSString
-        if key.length > 0, let cached = fileIconCache.object(forKey: key) {
-            return cached
-        }
-        let icon = NSWorkspace.shared.icon(forFile: path).copy() as! NSImage
-        icon.size = NSSize(width: 16, height: 16)
-        if key.length > 0 {
-            fileIconCache.setObject(icon, forKey: key)
-        }
-        return icon
-    }
-
-    private func summaryDisplayTitle(for summary: HistorySummary) -> String {
-        summary.asEntry().listDisplayTitle
-    }
-
-    private func historyToolTip(for summary: HistorySummary) -> String? {
-        var parts: [String] = []
-        if let location = summary.item.locationSummary {
-            parts.append("\(L10n.t(.location)): \(location)")
-        }
-        if let app = summary.sourceApp {
-            parts.append("\(L10n.t(.source)): \(app)")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: "\n")
-    }
-
-    private func historyFileToolTip(for summary: HistorySummary, urls: [URL]) -> String {
-        var parts: [String] = []
-        if let location = summary.item.locationSummary {
-            parts.append("\(L10n.t(.location)): \(location)")
-        } else {
-            parts.append(urls.map(\.path).joined(separator: "\n"))
-        }
-        if let app = summary.sourceApp {
-            parts.append("\(L10n.t(.source)): \(app)")
-        }
-        return parts.joined(separator: "\n")
-    }
-
     @objc private func menuItemClicked(_ sender: NSMenuItem) {
-        if let summary = sender.representedObject as? HistorySummary {
-            let entry = clipboardManager.resolveEntry(summary)
-            clipboardManager.moveHistoryEntryToFront(entry)
-            clipboardManager.copyToPasteboard(entry)
-        } else if let reference = sender.representedObject as? SnippetMenuReference,
-                  let snippet = snippetManager.snippet(id: reference.snippetId) {
+        if let reference = sender.representedObject as? SnippetMenuReference,
+           let snippet = snippetManager.snippet(id: reference.snippetId) {
             clipboardManager.copyToPasteboard(.text(snippet.content))
-        } else if let item = sender.representedObject as? HistoryItem {
-            clipboardManager.copyToPasteboard(item)
         }
     }
 
-    @objc private func pasteFileNameClicked(_ sender: NSMenuItem) {
-        guard let entry = historyEntry(from: sender),
-              let urls = entry.item.fileURLs else { return }
-        clipboardManager.moveHistoryEntryToFront(entry)
-        clipboardManager.copyFileNamesToPasteboard(urls)
-    }
-
-    @objc private func pasteFileClicked(_ sender: NSMenuItem) {
-        guard let entry = historyEntry(from: sender) else { return }
-        clipboardManager.moveHistoryEntryToFront(entry)
-        clipboardManager.writeToPasteboard(entry.item)
-    }
-
-    @objc private func revealHistoryFileInFinder(_ sender: NSMenuItem) {
-        guard let entry = historyEntry(from: sender) else { return }
-        clipboardManager.revealInFinder(for: entry)
-    }
-
-    @objc private func pasteHTMLPlainTextClicked(_ sender: NSMenuItem) {
-        guard let entry = historyEntry(from: sender) else { return }
-        clipboardManager.moveHistoryEntryToFront(entry)
-        clipboardManager.writePlainTextToPasteboard(entry.item, textPath: entry.textPath)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            self.clipboardManager.simulatePasteIfTrusted()
-        }
-    }
-
-    @objc private func pasteHTMLFormattedClicked(_ sender: NSMenuItem) {
-        guard let entry = historyEntry(from: sender) else { return }
-        clipboardManager.moveHistoryEntryToFront(entry)
-        clipboardManager.copyToPasteboard(entry)
-    }
-
-    private func historyEntry(from sender: NSMenuItem) -> HistoryEntry? {
-        guard let summary = sender.representedObject as? HistorySummary else { return nil }
-        return clipboardManager.resolveEntry(summary)
-    }
-
-    @objc private func sendTextClicked(_ sender: NSMenuItem) {
-        guard let peerId = sender.representedObject as? String else { return }
+    func sendText(to peerId: String) {
         // Resolve display name for the dialog title
         let deviceName = SyncManager.shared.availableDeviceEntries.first(where: { $0.peerId == peerId })?.displayName ?? peerId
         appLog("Send Text clicked for peer: \(peerId)")
@@ -803,8 +227,7 @@ class MenuController: NSObject {
         }
     }
 
-    @objc private func sendFileClicked(_ sender: NSMenuItem) {
-        guard let peerId = sender.representedObject as? String else { return }
+    func sendFile(to peerId: String) {
         let deviceName = SyncManager.shared.availableDeviceEntries.first(where: { $0.peerId == peerId })?.displayName ?? peerId
         appLog("Send File clicked for peer: \(peerId)")
 
@@ -839,22 +262,9 @@ class MenuController: NSObject {
     }
     
     @objc private func openNotifications() {
-        notificationWindow.showWindow()
+        MainWindow.shared.showNotifications()
     }
 
-    @objc private func refreshLanDevices() {
-        SyncManager.shared.refreshDiscovery(pruneCache: true, scanFullSubnet: true)
-        // 菜单打开期间走设备区增量更新（由 onDevicesChanged 回调驱动），
-        // 不再触发整张菜单重建；1s 后补一次增量以兜底慢响应的设备。
-        if isMenuOpen {
-            applyDeviceIncrementalUpdate()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                guard let self else { return }
-                if self.isMenuOpen { self.applyDeviceIncrementalUpdate() }
-            }
-        }
-    }
-    
     @objc private func openPreferences() {
         NSApp.activate(ignoringOtherApps: true)
         SettingsWindow.shared.makeKeyAndOrderFront(nil)
@@ -867,12 +277,12 @@ class MenuController: NSObject {
     
     @objc private func openSnippetEditor() {
         NSApp.activate(ignoringOtherApps: true)
-        SnippetEditorWindow.shared.makeKeyAndOrderFront(nil)
+        MainWindow.shared.show(.snippets)
     }
     
     @objc private func openSearch() {
         NSApp.activate(ignoringOtherApps: true)
-        SearchWindow.shared.showWindow()
+        MainWindow.shared.show(.history)
     }
 
     @objc private func openWordBook() {
@@ -886,16 +296,6 @@ class MenuController: NSObject {
     @objc private func openPasswordGenerator() {
         NSApp.activate(ignoringOtherApps: true)
         PasswordGeneratorWindow.show()
-    }
-
-    @objc private func toggleKeepAwake(_ sender: NSMenuItem) {
-        if KeepAwakeManager.shared.toggle() {
-            sender.state = KeepAwakeManager.shared.isActive ? .on : .off
-        } else {
-            let alert = NSAlert()
-            alert.messageText = L10n.t(.keepAwakeFailed)
-            alert.runModal()
-        }
     }
 
     @objc private func registerGlobalHotKeys() {
@@ -916,45 +316,4 @@ class MenuController: NSObject {
         ScreenshotSessionCoordinator.shared.startCapture(mode: .fullscreen, fromMenu: true)
     }
 
-    @objc private func languageDidChange() {
-        // Rebuilding while the menu is on screen destroys the item the user is
-        // hovering; the next open re-renders with the new language anyway.
-        guard !isMenuOpen else {
-            isMenuDirtyWhileOpen = true
-            return
-        }
-        if clipboardManager.isMenuMemoryRetained, let menu = legacyMenu {
-            rebuildMenuContents(menu, with: clipboardManager.recentSummaries)
-        }
-    }
-
-
-}
-
-extension MenuController: NSMenuDelegate {
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === legacyMenu else { return }
-        MenuBarOverflowManager.shared.refreshForMenu()
-        MenuBarOverflowManager.shared.recordMenuPresentation()
-        isMenuOpen = true
-        isMenuDirtyWhileOpen = false
-        refreshMenuForOpen(menu)
-    }
-
-    func menuDidClose(_ menu: NSMenu) {
-        guard menu === legacyMenu else { return }
-        isMenuOpen = false
-        MenuBarOverflowManager.shared.endMenuPresentation()
-        // 打开期间累积的 dirty 不在这里重建：menuNeedsUpdate 每次打开都会
-        // ensureMenuSummariesLoaded + rebuild，关闭后再建一次只会把刚释放的
-        // 摘要重新拉回内存，并渲染一张没人看得见的菜单。
-        isMenuDirtyWhileOpen = false
-        // 关闭即整树清空：menuNeedsUpdate 每次打开都全量重建，关闭后这棵
-        // item 树（50 条历史 representedObject 装箱 + 16px 缩略图 + 片段/
-        // 设备子菜单）滞留在常驻 statusItem
-        // .menu 上纯属浪费，还会抵消下面的 releaseMenuMemory。
-        menu.removeAllItems()
-        clipboardManager.releaseMenuMemory()
-        MemoryFootprintReclaimer.reclaimIfIdle()
-    }
 }

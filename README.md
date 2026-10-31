@@ -53,6 +53,8 @@ Organize reusable replies and code snippets in folders on Mac. Assign keyboard s
 </tr>
 </table>
 
+Experimental: optional [phone control of the Mac lock screen](docs/SCREEN_CONTROL.md), with local Keychain password configuration, direct actions for connected phones (no control key), and verified system Accessibility controls (no separate helper). Real locked-screen unlock acceptance is pending; this opt-in capability is not production-validated.
+
 ## Platform support
 
 | Platform | Distribution | Available features |
@@ -129,7 +131,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.33** · Source build **12286** (Android arm64 `versionCode` **14286**) · Latest published release: **[v1.0.33](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.33)** · [Build metadata](clipy_android/pubspec.yaml)
+Current source version: **1.0.34** · Source build **12331** (Android arm64 `versionCode` **14331**) · Latest published release: **[v1.0.33](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.33)** · [Build metadata](clipy_flutter/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see [sync version notes](docs/GETTING_STARTED.md#sync-version-notes).
 
@@ -176,6 +178,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 - Search in Chinese, English or with partial text. Chinese queries list English translations; bilingual suggestions and English spelling corrections open complete entries on selection. English entries include Chinese definitions, parts of speech, American IPA, word forms, phrases and bilingual examples. Click a phrase to look it up.
 - Translate English phrases and full sentences into Chinese, or Chinese sentences into English, including punctuation and numbers (up to 500 characters). Unlisted phrases such as `Fine-grained personal` show a separate machine translation with copy and English read-aloud actions. Paste text into the input, then click **Look up** or press <kbd>⌘</kbd> + <kbd>Return</kbd>. Sentence translations are not added to Vocabulary.
 - Play American pronunciation; if dictionary audio fails, use an installed system American English voice. Missing IPA, phrases or examples are shown explicitly.
+- **Model sentence translation:** in the lookup window, select **Model translation**, then **API settings**. Configure a Chat Completions compatible base URL or full endpoint and optional API key. Click **Fetch models**, filter the list and select a model, or enter its name manually. Local HTTP is supported for loopback addresses such as `http://127.0.0.1:3425`; remote endpoints require HTTPS. A bare host defaults to `/v1/chat/completions` and discovery uses `/v1/models`. Choose Chinese or English and submit up to 500 characters. Keys stay in macOS Keychain; only explicit submissions send text to that endpoint. Results are transient, support copying and use system speech for English read-aloud.
 - On opening, a single English word in the clipboard is automatically filled into the focused input; press Return to look it up. Sentences, URLs, files and multiple words are ignored. Queries require internet access and are sent to Youdao Dictionary only after submission. Complete dictionary entries are automatically saved to a local vocabulary book. Closing the window cancels requests and audio and releases results.
 - Open **Vocabulary** from the menu or lookup window to review **Unfamiliar / Familiar** lists. Check a word to mark it familiar, or uncheck to move it back. Fuzzy search in Chinese or English supports partial text, skipped letters/characters, mixed keywords and English typo tolerance across headwords, meanings, inflections, phrases and examples; review saved IPA, definitions, word forms, phrases and examples offline, and play pronunciation online (with system voice fallback). Repeat lookups update the entry and lookup count while preserving familiarity. The vocabulary book stays on this Mac and is not synced. Previous versions did not retain lookups, so earlier queries cannot be recovered.
 - Show or hide Chinese meanings in Vocabulary, including list summaries, definitions, phrase translations and example translations. The choice persists across window reopening and app restarts. The separate lookup window continues to show complete definitions.
@@ -201,14 +204,14 @@ Download installers from the [latest published release](https://github.com/JunWe
 
 ### ☀️ Keep Awake / prevent idle sleep (macOS)
 
-- Use the **Keep Awake** button in the control panel footer to prevent idle display and system sleep while Clipy is running. Its icon and label show the current state; the classic Tools menu offers the same action.
+- Use the **Keep Awake** button in the control panel footer to prevent idle display and system sleep while Clipy is running. Its icon and label show the current state.
 - Turning it off or quitting Clipy releases the request. Closing the laptop lid and choosing Sleep manually still work; restarting Clipy starts with Keep Awake off.
 
 ### macOS interface
 - **Hidden menu bar icons:** opt in under Preferences → General or the panel’s settings. On every connected display, overflowing items appear in a visible row below the panel search field with their original icon when capture succeeds, or an application icon and name otherwise. Clicking requests the original menu through Accessibility; some apps do not support this. Icons are never moved. Accessibility is required; Screen Recording is optional for original previews (macOS 14+). Dynamic status images are not guaranteed.
 - Native title bars, readable light/dark content surfaces, consistent SF Symbols, spacing and controls.
 - Press <kbd>Esc</kbd> to close the focused window, including settings, search, word lookup, vocabulary, snippet and image/video editors, OCR results and pinned images. Existing save prompts still apply; input-method composition, shortcut recording and modal dialogs handle cancellation first.
-- **Control panel:** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, Clipboard / Snippets / Devices / Tools tabs (refresh plus direct Send Text / Send File per device), and a notification page. Detail pages use a smaller Back/title layout; Tools groups four launchers: direct screenshot modes, Lookup / Vocabulary, and Password. Its hidden-icon strip matches the other tabs, and switching to Tools keeps the same panel size; Keep Awake and Notifications remain in the footer, with notification banners in More. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-click the menu-bar icon for the classic native menu.
+- **Control panel:** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, Clipboard / Snippets / Devices / Tools tabs (refresh plus direct Send Text / Send File per device), and a notification page. Detail pages use a smaller Back/title layout; Tools groups four launchers: direct screenshot modes, Lookup / Vocabulary, and Password. Its hidden-icon strip matches the other tabs, and switching to Tools keeps the same panel size; Keep Awake and Notifications remain in the footer, and the Settings gear opens Preferences directly. Notification banners are configured in Notifications, hidden-icon controls in Preferences, and Quit in the application menu. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-clicking the menu-bar icon has no action.
 - Preferences and screenshot settings scroll continuously across categories; the sidebar follows the visible section and supports click-to-jump. See the [macOS design standard](docs/MACOS_DESIGN.md) for UI development guidance.
 
 ### ⌨️ Global hotkeys & 🌍 i18n
@@ -258,7 +261,7 @@ These are ad-hoc signed development builds, not published releases. See the [fir
 
 Requirements: Flutter **3.41.7** (see `.fvmrc`), JDK 17 and the Android SDK.
 
-Configure a persistent release keystore once on each build machine, using the ignored `clipy_android/android/key.properties` or the signing environment variables in the [Android signing guide](docs/DEVELOPMENT.md#android). Once configured, build with:
+Configure a persistent release keystore once on each build machine, using the ignored `clipy_flutter/android/key.properties` or the signing environment variables in the [Android signing guide](docs/DEVELOPMENT.md#android). Once configured, build with:
 
 ```bash
 ./build_android_apk.sh
@@ -270,13 +273,13 @@ For a debug build without release signing credentials:
 
 ```bash
 (
-  cd clipy_android
+  cd clipy_flutter
   flutter pub get --enforce-lockfile
   flutter build apk --debug --no-pub
 )
 ```
 
-Debug output: `clipy_android/build/app/outputs/flutter-apk/app-debug.apk`. Debug and release signing identities differ; do not assume in-place upgrades between them. Back up app data before any necessary uninstall/reinstall.
+Debug output: `clipy_flutter/build/app/outputs/flutter-apk/app-debug.apk`. Debug and release signing identities differ; do not assume in-place upgrades between them. Back up app data before any necessary uninstall/reinstall.
 
 Native alternative (same package ID and signer, not released): `./build_android_native_apk.sh` builds `clipy_android_native` with JDK 17 and Android SDK 36, no Flutter required. Its explicit `BUILD_NUMBER` is the actual versionCode (default source +2000); install it only over a lower versionCode, and switch back the same way with a higher Flutter build number.
 
@@ -285,14 +288,14 @@ Native alternative (same package ID and signer, not released): `./build_android_
 Build on Windows 10/11 x64 with Flutter **3.41.7** and Visual Studio's Desktop development with C++ workload:
 
 ```powershell
-cd clipy_android
+cd clipy_flutter
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.33
+./scripts/package_windows.ps1 -Version 1.0.34
 ```
 
-The package is `dist/ClipyClone-Windows-x64-v1.0.33.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Version 1.0.33 fixes garbled Chinese tray, notification and screenshot-hint text, keeps transparency of 32-bit clipboard bitmaps, retries when another app briefly holds the clipboard, and rejects malformed bitmaps instead of reading past their data. Windows source and release ZIPs are unsigned; check the release page for public availability.
+The package is `dist/ClipyClone-Windows-x64-v1.0.34.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Version 1.0.33 fixes garbled Chinese tray, notification and screenshot-hint text, keeps transparency of 32-bit clipboard bitmaps, retries when another app briefly holds the clipboard, and rejects malformed bitmaps instead of reading past their data. Windows source and release ZIPs are unsigned; check the release page for public availability.
 
 ### iOS (Flutter + Swift)
 
@@ -310,9 +313,9 @@ consistently. Older v3 clients remain compatible.
 
 ### Versions and checks
 
-The source version remains `X.Y.Z+N` in [`clipy_android/pubspec.yaml`](clipy_android/pubspec.yaml); this file is shared version metadata, not a Flutter build dependency. `APP_VERSION` overrides `X.Y.Z`. macOS defaults to build `N`; the public Android script defaults to actual `versionCode = N + 2000`, continuing the old Flutter ARM64 split-APK numbering. Native ABI packages all use the same actual code.
+The source version remains `X.Y.Z+N` in [`clipy_flutter/pubspec.yaml`](clipy_flutter/pubspec.yaml); this file supplies version metadata for all clients. `APP_VERSION` overrides `X.Y.Z`. macOS defaults to build `N`; the public Android script defaults to actual `versionCode = N + 2000`, continuing the old Flutter ARM64 split-APK numbering. The public Flutter split build adds 1000 for ARM32 and 2000 for ARM64 to its base build number.
 
-An explicit Android `BUILD_NUMBER` is the **final versionCode**, with no additional ABI offset. Release CI uses `N + workflow run number + 2000` for Android and `N + workflow run number` for macOS/Windows. For an in-place Android upgrade, preserve the signer and choose an actual code higher than the installed APK (including any older Flutter split offset); the default may be lower than an installed CI or local build. Update **both README files** when changing source versions. This migration does not change the published release version.
+For the public Flutter Android script, an explicit `BUILD_NUMBER` is the **base build number**; split APKs still add their ABI offset. Only the native Android alternative treats an explicit value as the final versionCode. Release CI uses `N + workflow run number + 2000` for Android and `N + workflow run number` for macOS/Windows. For an in-place Android upgrade, preserve the signer and choose an actual code higher than the installed APK (including any older Flutter split offset); the default may be lower than an installed CI or local build. Update **both README files** when changing source versions. The source version and the latest published release are listed separately above.
 
 Run `bash scripts/check.sh all` from the root for local quality checks. On macOS, also run `bash scripts/test_macos_core.sh` for search, word lookup, and socket regressions; it uses a temporary test executable without installing or launching the app. Optional `CLIPY_MENU_BAR_LIVE_TESTS=1 bash scripts/test_macos_core.sh` also creates temporary overflowing status items and verifies original menu/popover activation on a single built-in display with existing Accessibility permission; it does not install the app or move existing icons.
 
@@ -325,11 +328,11 @@ Run `bash scripts/check.sh all` from the root for local quality checks. On macOS
 - `SnippetManager` — folders, snippets, hotkeys, import/export.
 - `SyncManager` — subnet/manual discovery, length-prefixed TCP sync (protocol v3), AES-GCM encryption, reliable history + notification delivery.
 - `Sources/Screenshot/` — the full screenshot/recording engine (ported from macshot): unified `OverlayView`, 18-tool annotation engine, scroll capture, recording, beautify/effects, OCR, pin, floating thumbnail, editor window. Driven by `ScreenshotSessionCoordinator`.
-- `SearchWindow` — global search with filters and ranking.
+- `MainWindow` — shared history, snippets, devices and notifications window; global history search supports filters and ranking.
 - `NotificationManager` — phone-notification mirror.
-- `PreferencesManager`, `SettingsWindow`, `SnippetEditorWindow`, `LogWindow` — config & editing surfaces.
+- `PreferencesManager`, `SettingsWindow`, `LogWindow` — config & editing surfaces.
 
-**Android app** — Flutter (`clipy_android`) with Kotlin platform channels, foreground service, notification listener and countdown widget. A native Kotlin/Compose alternative (`clipy_android_native`) keeps the same data contracts, package ID and keystore but is not used for releases.
+**Android app** — Flutter (`clipy_flutter`) with Kotlin platform channels, foreground service, notification listener and countdown widget. A native Kotlin/Compose alternative (`clipy_android_native`) keeps the same data contracts, package ID and keystore but is not used for releases.
 
 **Windows and iOS apps / Android comparison reference** — Flutter/Dart:
 - `lib/main.dart` — default entrypoint; `lib/app/` owns bootstrap and the headless bridge.
@@ -356,10 +359,18 @@ Current source also supports an opt-in [self-hosted Internet relay](docs/COMMON-
 
 ## 📁 Project structure
 
+Android requires **Android 8.0 (API 26)** or newer, for both the Flutter release and the native alternative.
+
+The Flutter project was renamed from `clipy_android` to `clipy_flutter`; installed app identities and user data remain compatible. See the [directory and dependency guide](docs/REPOSITORY_LAYOUT.md).
+
 ```
 clipy_macos/Sources/      # macOS Swift/AppKit source
-clipy_android/lib/        # Android, Windows & iOS Flutter/Dart source
+clipy_flutter/lib/        # Android, Windows & iOS Flutter/Dart source
 clipy_android_native/     # Native Kotlin/Compose Android alternative (not released)
+clipy_nsh/                # Paused experiment (kept, not released)
+packages/relay-swift/     # macOS Swift dependency manifest and lockfile
+scripts/                  # Build, checks, icon and test tools
+docs/                     # Architecture, development and feature guides
 build_macos_app.sh        # macOS app bundle build script
 build_android_apk.sh      # Android split-APK build script
 .github/workflows/        # CI + public three-platform releases
@@ -379,10 +390,10 @@ Issues and pull requests are welcome in English or Chinese. See [CONTRIBUTING.md
 
 ## 📦 Releasing
 
-After completing the [release checklist](docs/DEVELOPMENT.md#release-checklist), configuring signing and updating `clipy_android/pubspec.yaml` and both README files, commit the changes. Push a **new, unused** version tag matching the source version to run CI and publish the release automatically when all jobs pass:
+After completing the [release checklist](docs/DEVELOPMENT.md#release-checklist), configuring signing and updating `clipy_flutter/pubspec.yaml` and both README files, commit the changes. Push a **new, unused** version tag matching the source version to run CI and publish the release automatically when all jobs pass:
 
 ```bash
-VERSION="$(awk '/^version:/ {split($2, v, "+"); print v[1]; exit}' clipy_android/pubspec.yaml)"
+VERSION="$(awk '/^version:/ {split($2, v, "+"); print v[1]; exit}' clipy_flutter/pubspec.yaml)"
 git tag "v${VERSION}"
 git push origin "v${VERSION}"
 ```
@@ -421,3 +432,13 @@ Device groups also support device renaming, leaving the current group and admini
 Relay invitations default to automatic joining after scanning, with manual pairing-code approval available by turning the option off. Automatic admission verifies a time-limited manager-signed delegation and grants ordinary membership; the inviter need not remain online. QR codes and copied invitations use encrypted short links, while legacy invitations remain supported. Existing members must upgrade to the delegation-aware SDK; the server must support automatic admission and invitation-link endpoints.
 
 Network changes and device refresh now probe stale connections within three seconds and trigger relay fallback immediately; healthy LAN connections remain preferred. This is a detection deadline, not a guaranteed end-to-end connection time.
+
+### UI alignment in source
+
+The interface follows platform-specific design standards: [macOS](docs/MACOS_DESIGN.md), [Android](docs/ANDROID_DESIGN.md), Cupertino presentation on iOS, and Fluent-style controls on Windows. Design HTML and machine-specific acceptance evidence are maintained locally and are not included in source distributions.
+
+macOS appearance can be changed immediately in **Settings → General → Appearance** (System, Light, Dark); the choice is remembered after restart.
+
+### Windows window behavior
+
+Manual launch opens the full desktop window; login startup stays in the tray. One tray-icon click toggles the clipboard quick panel. Its × button or Esc hides it; **Open main window** restores the full desktop window. Closing the main window hides it to the tray; only **Exit** in the tray menu quits the app. The quick panel contains clipboard content only, never the Devices, Notifications or Settings pages.

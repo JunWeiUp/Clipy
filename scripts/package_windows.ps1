@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$buildRoot = Join-Path $root "clipy_android/build/windows"
+$buildRoot = Join-Path $root "clipy_flutter/build/windows"
 $candidates = @(Get-ChildItem $buildRoot -Filter ClipyClone.exe -Recurse -File |
   Where-Object { $_.Directory.Name -eq "Release" })
 if ($candidates.Count -ne 1) {

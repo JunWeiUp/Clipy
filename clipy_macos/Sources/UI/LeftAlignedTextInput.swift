@@ -1,57 +1,5 @@
 import SwiftUI
 
-struct LeftAlignedTextField: NSViewRepresentable {
-    @Binding var text: String
-    var onTextChange: (() -> Void)?
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onTextChange: onTextChange)
-    }
-
-    func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField(string: text)
-        field.isBordered = true
-        field.isBezeled = true
-        field.bezelStyle = .roundedBezel
-        field.alignment = .left
-        field.lineBreakMode = .byTruncatingTail
-        field.font = NSFont.systemFont(ofSize: AppFont.bodySize)
-        field.delegate = context.coordinator
-        field.target = context.coordinator
-        field.action = #selector(Coordinator.editingEnded(_:))
-        return field
-    }
-
-    func updateNSView(_ nsView: NSTextField, context: Context) {
-        context.coordinator.onTextChange = onTextChange
-        if nsView.stringValue != text {
-            nsView.stringValue = text
-        }
-        nsView.alignment = .left
-    }
-
-    final class Coordinator: NSObject, NSTextFieldDelegate {
-        @Binding var text: String
-        var onTextChange: (() -> Void)?
-
-        init(text: Binding<String>, onTextChange: (() -> Void)?) {
-            _text = text
-            self.onTextChange = onTextChange
-        }
-
-        func controlTextDidChange(_ obj: Notification) {
-            guard let field = obj.object as? NSTextField else { return }
-            text = field.stringValue
-            onTextChange?()
-        }
-
-        @objc func editingEnded(_ sender: NSTextField) {
-            text = sender.stringValue
-            onTextChange?()
-        }
-    }
-}
-
 struct LeftAlignedTextEditor: NSViewRepresentable {
     @Binding var text: String
     /// Fired with the latest text after typing settles (debounce) or on blur.
@@ -79,14 +27,16 @@ struct LeftAlignedTextEditor: NSViewRepresentable {
         textView.alignment = .left
         textView.textContainerInset = NSSize(width: AppSpacing.xl, height: AppSpacing.lg)
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 6
+        paragraph.lineSpacing = 9
         textView.defaultParagraphStyle = paragraph
+        textView.typingAttributes = Self.bodyAttributes(paragraph)
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.string = text
+        Self.applyBodyStyle(to: textView)
         textView.delegate = context.coordinator
         context.coordinator.textView = textView
 
@@ -100,10 +50,26 @@ struct LeftAlignedTextEditor: NSViewRepresentable {
         guard let textView = context.coordinator.textView else { return }
         if textView.string != text {
             textView.string = text
+            Self.applyBodyStyle(to: textView)
         }
         textView.alignment = .left
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.lineFragmentPadding = 0
+    }
+
+    private static func bodyAttributes(_ paragraph: NSParagraphStyle) -> [NSAttributedString.Key: Any] {
+        var attributes = AppFont.textAttributes(size: 14, color: .labelColor)
+        attributes[.paragraphStyle] = paragraph
+        return attributes
+    }
+
+    /// `string =` replaces storage without the default paragraph style, so
+    /// re-apply the body line height (design: 14pt / 1.85) to programmatic text.
+    private static func applyBodyStyle(to textView: NSTextView) {
+        guard let storage = textView.textStorage, let paragraph = textView.defaultParagraphStyle else { return }
+        let attributes = bodyAttributes(paragraph)
+        storage.addAttributes(attributes, range: NSRange(location: 0, length: storage.length))
+        textView.typingAttributes = attributes
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {

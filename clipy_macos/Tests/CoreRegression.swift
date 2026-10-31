@@ -7,6 +7,8 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
 }
 
 func runCoreRegressionTests() {
+    runAppearanceRegressionTests()
+    runSettingsSearchRegressionTests()
     runKeepAwakeRegressionTests()
     runMenuBarPanelRegressionTests()
     runMenuBarOverflowRegressionTests()
@@ -180,4 +182,40 @@ private func runHistoryCopyRegressionTests() {
     manager.copyToPasteboard(legacy, simulatePaste: false)
     check(pasteboard.string(forType: .string) == inline, "legacy text without a file was lost")
     print("History copy regressions passed (200-character boundary, full Unicode text, inline/legacy text).")
+}
+
+private func runAppearanceRegressionTests() {
+    let name = "clipy.appearance.tests." + UUID().uuidString
+    let defaults = UserDefaults(suiteName: name)!
+    let app = NSApplication.shared
+    let original = app.appearance
+    defer {
+        app.appearance = original
+        defaults.removePersistentDomain(forName: name)
+    }
+    check(AppAppearancePreference.read(from: defaults) == .system, "unset theme must follow system")
+    defaults.set("invalid", forKey: AppAppearancePreference.defaultsKey)
+    check(AppAppearancePreference.read(from: defaults) == .system, "invalid theme must follow system")
+    for value in AppAppearancePreference.allCases {
+        value.store(in: defaults)
+        check(AppAppearancePreference.read(from: UserDefaults(suiteName: name)!) == value, "theme persistence failed")
+        value.apply()
+        switch value {
+        case .system: check(app.appearance == nil, "system appearance must clear app override")
+        case .light: check(app.appearance?.name == .aqua, "light appearance not applied")
+        case .dark: check(app.appearance?.name == .darkAqua, "dark appearance not applied")
+        }
+    }
+    print("Appearance regressions passed (defaults, persistence, live light/dark and system reset).")
+}
+
+private func runSettingsSearchRegressionTests() {
+    let general = AppSettingsPage(id: "general", title: "通用", symbol: "slider.horizontal.3")
+    let recording = AppSettingsPage(id: "screenshot.recording", title: "录屏", symbol: "record.circle")
+    check(AppSettingsSearch.matches(general, query: "浅色"), "theme setting not searchable")
+    check(AppSettingsSearch.matches(general, query: "THEME dark"), "case-insensitive settings search failed")
+    check(AppSettingsSearch.matches(recording, query: "麦克风"), "recording microphone not searchable")
+    check(!AppSettingsSearch.matches(general, query: "麦克风"), "unrelated settings section matched")
+    check(AppSettingsSearch.matches(general, query: "  "), "empty search must restore sections")
+    print("Settings search regressions passed (Chinese, English, multiple tokens, empty and no match).")
 }

@@ -3,24 +3,6 @@ import PDFKit
 import SwiftUI
 import WebKit
 
-struct PDFDataPreviewRepresentable: NSViewRepresentable {
-    let data: Data
-
-    func makeNSView(context: Context) -> PDFView {
-        let pdfView = PDFView()
-        pdfView.autoScales = true
-        pdfView.displayMode = .singlePageContinuous
-        pdfView.displayDirection = .vertical
-        pdfView.backgroundColor = .textBackgroundColor
-        pdfView.document = PDFDocument(data: data)
-        return pdfView
-    }
-
-    func updateNSView(_ pdfView: PDFView, context: Context) {
-        pdfView.document = PDFDocument(data: data)
-    }
-}
-
 struct PDFFilePreviewRepresentable: NSViewRepresentable {
     let url: URL
 
@@ -101,6 +83,7 @@ struct HTMLFilePreviewRepresentable: NSViewRepresentable {
 
 struct PlainTextPreviewRepresentable: NSViewRepresentable {
     let text: String
+    var highlight: String = ""
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
@@ -113,6 +96,7 @@ struct PlainTextPreviewRepresentable: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return scrollView }
         configure(textView)
         textView.string = text
+        applyHighlight(to: textView)
         return scrollView
     }
 
@@ -121,6 +105,33 @@ struct PlainTextPreviewRepresentable: NSViewRepresentable {
         if textView.string != text {
             textView.string = text
         }
+        applyHighlight(to: textView)
+    }
+
+    /// Marks search hits like the V3 `<mark>` (bounded to the first 500 hits).
+    private func applyHighlight(to textView: NSTextView) {
+        guard let storage = textView.textStorage else { return }
+        let whole = NSRange(location: 0, length: storage.length)
+        storage.beginEditing()
+        storage.removeAttribute(.backgroundColor, range: whole)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 4
+        storage.addAttribute(.paragraphStyle, value: paragraph, range: whole)
+        let source = storage.string as NSString
+        var hits = 0
+        let markColor = NSColor(srgbRed: 1, green: 0.8, blue: 0, alpha: 0.35)
+        for term in highlight.split(whereSeparator: \.isWhitespace).map(String.init) where !term.isEmpty {
+            var searchRange = whole
+            while hits < 500 {
+                let found = source.range(of: term, options: .caseInsensitive, range: searchRange)
+                guard found.location != NSNotFound, found.length > 0 else { break }
+                storage.addAttribute(.backgroundColor, value: markColor, range: found)
+                hits += 1
+                let next = found.location + found.length
+                searchRange = NSRange(location: next, length: whole.length - next)
+            }
+        }
+        storage.endEditing()
     }
 
     private func configure(_ textView: NSTextView) {
@@ -129,8 +140,11 @@ struct PlainTextPreviewRepresentable: NSViewRepresentable {
         textView.isRichText = false
         textView.font = NSFont.monospacedSystemFont(ofSize: AppFont.bodySize, weight: .regular)
         textView.textColor = .textColor
-        textView.backgroundColor = .textBackgroundColor
-        textView.textContainerInset = NSSize(width: AppSpacing.md, height: AppSpacing.md)
+        textView.drawsBackground = false
+        textView.textContainerInset = NSSize(width: 21, height: 20)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 4
+        textView.defaultParagraphStyle = paragraph
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.textContainer?.widthTracksTextView = true
@@ -167,6 +181,8 @@ struct AsyncTextFilePreviewView: View {
 
 struct TextPreviewPanel: View {
     let payload: HistoryPreviewSupport.TextPreviewPayload
+    /// Search text to mark in the preview (case-insensitive, whitespace-split terms).
+    var highlight: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppSpacing.xs) {
@@ -174,10 +190,10 @@ struct TextPreviewPanel: View {
                 Text(L10n.t(.historyPreviewTruncated))
                     .font(AppFont.caption)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, AppSpacing.sm)
-                    .padding(.top, AppSpacing.xs)
+                    .padding(.horizontal, 26)
+                    .padding(.top, 14)
             }
-            PlainTextPreviewRepresentable(text: payload.displayText)
+            PlainTextPreviewRepresentable(text: payload.displayText, highlight: highlight)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }

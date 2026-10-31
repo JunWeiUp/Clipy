@@ -74,7 +74,11 @@ class NotificationManager: NSObject {
     private override init() {
         super.init()
         loadPreferences()
+        #if CLIPY_CORE_TESTS
+        if ProcessInfo.processInfo.environment["CLIPY_WINDOW_SNAPSHOT_DIR"] == nil { setupNotificationCenter() }
+        #else
         setupNotificationCenter()
+        #endif
         // Seed the in-memory count once. This is the only COUNT(*) on this
         // table at steady state; every subsequent change adjusts it by ±Δ.
         // Done last so DB schema (created in NotificationRepository.init via
@@ -162,6 +166,14 @@ class NotificationManager: NSObject {
 
     func fetchPage(offset: Int, limit: Int = pageSize) -> [NotificationEntry] {
         repository.fetch(offset: offset, limit: limit)
+    }
+
+    func fetchPage(packageName: String, offset: Int, limit: Int = pageSize) -> [NotificationEntry] {
+        repository.fetch(packageName: packageName, offset: offset, limit: limit)
+    }
+
+    func appSummaries() -> [NotificationRepository.AppSummary] {
+        repository.fetchAppSummaries()
     }
 
     func fetchAllNotifications() -> [NotificationEntry] {

@@ -53,6 +53,8 @@ Mac 原生菜单栏应用还集成了**截图标注、OCR 文字识别、屏幕�
 </tr>
 </table>
 
+实验性功能：可选的[手机控制 Mac 锁屏](docs/SCREEN_CONTROL.md)，密码在 Mac 本地钥匙串配置，连接手机可直接操作、无需控制密钥；通过系统辅助功能控件解锁，无需额外组件。真实锁屏解锁验收待完成，这项可选能力尚未经过生产环境验证。
+
 ## 平台支持
 
 | 平台 | 分发方式 | 可用功能 |
@@ -129,7 +131,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标和最�
 <details>
 <summary><b>版本、下载与源码构建</b></summary>
 
-当前源码版本：**1.0.33** · 源码构建号 **12286**（Android arm64 `versionCode` **14286**） · 最新正式版：**[v1.0.33](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.33)** · [构建版本配置](clipy_android/pubspec.yaml)
+当前源码版本：**1.0.34** · 源码构建号 **12331**（Android arm64 `versionCode` **14331**） · 最新正式版：**[v1.0.33](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.33)** · [构建版本配置](clipy_flutter/pubspec.yaml)
 
 安装包请前往[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，具体应用版本和构建号以发布说明为准。Android 改版已在 v1.0.19 发布；后续开发期间，源码版本可能领先于公开安装包。Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
 
@@ -176,6 +178,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标和最�
 - 支持中文、英文及部分文字查询：中文查询列出英文译词，中英文联想与英文拼写建议可点击查看完整词条。英文词条包含中文释义、词性、美式音标、词形变化、相关短语与双语例句；点击短语可继续查询。
 - 支持英文短语、整句译中文，以及中文句子译英文，允许标点和数字（最多 500 字符）。`Fine-grained personal` 等未收录短语会显示独立的机器翻译，支持复制译文和朗读英文。将内容粘贴到输入框后点击**查询**或按 <kbd>⌘</kbd> + <kbd>Return</kbd> 提交；句子翻译不加入单词表。
 - 支持美式发音播放；词典音频不可用时使用已安装的系统美式英语语音。词典缺少音标、短语或例句时会明确提示。
+- **模型句子翻译：** 在查询窗口选择**模型翻译**，点击 **API 设置**，填写兼容 Chat Completions 的基础地址或完整接口地址及可选 API Key，点击**获取模型**后筛选、选择，也可手动填写模型名。本地回环地址支持 HTTP（如 `http://127.0.0.1:3425`），远程地址使用 HTTPS。仅填写主机时默认使用 `/v1/chat/completions`，模型列表使用 `/v1/models`。选择中文或英文后提交，最多 500 字符。密钥保存到 macOS 系统钥匙串，仅主动提交才发送文本；译文不入单词本，支持复制，英文朗读使用系统语音。
 - 打开窗口时，若剪贴板内容是单个英文单词，会自动填入并聚焦输入框，按回车即可查询；句子、网址、文件和多个单词不会自动填入。仅在确认提交后联网查询有道词典，完整词条自动保存到本机单词表；关闭窗口即取消请求、停止发音并释放结果。
 - 从菜单栏或查词窗口打开**单词表**，在**不熟悉 / 熟悉**两个列表中复习；勾选即标记熟悉，取消勾选移回不熟悉。支持中英文模糊搜索（部分文字、跳字、混合关键词及英文拼写容错），覆盖单词、释义、词形、短语与例句；离线查看已保存的音标、释义、词形、短语与例句，联网播放词典发音（不可用时回退系统语音）。重复查询更新词条和查询次数，保留熟悉状态。单词表仅保存在这台 Mac，不参与同步；旧版本未保留查询记录，无法补回此前查过的单词。
 - 单词表支持一键显示／隐藏中文释义，同时切换列表摘要、详情释义、短语翻译和例句翻译；会记住上次选择，关闭窗口或重启应用后仍然生效。独立查词窗口继续显示完整释义。
@@ -201,14 +204,14 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标和最�
 
 ### ☀️ 保持唤醒 / Keep Awake（macOS）
 
-- 点击控制面板底部的**保持唤醒**按钮，在 Clipy 运行期间防止闲置导致的屏幕关闭和系统睡眠。按钮图标和文字显示当前状态，经典工具菜单也提供同一入口。
+- 点击控制面板底部的**保持唤醒**按钮，在 Clipy 运行期间防止闲置导致的屏幕关闭和系统睡眠。按钮图标和文字显示当前状态。
 - 再次关闭或退出 Clipy 会释放唤醒请求。合盖和手动睡眠仍然有效；重启 Clipy 后保持唤醒默认关闭。
 
 ### macOS 界面
 - **隐藏的菜单栏图标：** 在偏好设置 → 通用或浮层设置中开启。每个已连接屏幕上被挤掉的项目直接显示在搜索框下方的图标栏中，优先显示原图，截取失败时显示应用图标和名称。点击通过辅助功能请求打开原菜单，部分应用可能不支持；不移动图标。需要辅助功能权限；屏幕录制权限仅用于原图预览（macOS 14+），并非必需。不保证动态图标内容复现。
 - 原生标题栏、清晰的浅色/深色内容背景，以及统一的 SF Symbols、间距与控件样式。
 - 按 <kbd>Esc</kbd> 关闭当前聚焦的窗口，包括设置、搜索、查词、单词表、片段及图片／视频编辑器、OCR 结果和贴图；保留原有保存提示，输入法组词、快捷键录入和模态对话框优先处理取消操作。
-- **轻量控制面板：** 左键点击菜单栏图标，打开原生浮层，顶部一行包含搜索、置顶和设置，下面是直出的隐藏图标、「剪贴板 / 片段 / 设备 / 工具」四个标签（设备页可刷新，每台设备直接提供「发送文本」「发送文件」），以及通知页面。详情页采用更小的返回／标题布局；工具页集中四个入口：截图模式直达、查词／单词本、生成密码；顶部隐藏图标栏和其他标签保持一致，切换工具时维持相同面板尺寸；底部保留保持唤醒与通知，通知弹出开关收进更多菜单。搜索异步覆盖历史、片段与工具，首页展示最近六条复制内容；点击历史行会复制并粘贴支持的文本类型，行内「复制」按钮只复制并保持浮层打开。可固定面板，点击外部不关闭；右键菜单栏图标仍可打开经典原生菜单。
+- **轻量控制面板：** 左键点击菜单栏图标，打开原生浮层，顶部一行包含搜索、置顶和设置，下面是直出的隐藏图标、「剪贴板 / 片段 / 设备 / 工具」四个标签（设备页可刷新，每台设备直接提供「发送文本」「发送文件」），以及通知页面。详情页采用更小的返回／标题布局；工具页集中四个入口：截图模式直达、查词／单词本、生成密码；顶部隐藏图标栏和其他标签保持一致，切换工具时维持相同面板尺寸；底部保留保持唤醒与通知，设置齿轮直接打开偏好设置窗口；通知弹窗在通知窗口配置，隐藏图标在偏好设置中管理，退出位于应用菜单。搜索异步覆盖历史、片段与工具，首页展示最近六条复制内容；点击历史行会复制并粘贴支持的文本类型，行内「复制」按钮只复制并保持浮层打开。可固定面板，点击外部不关闭；右键点击菜单栏图标不执行操作。
 - 偏好设置与截图设置可连续滚动浏览各类选项，侧边分类随滚动高亮，也支持点击跳转。界面开发规范见 [macOS 设计标准](docs/MACOS_DESIGN.md)。
 
 ### ⌨️ 全局快捷键 与 🌍 国际化
@@ -258,7 +261,7 @@ Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留
 
 环境要求：Flutter **3.41.7**（见 `.fvmrc`）、JDK 17 与 Android SDK。
 
-每台构建机器首次使用时，需按 [Android 签名指南](docs/DEVELOPMENT.md#android)配置固定发布密钥，使用 Git 忽略的 `clipy_android/android/key.properties` 或签名环境变量。配置完成后，直接运行：
+每台构建机器首次使用时，需按 [Android 签名指南](docs/DEVELOPMENT.md#android)配置固定发布密钥，使用 Git 忽略的 `clipy_flutter/android/key.properties` 或签名环境变量。配置完成后，直接运行：
 
 ```bash
 ./build_android_apk.sh
@@ -270,13 +273,13 @@ Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留
 
 ```bash
 (
-  cd clipy_android
+  cd clipy_flutter
   flutter pub get --enforce-lockfile
   flutter build apk --debug --no-pub
 )
 ```
 
-调试包位于 `clipy_android/build/app/outputs/flutter-apk/app-debug.apk`。调试包与发布包签名不同，不能假设可互相覆盖安装；如确需卸载重装，请先备份应用数据。
+调试包位于 `clipy_flutter/build/app/outputs/flutter-apk/app-debug.apk`。调试包与发布包签名不同，不能假设可互相覆盖安装；如确需卸载重装，请先备份应用数据。
 
 原生备选（相同包名与签名，不发布）：`./build_android_native_apk.sh` 用 JDK 17 与 Android SDK 36 构建 `clipy_android_native`，无需 Flutter。显式 `BUILD_NUMBER` 即实际 versionCode（默认源码 +2000）；只能覆盖更低的 versionCode，切回 Flutter 时同样使用更高的构建号。
 
@@ -285,14 +288,14 @@ Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留
 在 Windows 10/11 x64 上安装 Flutter **3.41.7** 和 Visual Studio 的「使用 C++ 的桌面开发」工作负载后构建：
 
 ```powershell
-cd clipy_android
+cd clipy_flutter
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.33
+./scripts/package_windows.ps1 -Version 1.0.34
 ```
 
-产物为 `dist/ClipyClone-Windows-x64-v1.0.33.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。v1.0.24 在「历史记录」提供「截图」菜单，支持区域、窗口和显示器截图；完成后复制 PNG 并保存到本机历史。窗口截图使用 Windows `PrintWindow`：目标应用可能拒绝捕获，也可能返回空白画面，受保护或使用 GPU 绘制的内容尤其需要实机检查。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。v1.0.33 修复托盘、通知与截图提示中的中文乱码，保留 32 位剪贴板位图的透明度，其他程序短暂占用剪贴板时会重试，并拒绝读取异常位图以免越界。Windows 源码构建与正式版 ZIP 均未签名；公开版本以发布页为准。
+产物为 `dist/ClipyClone-Windows-x64-v1.0.34.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。v1.0.24 在「历史记录」提供「截图」菜单，支持区域、窗口和显示器截图；完成后复制 PNG 并保存到本机历史。窗口截图使用 Windows `PrintWindow`：目标应用可能拒绝捕获，也可能返回空白画面，受保护或使用 GPU 绘制的内容尤其需要实机检查。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。v1.0.33 修复托盘、通知与截图提示中的中文乱码，保留 32 位剪贴板位图的透明度，其他程序短暂占用剪贴板时会重试，并拒绝读取异常位图以免越界。Windows 源码构建与正式版 ZIP 均未签名；公开版本以发布页为准。
 
 ### iOS（Flutter + Swift）
 
@@ -307,9 +310,9 @@ Android、iOS 和 Windows 在设置底部显示版本号与构建号，macOS 在
 
 ### 版本号与检查
 
-源码版本仍取自 [`clipy_android/pubspec.yaml`](clipy_android/pubspec.yaml) 的 `X.Y.Z+N`；它是共用版本元数据，不意味着构建依赖 Flutter。`APP_VERSION` 可覆盖 `X.Y.Z`。macOS 默认构建号为 `N`；Android 公共脚本默认实际 `versionCode = N + 2000`，延续旧 Flutter ARM64 分包的编号。原生各 ABI 包使用同一个实际构建号。
+源码版本仍取自 [`clipy_flutter/pubspec.yaml`](clipy_flutter/pubspec.yaml) 的 `X.Y.Z+N`；它为所有客户端提供共用版本元数据。`APP_VERSION` 可覆盖 `X.Y.Z`。macOS 默认构建号为 `N`；Android 公共脚本默认实际 `versionCode = N + 2000`，延续旧 Flutter ARM64 分包的编号。公共 Flutter 分包会在基础构建号上为 ARM32 加 1000、ARM64 加 2000。
 
-显式传入 Android `BUILD_NUMBER` 时，它就是**最终 versionCode**，不再追加 ABI 偏移。Release CI 中 Android 使用 `N + 工作流运行序号 + 2000`，macOS/Windows 使用 `N + 工作流运行序号`。覆盖升级 Android 时须保留签名，并选择高于手机已装 APK 的实际构建号（包括旧 Flutter 分包偏移）；默认值可能低于已装的 CI 或本地包。修改源码版本时同步更新**中英文 README**；本次迁移不修改已公开发布版本。
+公共 Flutter Android 脚本显式传入的 `BUILD_NUMBER` 是**基础构建号**，分包仍追加对应 ABI 偏移；只有原生 Android 备选工程将显式值作为最终 versionCode。Release CI 中 Android 使用 `N + 工作流运行序号 + 2000`，macOS/Windows 使用 `N + 工作流运行序号`。覆盖升级 Android 时须保留签名，并选择高于手机已装 APK 的实际构建号（包括旧 Flutter 分包偏移）；默认值可能低于已装的 CI 或本地包。修改源码版本时同步更新**中英文 README**；源码版本和最新正式版在上方分别列出。
 
 在仓库根目录运行 `bash scripts/check.sh all` 可执行质量检查。macOS 上还需运行 `bash scripts/test_macos_core.sh`，验证搜索、单词查询与 socket 回归用例；它使用临时测试程序，不安装或启动应用。
 
@@ -324,11 +327,11 @@ Android、iOS 和 Windows 在设置底部显示版本号与构建号，macOS 在
 - `SnippetManager` —— 文件夹、片段、快捷键、导入导出。
 - `SyncManager` —— 子网/手动发现、带长度前缀的 TCP 同步（协议 v3）、AES-GCM 加密、可靠历史与通知投递。
 - `Sources/Screenshot/` —— 完整的截图/录屏引擎（移植自 macshot）：统一 OverlayView、18 工具标注引擎、滚动长截图、录屏、美化/特效、OCR、贴图、浮动缩略图、编辑器窗口。由 `ScreenshotSessionCoordinator` 编排。
-- `SearchWindow` —— 带筛选与排序的全局搜索。
+- `MainWindow` —— 历史、片段、设备与通知共用主窗口；历史全局搜索支持筛选与排序。
 - `NotificationManager` —— 手机通知镜像。
-- `PreferencesManager`、`SettingsWindow`、`SnippetEditorWindow`、`LogWindow` —— 配置与编辑界面。
+- `PreferencesManager`、`SettingsWindow`、`LogWindow` —— 配置与编辑界面。
 
-**Android 应用** —— Flutter（`clipy_android`）配合 Kotlin 平台通道、前台服务、通知监听与倒计时部件。原生 Kotlin/Compose 备选实现（`clipy_android_native`）沿用相同数据契约、包名与密钥，但不用于正式发布。
+**Android 应用** —— Flutter（`clipy_flutter`）配合 Kotlin 平台通道、前台服务、通知监听与倒计时部件。原生 Kotlin/Compose 备选实现（`clipy_android_native`）沿用相同数据契约、包名与密钥，但不用于正式发布。
 
 **Windows/iOS 应用与 Android 对照参考** —— Flutter/Dart：
 - `lib/main.dart` —— 默认入口；`lib/app/` 负责初始化与无界面引擎桥接。
@@ -355,10 +358,18 @@ Clipy 使用面向局域网的协议 v3 处理剪贴板历史与通知：
 
 ## 📁 项目结构
 
+Android 最低支持 **Android 8.0（API 26）**；Flutter 正式版与原生备选版采用相同要求。
+
+Flutter 工程由 `clipy_android` 更名为 `clipy_flutter`，应用标识与用户数据保持兼容。完整目录职责与依赖规则见[目录说明](docs/REPOSITORY_LAYOUT.md)。
+
 ```
 clipy_macos/Sources/      # macOS Swift/AppKit 源码
-clipy_android/lib/        # Android、Windows 与 iOS 的 Flutter/Dart 源码
+clipy_flutter/lib/        # Android、Windows 与 iOS 的 Flutter/Dart 源码
 clipy_android_native/     # 原生 Kotlin/Compose Android 备选实现（不发布）
+clipy_nsh/                # 已暂停的实验实现（保留，不用于发布）
+packages/relay-swift/     # macOS 的 Swift 包依赖与锁文件
+scripts/                  # 构建、检查、图标与测试工具
+docs/                     # 架构、开发和专项文档
 build_macos_app.sh        # macOS 应用包构建脚本
 build_android_apk.sh      # Android 分 ABI APK 构建脚本
 .github/workflows/        # CI + 三平台正式发布
@@ -378,10 +389,10 @@ assets/                   # Logo 与应用图标
 
 ## 📦 发布
 
-完成[发布清单](docs/DEVELOPMENT.md#release-checklist)、配置发布签名并更新 `clipy_android/pubspec.yaml` 和中英文 README 后提交改动，再推送与源码版本一致的**全新、未使用过的版本标签**。所有检查通过后，工作流会直接发布正式版：
+完成[发布清单](docs/DEVELOPMENT.md#release-checklist)、配置发布签名并更新 `clipy_flutter/pubspec.yaml` 和中英文 README 后提交改动，再推送与源码版本一致的**全新、未使用过的版本标签**。所有检查通过后，工作流会直接发布正式版：
 
 ```bash
-VERSION="$(awk '/^version:/ {split($2, v, "+"); print v[1]; exit}' clipy_android/pubspec.yaml)"
+VERSION="$(awk '/^version:/ {split($2, v, "+"); print v[1]; exit}' clipy_flutter/pubspec.yaml)"
 git tag "v${VERSION}"
 git push origin "v${VERSION}"
 ```
@@ -420,3 +431,13 @@ Clipy 自有代码仍采用 [MIT](LICENSE)。macOS 组合应用包含修改过�
 公网中继邀请默认“扫码后自动加入”，可关闭并使用配对码手动确认。自动加入通过管理员签署的限时委托验证，仅授予普通成员权限，不要求邀请设备持续在线。二维码和复制链接使用加密邀请短链接，兼容旧邀请；既有成员须升级支持委托签名链的 SDK。服务端需支持自动入组及短链接接口。
 
 切网与设备扫描现会在约 3 秒内检查旧连接，失效后立即触发中继接管；健康的局域网连接仍优先。3 秒为连接检查时限，不代表端到端连接必定在 3 秒内完成。
+
+### 源码界面对齐
+
+界面遵循各平台设计规范：[macOS](docs/MACOS_DESIGN.md)、[Android](docs/ANDROID_DESIGN.md)，iOS 使用 Cupertino 外观，Windows 使用 Fluent 风格控件。HTML 设计稿与本机验收资料仅在本地维护，不包含在公开源码中。
+
+macOS 可在 **偏好设置 → 通用 → 主题** 切换跟随系统、浅色或深色，即时生效并在重启后保留。
+
+### Windows 窗口行为
+
+手动启动打开完整桌面主窗口，登录自启静默进入托盘。单击托盘图标切换剪贴板快速面板；面板的 × 或 Esc 收起，**打开主窗口**恢复完整大窗口。关闭主窗口只收起到托盘，只有托盘菜单的**退出**才结束程序。快速面板仅展示剪贴板，不包含设备、通知或设置页面。

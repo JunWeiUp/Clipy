@@ -68,7 +68,7 @@ struct MenuBarPanelToolsView: View {
                 ForEach(tools, id: \.rawValue) { tool in
                     Button { model.useTool(tool) } label: {
                         HStack(spacing: 10) {
-                            Image(systemName: tool.symbol).font(.system(size: 20))
+                            Image(systemName: Self.cardSymbol(tool)).font(.system(size: 17, weight: .light))
                                 .frame(width: 36, height: 36).foregroundStyle(color)
                                 .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
                             VStack(alignment: .leading, spacing: 6) {
@@ -87,6 +87,16 @@ struct MenuBarPanelToolsView: View {
                         .onHover { if $0 { model.selectedID = "t:" + tool.rawValue } }
                 }
             }
+        }
+    }
+
+    /// Line icons matching the V3 tool cards (book-open-text / book-marked / key-round).
+    private static func cardSymbol(_ tool: MenuBarPanelModel.Tool) -> String {
+        switch tool {
+        case .word: return "book"
+        case .wordBook: return "book.closed"
+        case .password: return "key"
+        default: return tool.symbol
         }
     }
 }

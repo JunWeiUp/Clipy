@@ -37,7 +37,7 @@ GitHub's release page provides source ZIP and tar archives at the tag.
 
 ## Other dependencies
 
-- Flutter/Dart dependencies are declared in `clipy_android/pubspec.yaml` and
+- Flutter/Dart dependencies are declared in `clipy_flutter/pubspec.yaml` and
   pinned transitively by `pubspec.lock`. Retain Flutter's generated dependency
   license data in distributed applications.
 - AndroidX dependencies are declared in the Android Gradle files. Include their
@@ -51,7 +51,7 @@ This is a provenance inventory, not a claim that every dependency has been audit
 
 ## Common Relay SDK and Sodium
 
-Common Relay snapshots are vendored under `vendor/common-relay/`; each SOURCE.json records provenance and file hashes. macOS links CommonRelay and swift-sodium 0.11.0 / libsodium statically. Flutter retains generated dependency notices.
+Flutter and macOS depend on the official Common Relay v0.1.3 Git package, pinned by `clipy_flutter/pubspec.lock` and `packages/relay-swift/Package.resolved`. The native Android alternative uses `com.github.JunWeiUp.common-relay:java:v0.1.3` via JitPack; its packaged SOURCE.json records the version, revision and coordinates. No Common Relay implementation is copied into app sources. macOS links CommonRelay and swift-sodium 0.11.0 / libsodium statically. Flutter retains generated dependency notices.
 
 ### Common Relay — MIT
 
@@ -116,3 +116,22 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+
+## Verified screen-control code: VibePier (MIT)
+
+The macOS ScreenControlAXTraversal, ScreenControlAXUnlock and
+ScreenControlUnlockSubmission implementations adapt the verified secure-field
+path from [VibePier](https://github.com/JunWeiUp/vibepier), specifically
+`apps/macos/Sources/VibePierCore/Security/{DesktopAXTraversal,ScreenLock,ScreenUnlockSubmission}.swift`.
+The reference was the local worktree with HEAD
+`c06c27bc6da479e2c4cfdb74708fe6c5c3dea95e`; this identifies the reference revision,
+not a claim that the local worktree had no uncommitted changes. Clipy adapts
+lifecycle, error statuses, credential ownership and bounds, checks the system
+application path, and retains its Mac-local Keychain storage. VibePier's separate
+credential preferences and transport are not imported. The upstream MIT license
+and copyright notice (Copyright (c) 2026 Ben Gittins) are preserved in
+`LICENSE.VIBEPIER.MIT` and bundled in the macOS application's Resources.
+
+### Cupertino Icons
+
+The iOS presentation uses `cupertino_icons` under the MIT license (Copyright 2016 Vladimir Kharlampidi). Its license is retained in Flutter-generated dependency notices.

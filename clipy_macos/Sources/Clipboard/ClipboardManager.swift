@@ -927,7 +927,7 @@ class ClipboardManager {
             writePlainTextToPasteboard(entry.item, textPath: entry.textPath)
             moveHistoryEntryToFront(entry)
             let keepOpen = action == .pastePlainKeepOpen
-            if !keepOpen { SearchWindow.shared.closeWindow() }
+            if !keepOpen { MainWindow.shared.close(ifShowing: .history) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self.simulatePasteIfTrusted() }
         case .pasteKeepOpen:
             performPaste(entry: entry, pasteFileAsName: true, closeWindow: false)
@@ -952,7 +952,7 @@ class ClipboardManager {
         }
 
         if closeWindow {
-            SearchWindow.shared.closeWindow()
+            MainWindow.shared.close(ifShowing: .history)
         }
 
         guard shouldAutoPaste else { return }

@@ -11,8 +11,15 @@ final class AppDatabase {
     private let dbURL: URL
 
     private init() {
+        #if CLIPY_CORE_TESTS
+        appSupport = ProcessInfo.processInfo.environment["CLIPY_WINDOW_SNAPSHOT_DIR"]
+            .map { URL(fileURLWithPath: $0).appendingPathComponent("fixture-database", isDirectory: true) }
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("ClipyClone", isDirectory: true)
+        #else
         appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ClipyClone", isDirectory: true)
+        #endif
         try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
         dbURL = appSupport.appendingPathComponent("clipy.db")
         openDatabase()

@@ -7,7 +7,7 @@
   newest ScreenCaptureKit calls. The deployment target remains macOS 13.
 - Flutter: **3.41.7**, pinned in `.fvmrc` and read by CI (FVM is optional).
   The lockfile requires Dart 3.11+. Do not upgrade dependencies just to run checks.
-- Android: JDK 17, Android SDK, NDK `27.0.12077973`. Gradle uses its checked-in wrapper.
+- Android: minimum Android 8.0 (API 26) for both app implementations; JDK 17, Android SDK, NDK `27.0.12077973`. Gradle uses its checked-in wrapper.
 - Repository checks: Bash, Git and Python 3; no third-party Python packages.
 
 Use your own shell proxy configuration when required by your network. Public
@@ -18,7 +18,7 @@ scripts do not assume a `proxy` alias, personal IP address or developer SDK path
 From the repository root:
 
 ```bash
-cd clipy_android
+cd clipy_flutter
 flutter pub get --enforce-lockfile
 cd ..
 bash scripts/check.sh all
@@ -38,7 +38,7 @@ bash scripts/check.sh flutter   # format + analyze + tests (dependencies resolve
 bash scripts/check.sh macos     # compile, package and validate; no install/launch
 ```
 
-Use `dart format lib test tool` from `clipy_android/` before submitting Dart changes.
+Use `dart format lib test tool` from `clipy_flutter/` before submitting Dart changes.
 The hygiene check covers the working tree only, not past commits or all possible
 credential formats. Current Swift 6 concurrency/SDK warnings are not yet a
 zero-warning baseline; Swift language mode is explicitly 5.
@@ -65,7 +65,7 @@ directory. No process is killed, and no TCC permissions are reset by the script.
 | `BUNDLE_ID` | Existing `com.yourdomain.ClipyClone`; keep stable for TCC grants |
 | `MACOS_ARCH` | `arm64`; `x86_64` is an optional cross-build, not device-tested in CI |
 
-The icon is built from `Clipy/Resources/AppIcon.png`; permission metadata is in
+The icon is built from `clipy_macos/Resources/AppIcon.png`; permission metadata is in
 `clipy_macos/Resources/Info.plist`. New `.swift` files under `Sources/` are collected
 automatically. The release workflow currently creates **ad-hoc signed, non-notarized**
 macOS artifacts. Ad-hoc signing is also the explicit policy for the Mac CI job;
@@ -94,7 +94,7 @@ notices are inside the app bundle, and the summary links to the bilingual
 30 days. These builds target Apple Silicon / macOS 13+; they are not Intel or
 universal binaries, and are not public GitHub Releases.
 
-The app version comes from `clipy_android/pubspec.yaml`; the build number is the
+The app version comes from `clipy_flutter/pubspec.yaml`; the build number is the
 source build number plus the caller's `GITHUB_RUN_NUMBER`, matching the Release
 formula. Run numbers are scoped to each workflow, so build numbers across manual
 Mac, CI and Release runs are not a global sequence; reruns keep the same build
@@ -111,7 +111,7 @@ Developer ID signing.
 ## Android
 
 ```bash
-cd clipy_android
+cd clipy_flutter
 flutter build apk --debug --no-pub
 ```
 
@@ -135,7 +135,7 @@ The Release workflow uploads only the arm64 APK; the ARM32 build remains a local
 output of the shared script.
 Build numbers now come directly from Flutter metadata, with no device-specific
 minimum hidden in Gradle. The current source version and build number are recorded
-in `clipy_android/pubspec.yaml`; keep them aligned with the current-version text in
+in `clipy_flutter/pubspec.yaml`; keep them aligned with the current-version text in
 both root README files. To upgrade a newer local or CI installation, explicitly
 supply a higher `BUILD_NUMBER`. Changing signing keys prevents in-place APK upgrades;
 back up user data before any uninstall/reinstall.
@@ -159,9 +159,9 @@ implementations pick a build number above the installed versionCode.
 
 ## Windows and iOS
 
-Windows uses the Flutter runner in `clipy_android/windows/`. On Windows 10/11
+Windows uses the Flutter runner in `clipy_flutter/windows/`. On Windows 10/11
 x64 with Visual Studio C++ tools, run `flutter pub get --enforce-lockfile` and
-`flutter build windows --release --no-pub -t lib/main_windows.dart` from `clipy_android/`, then
+`flutter build windows --release --no-pub -t lib/main_windows.dart` from `clipy_flutter/`, then
 `./scripts/package_windows.ps1 -Version <version>` from the repository root.
 The script includes the Flutter bundle and MSVC runtime DLLs, verifies the
 extracted ZIP, and writes `dist/ClipyClone-Windows-x64-v<version>.zip`.
@@ -179,7 +179,7 @@ foreground/background reconnect still need a signed physical-device check.
 
 ### Install on a connected iPhone
 
-Use Flutter 3.41 or later and open `clipy_android/ios/Runner.xcworkspace` in
+Use Flutter 3.41 or later and open `clipy_flutter/ios/Runner.xcworkspace` in
 Xcode. Sign in to your Apple developer account, select the Runner target's
 development team, and enable Developer Mode on the connected phone. Keep the
 existing bundle ID/team when updating an installed copy to retain its data.
@@ -220,7 +220,7 @@ and tests over-limit, early rejection, wrong peer, cancellation and disconnect.
 
 For a command-line Release build that can launch without a debugger, first run
 `flutter pub get --enforce-lockfile` and
-`flutter build ios --release --no-codesign --no-pub` in `clipy_android/`. Then:
+`flutter build ios --release --no-codesign --no-pub` in `clipy_flutter/`. Then:
 
 ```bash
 # Set IOS_TEAM and IOS_DEVICE to your own team ID and connected device ID.
@@ -279,7 +279,7 @@ entry on the destination. It never creates/overwrites its input and has no defau
 peer address. Do not run it against a device without permission:
 
 ```bash
-cd clipy_android
+cd clipy_flutter
 dart run tool/e2e_file_send.dart <host> <existing-test-file>
 ```
 
@@ -303,7 +303,7 @@ endpoints must run protocol v3. Set `CLIPY_SYNC_PORT` for non-default ports. See
 4. Configure Actions secrets `CLIPY_KEYSTORE_BASE64`, `CLIPY_KEYSTORE_PASSWORD`,
    `CLIPY_KEY_ALIAS`, `CLIPY_KEY_PASSWORD` using a backed-up release keystore.
    Missing credentials fail the workflow; debug keys are never an implicit fallback.
-5. Update `clipy_android/pubspec.yaml`, `README.md` and `README_ZH.md` in the same
+5. Update `clipy_flutter/pubspec.yaml`, `README.md` and `README_ZH.md` in the same
    change. Version tags must use `vX.Y.Z`, match the source version and never
    overwrite an existing tag. README source-version text is separate from the
    Release badge, which only tracks published releases. CI build

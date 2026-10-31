@@ -86,7 +86,13 @@ class SnippetManager {
 
     private init() {
         let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        #if CLIPY_CORE_TESTS
+        let appSupport = ProcessInfo.processInfo.environment["CLIPY_WINDOW_SNAPSHOT_DIR"]
+            .map { URL(fileURLWithPath: $0).appendingPathComponent("fixture-data") }
+            ?? paths[0].appendingPathComponent("ClipyClone")
+        #else
         let appSupport = paths[0].appendingPathComponent("ClipyClone")
+        #endif
         try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
         self.storageURL = appSupport.appendingPathComponent("snippets.json")
         
@@ -94,7 +100,11 @@ class SnippetManager {
         if folders.isEmpty {
             createDefaultSnippets()
         }
+        #if CLIPY_CORE_TESTS
+        if ProcessInfo.processInfo.environment["CLIPY_WINDOW_SNAPSHOT_DIR"] == nil { registerHotKeys() }
+        #else
         registerHotKeys()
+        #endif
     }
     
     /// Registers every shortcut. The handlers capture **ids only** and re-read
@@ -102,6 +112,9 @@ class SnippetManager {
     /// pasting whatever the text was at registration time, since editing content
     /// deliberately skips re-registration.
     func registerHotKeys() {
+        #if CLIPY_CORE_TESTS
+        if ProcessInfo.processInfo.environment["CLIPY_WINDOW_SNAPSHOT_DIR"] != nil { return }
+        #endif
         HotKeyManager.shared.unregisterAll()
         hotKeyIds.removeAll()
 

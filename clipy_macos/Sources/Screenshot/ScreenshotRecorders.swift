@@ -15,12 +15,13 @@ import Foundation
 ///   6. On completion: deliver the MP4 (reveal in Finder / copy path / open in
 ///      macshot's video editor, per the `recordingOnStop` preference).
 @MainActor
-final class ScreenshotRecorder {
+final class ScreenshotRecorder: NSObject {
     static let shared = ScreenshotRecorder()
-    private init() {}
+    private override init() { super.init() }
 
     private var engine: RecordingEngine?
     private var hudPanel: RecordingHUDPanel?
+    private var recordingStatusItem: NSStatusItem?
     private var selectionBorder: SelectionBorderOverlay?
     /// Optional recording overlays (webcam / mouse-click highlight / keystrokes).
     /// These are intentionally part of the recording, so their window numbers are
@@ -60,6 +61,7 @@ final class ScreenshotRecorder {
         // Per-session overrides from the overlay (nil = use UserDefaults).
         engine.onProgress = { [weak self] seconds in
             self?.hudPanel?.update(elapsedSeconds: seconds)
+            self?.updateRecordingStatus(seconds: seconds)
         }
         engine.onPauseChanged = { [weak self] paused in
             self?.hudPanel?.setPaused(paused)
@@ -68,6 +70,14 @@ final class ScreenshotRecorder {
             self?.handleCompletion(url: url, error: error)
         }
         self.engine = engine
+        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: L("Stop recording"))
+        statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.title = "00:00"
+        statusItem.button?.toolTip = L("Stop recording")
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(stopFromStatusItem)
+        recordingStatusItem = statusItem
 
         // Selection border so the user sees what's being recorded.
         let border = SelectionBorderOverlay(screen: screen)
@@ -135,6 +145,13 @@ final class ScreenshotRecorder {
 
     /// User pressed Stop (HUD button, menu bar, or overlay Esc). Finalization is
     /// asynchronous — `onCompletion` fires with the MP4 URL.
+    @objc private func stopFromStatusItem() { stopRecording() }
+
+    private func updateRecordingStatus(seconds: Int) {
+        let value = max(0, seconds)
+        recordingStatusItem?.button?.title = String(format: "%02d:%02d", value / 60, value % 60)
+    }
+
     func stopRecording() {
         engine?.stopRecording()
     }
@@ -146,6 +163,8 @@ final class ScreenshotRecorder {
     // MARK: - Completion
 
     private func handleCompletion(url: URL?, error: Error?) {
+        if let statusItem = recordingStatusItem { NSStatusBar.system.removeStatusItem(statusItem) }
+        recordingStatusItem = nil
         // Tear down the recording UI + all optional overlays.
         hudPanel?.close()
         hudPanel = nil

@@ -30,7 +30,7 @@ final class VideoEditorWindowController: NSObject, NSWindowDelegate {
         guard let screen = NSScreen.main else { return }
 
         // Size window to fit content, capped at 60% of screen
-        let controlsH: CGFloat = 172
+        let controlsH: CGFloat = 52 + 50 + 40 + 150
         let maxW = screen.frame.width * 0.6
         let maxH = screen.frame.height * 0.6
         var contentW: CGFloat = 800
@@ -50,24 +50,29 @@ final class VideoEditorWindowController: NSObject, NSWindowDelegate {
 
         // Scale down to fit screen, maintaining aspect ratio
         let scale = min(1.0, min(maxW / contentW, (maxH - controlsH) / contentH))
-        let winW = max(880, contentW * scale)
-        let winH = max(400, contentH * scale + controlsH)
+        let winW = max(980, contentW * scale + 272)
+        let winH = max(560, contentH * scale + controlsH)
         let winX = screen.frame.midX - winW / 2
         let winY = screen.frame.midY - winH / 2
 
         let win = EscapeClosingWindow(
             contentRect: NSRect(x: winX, y: winY, width: winW, height: winH),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
+        // V3 (mac-video.html): unified 52pt header row drawn by VideoEditorView —
+        // an empty unified toolbar centres the traffic lights in it.
+        win.titleVisibility = .hidden
+        win.titlebarAppearsTransparent = true
+        win.toolbar = NSToolbar(identifier: "ClipyVideoEditorTitlebar")
+        win.toolbarStyle = .unified
         // Prefix with the source filename so multiple editor windows are
         // distinguishable in the Dock menu and Window menu.
         win.title = "\(url.deletingPathExtension().lastPathComponent) — \(L("macshot Video Editor"))"
-        win.minSize = NSSize(width: 880, height: 400)
+        win.minSize = NSSize(width: 980, height: 600)
         win.isReleasedWhenClosed = false
         win.delegate = self
         win.collectionBehavior = [.fullScreenAuxiliary]
-        win.backgroundColor = ToolbarLayout.bgColor
 
         let view = VideoEditorView(frame: NSRect(x: 0, y: 0, width: winW, height: winH),
                                     videoURL: url,
@@ -169,6 +174,32 @@ private final class VideoEditorView: NSView {
     private var effectsScrollView: NSScrollView?
     private var effectsBandHeightConstraint: NSLayoutConstraint?
     private var playerBottomConstraint: NSLayoutConstraint?
+    private let inspectorWidth: CGFloat = 272
+    private let effectToolbarHeight: CGFloat = 40
+    private let transportHeight: CGFloat = 50
+    /// V3 header row (title, subtitle, copy / Finder / save).
+    private let headerHeight: CGFloat = 52
+    /// Track-label gutter ("画面" / "效果") and right inset of the timeline.
+    private let timelineLeft: CGFloat = 108
+    private let timelineRight: CGFloat = 16
+    private let headerTitle = NSTextField(labelWithString: "")
+    private let headerSubtitle = NSTextField(labelWithString: "")
+    private let copyHeaderButton = EditorFooterButton()
+    private let copyMenuButton = EditorFooterButton()
+    private let finderHeaderButton = EditorFooterButton()
+    #if !OFFLINE
+    private let uploadHeaderButton = EditorFooterButton()
+    #endif
+    private let saveHeaderButton = EditorFooterButton()
+    private var playButton: VideoTransportPlayButton?
+    private var muteButton: NSButton?
+    private var statusPillRect: NSRect = .zero
+    private weak var zoomValueLabel: NSTextField?
+    private var inspector: NSScrollView?
+    private var inspectorStack: NSStackView?
+    private var effectToolbar: NSStackView?
+    private var transport: NSStackView?
+    private var transportTime: NSTextField?
 
     // Convenience accessors so call sites don't have to guard the optional.
     private var zoomSegments: [VideoZoomSegment] { effectsBand?.zoomSegments ?? [] }
@@ -230,14 +261,14 @@ private final class VideoEditorView: NSView {
     // Time labels sit ABOVE the trim bar so they don't collide with the
     // effects band's "Click to add effects" hint that sits directly
     // above the bottom buttons row.
-    private let buttonsAreaH: CGFloat = 48
-    private let labelsRowH: CGFloat = 18
-    private let trimBarH: CGFloat = 36
-    private let topPadH: CGFloat = 12
+    private let buttonsAreaH: CGFloat = 12
+    private let labelsRowH: CGFloat = 26
+    private let trimBarH: CGFloat = 44
+    private let topPadH: CGFloat = 0
     /// Gap between the effects scroll view (top) and the trim bar (bottom).
     /// Sized to fit the playhead circle which sits below the trim bar in
     /// this layout (circle is 8pt diameter with 2pt breathing room).
-    private let scrollToLabelsGap: CGFloat = 14
+    private let scrollToLabelsGap: CGFloat = 12
 
     /// Total height of the controls band at the bottom of the editor,
     /// dynamic because the effects scroll view grows with row count.
@@ -266,6 +297,7 @@ private final class VideoEditorView: NSView {
         addTrackingArea(area)
 
         setupPlayer()
+        buildInspector()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -315,6 +347,8 @@ private final class VideoEditorView: NSView {
                 self.trimEnd = self.duration
                 self.buildPlayerView()
                 self.effectsBand?.duration = self.duration
+                self.transportTime?.attributedStringValue = self.transportTimeString()
+                self.refreshInspector()
             }
         }
     }
@@ -357,10 +391,10 @@ private final class VideoEditorView: NSView {
         addSubview(iv)
 
         NSLayoutConstraint.activate([
-            iv.topAnchor.constraint(equalTo: topAnchor),
-            iv.leadingAnchor.constraint(equalTo: leadingAnchor),
-            iv.trailingAnchor.constraint(equalTo: trailingAnchor),
-            iv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -controlsH),
+            iv.topAnchor.constraint(equalTo: topAnchor, constant: headerHeight + 14),
+            iv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            iv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(inspectorWidth + 16)),
+            iv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(controlsH + effectToolbarHeight + transportHeight + 6)),
         ])
         gifImageView = iv
         gifIsPlaying = true
@@ -391,11 +425,11 @@ private final class VideoEditorView: NSView {
         pv.translatesAutoresizingMaskIntoConstraints = false
         addSubview(pv)
 
-        let playerBottomC = pv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -controlsH)
+        let playerBottomC = pv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(controlsH + effectToolbarHeight + transportHeight + 6))
         NSLayoutConstraint.activate([
-            pv.topAnchor.constraint(equalTo: topAnchor),
-            pv.leadingAnchor.constraint(equalTo: leadingAnchor),
-            pv.trailingAnchor.constraint(equalTo: trailingAnchor),
+            pv.topAnchor.constraint(equalTo: topAnchor, constant: headerHeight + 14),
+            pv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            pv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(inspectorWidth + 16)),
             playerBottomC,
         ])
         playerView = pv
@@ -457,8 +491,8 @@ private final class VideoEditorView: NSView {
             // endTime=duration) still have room to render fully. The
             // band itself re-inserts a matching 4pt horizontalInset so
             // pills visually align with the thumbnails above.
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: timelinePad - 4),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(timelinePad - 4)),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: timelineLeft - 4),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(timelineRight - 4)),
             // Scroll view sits directly above the buttons row (y=48 from parent bottom).
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -buttonsAreaH),
             heightC,
@@ -494,9 +528,519 @@ private final class VideoEditorView: NSView {
         needsDisplay = true
     }
 
+    // MARK: - V3 palette (mac.css tokens; preview stage stays dark)
+
+    fileprivate static func dynamic(_ light: NSColor, _ dark: NSColor) -> NSColor {
+        NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light }
+    }
+    fileprivate static let surface = dynamic(.white, NSColor(srgbRed: 0.118, green: 0.118, blue: 0.129, alpha: 1))
+    fileprivate static let toolSurface = dynamic(NSColor(white: 0.985, alpha: 1), NSColor(srgbRed: 0.137, green: 0.137, blue: 0.153, alpha: 1))
+    fileprivate static let line = dynamic(NSColor(white: 0, alpha: 0.08), NSColor(white: 1, alpha: 0.09))
+    fileprivate static let fill = dynamic(NSColor(white: 0, alpha: 0.045), NSColor(white: 1, alpha: 0.06))
+    fileprivate static let stage = NSColor(srgbRed: 0.11, green: 0.11, blue: 0.118, alpha: 1)
+
+    // The inspector only edits the existing segment models; the timeline and
+    // export pipeline remain their single owners.
+    private func buildInspector() {
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        let stack = VideoInspectorStack()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
+        scroll.documentView = stack
+        addSubview(scroll)
+        inspector = scroll
+        inspectorStack = stack
+
+        // Timeline toolbar: 添加 · 缩放 遮挡 文字 变速 定格 剪切 (mac-video.html .ttb).
+        let toolbar = NSStackView()
+        toolbar.orientation = .horizontal
+        toolbar.alignment = .centerY
+        toolbar.spacing = 2
+        let addLabel = NSTextField(labelWithString: videoLabel("Add", "添加"))
+        addLabel.font = .systemFont(ofSize: 11.5)
+        addLabel.textColor = .tertiaryLabelColor
+        toolbar.addArrangedSubview(addLabel)
+        toolbar.setCustomSpacing(6, after: addLabel)
+        for (index, item) in [("Add Zoom", "plus.magnifyingglass", L("Zoom")), ("Add Censor", "eye.slash", L("Censor")),
+                              ("Add Text", "textformat", L("Text")), ("Add Speed", "forward", videoLabel("Speed", "变速")),
+                              ("Add Freeze", "snowflake", videoLabel("Freeze", "定格")), ("Add Cut", "scissors", videoLabel("Cut", "剪切"))].enumerated() {
+            let button = VideoToolbarButton(title: item.2, target: self, action: #selector(addEffectFromToolbar(_:)))
+            button.identifier = NSUserInterfaceItemIdentifier(item.0)
+            button.toolTip = L(item.0)
+            button.tag = index
+            button.image = NSImage(systemSymbolName: item.1, accessibilityDescription: L(item.0))?
+                .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+            button.imagePosition = .imageLeading
+            button.isEnabled = !isGIF
+            toolbar.addArrangedSubview(button)
+        }
+        addSubview(toolbar)
+        effectToolbar = toolbar
+
+        // Transport under the preview (mac-video.html .transport).
+        let playback = NSStackView()
+        playback.orientation = .horizontal
+        playback.alignment = .centerY
+        playback.spacing = 10
+        func transportButton(_ symbol: String, _ tip: String, _ action: Selector) -> NSButton {
+            let button = NSButton(title: "", target: self, action: action)
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
+                .withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
+            button.isBordered = false
+            button.contentTintColor = NSColor.white.withAlphaComponent(0.85)
+            button.toolTip = tip
+            button.widthAnchor.constraint(equalToConstant: 30).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 30).isActive = true
+            return button
+        }
+        let back = transportButton("backward.frame", videoLabel("Previous frame (←)", "上一帧（←）"), #selector(inspectorPreviousFrame))
+        back.isEnabled = !isGIF
+        let play = VideoTransportPlayButton(target: self, action: #selector(inspectorPlayPause))
+        play.isPlaying = { [weak self] in
+            guard let self else { return false }
+            return self.isGIF ? self.gifIsPlaying : (self.player?.rate ?? 0) > 0
+        }
+        play.toolTip = videoLabel("Play / Pause (Space)", "播放 / 暂停（空格）")
+        playButton = play
+        let forward = transportButton("forward.frame", videoLabel("Next frame (→)", "下一帧（→）"), #selector(inspectorNextFrame))
+        forward.isEnabled = !isGIF
+        let time = NSTextField(labelWithString: "00:00.0 / 00:00.0")
+        time.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        time.textColor = .white
+        transportTime = time
+        let mute = transportButton("speaker.wave.2", L("Mute"), #selector(transportMute))
+        mute.isEnabled = !isGIF
+        muteButton = mute
+        for view in [back, play, forward, time, mute] { playback.addArrangedSubview(view) }
+        playback.setCustomSpacing(18, after: forward)
+        playback.setCustomSpacing(18, after: time)
+        addSubview(playback)
+        transport = playback
+
+        // Header: title / subtitle · [复制 | ⌄] · Finder · 保存.
+        headerTitle.font = .systemFont(ofSize: 14, weight: .semibold)
+        headerTitle.textColor = .labelColor
+        headerTitle.lineBreakMode = .byTruncatingTail
+        headerSubtitle.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        headerSubtitle.textColor = .secondaryLabelColor
+        addSubview(headerTitle)
+        addSubview(headerSubtitle)
+        copyHeaderButton.configure(title: L("Copy"), symbol: "doc.on.doc")
+        copyHeaderButton.target = self
+        copyHeaderButton.action = #selector(headerCopy)
+        copyMenuButton.configure(title: "", symbol: "chevron.down")
+        copyMenuButton.imagePosition = .imageOnly
+        copyMenuButton.toolTip = L("Copy Path")
+        copyMenuButton.target = self
+        copyMenuButton.action = #selector(headerCopyMenu)
+        finderHeaderButton.configure(title: "", symbol: "folder")
+        finderHeaderButton.imagePosition = .imageOnly
+        finderHeaderButton.toolTip = videoLabel("Show in Finder (available after saving)", "在 Finder 中显示（保存后可用）")
+        finderHeaderButton.target = self
+        finderHeaderButton.action = #selector(headerFinder)
+        saveHeaderButton.configure(title: L("Save"), symbol: "arrow.down.to.line", primary: true)
+        saveHeaderButton.target = self
+        saveHeaderButton.action = #selector(headerSave)
+        saveHeaderButton.onRightClick = { [weak self] _ in self?.saveVideoAs() }
+        saveHeaderButton.toolTip = videoLabel("Save (right-click: Save As…)", "保存（右键：另存为…）")
+        var headerButtons: [NSButton] = [copyHeaderButton, copyMenuButton, finderHeaderButton, saveHeaderButton]
+        #if !OFFLINE
+        uploadHeaderButton.configure(title: L("Upload"), symbol: "icloud.and.arrow.up")
+        uploadHeaderButton.target = self
+        uploadHeaderButton.action = #selector(headerUpload)
+        headerButtons.append(uploadHeaderButton)
+        #endif
+        headerButtons.forEach { addSubview($0) }
+        refreshInspector()
+    }
+
+    @objc private func transportMute() { toggleMute() }
+    @objc private func headerCopy() { copyToClipboard() }
+    @objc private func headerCopyMenu() {
+        let menu = NSMenu()
+        let pathItem = NSMenuItem(title: L("Copy Path"), action: #selector(copyPathAction), keyEquivalent: "")
+        pathItem.target = self
+        menu.addItem(pathItem)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: copyMenuButton.bounds.height + 4), in: copyMenuButton)
+    }
+    @objc private func headerFinder() { if let url = savedURL { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
+    @objc private func headerSave() { saveVideo() }
+    #if !OFFLINE
+    @objc private func headerUpload() { uploadVideo() }
+    #endif
+
+    private func formatClock(_ seconds: Double) -> String {
+        let total = max(0, seconds)
+        let m = Int(total) / 60, s = Int(total) % 60, d = Int((total - floor(total)) * 10)
+        return String(format: "%02d:%02d.%d", m, s, d)
+    }
+
+    /// Output duration after trim, cuts, speed and freeze edits.
+    private var outputDuration: Double {
+        if cutSegments.isEmpty && speedSegments.isEmpty && freezeSegments.isEmpty { return trimEnd - trimStart }
+        let kept = VideoCuts.keptRanges(trimStart: trimStart, trimEnd: trimEnd, cuts: cutSegments)
+        let pieces = VideoSpeeds.pieces(keptRanges: kept, speeds: speedSegments, freezes: freezeSegments)
+        return VideoSpeeds.totalCompositionDuration(pieces)
+    }
+
+    /// Header title/subtitle: "W × H · fps · total → output" (mac-video.html .tt .sub).
+    private func refreshHeaderInfo() {
+        headerTitle.stringValue = window?.title ?? ""
+        var parts: [String] = []
+        if originalWidth > 0 { parts.append("\(originalWidth) × \(originalHeight)") }
+        if let fps = asset?.tracks(withMediaType: .video).first?.nominalFrameRate, fps > 0 { parts.append("\(Int(fps.rounded()))fps") }
+        if duration > 0 { parts.append("\(formatClock(duration)) → \(formatClock(outputDuration))") }
+        headerSubtitle.stringValue = parts.joined(separator: " · ")
+        finderHeaderButton.isEnabled = savedURL != nil
+        finderHeaderButton.alphaValue = savedURL != nil ? 1 : 0.45
+        playButton?.needsDisplay = true
+        muteButton?.image = NSImage(systemSymbolName: isMuted ? "speaker.slash" : "speaker.wave.2", accessibilityDescription: L("Mute"))?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
+        needsLayout = true
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshHeaderInfo()
+    }
+
+    override func layout() {
+        super.layout()
+        let panelTop = controlsH + effectToolbarHeight
+        let headerY = bounds.height - headerHeight
+        inspector?.frame = NSRect(x: bounds.width - inspectorWidth + 0.5, y: panelTop,
+                                  width: inspectorWidth - 0.5, height: max(0, headerY - panelTop))
+        if let stack = inspectorStack {
+            stack.frame = NSRect(x: 0, y: 0, width: inspectorWidth,
+                                 height: max(inspector?.contentSize.height ?? 0, stack.fittingSize.height))
+        }
+        if let toolbar = effectToolbar {
+            let size = toolbar.fittingSize
+            toolbar.frame = NSRect(x: 10, y: controlsH + (effectToolbarHeight - size.height) / 2,
+                                   width: size.width, height: size.height)
+        }
+        if let transport {
+            let size = transport.fittingSize
+            let mainW = bounds.width - inspectorWidth
+            transport.frame = NSRect(x: (mainW - size.width) / 2, y: panelTop + (transportHeight - size.height) / 2,
+                                     width: size.width, height: size.height)
+        }
+        transportTime?.attributedStringValue = transportTimeString()
+
+        // Header row (traffic lights sit at the left of the same 52pt band).
+        var x: CGFloat = 84
+        if let zoom = window?.standardWindowButton(.zoomButton) {
+            x = max(x, convert(zoom.convert(zoom.bounds, to: nil), from: nil).maxX + 16)
+        }
+        var right = bounds.width - 14
+        func place(_ button: NSButton, gap: CGFloat = 8) {
+            guard !button.isHidden else { return }
+            right -= button.frame.width
+            button.frame = NSRect(x: right, y: headerY + (headerHeight - 28) / 2, width: button.frame.width, height: 28)
+            right -= gap
+        }
+        place(saveHeaderButton)
+        #if !OFFLINE
+        place(uploadHeaderButton)
+        #endif
+        finderHeaderButton.frame.size.width = 30
+        place(finderHeaderButton)
+        copyMenuButton.frame.size.width = 26
+        place(copyMenuButton, gap: 0)
+        place(copyHeaderButton)
+        statusPillRect = .zero
+        if let message = statusMessage {
+            let width = ceil((message as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width) + 20
+            statusPillRect = NSRect(x: right - width, y: headerY + (headerHeight - 28) / 2, width: width, height: 28)
+            right = statusPillRect.minX - 8
+        }
+        headerTitle.sizeToFit(); headerSubtitle.sizeToFit()
+        let titleW = max(0, min(headerTitle.frame.width, right - x - 8))
+        headerTitle.frame = NSRect(x: x, y: headerY + 26, width: titleW, height: headerTitle.frame.height)
+        headerSubtitle.frame = NSRect(x: x, y: headerY + 10, width: max(0, min(headerSubtitle.frame.width, right - x - 8)), height: headerSubtitle.frame.height)
+    }
+
+    private func transportTimeString() -> NSAttributedString {
+        let text = NSMutableAttributedString(string: formatClock(currentPlaybackTime), attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.white])
+        text.append(NSAttributedString(string: "  /  \(formatClock(duration))", attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(0.45)]))
+        return text
+    }
+
+    private func inspectorLabel(_ text: String, heading: Bool = false) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: heading ? 13 : 11.5, weight: heading ? .semibold : .regular)
+        label.textColor = heading ? .labelColor : .tertiaryLabelColor
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 3
+        label.preferredMaxLayoutWidth = inspectorWidth - 28
+        return label
+    }
+
+    private func groupLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        label.textColor = .tertiaryLabelColor
+        return label
+    }
+
+    private func videoLabel(_ english: String, _ chinese: String) -> String {
+        ScreenshotLocalization.active["Zoom"] == nil ? english : chinese
+    }
+
+    private func inspectorPopup(_ titles: [String], selection: Int, action: Selector) -> NSPopUpButton {
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 160, height: 26), pullsDown: false)
+        popup.addItems(withTitles: titles)
+        if selection >= 0 && selection < titles.count { popup.selectItem(at: selection) }
+        popup.target = self
+        popup.action = action
+        popup.font = .systemFont(ofSize: 12.5)
+        return popup
+    }
+
+    /// "label · control · value" row (mac-video.html .ir).
+    private func inspectorRow(_ title: String, _ control: NSView, value: String? = nil) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 12.5)
+        label.textColor = .secondaryLabelColor
+        label.widthAnchor.constraint(equalToConstant: 62).isActive = true
+        row.addArrangedSubview(label)
+        row.addArrangedSubview(control)
+        control.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        if let value {
+            let valueLabel = NSTextField(labelWithString: value)
+            valueLabel.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
+            valueLabel.textColor = .secondaryLabelColor
+            valueLabel.alignment = .right
+            valueLabel.widthAnchor.constraint(equalToConstant: 40).isActive = true
+            row.addArrangedSubview(valueLabel)
+        }
+        row.widthAnchor.constraint(equalToConstant: inspectorWidth - 28).isActive = true
+        return row
+    }
+
+    /// Wrapping chip group (mac-video.html .chs).
+    private func chipGroup(_ titles: [String], selected: Int, action: Selector) -> NSView {
+        let container = VideoChipGroup()
+        for (index, title) in titles.enumerated() {
+            let chip = VideoChipButton(title: title, target: self, action: action)
+            chip.tag = index
+            chip.isOn = index == selected
+            container.addSubview(chip)
+        }
+        container.widthAnchor.constraint(equalToConstant: inspectorWidth - 28).isActive = true
+        container.layoutChips(width: inspectorWidth - 28)
+        container.heightAnchor.constraint(equalToConstant: container.frame.height).isActive = true
+        return container
+    }
+
+    private func effectHeader(symbol: String, tint: NSColor, title: String, start: Double, end: Double) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        let tile = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: title)?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .regular)) ?? NSImage())
+        tile.contentTintColor = tint
+        tile.wantsLayer = true
+        tile.layer?.cornerRadius = 8
+        tile.layer?.backgroundColor = tint.withAlphaComponent(0.14).cgColor
+        tile.widthAnchor.constraint(equalToConstant: 32).isActive = true
+        tile.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        let text = NSStackView()
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 2
+        let name = NSTextField(labelWithString: title)
+        name.font = .systemFont(ofSize: 13, weight: .semibold)
+        let range = NSTextField(labelWithString: "\(formatClock(start)) – \(formatClock(end))")
+        range.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        range.textColor = .tertiaryLabelColor
+        text.addArrangedSubview(name)
+        text.addArrangedSubview(range)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let delete = NSButton(title: L("Delete"), target: self, action: #selector(inspectorDelete))
+        delete.image = NSImage(systemSymbolName: "trash", accessibilityDescription: L("Delete"))?
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
+        delete.imagePosition = .imageOnly
+        delete.isBordered = false
+        delete.contentTintColor = .secondaryLabelColor
+        delete.toolTip = L("Delete")
+        delete.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        for view in [tile, text, spacer, delete] { row.addArrangedSubview(view) }
+        row.widthAnchor.constraint(equalToConstant: inspectorWidth - 28).isActive = true
+        return row
+    }
+
+    private func separatorView() -> NSView {
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.widthAnchor.constraint(equalToConstant: inspectorWidth - 28).isActive = true
+        return separator
+    }
+
+    private static let fadeValues: [Double] = [0, 0.15, 0.25, 0.35, 0.5, 1]
+
+    private func refreshInspector() {
+        guard let stack = inspectorStack else { return }
+        stack.arrangedSubviews.forEach { stack.removeArrangedSubview($0); $0.removeFromSuperview() }
+        let id = selectedSegmentID
+        let zoomTint = NSColor.systemBlue, censorTint = NSColor.systemGray, textTint = NSColor.systemOrange
+        let speedTint = NSColor.systemTeal, freezeTint = NSColor.systemPurple, cutTint = NSColor.systemRed
+        if let id = id, let seg = zoomSegments.first(where: { $0.id == id }) {
+            stack.addArrangedSubview(effectHeader(symbol: "plus.magnifyingglass", tint: zoomTint, title: L("Zoom"), start: seg.startTime, end: seg.endTime))
+            let slider = NSSlider(value: Double(seg.zoomLevel), minValue: Double(VideoZoomSegment.minZoom), maxValue: Double(VideoZoomSegment.maxZoom), target: self, action: #selector(inspectorZoom(_:)))
+            slider.controlSize = .small
+            let zoomRow = inspectorRow(L("Zoom"), slider, value: String(format: "%.1f×", seg.zoomLevel))
+            zoomValueLabel = (zoomRow as? NSStackView)?.arrangedSubviews.last as? NSTextField
+            stack.addArrangedSubview(zoomRow)
+            stack.addArrangedSubview(inspectorLabel("ⓘ " + videoLabel("Drag the frame on the preview to move and resize the region; press + / − to change the level while selected.", "在预览上拖动区域框调整位置与范围；选中时按 + / − 调整倍数")))
+        } else if let id = id, let seg = censorSegments.first(where: { $0.id == id }) {
+            stack.addArrangedSubview(effectHeader(symbol: "eye.slash", tint: censorTint, title: L("Censor"), start: seg.startTime, end: seg.endTime))
+            let styles: [VideoCensorSegment.Style] = [.solid, .pixelate, .blur]
+            let segmented = NSSegmentedControl(labels: [L("Solid"), L("Pixelate"), L("Blur")], trackingMode: .selectOne, target: self, action: #selector(inspectorCensorSegment(_:)))
+            segmented.selectedSegment = styles.firstIndex(of: seg.style) ?? 0
+            segmented.selectedSegmentBezelColor = .controlColor
+            segmented.widthAnchor.constraint(equalToConstant: inspectorWidth - 28).isActive = true
+            stack.addArrangedSubview(segmented)
+        } else if let id = id, let seg = speedSegments.first(where: { $0.id == id }) {
+            stack.addArrangedSubview(effectHeader(symbol: "forward", tint: speedTint, title: videoLabel("Speed", "变速"), start: seg.startTime, end: seg.endTime))
+            stack.addArrangedSubview(groupLabel(videoLabel("Speed", "倍速")))
+            stack.addArrangedSubview(chipGroup(VideoSpeedSegment.presetFactors.map { "\($0)×" }, selected: VideoSpeedSegment.presetFactors.firstIndex(of: seg.speedFactor) ?? -1, action: #selector(inspectorSpeedChip(_:))))
+        } else if let id = id, let seg = freezeSegments.first(where: { $0.id == id }) {
+            stack.addArrangedSubview(effectHeader(symbol: "snowflake", tint: freezeTint, title: videoLabel("Freeze", "定格"), start: seg.atTime, end: seg.atTime + seg.holdDuration))
+            stack.addArrangedSubview(groupLabel(videoLabel("Hold", "定格时长")))
+            stack.addArrangedSubview(chipGroup(VideoFreezeSegment.presetDurations.map { videoLabel("\($0) s", "\($0) 秒") }, selected: VideoFreezeSegment.presetDurations.firstIndex(of: seg.holdDuration) ?? -1, action: #selector(inspectorFreezeChip(_:))))
+        } else if let id = id, let seg = textSegments.first(where: { $0.id == id }) {
+            stack.addArrangedSubview(effectHeader(symbol: "textformat", tint: textTint, title: L("Text"), start: seg.startTime, end: seg.endTime))
+            let edit = NSButton(title: L("Edit Text…"), target: self, action: #selector(inspectorEditText))
+            edit.bezelStyle = .rounded
+            edit.controlSize = .small
+            stack.addArrangedSubview(edit)
+            stack.addArrangedSubview(inspectorRow(L("Size"), inspectorPopup([L("Small"), L("Medium"), L("Large"), L("Huge")], selection: [CGFloat(32), 48, 72, 104].firstIndex(where: { abs($0 - seg.fontSize) < 0.5 }) ?? 1, action: #selector(inspectorTextSize(_:)))))
+            let styleRow = NSStackView()
+            styleRow.spacing = 12
+            let bold = NSButton(checkboxWithTitle: L("Bold"), target: self, action: #selector(inspectorTextBold(_:)))
+            bold.state = seg.bold ? .on : .off
+            let italic = NSButton(checkboxWithTitle: L("Italic"), target: self, action: #selector(inspectorTextItalic(_:)))
+            italic.state = seg.italic ? .on : .off
+            styleRow.addArrangedSubview(bold); styleRow.addArrangedSubview(italic)
+            stack.addArrangedSubview(inspectorRow(videoLabel("Style", "样式"), styleRow))
+            stack.addArrangedSubview(inspectorRow(videoLabel("Align", "对齐"), inspectorPopup([L("Left"), L("Center"), L("Right")], selection: [VideoTextSegment.Alignment.left, .center, .right].firstIndex(of: seg.alignment) ?? 1, action: #selector(inspectorTextAlignment(_:)))))
+            stack.addArrangedSubview(inspectorRow(videoLabel("Background", "背景"), inspectorPopup([L("None"), L("Solid"), L("Rounded")], selection: [VideoTextSegment.BackgroundStyle.none, .solid, .rounded].firstIndex(of: seg.bgStyle) ?? 0, action: #selector(inspectorTextBackground(_:)))))
+        } else if let id = id, let seg = cutSegments.first(where: { $0.id == id }) {
+            stack.addArrangedSubview(effectHeader(symbol: "scissors", tint: cutTint, title: videoLabel("Cut", "剪切"), start: seg.startTime, end: seg.endTime))
+            stack.addArrangedSubview(inspectorLabel(videoLabel("This range is removed on export.", "导出时将移除此范围。")))
+        } else {
+            stack.addArrangedSubview(inspectorLabel(videoLabel("Select an effect", "选择特效"), heading: true))
+            stack.addArrangedSubview(inspectorLabel(videoLabel("Select a timeline segment to edit its settings", "选择时间线片段以编辑设置")))
+        }
+        if let id = id {
+            let fade = zoomSegments.first(where: { $0.id == id })?.fadeIn
+                ?? censorSegments.first(where: { $0.id == id })?.fadeIn
+                ?? textSegments.first(where: { $0.id == id })?.fadeIn
+            if let fade = fade {
+                stack.addArrangedSubview(groupLabel(videoLabel("Fade in and out", "淡入淡出")))
+                let titles = Self.fadeValues.map { $0 == 0 ? L("None") : String(format: "%gs", $0) }
+                stack.addArrangedSubview(chipGroup(titles, selected: Self.fadeValues.firstIndex(where: { abs($0 - fade) < 0.001 }) ?? -1, action: #selector(inspectorFadeChip(_:))))
+            }
+            let more = NSButton(title: videoLabel("More Settings…", "更多设置…"), target: self, action: #selector(inspectorMoreSettings))
+            more.bezelStyle = .rounded
+            more.controlSize = .small
+            stack.addArrangedSubview(more)
+        }
+        stack.addArrangedSubview(separatorView())
+        stack.addArrangedSubview(groupLabel(videoLabel("Export", "导出")))
+        if !isGIF {
+            let format = NSSegmentedControl(labels: ["MP4", "GIF"], trackingMode: .selectOne, target: self, action: #selector(inspectorFormatSegment(_:)))
+            format.selectedSegment = exportAsGIF ? 1 : 0
+            format.selectedSegmentBezelColor = .controlColor
+            format.setWidth((inspectorWidth - 28) / 2 - 2, forSegment: 0)
+            format.setWidth((inspectorWidth - 28) / 2 - 2, forSegment: 1)
+            stack.addArrangedSubview(format)
+        }
+        let scales: [CGFloat] = [1.0, 0.75, 0.5, 0.33, 0.25]
+        let sizeTitles = scales.map { scale -> String in
+            let w = (Int(CGFloat(originalWidth) * scale) / 2) * 2, h = (Int(CGFloat(originalHeight) * scale) / 2) * 2
+            if originalWidth == 0 { return "\(Int(scale * 100))%" }
+            return scale >= 0.999 ? "\(originalWidth) × \(originalHeight) (\(videoLabel("Original", "原始")))" : "\(w) × \(h) (\(Int(scale * 100))%)"
+        }
+        stack.addArrangedSubview(inspectorRow(videoLabel("Size", "尺寸"), inspectorPopup(sizeTitles, selection: scales.firstIndex(where: { abs($0 - exportScale) < 0.01 }) ?? 0, action: #selector(inspectorScale(_:)))))
+        if exportAsGIF || isGIF {
+            stack.addArrangedSubview(inspectorRow(videoLabel("Frame rate", "帧率"), inspectorPopup((5...30).map { "\($0) fps" }, selection: gifExportFPS - 5, action: #selector(inspectorFPS(_:)))))
+        } else {
+            stack.addArrangedSubview(inspectorRow(videoLabel("Quality", "质量"), inspectorPopup([L("High"), L("Medium"), L("Low")], selection: exportQuality == .high ? 0 : exportQuality == .medium ? 1 : 2, action: #selector(inspectorQuality(_:)))))
+        }
+        let estimate = NSTextField(labelWithString: estimatedExportSizeText())
+        estimate.font = .systemFont(ofSize: 12.5)
+        estimate.textColor = .tertiaryLabelColor
+        stack.addArrangedSubview(inspectorRow(videoLabel("Est. size", "预计大小"), estimate))
+        refreshHeaderInfo()
+        needsLayout = true
+    }
+
+    /// Same estimate the former bottom bar showed (trim × scale² × quality, GIF ×3).
+    private func estimatedExportSizeText() -> String {
+        let sourceFileSize = (try? FileManager.default.attributesOfItem(atPath: videoURL.path)[.size] as? Int) ?? 0
+        guard sourceFileSize > 0 else { return "—" }
+        let fpsValue = asset?.tracks(withMediaType: .video).first?.nominalFrameRate ?? 0
+        let trimRatio = duration > 0 ? (trimEnd - trimStart) / duration : 1.0
+        let scaleRatio = Double(exportScale * exportScale)
+        let qualityRatio: Double = exportQuality == .low ? 0.33 : (exportQuality == .medium ? 0.62 : 1.0)
+        let estimated: Int64
+        if exportAsGIF {
+            let gifFPSRatio = min(Float(gifExportFPS), fpsValue) / max(fpsValue, 1)
+            estimated = Int64(Double(sourceFileSize) * trimRatio * scaleRatio * 3.0 * Double(gifFPSRatio))
+        } else {
+            estimated = Int64(Double(sourceFileSize) * trimRatio * scaleRatio * qualityRatio)
+        }
+        return "≈ " + ByteCountFormatter.string(fromByteCount: estimated, countStyle: .file)
+    }
+
+    @objc private func inspectorCensorSegment(_ sender: NSSegmentedControl) { if let id = selectedSegmentID, let seg = censorSegments.first(where: { $0.id == id }) { seg.style = [VideoCensorSegment.Style.solid, .pixelate, .blur][sender.selectedSegment]; inspectorMutation() } }
+    @objc private func inspectorSpeedChip(_ sender: NSButton) { if let id = selectedSegmentID, let seg = speedSegments.first(where: { $0.id == id }) { let factor = VideoSpeedSegment.presetFactors[sender.tag]; seg.endTime = min(duration, max(seg.endTime, seg.startTime + VideoSpeedSegment.minCompDuration * factor)); seg.speedFactor = factor; inspectorMutation(); refreshInspector() } }
+    @objc private func inspectorFreezeChip(_ sender: NSButton) { if let id = selectedSegmentID, let seg = freezeSegments.first(where: { $0.id == id }) { seg.holdDuration = VideoFreezeSegment.presetDurations[sender.tag]; inspectorMutation(); refreshInspector() } }
+    @objc private func inspectorFadeChip(_ sender: NSButton) { guard let id = selectedSegmentID else { return }; let value = Self.fadeValues[sender.tag]; if let seg = zoomSegments.first(where: { $0.id == id }) { seg.fadeIn = value; seg.fadeOut = value } else if let seg = censorSegments.first(where: { $0.id == id }) { seg.fadeIn = value; seg.fadeOut = value } else if let seg = textSegments.first(where: { $0.id == id }) { seg.fadeIn = value; seg.fadeOut = value }; inspectorMutation(); refreshInspector() }
+    @objc private func inspectorFormatSegment(_ sender: NSSegmentedControl) { exportAsGIF = sender.selectedSegment == 1; savedURL = nil; refreshInspector(); needsDisplay = true }
+
+    @objc private func addEffectFromToolbar(_ sender: NSButton) { effectsBand?.addEffect(sender.tag, at: currentPlaybackTime) }
+    @objc private func inspectorPreviousFrame() { stepFrame(forward: false) }
+    @objc private func inspectorNextFrame() { stepFrame(forward: true) }
+    @objc private func inspectorPlayPause() { togglePlayPause() }
+    @objc private func inspectorDelete() { if let id = selectedSegmentID { effectsBand?.removeSegment(id: id) } }
+    @objc private func inspectorMoreSettings() { if let event = NSApp.currentEvent { effectsBand?.showSelectedSettings(event: event) } }
+    @objc private func inspectorEditText() { if let id = selectedSegmentID, let band = effectsBand { effectsBandDidRequestTextEdit(band, segmentID: id) } }
+    @objc private func inspectorZoom(_ sender: NSSlider) { if let id = selectedSegmentID, let seg = zoomSegments.first(where: { $0.id == id }) { seg.zoomLevel = CGFloat(sender.doubleValue); zoomValueLabel?.stringValue = String(format: "%.1f×", seg.zoomLevel); inspectorMutation() } }
+    @objc private func inspectorCensor(_ sender: NSPopUpButton) { if let id = selectedSegmentID, let seg = censorSegments.first(where: { $0.id == id }) { seg.style = [VideoCensorSegment.Style.solid, .pixelate, .blur][sender.indexOfSelectedItem]; inspectorMutation() } }
+    @objc private func inspectorSpeed(_ sender: NSPopUpButton) { if let id = selectedSegmentID, let seg = speedSegments.first(where: { $0.id == id }) { let factor = VideoSpeedSegment.presetFactors[sender.indexOfSelectedItem]; seg.endTime = min(duration, max(seg.endTime, seg.startTime + VideoSpeedSegment.minCompDuration * factor)); seg.speedFactor = factor; inspectorMutation() } }
+    @objc private func inspectorFreeze(_ sender: NSPopUpButton) { if let id = selectedSegmentID, let seg = freezeSegments.first(where: { $0.id == id }) { seg.holdDuration = VideoFreezeSegment.presetDurations[sender.indexOfSelectedItem]; inspectorMutation() } }
+    @objc private func inspectorTextSize(_ sender: NSPopUpButton) { if let id = selectedSegmentID, let seg = textSegments.first(where: { $0.id == id }) { seg.fontSize = [32, 48, 72, 104][sender.indexOfSelectedItem]; textRasterCache.removeValue(forKey: id); inspectorMutation() } }
+    @objc private func inspectorTextBold(_ sender: NSButton) { if let id = selectedSegmentID, let seg = textSegments.first(where: { $0.id == id }) { seg.bold = sender.state == .on; textRasterCache.removeValue(forKey: id); inspectorMutation() } }
+    @objc private func inspectorTextItalic(_ sender: NSButton) { if let id = selectedSegmentID, let seg = textSegments.first(where: { $0.id == id }) { seg.italic = sender.state == .on; textRasterCache.removeValue(forKey: id); inspectorMutation() } }
+    @objc private func inspectorTextAlignment(_ sender: NSPopUpButton) { if let id = selectedSegmentID, let seg = textSegments.first(where: { $0.id == id }) { seg.alignment = [VideoTextSegment.Alignment.left, .center, .right][sender.indexOfSelectedItem]; textRasterCache.removeValue(forKey: id); inspectorMutation() } }
+    @objc private func inspectorTextBackground(_ sender: NSPopUpButton) { if let id = selectedSegmentID, let seg = textSegments.first(where: { $0.id == id }) { seg.bgStyle = [VideoTextSegment.BackgroundStyle.none, .solid, .rounded][sender.indexOfSelectedItem]; textRasterCache.removeValue(forKey: id); inspectorMutation() } }
+    @objc private func inspectorFade(_ sender: NSPopUpButton) { guard let id = selectedSegmentID else { return }; let value = [0.0, 0.15, 0.25, 0.35, 0.5, 1.0][sender.indexOfSelectedItem]; if let seg = zoomSegments.first(where: { $0.id == id }) { seg.fadeIn = value; seg.fadeOut = value } else if let seg = censorSegments.first(where: { $0.id == id }) { seg.fadeIn = value; seg.fadeOut = value } else if let seg = textSegments.first(where: { $0.id == id }) { seg.fadeIn = value; seg.fadeOut = value }; inspectorMutation() }
+    @objc private func inspectorFormat(_ sender: NSPopUpButton) { exportAsGIF = sender.indexOfSelectedItem == 1; savedURL = nil; refreshInspector(); needsDisplay = true }
+    @objc private func inspectorScale(_ sender: NSPopUpButton) { exportScale = [1.0, 0.75, 0.5, 0.33, 0.25][sender.indexOfSelectedItem]; savedURL = nil; refreshInspector(); needsDisplay = true }
+    @objc private func inspectorFPS(_ sender: NSPopUpButton) { gifExportFPS = sender.indexOfSelectedItem + 5; UserDefaults.standard.set(gifExportFPS, forKey: "gifExportFPS"); savedURL = nil; needsDisplay = true }
+    @objc private func inspectorQuality(_ sender: NSPopUpButton) { exportQuality = [VideoQuality.high, .medium, .low][sender.indexOfSelectedItem]; savedURL = nil; refreshInspector(); needsDisplay = true }
+    private func inspectorMutation() { savedURL = nil; effectsBand?.refreshAfterParentEdit(); applyZoomTransformForCurrentTime(); needsDisplay = true }
+
     private func generateThumbnails() {
         guard let asset = asset, !thumbnailsGenerating else { return }
-        let tlW = bounds.width - timelinePad * 2
+        let tlW = bounds.width - timelineLeft - timelineRight
         guard tlW > 0 else { return }
         lastThumbnailWidth = tlW
         thumbnailsGenerating = true
@@ -599,37 +1143,57 @@ private final class VideoEditorView: NSView {
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
-        // Controls background
-        let controlsBg = NSRect(x: 0, y: 0, width: bounds.width, height: controlsH)
-        ToolbarLayout.bgColor.setFill()
-        NSBezierPath(rect: controlsBg).fill()
-
-        // Separator
-        ToolbarLayout.iconColor.withAlphaComponent(0.1).setFill()
-        NSBezierPath(rect: NSRect(x: 0, y: controlsH, width: bounds.width, height: 0.5)).fill()
+        let panelH = controlsH + effectToolbarHeight
+        let headerY = bounds.height - headerHeight
+        // Header row and timeline panel follow the window theme; the preview
+        // column stays dark because the video is document content.
+        Self.toolSurface.setFill()
+        NSRect(x: 0, y: headerY, width: bounds.width, height: headerHeight).fill()
+        Self.stage.setFill()
+        NSRect(x: 0, y: panelH, width: bounds.width - inspectorWidth, height: max(0, headerY - panelH)).fill()
+        Self.surface.setFill()
+        NSRect(x: bounds.width - inspectorWidth, y: panelH, width: inspectorWidth, height: max(0, headerY - panelH)).fill()
+        NSRect(x: 0, y: 0, width: bounds.width, height: panelH).fill()
+        Self.line.setFill()
+        NSRect(x: 0, y: headerY, width: bounds.width, height: 0.5).fill()
+        NSRect(x: 0, y: panelH - 0.5, width: bounds.width, height: 0.5).fill()
+        NSRect(x: 0, y: controlsH, width: bounds.width, height: 0.5).fill()
+        NSRect(x: bounds.width - inspectorWidth, y: panelH, width: 0.5, height: max(0, headerY - panelH)).fill()
+        NSRect(x: 96, y: 0, width: 0.5, height: controlsH).fill()
+        if let message = statusMessage, statusPillRect.width > 0 { drawStatus(message) }
 
         guard duration > 0 else { return }
 
-        // Skip draw sections whose Y-band doesn't intersect the dirty rect.
-        // AppKit already clips final drawing to `dirtyRect`, but each
-        // `drawX()` method still executes its setup — SF-Symbol
-        // rasterization in `drawIconButton` alone costs ~25ms/call. When
-        // the 30Hz playhead observer only invalidates the trim-bar band,
-        // the bottom buttons row doesn't need to run at all.
-        let buttonsBand = NSRect(x: 0, y: 0, width: bounds.width, height: buttonsAreaH)
+        // Timeline toolbar info: 入点 · 出点 · 共.
+        let info = "\(videoLabel("In", "入点")) \(formatClock(trimStart)) · \(videoLabel("Out", "出点")) \(formatClock(trimEnd)) · \(videoLabel("Total", "共")) \(formatClock(duration))" as NSString
+        let infoAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .regular), .foregroundColor: NSColor.tertiaryLabelColor]
+        let infoSize = info.size(withAttributes: infoAttrs)
+        info.draw(at: NSPoint(x: bounds.width - 14 - infoSize.width, y: controlsH + (effectToolbarHeight - infoSize.height) / 2), withAttributes: infoAttrs)
 
         drawTimeline()
-        if dirtyRect.intersects(buttonsBand) {
-            drawButtons()
-        }
+        drawLaneLabels()
         drawTimeLabels()
-        if let msg = statusMessage { drawStatus(msg) }
     }
 
+    /// Track gutter labels (mac-video.html .lanes).
+    private func drawLaneLabels() {
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor]
+        func lane(_ symbol: String, _ title: String, centerY: CGFloat) {
+            if let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 12, weight: .regular)) {
+                let tinted = NSImage(size: icon.size, flipped: false) { r in icon.draw(in: r); NSColor.tertiaryLabelColor.setFill(); r.fill(using: .sourceAtop); return true }
+                tinted.draw(in: NSRect(x: 12, y: centerY - icon.size.height / 2, width: icon.size.width, height: icon.size.height))
+            }
+            let size = (title as NSString).size(withAttributes: attrs)
+            (title as NSString).draw(at: NSPoint(x: 32, y: centerY - size.height / 2), withAttributes: attrs)
+        }
+        lane("film", videoLabel("Video", "画面"), centerY: timelineRect.midY)
+        let bandTop = buttonsAreaH + effectsScrollViewHeight(forRowCount: currentEffectRowCount)
+        lane("sparkles", videoLabel("Effects", "效果"), centerY: bandTop - 15)
+    }
 
     private func drawTimeline() {
-        let tlX = timelinePad
-        let tlW = bounds.width - timelinePad * 2
+        let tlX = timelineLeft
+        let tlW = bounds.width - timelineLeft - timelineRight
         // Trim timeline bottom sits above the time-labels row, which sits
         // above the effects scroll view. All three adjust upward as the
         // scroll view grows to show more rows.
@@ -651,8 +1215,8 @@ private final class VideoEditorView: NSView {
         rebuildThumbnailStripIfNeeded(width: tlW, height: tlH)
 
         // Track background with rounded clip
-        let trackPath = NSBezierPath(roundedRect: timelineRect, xRadius: 5, yRadius: 5)
-        ToolbarLayout.iconColor.withAlphaComponent(0.06).setFill()
+        let trackPath = NSBezierPath(roundedRect: timelineRect, xRadius: 6, yRadius: 6)
+        NSColor.black.setFill()
         trackPath.fill()
 
         // Blit the pre-composited thumbnail strip in one draw call. Drawing
@@ -662,19 +1226,32 @@ private final class VideoEditorView: NSView {
         trackPath.addClip()
         if let strip = thumbnailStrip {
             strip.draw(in: NSRect(x: tlX, y: tlY, width: tlW, height: tlH),
-                       from: .zero, operation: .sourceOver, fraction: 0.5)
+                       from: .zero, operation: .sourceOver, fraction: 1.0)
         }
 
         // Dim untrimmed regions
         let startX = tlX + CGFloat(trimStart / duration) * tlW
         let endX = tlX + CGFloat(trimEnd / duration) * tlW
-        NSColor.black.withAlphaComponent(0.6).setFill()
-        if startX > tlX {
-            NSRect(x: tlX, y: tlY, width: startX - tlX, height: tlH).fill()
+        // Outside the trim window: dark hatched veil (mac-video.html .trim .out).
+        func veil(_ rect: NSRect) {
+            guard rect.width > 0 else { return }
+            NSColor.black.withAlphaComponent(0.55).setFill()
+            rect.fill()
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(rect: rect).addClip()
+            NSColor.black.withAlphaComponent(0.14).setStroke()
+            let hatch = NSBezierPath()
+            hatch.lineWidth = 4
+            var hx = rect.minX - rect.height
+            while hx < rect.maxX + rect.height {
+                hatch.move(to: NSPoint(x: hx, y: rect.maxY)); hatch.line(to: NSPoint(x: hx + rect.height, y: rect.minY))
+                hx += 12
+            }
+            hatch.stroke()
+            NSGraphicsContext.restoreGraphicsState()
         }
-        if endX < tlX + tlW {
-            NSRect(x: endX, y: tlY, width: tlX + tlW - endX, height: tlH).fill()
-        }
+        veil(NSRect(x: tlX, y: tlY, width: max(0, startX - tlX), height: tlH))
+        veil(NSRect(x: endX, y: tlY, width: max(0, tlX + tlW - endX), height: tlH))
 
         // Subtle teal tint for speed ranges — just enough to signal them on
         // the trim bar. The full pill lives on the effects band below.
@@ -714,26 +1291,23 @@ private final class VideoEditorView: NSView {
         }
 
         // Trim border highlight
-        let trimRect = NSRect(x: startX, y: tlY, width: endX - startX, height: tlH)
-        let trimBorder = NSBezierPath(roundedRect: trimRect.insetBy(dx: 0.5, dy: 0.5), xRadius: 2, yRadius: 2)
-        trimBorder.lineWidth = 1.5
-        ToolbarLayout.accentColor.withAlphaComponent(0.8).setStroke()
-        trimBorder.stroke()
         NSGraphicsContext.restoreGraphicsState()
 
-        // Trim handles
-        let handleW: CGFloat = 10
-        let handleH: CGFloat = tlH + 8
-
-        let startHandleRect = NSRect(x: startX - handleW / 2, y: tlY - 4, width: handleW, height: handleH)
-        ToolbarLayout.accentColor.setFill()
-        NSBezierPath(roundedRect: startHandleRect, xRadius: 3, yRadius: 3).fill()
-        drawHandleGrip(in: startHandleRect)
-
-        let endHandleRect = NSRect(x: endX - handleW / 2, y: tlY - 4, width: handleW, height: handleH)
-        ToolbarLayout.accentColor.setFill()
-        NSBezierPath(roundedRect: endHandleRect, xRadius: 3, yRadius: 3).fill()
-        drawHandleGrip(in: endHandleRect)
+        // Trim window: yellow frame with 9pt side grips (mac-video.html .trim .win2).
+        let trimYellow = NSColor(srgbRed: 1, green: 0.8, blue: 0, alpha: 1)
+        let trimRect = NSRect(x: startX, y: tlY, width: max(18, endX - startX), height: tlH)
+        let outer = NSBezierPath(roundedRect: trimRect, xRadius: 6, yRadius: 6)
+        let inner = NSBezierPath(roundedRect: trimRect.insetBy(dx: 9, dy: 2), xRadius: 2, yRadius: 2)
+        outer.append(inner.reversed)
+        trimYellow.setFill()
+        outer.fill()
+        NSColor.black.withAlphaComponent(0.45).setStroke()
+        for gripX in [trimRect.minX + 4.5, trimRect.maxX - 4.5] {
+            let grip = NSBezierPath()
+            grip.lineWidth = 1.5
+            grip.move(to: NSPoint(x: gripX, y: trimRect.midY - 6)); grip.line(to: NSPoint(x: gripX, y: trimRect.midY + 6))
+            grip.stroke()
+        }
 
         // Playhead — line spans the full trim timeline. Circle sits BELOW
         // the trim bar in the gap between it and the effects scroll view.
@@ -748,21 +1322,20 @@ private final class VideoEditorView: NSView {
             // of marking the whole view dirty.
             lastDrawnPlayheadX = playheadX
 
-            ToolbarLayout.iconColor.withAlphaComponent(0.9).setFill()
-            let playheadRect = NSRect(x: playheadX - 1, y: tlY - 2,
-                                       width: 2, height: tlH + 4)
-            NSBezierPath(roundedRect: playheadRect, xRadius: 1, yRadius: 1).fill()
-
-            let circleR: CGFloat = 4
-            let circleX = playheadX
-            // Circle sits centered in the gap below the trim bar, so it's
-            // visually "stuck to" the trim bar's bottom edge.
-            let circleY = tlY - circleR * 2 - 2
-            ToolbarLayout.iconColor.setFill()
-            NSBezierPath(ovalIn: NSRect(x: circleX - circleR,
-                                          y: circleY,
-                                          width: circleR * 2,
-                                          height: circleR * 2)).fill()
+            // Red playhead through ruler + filmstrip with a pentagon head
+            // (mac-video.html .phd). The effects band is a sibling scroll view.
+            let rulerTop = tlY + tlH + labelsRowH
+            NSColor.systemRed.setFill()
+            NSRect(x: playheadX - 1, y: tlY - 6, width: 2, height: rulerTop - (tlY - 6) - 4).fill()
+            let head = NSBezierPath()
+            let headTop = rulerTop - 4
+            head.move(to: NSPoint(x: playheadX - 6, y: headTop))
+            head.line(to: NSPoint(x: playheadX + 6, y: headTop))
+            head.line(to: NSPoint(x: playheadX + 6, y: headTop - 6.6))
+            head.line(to: NSPoint(x: playheadX, y: headTop - 12))
+            head.line(to: NSPoint(x: playheadX - 6, y: headTop - 6.6))
+            head.close()
+            head.fill()
         }
     }
 
@@ -775,8 +1348,10 @@ private final class VideoEditorView: NSView {
     /// observers. Other mutations (trim drag, segment edits, window
     /// resize) still use `needsDisplay = true` for full redraws.
     private func invalidatePlayheadArea() {
-        let tlX = timelinePad
-        let tlW = bounds.width - timelinePad * 2
+        transportTime?.attributedStringValue = transportTimeString()
+        playButton?.needsDisplay = true
+        let tlX = timelineLeft
+        let tlW = bounds.width - timelineLeft - timelineRight
         let newX = max(tlX, min(tlX + tlW, tlX + CGFloat(currentPlaybackTime / max(duration, 0.0001)) * tlW))
         let oldX = lastDrawnPlayheadX ?? newX
 
@@ -787,7 +1362,7 @@ private final class VideoEditorView: NSView {
         // path — that was eating ~1s/10s on the main thread.
         let scrollH = effectsScrollViewHeight(forRowCount: currentEffectRowCount)
         let tlY = buttonsAreaH + scrollH + scrollToLabelsGap
-        let playheadBandMinY = tlY - 12                                              // below trim bar (circle + padding)
+        let playheadBandMinY = tlY - 8                                               // below trim bar
         let playheadBandMaxY = tlY + trimBarH + labelsAboveTrimGap + labelsRowH + 2  // through label row
 
         // 1) The playhead stripe (line + circle + trim bar content around it).
@@ -1172,7 +1747,7 @@ private final class VideoEditorView: NSView {
     /// Extra vertical gap between the trim bar top and the time labels,
     /// purely for visual breathing room. Without it the labels hug the
     /// top edge of the trim rectangle and look cramped.
-    private let labelsAboveTrimGap: CGFloat = 4
+    private let labelsAboveTrimGap: CGFloat = 0
 
     private var timeLabelY: CGFloat {
         let attrs: [NSAttributedString.Key: Any] = [
@@ -1187,44 +1762,39 @@ private final class VideoEditorView: NSView {
         return labelsRowBottom + (labelsRowH - sampleHeight) / 2
     }
 
+    /// Ruler above the filmstrip (mac-video.html .ruler): ticks + mm:ss labels.
     private func drawTimeLabels() {
-        let currentTime = currentPlaybackTime
-        // Show the actual output duration so users see the effect of cuts
-        // and speed on the final export. Falls back to raw trim span when
-        // neither is present (same value, cheaper to compute).
-        let trimDuration: Double = {
-            if cutSegments.isEmpty && speedSegments.isEmpty && freezeSegments.isEmpty {
-                return trimEnd - trimStart
-            }
-            let kept = VideoCuts.keptRanges(trimStart: trimStart, trimEnd: trimEnd, cuts: cutSegments)
-            let pieces = VideoSpeeds.pieces(keptRanges: kept,
-                                              speeds: speedSegments,
-                                              freezes: freezeSegments)
-            return VideoSpeeds.totalCompositionDuration(pieces)
-        }()
-
-        let leftStr = formatTime(currentTime) as NSString
-        let rightStr = String(format: L("%@ selected"), formatTime(trimDuration)) as NSString
+        guard duration > 0 else { return }
+        let rulerY = timelineRect.maxY
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
-            .foregroundColor: ToolbarLayout.iconColor.withAlphaComponent(0.5),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
+            .foregroundColor: NSColor.tertiaryLabelColor,
         ]
-
-        leftStr.draw(at: NSPoint(x: timelinePad, y: timeLabelY), withAttributes: attrs)
-
-        let rightSize = rightStr.size(withAttributes: attrs)
-        rightStr.draw(at: NSPoint(x: bounds.width - timelinePad - rightSize.width, y: timeLabelY), withAttributes: attrs)
+        let steps: [Double] = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
+        let step = steps.first { CGFloat($0 / duration) * timelineRect.width >= 64 } ?? 600
+        var t: Double = 0
+        while t <= duration + 0.0001 {
+            let x = timelineRect.minX + CGFloat(t / duration) * timelineRect.width
+            Self.line.setFill()
+            NSRect(x: x, y: rulerY + 10, width: 0.5, height: 12).fill()
+            let label = step < 1 ? String(format: "%d:%04.1f", Int(t) / 60, t.truncatingRemainder(dividingBy: 60))
+                : String(format: "%d:%02d", Int(t) / 60, Int(t) % 60)
+            let size = (label as NSString).size(withAttributes: attrs)
+            if x + 4 + size.width <= bounds.width - 2 {
+                (label as NSString).draw(at: NSPoint(x: x + 4, y: rulerY + 10 + (12 - size.height) / 2), withAttributes: attrs)
+            }
+            t += step
+        }
     }
 
     private func drawStatus(_ message: String) {
-        let color: NSColor = statusIsError ? NSColor(calibratedRed: 1.0, green: 0.5, blue: 0.5, alpha: 1.0) : .systemGreen
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: color,
-        ]
-        let str = message as NSString
-        let size = str.size(withAttributes: attrs)
-        str.draw(at: NSPoint(x: bounds.midX - size.width / 2, y: timeLabelY), withAttributes: attrs)
+        // Header status pill (mac-video.html .stat).
+        Self.fill.setFill()
+        NSBezierPath(roundedRect: statusPillRect, xRadius: 7, yRadius: 7).fill()
+        let color: NSColor = statusIsError ? .systemRed : .secondaryLabelColor
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: color]
+        let size = (message as NSString).size(withAttributes: attrs)
+        (message as NSString).draw(at: NSPoint(x: statusPillRect.midX - size.width / 2, y: statusPillRect.midY - size.height / 2), withAttributes: attrs)
     }
 
     private func formatTime(_ seconds: Double) -> String {
@@ -1372,10 +1942,10 @@ private final class VideoEditorView: NSView {
 
         // Format toggle
         if formatMP4Rect.contains(point) && exportAsGIF {
-            exportAsGIF = false; savedURL = nil; needsDisplay = true; return
+            exportAsGIF = false; savedURL = nil; refreshInspector(); needsDisplay = true; return
         }
         if formatGIFRect.contains(point) && !exportAsGIF {
-            exportAsGIF = true; savedURL = nil; needsDisplay = true; return
+            exportAsGIF = true; savedURL = nil; refreshInspector(); needsDisplay = true; return
         }
 
         // Dimensions dropdown
@@ -1447,6 +2017,7 @@ private final class VideoEditorView: NSView {
     private func toggleMute() {
         isMuted.toggle()
         player?.isMuted = isMuted
+        refreshHeaderInfo()
         needsDisplay = true
     }
 
@@ -1471,16 +2042,19 @@ private final class VideoEditorView: NSView {
             }
             player.play()
         }
+        playButton?.needsDisplay = true
         needsDisplay = true
     }
 
     private func showStatus(_ msg: String, isError: Bool = false, persist: Bool = false) {
         statusMessage = msg
         statusIsError = isError
+        needsLayout = true
         statusTimer?.invalidate()
         if !persist {
             statusTimer = Timer.scheduledTimer(withTimeInterval: isError ? 6 : 3, repeats: false) { [weak self] _ in
                 self?.statusMessage = nil
+                self?.needsLayout = true
                 self?.needsDisplay = true
             }
         }
@@ -1726,6 +2300,7 @@ private final class VideoEditorView: NSView {
     @objc private func dimensionSelected(_ sender: NSMenuItem) {
         exportScale = CGFloat(sender.tag) / 100.0
         savedURL = nil
+        refreshInspector()
         needsDisplay = true
     }
 
@@ -1764,6 +2339,7 @@ private final class VideoEditorView: NSView {
         gifExportFPS = min(30, max(5, sender.tag))
         UserDefaults.standard.set(gifExportFPS, forKey: "gifExportFPS")
         savedURL = nil
+        refreshInspector()
         needsDisplay = true
     }
 
@@ -1771,6 +2347,7 @@ private final class VideoEditorView: NSView {
         if let raw = sender.representedObject as? String, let q = VideoQuality(rawValue: raw) {
             exportQuality = q
             savedURL = nil
+            refreshInspector()
             needsDisplay = true
         }
     }
@@ -3168,11 +3745,13 @@ extension VideoEditorView: EffectsBandViewDelegate {
     func effectsBandDidMutate(_ view: EffectsBandView) {
         savedURL = nil
         applyZoomTransformForCurrentTime()
+        refreshHeaderInfo()
         needsDisplay = true
     }
 
     func effectsBand(_ view: EffectsBandView, didSelectSegment segmentID: UUID?) {
         updateEffectsOverlay()
+        refreshInspector()
     }
 
     func effectsBand(_ view: EffectsBandView, didChangeRowCount rowCount: Int) {
@@ -3181,7 +3760,8 @@ extension VideoEditorView: EffectsBandViewDelegate {
         effectsBandHeightConstraint?.animator().constant = newScrollH
         // Player view also shrinks so the whole controls band (including the
         // trim timeline) has room to grow upward.
-        playerBottomConstraint?.animator().constant = -controlsH
+        playerBottomConstraint?.animator().constant = -(controlsH + effectToolbarHeight + transportHeight + 6)
+        needsLayout = true
         needsDisplay = true
     }
 
@@ -3278,5 +3858,119 @@ private extension CMSampleBuffer {
             sampleBufferOut: &out
         )
         return status == noErr ? out : nil
+    }
+}
+
+// MARK: - V3 video editor controls
+
+/// Flipped so inspector content starts at the top of its scroll view.
+private final class VideoInspectorStack: NSStackView {
+    override var isFlipped: Bool { true }
+}
+
+/// Timeline toolbar action (`.ttb .a`): borderless icon + label with hover fill.
+private final class VideoToolbarButton: NSButton {
+    private var hovering = false { didSet { needsDisplay = true } }
+    private var area: NSTrackingArea?
+    convenience init(title: String, target: AnyObject?, action: Selector) {
+        self.init(frame: .zero)
+        self.title = title
+        self.target = target
+        self.action = action
+        isBordered = false
+        font = .systemFont(ofSize: 12.5)
+        contentTintColor = .secondaryLabelColor
+        attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: NSColor.secondaryLabelColor])
+        heightAnchor.constraint(equalToConstant: 28).isActive = true
+    }
+    override var intrinsicContentSize: NSSize {
+        let base = super.intrinsicContentSize
+        return NSSize(width: base.width + 18, height: 28)
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area { removeTrackingArea(area) }
+        let next = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self, userInfo: nil)
+        addTrackingArea(next); area = next
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func draw(_ dirtyRect: NSRect) {
+        if hovering && isEnabled {
+            VideoEditorView.fill.setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
+        }
+        super.draw(dirtyRect)
+    }
+}
+
+/// White 40pt round play / pause button (`.transport .play`).
+private final class VideoTransportPlayButton: NSButton {
+    var isPlaying: (() -> Bool)?
+    convenience init(target: AnyObject?, action: Selector) {
+        self.init(frame: NSRect(x: 0, y: 0, width: 40, height: 40))
+        self.target = target
+        self.action = action
+        isBordered = false
+        title = ""
+        widthAnchor.constraint(equalToConstant: 40).isActive = true
+        heightAnchor.constraint(equalToConstant: 40).isActive = true
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.white.withAlphaComponent(isHighlighted ? 0.8 : 1).setFill()
+        NSBezierPath(ovalIn: bounds).fill()
+        let name = (isPlaying?() ?? false) ? "pause.fill" : "play.fill"
+        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 16, weight: .semibold)) else { return }
+        let tinted = NSImage(size: symbol.size, flipped: false) { r in
+            symbol.draw(in: r); NSColor(white: 0.07, alpha: 1).setFill(); r.fill(using: .sourceAtop); return true
+        }
+        let dx: CGFloat = name == "play.fill" ? 1.5 : 0
+        tinted.draw(in: NSRect(x: bounds.midX - symbol.size.width / 2 + dx, y: bounds.midY - symbol.size.height / 2,
+                               width: symbol.size.width, height: symbol.size.height),
+                    from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+}
+
+/// Inspector choice chip (`.chs span`, `.on` = selected).
+private final class VideoChipButton: NSButton {
+    var isOn = false { didSet { needsDisplay = true } }
+    private let chipFont = NSFont.systemFont(ofSize: 12)
+    convenience init(title: String, target: AnyObject?, action: Selector) {
+        self.init(frame: .zero)
+        self.title = title
+        self.target = target
+        self.action = action
+        isBordered = false
+        let width = ceil((title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold)]).width) + 20
+        frame.size = NSSize(width: width, height: 26)
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7)
+        if isOn {
+            NSColor.controlAccentColor.withAlphaComponent(0.12).setFill(); path.fill()
+            NSColor.controlAccentColor.setStroke(); path.lineWidth = 1; path.stroke()
+        } else {
+            VideoEditorView.fill.setFill(); path.fill()
+        }
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: isOn ? NSFont.systemFont(ofSize: 12, weight: .semibold) : chipFont,
+            .foregroundColor: isOn ? NSColor.controlAccentColor : NSColor.secondaryLabelColor]
+        let size = (title as NSString).size(withAttributes: attrs)
+        (title as NSString).draw(at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2), withAttributes: attrs)
+    }
+}
+
+private final class VideoChipGroup: NSView {
+    override var isFlipped: Bool { true }
+    func layoutChips(width: CGFloat) {
+        var x: CGFloat = 0, y: CGFloat = 0
+        for chip in subviews {
+            if x + chip.frame.width > width, x > 0 { x = 0; y += 32 }
+            chip.frame.origin = NSPoint(x: x, y: y)
+            x += chip.frame.width + 6
+        }
+        frame.size = NSSize(width: width, height: y + 26)
     }
 }
