@@ -4,6 +4,7 @@
 #include <netfw.h>
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <optional>
 #include <shellapi.h>
 #include <variant>
@@ -256,7 +257,7 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       screenshot_capture_.reset();
       auto pending = std::move(screenshot_result_);
       if (!pending) return 0;
-      ShowFromTray();
+      if (screenshot_restore_window_ || !completion->second.empty()) ShowFromTray();
       if (!completion->second.empty()) {
         pending->Error(completion->second, "The selected content could not be captured.");
       } else if (completion->first.empty()) {
@@ -477,7 +478,11 @@ void FlutterWindow::InstallPlatformChannels() {
       return;
     }
     if (call.method_name() == "openFullHistory" || call.method_name() == "openMainWindow") {
-      DispatchTrayAction("main");
+      // Optional target lets quick-panel shortcuts land on one main-window page.
+      const auto* target = call.arguments() ? std::get_if<std::string>(call.arguments()) : nullptr;
+      const bool known = target && (*target == "history" || *target == "devices" ||
+                                    *target == "settings" || *target == "files");
+      DispatchTrayAction(known ? target->c_str() : "main");
       result->Success();
       return;
     }
@@ -571,6 +576,7 @@ void FlutterWindow::InstallPlatformChannels() {
           return;
         }
         pending_screenshot_mode_ = mode;
+        screenshot_restore_window_ = IsWindowVisible(GetHandle()) && !IsIconic(GetHandle()) && !IsPanelOpen();
         screenshot_capture_.reset();
         // Exclude Clipy's own window from the frozen desktop. Restore it when
         // selection completes or fails, including cancellation.
@@ -849,8 +855,12 @@ bool FlutterWindow::PasteQuickPanel() {
 
 void FlutterWindow::DispatchTrayAction(const char* action) {
   if (screenshot_result_) return;
-  if (IsPanelOpen()) LeaveQuickPanel(true);
-  else ShowFromTray();
+  // Capture keeps the current window state; the capture request hides it and
+  // only restores a main window that was already visible.
+  if (strcmp(action, "capture") != 0) {
+    if (IsPanelOpen()) LeaveQuickPanel(true);
+    else ShowFromTray();
+  }
   PublishWindowMode();
   if (tray_channel_) {
     tray_channel_->InvokeMethod("action",

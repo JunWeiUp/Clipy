@@ -39,18 +39,7 @@ class _WindowsHotkeySettingsState extends State<WindowsHotkeySettings> {
     }
   }
 
-  String _label(String kind) {
-    final m = _status['${kind}Modifiers'];
-    final k = _status['${kind}Key'];
-    if (m is! int || k is! int) return '—';
-    return [
-      if (m & 2 != 0) 'Ctrl',
-      if (m & 1 != 0) 'Alt',
-      if (m & 4 != 0) 'Shift',
-      if (m & 8 != 0) 'Win',
-      if (k >= 112 && k <= 123) 'F${k - 111}' else String.fromCharCode(k),
-    ].join(' + ');
-  }
+  String _label(String kind) => WindowsHotkeys.label(_status, kind) ?? '—';
 
   Future<void> _record(KeyEvent event) async {
     if (event is! KeyDownEvent || _recording == null || _saving) return;

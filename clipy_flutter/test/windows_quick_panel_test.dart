@@ -49,6 +49,8 @@ void main() {
     var closed = false;
     var pinned = false;
     var pasted = false;
+    final captures = <String>[];
+    final pages = <String>[];
     await tester.binding.setSurfaceSize(const Size(400, 640));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -63,6 +65,10 @@ void main() {
           setPinned: (value) async => pinned = value,
           onOpenFull: () => opened = true,
           onClose: () => closed = true,
+          onCapture: (mode, delay) => captures.add('$mode:$delay'),
+          onNavigate: pages.add,
+          deviceCount: 2,
+          screenshotShortcut: 'Ctrl + Shift + A',
         ),
       ),
     );
@@ -91,6 +97,19 @@ void main() {
     closed = false;
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     expect(closed, isTrue);
+    await tester.tap(find.text('Region'));
+    await tester.tap(find.text('Window'));
+    await tester.tap(find.text('Display'));
+    await tester.tap(find.text('Delay'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Capture region in 5 s'));
+    await tester.pumpAndSettle();
+    expect(captures, ['region:0', 'window:0', 'fullscreen:0', 'region:5']);
+    expect(find.text('Screenshot Ctrl + Shift + A'), findsOneWidget);
+    await tester.tap(find.text('Send file'));
+    await tester.tap(find.text('2 online'));
+    await tester.tap(find.byTooltip('Received Files'));
+    expect(pages, ['devices', 'devices', 'files']);
     expect(tester.takeException(), isNull);
   });
 }

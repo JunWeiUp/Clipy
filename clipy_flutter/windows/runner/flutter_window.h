@@ -59,6 +59,9 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> screenshot_channel_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> tray_channel_;
   std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> screenshot_result_;
+  // Only a capture started from the visible main window brings it back;
+  // tray, hotkey and quick-panel captures finish in the result flyout.
+  bool screenshot_restore_window_ = true;
   std::unique_ptr<ScreenshotCapture> screenshot_capture_;
   std::optional<std::pair<std::vector<uint8_t>, std::string>> screenshot_completion_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> storage_channel_;

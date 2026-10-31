@@ -514,6 +514,20 @@ class AppStrings {
       _t('$count 字', '$count characters');
   String get openMainWindow => _t('打开主窗口', 'Open main window');
   String get closeQuickPanel => _t('收起面板', 'Hide panel');
+  String get quickTools => _t('快捷工具', 'Quick tools');
+  String get quickRegion => _t('区域截图', 'Region');
+  String get quickWindow => _t('窗口', 'Window');
+  String get quickDisplay => _t('全屏', 'Display');
+  String get quickDelay => _t('延时', 'Delay');
+  String get quickSendFile => _t('发送文件', 'Send file');
+  String get quickSendFileHint =>
+      _t('在设备页选择设备并发送文件', 'Choose a device and send a file');
+  String quickDelayedRegion(int seconds) =>
+      _t('$seconds 秒后区域截图', 'Capture region in $seconds s');
+  String screenshotShortcutHint(String shortcut) =>
+      _t('截图 $shortcut', 'Screenshot $shortcut');
+  String devicesOnline(int count) => _t('$count 台设备在线', '$count online');
+  String get noDevicesOnline => _t('暂无设备在线', 'No devices online');
   String get openFullHistory => _t('打开完整历史', 'Open full history');
   String get searchNotifications => _t('搜索通知', 'Search notifications');
   String get searchHistory => _t('搜索内容或来源应用', 'Search content or source app');

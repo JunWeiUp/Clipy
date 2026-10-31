@@ -207,6 +207,10 @@ void main() {
             paste: () async => true,
             setPinned: (_) async {},
             onOpenFull: () {},
+            onCapture: (_, _) {},
+            onNavigate: (_) {},
+            deviceCount: 2,
+            screenshotShortcut: 'Ctrl + Shift + A',
           ),
           _ => WindowsCaptureResult(
             path: preview!.path,

@@ -7,22 +7,41 @@ import 'package:flutter/services.dart';
 import '../../app_localizations.dart';
 import '../../clipboard_manager.dart';
 import '../../models.dart';
+import '../../sync_manager.dart';
+import '../settings/windows_hotkeys.dart';
 import '../../ui/app_components.dart';
 import 'history_feed_controller.dart';
 
-/// Compact tray history, using the same paginated repository as the main view.
+/// Compact tray flyout: quick tools, clipboard history and device status.
+/// History uses the same paginated repository as the main view.
 class WindowsQuickPanel extends StatefulWidget {
   const WindowsQuickPanel({
     super.key,
     required this.onOpenFull,
+    this.onCapture,
+    this.onNavigate,
+    this.capturing = false,
     this.controller,
     this.copy,
     this.paste,
     this.setPinned,
     this.onClose,
+    this.deviceCount,
+    this.screenshotShortcut,
   });
   final VoidCallback onOpenFull;
   final VoidCallback? onClose;
+
+  /// Screenshot `region`/`window`/`fullscreen` with a 0, 3 or 5 second delay.
+  final void Function(String mode, int delaySeconds)? onCapture;
+
+  /// Opens a main-window page: `devices` or `files`.
+  final void Function(String target)? onNavigate;
+  final bool capturing;
+  @visibleForTesting
+  final int? deviceCount;
+  @visibleForTesting
+  final String? screenshotShortcut;
   @visibleForTesting
   final HistoryFeedController? controller;
   @visibleForTesting
@@ -47,10 +66,26 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
   bool _pinned = false;
   static const _tray = MethodChannel('com.clipyclone.clipy_android/tray');
   String? _copying;
+  String? _shortcut;
+  int? _devices;
+  StreamSubscription<List<DiscoveredPeer>>? _peers;
 
   @override
   void initState() {
     super.initState();
+    _shortcut = widget.screenshotShortcut;
+    _devices = widget.deviceCount;
+    if (Platform.isWindows) {
+      if (_shortcut == null) unawaited(_loadShortcut());
+      if (_devices == null) {
+        // Event-driven like the devices page; the listener lives only while
+        // the flyout is mounted.
+        _devices = SyncManager.instance.availablePeers.length;
+        _peers = SyncManager.instance.onPeersChanged.listen((peers) {
+          if (mounted) setState(() => _devices = peers.length);
+        });
+      }
+    }
     _feed =
         widget.controller ??
         HistoryFeedController(ClipboardManager.instance.fetchPage);
@@ -60,6 +95,18 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
       ClipboardManager.instance.addListener(_historyChanged);
     }
     if (_feed.entries.isEmpty) unawaited(_feed.refresh());
+  }
+
+  Future<void> _loadShortcut() async {
+    try {
+      final status = await WindowsHotkeys.read();
+      final label = status['screenshot'] == true
+          ? WindowsHotkeys.label(status, 'screenshot')
+          : null;
+      if (mounted) setState(() => _shortcut = label);
+    } catch (_) {
+      // The tools still work without the shortcut hint.
+    }
   }
 
   void _changed() {
@@ -148,6 +195,7 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
 
   @override
   void dispose() {
+    unawaited(_peers?.cancel());
     if (widget.controller == null) {
       ClipboardManager.instance.removeListener(_historyChanged);
     }
@@ -159,6 +207,97 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
     _search.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  Widget _buildTools(BuildContext context) {
+    final l10n = context.l10n;
+    final capture = widget.capturing ? null : widget.onCapture;
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    l10n.quickTools,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                if (_shortcut case final shortcut?)
+                  Text(
+                    l10n.screenshotShortcutHint(shortcut),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.outline,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Row(
+            children: [
+              _QuickTool(
+                icon: Icons.highlight_alt,
+                label: l10n.quickRegion,
+                tooltip: l10n.screenshotRegion,
+                primary: true,
+                onTap: capture == null ? null : () => capture('region', 0),
+              ),
+              _QuickTool(
+                icon: Icons.web_asset,
+                label: l10n.quickWindow,
+                tooltip: l10n.screenshotWindow,
+                onTap: capture == null ? null : () => capture('window', 0),
+              ),
+              _QuickTool(
+                icon: Icons.desktop_windows_outlined,
+                label: l10n.quickDisplay,
+                tooltip: l10n.screenshotFullscreen,
+                onTap: capture == null ? null : () => capture('fullscreen', 0),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: PopupMenuButton<int>(
+                    enabled: capture != null,
+                    tooltip: l10n.screenshotDelay,
+                    position: PopupMenuPosition.under,
+                    onSelected: (seconds) => capture?.call('region', seconds),
+                    itemBuilder: (_) => [
+                      for (final seconds in [3, 5])
+                        PopupMenuItem(
+                          value: seconds,
+                          child: Text(l10n.quickDelayedRegion(seconds)),
+                        ),
+                    ],
+                    child: _QuickToolFace(
+                      icon: Icons.timer_outlined,
+                      label: l10n.quickDelay,
+                      enabled: capture != null,
+                      trailing: Icons.expand_more,
+                    ),
+                  ),
+                ),
+              ),
+              _QuickTool(
+                icon: Icons.send_outlined,
+                label: l10n.quickSendFile,
+                tooltip: l10n.quickSendFileHint,
+                onTap: widget.onNavigate == null
+                    ? null
+                    : () => widget.onNavigate!('devices'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -216,6 +355,7 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
                     ],
                   ),
                 ),
+                if (widget.onCapture != null) _buildTools(context),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: TextField(
@@ -440,17 +580,157 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
                         ),
                 ),
                 const Divider(height: 1),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    onPressed: widget.onOpenFull,
-                    icon: const Icon(Icons.open_in_full, size: 16),
-                    label: Text(l10n.openMainWindow),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Row(
+                    children: [
+                      if (_devices != null)
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              onPressed: widget.onNavigate == null
+                                  ? null
+                                  : () => widget.onNavigate!('devices'),
+                              icon: Icon(
+                                Icons.circle,
+                                size: 8,
+                                color: _devices! > 0
+                                    ? const Color(0xFF16A34A)
+                                    : colors.outline,
+                              ),
+                              label: Text(
+                                _devices! > 0
+                                    ? l10n.devicesOnline(_devices!)
+                                    : l10n.noDevicesOnline,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: colors.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (_devices == null) const Spacer(),
+                      if (widget.onNavigate != null)
+                        IconButton(
+                          tooltip: l10n.receivedFiles,
+                          onPressed: () => widget.onNavigate!('files'),
+                          icon: const Icon(
+                            Icons.file_download_outlined,
+                            size: 18,
+                          ),
+                        ),
+                      TextButton.icon(
+                        onPressed: widget.onOpenFull,
+                        icon: const Icon(Icons.open_in_full, size: 16),
+                        label: Text(l10n.openMainWindow),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickTool extends StatelessWidget {
+  const _QuickTool({
+    required this.icon,
+    required this.label,
+    required this.tooltip,
+    required this.onTap,
+    this.primary = false,
+  });
+  final IconData icon;
+  final String label;
+  final String tooltip;
+  final VoidCallback? onTap;
+  final bool primary;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: Tooltip(
+        message: tooltip,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: onTap,
+          child: _QuickToolFace(
+            icon: icon,
+            label: label,
+            enabled: onTap != null,
+            primary: primary,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _QuickToolFace extends StatelessWidget {
+  const _QuickToolFace({
+    required this.icon,
+    required this.label,
+    required this.enabled,
+    this.primary = false,
+    this.trailing,
+  });
+  final IconData icon;
+  final String label;
+  final bool enabled;
+  final bool primary;
+  final IconData? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final foreground = primary ? colors.onPrimary : colors.onSurface;
+    return Opacity(
+      opacity: enabled ? 1 : 0.45,
+      child: Container(
+        height: 62,
+        decoration: BoxDecoration(
+          color: primary ? colors.primary : colors.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: primary ? Colors.transparent : colors.outlineVariant,
+          ),
+        ),
+        child: Stack(
+          children: [
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    icon,
+                    size: 19,
+                    color: primary ? foreground : colors.onSurfaceVariant,
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: foreground),
+                  ),
+                ],
+              ),
+            ),
+            if (trailing != null)
+              Positioned(
+                right: 3,
+                bottom: 3,
+                child: Icon(trailing, size: 12, color: colors.outline),
+              ),
+          ],
         ),
       ),
     );
