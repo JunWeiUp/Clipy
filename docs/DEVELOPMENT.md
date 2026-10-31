@@ -353,3 +353,7 @@ python3 scripts/clean_generated.py --include-nsh --apply
 ```
 
 Keep the experiment branch itself; generated outputs are separate from its source checkpoint. Cleanup does not remove application data under the user's Library or Android device/emulator storage.
+
+### macOS mouse regression host
+
+`test_macos_core.sh` runs model/socket regressions as a CLI and mouse selection checks in a disposable AppKit app bundle. The mouse checks target the fixture window directly instead of relying on foreground activation permitted by the host. A success marker is mandatory: launch failure, a failed selection assertion or a missing marker fails the same CI step. No UI assertions are skipped on hosted runners; the fixture uses synthetic content and does not launch the installed Clipy app.

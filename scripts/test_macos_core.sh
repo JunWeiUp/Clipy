@@ -27,6 +27,28 @@ swiftc "${COMMON_RELAY_COMPILE_FLAGS[@]}" "${COMMON_RELAY_LINK_FLAGS[@]}" "${SOU
   -lcompression -o "${TEST_DIR}/core-tests"
 "${TEST_DIR}/core-tests"
 
+# Mouse dispatch runs in its own registered AppKit lifecycle and targets the
+# fixture window directly. Mandatory on CI; a missing success marker is failure.
+UI_TEST_APP="${TEST_DIR}/ClipyUIRegression.app"
+mkdir -p "${UI_TEST_APP}/Contents/MacOS"
+cp "${TEST_DIR}/core-tests" "${UI_TEST_APP}/Contents/MacOS/ClipyUIRegression"
+cat > "${UI_TEST_APP}/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.clipyclone.ui-regression</string>
+<key>CFBundleExecutable</key><string>ClipyUIRegression</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>LSUIElement</key><true/>
+<key>NSHighResolutionCapable</key><true/>
+</dict></plist>
+PLIST
+UI_TEST_RESULT="${TEST_DIR}/history-ui-passed"
+/usr/bin/open -W -n --stdout "${TEST_DIR}/history-ui.log" --stderr "${TEST_DIR}/history-ui-error.log" \
+  "${UI_TEST_APP}" --args --clipy-history-selection-tests --result-file "${UI_TEST_RESULT}"
+cat "${TEST_DIR}/history-ui.log" "${TEST_DIR}/history-ui-error.log"
+test -f "${UI_TEST_RESULT}" || { echo "History UI regression did not complete successfully" >&2; exit 1; }
+
 # Explicit opt-in: disposable status items, real AXPress, existing permissions only.
 if [ "${CLIPY_MENU_BAR_LIVE_TESTS:-0}" = 1 ]; then
   "${TEST_DIR}/core-tests" --clipy-overflow-live-tests

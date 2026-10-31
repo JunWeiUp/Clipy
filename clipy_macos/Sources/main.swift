@@ -1,7 +1,9 @@
 import AppKit
 
 #if CLIPY_CORE_TESTS
-if CommandLine.arguments.contains("--clipy-capture-results-snapshot") {
+if CommandLine.arguments.contains("--clipy-history-selection-tests") {
+    runHistorySelectionApplicationTests()
+} else if CommandLine.arguments.contains("--clipy-capture-results-snapshot") {
     MainActor.assumeIsolated { runCaptureResultsLayoutSnapshot() }
 } else if CommandLine.arguments.contains("--clipy-video-editor-snapshot") {
     MainActor.assumeIsolated { runVideoEditorLayoutSnapshot() }
