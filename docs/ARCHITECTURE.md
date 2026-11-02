@@ -7,6 +7,9 @@ Swift owns iOS user-initiated paste and sandbox paths. All clients retain the v3
 wire contract; iOS Share Extension uses a bounded native one-shot client without
 starting a second background sync service.
 
+Windows V3 page ownership, bounded UI state, cancellation behavior and remaining
+runtime acceptance are documented in [WINDOWS_UI_PARITY.md](WINDOWS_UI_PARITY.md).
+
 ## Native Android alternative (not released)
 
 `clipy_android_native/` contains the Android UI, SQLite repositories, LAN v3

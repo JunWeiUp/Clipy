@@ -9,6 +9,7 @@ import '../features/history/history_feed_controller.dart';
 import '../models.dart';
 import '../sync_manager.dart';
 import 'app_components.dart';
+import 'windows_history_actions.dart';
 
 class PaginatedClipboardHistoryList extends StatefulWidget {
   final void Function(HistoryEntry entry)? onFileTap;
@@ -398,59 +399,83 @@ class _PaginatedClipboardHistoryListState
               },
             ),
           ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 36),
-            child: Row(
-              children: [
-                for (final filter in [
-                  ('all', l10n.allItems),
-                  ('today', l10n.today),
-                  if (widget.filterNotifier == null) ...[
-                    ('text', l10n.textItems),
-                    ('links', l10n.linkItems),
-                    ('images', l10n.imageItems),
-                    ('files', l10n.fileItems),
-                  ],
-                ])
-                  TextButton(
-                    onPressed: () => _search(filter: filter.$1),
-                    style: TextButton.styleFrom(
-                      foregroundColor: colors.onSurface,
-                      shape: const RoundedRectangleBorder(),
-                    ),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color: _feed.filter == filter.$1
-                                ? colors.primary
-                                : Colors.transparent,
-                            width: 3,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(36, 0, 20, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final filter in [
+                        ('all', l10n.allItems),
+                        ('today', l10n.today),
+                        if (widget.filterNotifier == null) ...[
+                          ('text', l10n.textItems),
+                          ('links', l10n.linkItems),
+                          ('images', l10n.imageItems),
+                          ('files', l10n.fileItems),
+                        ],
+                      ])
+                        TextButton(
+                          onPressed: () => _search(filter: filter.$1),
+                          style: TextButton.styleFrom(
+                            foregroundColor: colors.onSurface,
+                            shape: const RoundedRectangleBorder(),
+                          ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            decoration: BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: _feed.filter == filter.$1
+                                      ? colors.primary
+                                      : Colors.transparent,
+                                  width: 3,
+                                ),
+                              ),
+                            ),
+                            child: Text(
+                              filter.$2,
+                              style: TextStyle(
+                                fontWeight: _feed.filter == filter.$1
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                      child: Text(
-                        filter.$2,
-                        style: TextStyle(
-                          fontWeight: _feed.filter == filter.$1
-                              ? FontWeight.w600
-                              : FontWeight.normal,
-                        ),
-                      ),
+                    ],
+                  ),
+                ),
+              ),
+              PopupMenuButton<String>(
+                tooltip: l10n.filter,
+                icon: const Icon(Icons.filter_list, size: 18),
+                onSelected: (value) => _search(filter: value),
+                itemBuilder: (_) => [
+                  for (final filter in [
+                    ('all', l10n.allItems),
+                    ('links', l10n.linkItems),
+                    ('text', l10n.textItems),
+                    ('images', l10n.imageItems),
+                    ('files', l10n.fileItems),
+                  ])
+                    CheckedPopupMenuItem(
+                      value: filter.$1,
+                      checked: _feed.filter == filter.$1,
+                      child: Text(filter.$2),
                     ),
-                  ),
-                if (widget.onClearHistory != null)
-                  IconButton(
-                    tooltip: l10n.clearHistory,
-                    onPressed: widget.onClearHistory,
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                  ),
-              ],
-            ),
+                ],
+              ),
+              if (widget.onClearHistory != null)
+                IconButton(
+                  tooltip: l10n.clearHistory,
+                  onPressed: widget.onClearHistory,
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                ),
+            ],
           ),
         ),
         Expanded(
@@ -665,55 +690,88 @@ class _PaginatedClipboardHistoryListState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: typeColor.withValues(alpha: .10),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+              Expanded(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Icon(
-                      isLink
-                          ? Icons.link
-                          : isText
-                          ? Icons.title
-                          : isFile
-                          ? Icons.folder_outlined
-                          : Icons.image_outlined,
-                      size: 13,
-                      color: typeColor,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      isLink
-                          ? l10n.linkItems
-                          : isText
-                          ? l10n.textItems
-                          : isFile
-                          ? l10n.fileItems
-                          : l10n.imageItems,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: typeColor,
-                        fontWeight: FontWeight.w600,
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: typeColor.withValues(alpha: .10),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isLink
+                                ? Icons.link
+                                : isText
+                                ? Icons.title
+                                : isFile
+                                ? Icons.folder_outlined
+                                : Icons.image_outlined,
+                            size: 13,
+                            color: typeColor,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            isLink
+                                ? l10n.linkItems
+                                : isText
+                                ? l10n.textItems
+                                : isFile
+                                ? l10n.fileItems
+                                : l10n.imageItems,
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: typeColor,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                        ],
                       ),
                     ),
+                    if (isText)
+                      Text(
+                        l10n.historyCharacterCount(value.characters.length),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    if (!isText) WindowsHistoryMediaMetadata(entry: entry),
                   ],
                 ),
               ),
-              if (isText)
-                Text(
-                  l10n.historyCharacterCount(value.characters.length),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
+              IconButton(
+                tooltip: l10n.send,
+                onPressed: () => sendWindowsHistoryEntry(context, entry),
+                icon: const Icon(Icons.send_outlined, size: 16),
+              ),
+              PopupMenuButton<String>(
+                tooltip: l10n.moreActions,
+                icon: const Icon(Icons.more_horiz, size: 18),
+                onSelected: (action) {
+                  if (action == 'copy') _copy(entry);
+                  if (action == 'folder') widget.onFileTap?.call(entry);
+                },
+                itemBuilder: (_) => [
+                  PopupMenuItem(value: 'copy', child: Text(l10n.copyContent)),
+                  if (isFile)
+                    PopupMenuItem(
+                      value: 'folder',
+                      child: Text(l10n.openFolder),
+                    ),
+                ],
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -794,12 +852,11 @@ class _PaginatedClipboardHistoryListState
                 icon: const Icon(Icons.copy, size: 18),
                 label: Text(l10n.copyContent),
               ),
-              if (isText)
-                OutlinedButton.icon(
-                  onPressed: () => _send(value),
-                  icon: const Icon(Icons.send_outlined, size: 18),
-                  label: Text(l10n.send),
-                ),
+              OutlinedButton.icon(
+                onPressed: () => sendWindowsHistoryEntry(context, entry),
+                icon: const Icon(Icons.send_outlined, size: 18),
+                label: Text(l10n.send),
+              ),
               if (isFile)
                 OutlinedButton.icon(
                   onPressed: () => widget.onFileTap?.call(entry),

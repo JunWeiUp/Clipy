@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'database/notification_repository.dart';
 import 'log_manager.dart';
+import 'features/history/windows_notification_service.dart';
 import 'models.dart';
 import 'sync_manager.dart';
 
@@ -333,11 +334,33 @@ class NotificationManager {
   ) async {
     try {
       final json = jsonDecode(decrypted);
-      final entry = NotificationEntry.fromJson(json);
+      var entry = NotificationEntry.fromJson(json);
+      if (Platform.isWindows) {
+        final peers = SyncManager.instance.availablePeers.where(
+          (peer) => peer.peerId == senderDevice,
+        );
+        entry = entry.copyWith(
+          extras: {
+            ...entry.extras,
+            // Trusted local envelope values override any sender-provided extras.
+            'clipyWindowsSourceId': senderDevice,
+            'clipyWindowsSourceName': peers.isEmpty
+                ? senderDevice
+                : peers.first.displayName,
+            'clipyWindowsReceivedAt': DateTime.now().millisecondsSinceEpoch,
+            'clipyWindowsRead': false,
+          },
+        );
+      }
       final result = await _remoteRepository.upsert(entry);
       if (result.accepted) _notificationsChangedController.add(null);
       // ACK duplicates too: a previous ACK can be lost after the row commits.
       _acknowledgeRemote(entry.id, senderDevice);
+      if (Platform.isWindows && result.accepted) {
+        unawaited(
+          WindowsNotificationService.show(entry).catchError((_) => false),
+        );
+      }
     } catch (e) {
       appLog(
         'NotificationManager: error handling remote notification: $e',

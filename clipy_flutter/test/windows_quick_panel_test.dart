@@ -89,7 +89,11 @@ void main() {
     await tester.tap(find.text('Images'));
     await tester.pumpAndSettle();
     expect(find.text('Test text'), findsNothing);
-    expect(find.text('[Image]'), findsOneWidget);
+    expect(find.byTooltip('Copy Content'), findsOneWidget);
+    await tester.tap(find.byTooltip('Copy Content'));
+    await tester.pumpAndSettle();
+    expect(copied?.contentHash, 'image');
+    expect(pasted, isFalse);
     await tester.tap(find.text('Open main window').last);
     expect(opened, isTrue);
     await tester.tap(find.byTooltip('Hide panel'));

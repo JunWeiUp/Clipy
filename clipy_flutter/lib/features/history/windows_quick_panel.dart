@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../../app_localizations.dart';
 import '../../clipboard_manager.dart';
+import '../../database/clipboard_repository.dart';
 import '../../models.dart';
 import '../../sync_manager.dart';
 import '../settings/windows_hotkeys.dart';
@@ -68,6 +69,37 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
   String? _copying;
   String? _shortcut;
   int? _devices;
+  int? _matchingCount;
+  int _countGeneration = 0;
+  String? _selectedKey;
+  Timer? _countTimer;
+
+  void _refreshCount() {
+    final generation = ++_countGeneration;
+    _countTimer?.cancel();
+    _countTimer = Timer(const Duration(milliseconds: 150), () async {
+      if (widget.controller != null) {
+        if (mounted) {
+          setState(
+            () => _matchingCount = _feed.hasMore ? null : _feed.entries.length,
+          );
+        }
+        return;
+      }
+      try {
+        final count = await ClipboardRepository.instance.countMatching(
+          query: _feed.query,
+          filter: _feed.filter,
+        );
+        if (mounted && generation == _countGeneration) {
+          setState(() => _matchingCount = count);
+        }
+      } catch (_) {
+        // A count failure must not prevent clipboard use.
+      }
+    });
+  }
+
   StreamSubscription<List<DiscoveredPeer>>? _peers;
 
   @override
@@ -95,6 +127,7 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
       ClipboardManager.instance.addListener(_historyChanged);
     }
     if (_feed.entries.isEmpty) unawaited(_feed.refresh());
+    _refreshCount();
   }
 
   Future<void> _loadShortcut() async {
@@ -111,6 +144,7 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
 
   void _changed() {
     if (mounted) setState(() {});
+    if (!_feed.loading) _refreshCount();
   }
 
   void _historyChanged() {
@@ -128,15 +162,19 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
 
   void _applySearch({String? filter}) {
     _debounce?.cancel();
+    _countGeneration++;
+    _countTimer?.cancel();
+    setState(() => _matchingCount = null);
     if (_scroll.hasClients) _scroll.jumpTo(0);
     unawaited(_feed.search(_search.text, filter ?? _feed.filter));
   }
 
   Future<void> _copy(HistoryEntry entry, {bool paste = true}) async {
     if (_copying != null) return;
-    setState(
-      () => _copying = entry.contentHash ?? entry.date.toIso8601String(),
-    );
+    setState(() {
+      _copying = entry.contentHash ?? entry.date.toIso8601String();
+      _selectedKey = _copying;
+    });
     try {
       if (widget.copy != null) {
         await widget.copy!(entry);
@@ -195,6 +233,8 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
 
   @override
   void dispose() {
+    _countGeneration++;
+    _countTimer?.cancel();
     unawaited(_peers?.cancel());
     if (widget.controller == null) {
       ClipboardManager.instance.removeListener(_historyChanged);
@@ -364,6 +404,25 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
                       isDense: true,
                       prefixIcon: const Icon(Icons.search),
                       hintText: l10n.searchHistory,
+                      suffixIcon: _matchingCount == null
+                          ? null
+                          : Padding(
+                              padding: const EdgeInsets.only(right: 10),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    l10n.language == AppLanguage.zh
+                                        ? '$_matchingCount 条'
+                                        : '$_matchingCount items',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
                       border: const OutlineInputBorder(),
                     ),
                     onChanged: (_) {
@@ -390,6 +449,19 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
                         Padding(
                           padding: const EdgeInsets.only(right: 6),
                           child: ChoiceChip(
+                            avatar: filter.$1 == 'all'
+                                ? null
+                                : Icon(
+                                    switch (filter.$1) {
+                                      'text' => Icons.title,
+                                      'images' => Icons.image_outlined,
+                                      _ => Icons.folder_outlined,
+                                    },
+                                    size: 14,
+                                    color: _feed.filter == filter.$1
+                                        ? colors.onPrimary
+                                        : colors.onSurfaceVariant,
+                                  ),
                             label: Text(filter.$2),
                             shape: const StadiumBorder(),
                             selectedColor: colors.primary,
@@ -461,6 +533,17 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
                                 ? Icons.image_outlined
                                 : Icons.folder_outlined;
                             return Card(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                                side: BorderSide(
+                                  color:
+                                      _selectedKey ==
+                                          (entry.contentHash ??
+                                              entry.date.toIso8601String())
+                                      ? colors.primary
+                                      : colors.outlineVariant,
+                                ),
+                              ),
                               color: colors.surfaceContainerLow,
                               margin: const EdgeInsets.only(bottom: 6),
                               child: InkWell(
@@ -479,18 +562,38 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.stretch,
                                     children: [
-                                      Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
+                                      Stack(
                                         children: [
-                                          Expanded(
-                                            child: Padding(
+                                          if (type == 'image')
+                                            ClipRRect(
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                              child: Image.file(
+                                                File(
+                                                  entry.item.value.toString(),
+                                                ),
+                                                width: double.infinity,
+                                                height: 92,
+                                                fit: BoxFit.cover,
+                                                cacheHeight: 184,
+                                                errorBuilder: (_, _, _) =>
+                                                    SizedBox(
+                                                      height: 92,
+                                                      child: Center(
+                                                        child: Icon(icon),
+                                                      ),
+                                                    ),
+                                              ),
+                                            )
+                                          else
+                                            Padding(
                                               padding: const EdgeInsets.only(
                                                 top: 4,
+                                                right: 38,
                                               ),
                                               child: Text(
                                                 entry.item.title,
-                                                maxLines: 3,
+                                                maxLines: 2,
                                                 overflow: TextOverflow.ellipsis,
                                                 style: Theme.of(context)
                                                     .textTheme
@@ -498,54 +601,38 @@ class _WindowsQuickPanelState extends State<WindowsQuickPanel> {
                                                     ?.copyWith(height: 1.45),
                                               ),
                                             ),
-                                          ),
-                                          IconButton(
-                                            tooltip: l10n.copyContent,
-                                            constraints: const BoxConstraints(
-                                              minWidth: 32,
-                                              minHeight: 32,
-                                            ),
-                                            padding: const EdgeInsets.all(6),
-                                            onPressed: _copying == null
-                                                ? () =>
-                                                      _copy(entry, paste: false)
-                                                : null,
-                                            icon: const Icon(
-                                              Icons.copy_outlined,
-                                              size: 16,
+                                          Align(
+                                            alignment: Alignment.topRight,
+                                            child: IconButton(
+                                              tooltip: l10n.copyContent,
+                                              style: type == 'image'
+                                                  ? IconButton.styleFrom(
+                                                      backgroundColor: colors
+                                                          .surface
+                                                          .withValues(
+                                                            alpha: .9,
+                                                          ),
+                                                    )
+                                                  : null,
+                                              constraints: const BoxConstraints(
+                                                minWidth: 28,
+                                                minHeight: 28,
+                                              ),
+                                              padding: const EdgeInsets.all(6),
+                                              onPressed: _copying == null
+                                                  ? () => _copy(
+                                                      entry,
+                                                      paste: false,
+                                                    )
+                                                  : null,
+                                              icon: const Icon(
+                                                Icons.copy_outlined,
+                                                size: 14,
+                                              ),
                                             ),
                                           ),
                                         ],
                                       ),
-                                      if (type == 'image')
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                            top: 6,
-                                            right: 6,
-                                          ),
-                                          child: ClipRRect(
-                                            borderRadius: BorderRadius.circular(
-                                              4,
-                                            ),
-                                            child: Image.file(
-                                              File(entry.item.value.toString()),
-                                              height: 92,
-                                              fit: BoxFit.cover,
-                                              cacheHeight: 184,
-                                              errorBuilder: (_, _, _) =>
-                                                  SizedBox(
-                                                    height: 48,
-                                                    child: Center(
-                                                      child: Icon(
-                                                        icon,
-                                                        color: colors
-                                                            .onSurfaceVariant,
-                                                      ),
-                                                    ),
-                                                  ),
-                                            ),
-                                          ),
-                                        ),
                                       const SizedBox(height: 6),
                                       Row(
                                         children: [

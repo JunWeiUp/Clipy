@@ -29,6 +29,7 @@ import 'sync/diagnostics.dart';
 import 'sync/protocol.dart';
 import 'sync/run_lifecycle.dart';
 import 'sync/discovery_scan.dart';
+import 'sync/file_send_cancellation.dart';
 import 'sync/discovery_refresh.dart';
 import 'sync/session_policy.dart';
 import 'sync/file_receive_flow_control.dart';
@@ -60,6 +61,8 @@ class FileProgress {
 
   /// True while this device is the sender (outbound transfer progress).
   final bool isOutgoing;
+  final String? peerId;
+  final bool isCancelled;
 
   FileProgress({
     required this.fileId,
@@ -70,6 +73,8 @@ class FileProgress {
     this.isCompleted = false,
     this.isFailed = false,
     this.isOutgoing = false,
+    this.peerId,
+    this.isCancelled = false,
   });
 }
 
@@ -224,6 +229,8 @@ class SyncManager with WidgetsBindingObserver {
   static const Duration _fileIncomingIdleTimeout = Duration(minutes: 2);
   final Map<String, _IncomingFileTransfer> _incomingFiles = {};
   final Map<String, Completer<bool>> _fileAckWaiters = {};
+  final Map<String, FileSendCancellation> _outgoingFileCancellations = {};
+  final Set<String> _outgoingFilePeers = {};
 
   /// Cached at init so file.meta handlers can resolve the receive directory
   /// synchronously (StoragePaths goes through a MethodChannel).
@@ -268,6 +275,8 @@ class SyncManager with WidgetsBindingObserver {
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   final _discoveryRefresh = DiscoveryRefreshCoordinator();
   Future<void>? _discoveryTask;
+  int _discoveryGeneration = 0;
+  int _activeDiscoveryGeneration = 0;
   bool _activeDiscoveryFull = false;
   bool _activeDiscoveryExplicit = false;
   final discoveryProgress = ValueNotifier<DiscoveryProgress>(
@@ -768,6 +777,9 @@ class SyncManager with WidgetsBindingObserver {
 
   Future<void> stop() async {
     _textDeliveryReceipts.cancelAll();
+    for (final cancellation in _outgoingFileCancellations.values) {
+      cancellation.cancel();
+    }
     _relay?.stop();
     _relay = null;
     // Invalidate outstanding bind/connect/handshake/scan work before the first

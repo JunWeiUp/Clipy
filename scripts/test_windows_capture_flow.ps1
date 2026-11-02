@@ -11,6 +11,8 @@ public static class CaptureFlow {
  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")] public static extern void keybd_event(byte key,byte scan,uint flags,UIntPtr extra);
  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+ [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
+ [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int cmd);
  [DllImport("user32.dll")] public static extern IntPtr GetWindowLongPtr(IntPtr h,int index);
@@ -27,6 +29,21 @@ $h=[CaptureFlow]::FindWindow('FLUTTER_RUNNER_WIN32_WINDOW','ClipyClone')
 [uint32]$owner=0
 [CaptureFlow]::GetWindowThreadProcessId($h,[ref]$owner)|Out-Null
 if($owner -ne $app.Id){throw 'Window does not belong to the specified executable.'}
+$style=[CaptureFlow]::GetWindowLongPtr($h,-16).ToInt64()
+if(($style -band 0x00C00000) -ne 0){throw 'Native caption duplicates the Flutter caption.'}
+if(($style -band 0x00040000) -eq 0){throw 'Native sizing frame is missing.'}
+# Same posted native actions as caption channel methods, outside engine callbacks.
+[CaptureFlow]::ShowWindow($h,9)|Out-Null
+[CaptureFlow]::PostMessage($h,0x8003,[IntPtr]0xF030,[IntPtr]::Zero)|Out-Null
+Wait-Until { [CaptureFlow]::IsZoomed($h) } 'Caption maximize failed.'
+[CaptureFlow]::PostMessage($h,0x8003,[IntPtr]0xF030,[IntPtr]::Zero)|Out-Null
+Wait-Until { -not [CaptureFlow]::IsZoomed($h) } 'Caption restore failed.'
+[CaptureFlow]::PostMessage($h,0x8003,[IntPtr]0xF020,[IntPtr]::Zero)|Out-Null
+Wait-Until { [CaptureFlow]::IsIconic($h) } 'Caption minimize failed.'
+[CaptureFlow]::ShowWindow($h,9)|Out-Null
+[CaptureFlow]::PostMessage($h,0x10,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
+Wait-Until { -not [CaptureFlow]::IsWindowVisible($h) } 'Close did not hide to tray.'
+[CaptureFlow]::ShowWindow($h,9)|Out-Null
 for($i=0;$i -lt 3;$i++) {
  # Same native routing as the registered screenshot shortcut.
  [CaptureFlow]::PostMessage($h,0x312,[IntPtr]2,[IntPtr]::Zero)|Out-Null
@@ -40,8 +57,8 @@ for($i=0;$i -lt 3;$i++) {
  Start-Sleep -Milliseconds 300 # allow Dart to release its in-progress state
 }
 [CaptureFlow]::PostMessage($h,0x312,[IntPtr]1,[IntPtr]::Zero)|Out-Null
-Wait-Until { ([CaptureFlow]::GetWindowLongPtr($h,-16).ToInt64() -band 0x00C00000) -eq 0 } 'Quick panel did not open.'
+Wait-Until { ([CaptureFlow]::GetWindowLongPtr($h,-16).ToInt64() -band 0x00040000) -eq 0 } 'Quick panel did not open.'
 [CaptureFlow]::PostMessage($h,0x10,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
-Wait-Until { ([CaptureFlow]::GetWindowLongPtr($h,-16).ToInt64() -band 0x00C00000) -ne 0 } 'Quick panel did not restore normal window style.'
+Wait-Until { ([CaptureFlow]::GetWindowLongPtr($h,-16).ToInt64() -band 0x00040000) -ne 0 } 'Quick panel did not restore normal window style.'
 [CaptureFlow]::ShowWindow($h,9)|Out-Null
 'PASS: real Flutter/native capture start/cancel x3; quick panel open/close; process alive'

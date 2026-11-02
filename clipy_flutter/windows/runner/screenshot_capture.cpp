@@ -37,8 +37,12 @@ bool ValidSize(int width, int height) {
 }  // namespace
 
 ScreenshotCapture::ScreenshotCapture(HWND owner, Completion completion,
-                                     std::function<void(const char*)> trace)
-    : owner_(owner), trace_(std::move(trace)), completion_(std::move(completion)) {}
+                                     std::function<void(const char*)> trace,
+                                     const std::string& language)
+    : owner_(owner), trace_(std::move(trace)), completion_(std::move(completion)) {
+  chinese_ = language.empty() ? PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE
+                              : language.rfind("zh", 0) == 0;
+}
 
 ScreenshotCapture::~ScreenshotCapture() {
   // The Flutter window cancels an active session before destroying its engine.
@@ -53,6 +57,7 @@ bool ScreenshotCapture::Start(ScreenshotMode mode) {
   if (mode_ == ScreenshotMode::kWindow) CollectWindows();
 
   WNDCLASSW window_class{};
+  window_class.style = CS_DBLCLKS;
   window_class.lpfnWndProc = WindowProc;
   window_class.hInstance = GetModuleHandleW(nullptr);
   window_class.hCursor = LoadCursorW(nullptr, IDC_CROSS);
@@ -81,9 +86,9 @@ bool ScreenshotCapture::Start(ScreenshotMode mode) {
   POINT cursor{};
   GetCursorPos(&cursor);
   const RECT monitor = MonitorAt(cursor);
-  const int scale = std::max(96u, GetDpiForWindow(overlay_));
+  const int scale = dpi_ = std::max(96u, GetDpiForWindow(overlay_));
   toolbar_item_width_ = MulDiv(92, scale, 96);
-  const int toolbar_width = toolbar_item_width_ * 4;
+  const int toolbar_width = toolbar_item_width_ * 6;
   const int toolbar_height = MulDiv(44, scale, 96);
   const int left = monitor.left - virtual_bounds_.left +
                    std::max(0, (Width(monitor) - toolbar_width) / 2);
@@ -228,6 +233,7 @@ void ScreenshotCapture::SetMode(ScreenshotMode mode) {
     dragging_ = false;
     if (GetCapture() == overlay_) ReleaseCapture();
   }
+  selection_drag_ = 0;
   mode_ = mode;
   highlighted_ = RECT{};
   selected_window_ = nullptr;
@@ -241,7 +247,73 @@ void ScreenshotCapture::SetMode(ScreenshotMode mode) {
 
 int ScreenshotCapture::ToolbarItemAt(POINT point) const {
   if (!PtInRect(&toolbar_, point)) return -1;
-  return std::min(3, static_cast<int>((point.x - toolbar_.left) / toolbar_item_width_));
+  return std::min(5, static_cast<int>((point.x - toolbar_.left) / toolbar_item_width_));
+}
+
+int ScreenshotCapture::SelectionHit(POINT point) const {
+  if (mode_ != ScreenshotMode::kRegion || Width(highlighted_) < 6 || Height(highlighted_) < 6) return 0;
+  const int radius = MulDiv(7, dpi_, 96);
+  RECT outer = highlighted_;
+  InflateRect(&outer, radius, radius);
+  if (!PtInRect(&outer, point)) return 0;
+  int hit = 0;
+  if (abs(point.x - highlighted_.left) <= radius) hit |= 1;
+  else if (abs(point.x - highlighted_.right) <= radius) hit |= 2;
+  if (abs(point.y - highlighted_.top) <= radius) hit |= 4;
+  else if (abs(point.y - highlighted_.bottom) <= radius) hit |= 8;
+  return hit ? hit : 16;
+}
+
+void ScreenshotCapture::UpdateSelection(POINT point) {
+  point.x = std::clamp(point.x, 0L, static_cast<LONG>(Width(virtual_bounds_)));
+  point.y = std::clamp(point.y, 0L, static_cast<LONG>(Height(virtual_bounds_)));
+  RECT next = drag_original_;
+  if (selection_drag_ == 16) {
+    const LONG dx = std::clamp(point.x - drag_start_.x, -next.left, virtual_bounds_.right - virtual_bounds_.left - next.right);
+    const LONG dy = std::clamp(point.y - drag_start_.y, -next.top, virtual_bounds_.bottom - virtual_bounds_.top - next.bottom);
+    OffsetRect(&next, dx, dy);
+  } else if (selection_drag_) {
+    if (selection_drag_ & 1) next.left = point.x;
+    if (selection_drag_ & 2) next.right = point.x;
+    if (selection_drag_ & 4) next.top = point.y;
+    if (selection_drag_ & 8) next.bottom = point.y;
+    next = NormalizedRect(POINT{next.left, next.top}, POINT{next.right, next.bottom});
+  } else next = NormalizedRect(drag_start_, point);
+  if (!SameRect(next, highlighted_)) {
+    highlighted_ = next;
+    InvalidateRect(overlay_, nullptr, FALSE);
+  }
+}
+
+void ScreenshotCapture::Confirm() {
+  if (waiting_ || dragging_ || Width(highlighted_) < 6 || Height(highlighted_) < 6 ||
+      (mode_ == ScreenshotMode::kWindow && !selected_window_)) return;
+  if (delay_seconds_) {
+    // Hide the overlay, then acquire fresh pixels after the selected delay.
+    // One timer belongs to this session; DestroyWindow cancels it on teardown.
+    if (!SetTimer(overlay_, 1, delay_seconds_ * 1000, nullptr)) {
+      Complete({}, "CAPTURE_FAILED"); return;
+    }
+    waiting_ = true;
+    ShowWindow(overlay_, SW_HIDE);
+    DwmFlush();
+    return;
+  }
+  CaptureSelection();
+}
+
+void ScreenshotCapture::CaptureSelection() {
+  std::vector<uint8_t> png;
+  if (mode_ == ScreenshotMode::kWindow) {
+    ShowWindow(overlay_, SW_HIDE);
+    png = CaptureWindow(selected_window_);
+  } else {
+    RECT chosen = highlighted_;
+    OffsetRect(&chosen, virtual_bounds_.left, virtual_bounds_.top);
+    png = CaptureRect(chosen);
+  }
+  const bool captured = !png.empty();
+  Complete(std::move(png), captured ? "" : "CAPTURE_FAILED");
 }
 
 void ScreenshotCapture::Paint(HWND window) {
@@ -264,6 +336,19 @@ void ScreenshotCapture::Paint(HWND window) {
       HGDIOBJ old_pen = SelectObject(target, outline);
       HGDIOBJ old_brush = SelectObject(target, GetStockObject(NULL_BRUSH));
       Rectangle(target, left, top, right, bottom);
+      if (mode_ == ScreenshotMode::kRegion && !dragging_) {
+        const int handle = MulDiv(4, dpi_, 96);
+        HBRUSH white = CreateSolidBrush(RGB(255, 255, 255));
+        SelectObject(target, white);
+        for (const int x : {left, (left + right) / 2, right}) {
+          for (const int y : {top, (top + bottom) / 2, bottom}) {
+            if (x == (left + right) / 2 && y == (top + bottom) / 2) continue;
+            Rectangle(target, x - handle, y - handle, x + handle, y + handle);
+          }
+        }
+        SelectObject(target, old_brush);
+        DeleteObject(white);
+      }
       SelectObject(target, old_brush);
       SelectObject(target, old_pen);
       DeleteObject(outline);
@@ -281,12 +366,21 @@ void ScreenshotCapture::Paint(HWND window) {
   DeleteObject(bar_brush);
   DeleteObject(bar_pen);
   SetBkMode(target, TRANSPARENT);
-  HGDIOBJ old_font = SelectObject(target, GetStockObject(DEFAULT_GUI_FONT));
-  const wchar_t* labels[] = {L"Region / 区域", L"Window / 窗口",
-                             L"Display / 屏幕", L"Esc / 取消"};
+  HFONT font = CreateFontW(-MulDiv(13, dpi_, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+      FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+      CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+  HFONT icons = CreateFontW(-MulDiv(16, dpi_, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+      FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+      CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe MDL2 Assets");
+  HGDIOBJ old_font = SelectObject(target, font);
+  const wchar_t* delay = delay_seconds_ == 3 ? L"3 s" : delay_seconds_ == 5 ? L"5 s" :
+                          chinese_ ? L"不延时" : L"No delay";
+  const wchar_t* labels[] = {chinese_ ? L"区域" : L"Region", chinese_ ? L"窗口" : L"Window",
+      chinese_ ? L"显示器" : L"Display", delay, chinese_ ? L"确认" : L"Capture", L"Esc"};
+  const wchar_t* glyphs[] = {L"\xE91B", L"\xE737", L"\xE7F4", L"\xE916", L"\xE73E", L"\xE711"};
   const int active = mode_ == ScreenshotMode::kRegion ? 0 :
                      mode_ == ScreenshotMode::kWindow ? 1 : 2;
-  for (int i = 0; i < 4; ++i) {
+  for (int i = 0; i < 6; ++i) {
     RECT item{toolbar_.left + i * toolbar_item_width_, toolbar_.top + 4,
               toolbar_.left + (i + 1) * toolbar_item_width_, toolbar_.bottom - 4};
     if (i == active) {
@@ -295,14 +389,26 @@ void ScreenshotCapture::Paint(HWND window) {
       DeleteObject(selected);
     }
     SetTextColor(target, i == active ? RGB(0, 85, 214) : RGB(35, 35, 35));
+    RECT icon_rect = item;
+    icon_rect.left += MulDiv(8, dpi_, 96);
+    icon_rect.right = icon_rect.left + MulDiv(20, dpi_, 96);
+    SelectObject(target, icons);
+    DrawTextW(target, glyphs[i], -1, &icon_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(target, font);
+    item.left += MulDiv(28, dpi_, 96);
     DrawTextW(target, labels[i], -1, &item,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
   }
   if (Width(highlighted_) > 0 && Height(highlighted_) > 0) {
-    wchar_t dimensions[64]{};
-    swprintf_s(dimensions, L"%d × %d", Width(highlighted_), Height(highlighted_));
-    RECT hud{highlighted_.left, std::max(0L, highlighted_.top - 26),
-             highlighted_.left + 140, std::max(0L, highlighted_.top - 2)};
+    wchar_t dimensions[160]{};
+    swprintf_s(dimensions, L"%d × %d px · %s", Width(highlighted_), Height(highlighted_),
+        chinese_ ? L"Enter 确认 · Esc 取消" : L"Enter capture · Esc cancel");
+    const LONG hud_width = std::min(width, MulDiv(340, dpi_, 96));
+    const LONG hud_height = MulDiv(24, dpi_, 96);
+    const LONG hud_left = std::clamp(highlighted_.left, 0L, static_cast<LONG>(width) - hud_width);
+    const LONG hud_top = highlighted_.top >= hud_height + 4 ? highlighted_.top - hud_height - 4 :
+        std::min(static_cast<LONG>(height) - hud_height, toolbar_.bottom + MulDiv(8, dpi_, 96));
+    RECT hud{hud_left, hud_top, hud_left + hud_width, hud_top + hud_height};
     HBRUSH hud_brush = CreateSolidBrush(RGB(35, 35, 35));
     FillRect(target, &hud, hud_brush);
     DeleteObject(hud_brush);
@@ -310,6 +416,8 @@ void ScreenshotCapture::Paint(HWND window) {
     DrawTextW(target, dimensions, -1, &hud, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
   }
   SelectObject(target, old_font);
+  DeleteObject(font);
+  DeleteObject(icons);
   EndPaint(window, &paint);
   if (first_paint_ && trace_) trace_("first-paint-end");
   first_paint_ = false;
@@ -423,73 +531,86 @@ LRESULT ScreenshotCapture::HandleMessage(
     case WM_PAINT:
       Paint(window);
       return 0;
-    case WM_SETCURSOR:
-      SetCursor(LoadCursorW(nullptr, IDC_CROSS));
+    case WM_SETCURSOR: {
+      POINT point{};
+      GetCursorPos(&point);
+      ScreenToClient(window, &point);
+      const int hit = SelectionHit(point);
+      LPCWSTR cursor = ToolbarItemAt(point) >= 0 ? IDC_HAND :
+          hit == 16 ? IDC_SIZEALL : hit == 1 || hit == 2 ? IDC_SIZEWE :
+          hit == 4 || hit == 8 ? IDC_SIZENS : hit == 5 || hit == 10 ? IDC_SIZENWSE :
+          hit == 6 || hit == 9 ? IDC_SIZENESW : IDC_CROSS;
+      SetCursor(LoadCursorW(nullptr, cursor));
       return TRUE;
+    }
+    case WM_TIMER:
+      if (wparam == 1 && waiting_) {
+        KillTimer(window, 1);
+        waiting_ = false;
+        ReleaseDesktop();
+        if (!CaptureDesktop()) { Complete({}, "CAPTURE_FAILED"); return 0; }
+        CaptureSelection();
+        return 0;
+      }
+      break;
     case WM_MOUSEMOVE: {
       POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-      if (dragging_) {
-        RECT next = NormalizedRect(drag_start_, point);
-        if (!SameRect(next, highlighted_)) {
-          highlighted_ = next;
-          InvalidateRect(window, nullptr, FALSE);
-        }
-      } else {
-        UpdateHighlight(point);
-      }
+      if (dragging_) UpdateSelection(point);
+      else if (ToolbarItemAt(point) < 0) UpdateHighlight(point);
       return 0;
     }
+    case WM_LBUTTONDBLCLK:
+      if (mode_ == ScreenshotMode::kRegion && ToolbarItemAt(POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)}) < 0) Confirm();
+      return 0;
     case WM_LBUTTONDOWN: {
       const POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
       const int item = ToolbarItemAt(point);
       if (item >= 0) {
         toolbar_click_ = true;
-        if (item == 3) { Cancel(); return 0; }
+        if (item == 5) { Cancel(); return 0; }
+        if (item == 4) { Confirm(); return 0; }
+        if (item == 3) {
+          delay_seconds_ = delay_seconds_ == 0 ? 3 : delay_seconds_ == 3 ? 5 : 0;
+          InvalidateRect(window, &toolbar_, FALSE);
+          return 0;
+        }
         SetMode(item == 0 ? ScreenshotMode::kRegion :
                 item == 1 ? ScreenshotMode::kWindow : ScreenshotMode::kFullscreen);
         return 0;
       }
       if (mode_ == ScreenshotMode::kRegion) {
+        selection_drag_ = SelectionHit(point);
+        drag_original_ = highlighted_;
         dragging_ = true;
         drag_start_ = point;
-        highlighted_ = RECT{};
+        if (!selection_drag_) highlighted_ = RECT{};
         SetCapture(window);
       } else {
         UpdateHighlight(point);
       }
       return 0;
     }
+    case WM_CAPTURECHANGED:
+      if (dragging_) { dragging_ = false; InvalidateRect(window, nullptr, FALSE); }
+      return 0;
     case WM_LBUTTONUP: {
       if (toolbar_click_) { toolbar_click_ = false; return 0; }
       const POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
       if (mode_ == ScreenshotMode::kRegion) {
         if (!dragging_) return 0;
+        UpdateSelection(point);
         dragging_ = false;
         ReleaseCapture();
-        highlighted_ = NormalizedRect(drag_start_, point);
-        if (Width(highlighted_) < 6 || Height(highlighted_) < 6) {
-          highlighted_ = RECT{};
-          InvalidateRect(window, nullptr, FALSE);
-          return 0;
-        }
+        if (Width(highlighted_) < 6 || Height(highlighted_) < 6) highlighted_ = RECT{};
+        InvalidateRect(window, nullptr, FALSE);
       } else {
         UpdateHighlight(point);
-        if (mode_ == ScreenshotMode::kWindow && !selected_window_) return 0;
+        Confirm();
       }
-      std::vector<uint8_t> png;
-      if (mode_ == ScreenshotMode::kWindow) {
-        ShowWindow(window, SW_HIDE);
-        png = CaptureWindow(selected_window_);
-      } else {
-        RECT chosen = highlighted_;
-        OffsetRect(&chosen, virtual_bounds_.left, virtual_bounds_.top);
-        png = CaptureRect(chosen);
-      }
-      const bool captured = !png.empty();
-      Complete(std::move(png), captured ? "" : "CAPTURE_FAILED");
       return 0;
     }
     case WM_KEYDOWN:
+      if (wparam == VK_RETURN && !dragging_) { Confirm(); return 0; }
       if (wparam == VK_ESCAPE) {
         Cancel();
         return 0;

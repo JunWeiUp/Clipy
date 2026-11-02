@@ -94,6 +94,12 @@ class FlutterWindow : public Win32Window {
   // Separate native icon IDs prevent a later receipt changing an earlier tap.
   std::map<UINT, std::string> receipt_paths_;
   UINT next_receipt_id_ = 10;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> phone_notification_channel_;
+  std::map<UINT, std::string> phone_notifications_;
+  UINT next_phone_notification_id_ = 32768;
+  bool NotifyPhone(const std::string& id, const std::string& title,
+                   const std::string& body);
+  void RemovePhoneNotification(UINT id);
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

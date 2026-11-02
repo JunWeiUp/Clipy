@@ -561,13 +561,40 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
   }
 }
 
+/// Shared validated dialog used by both the section and the Windows toolbar.
+Future<void> showAddManualPeer(BuildContext context) async {
+  if (!SyncManager.instance.isEnabled) return;
+  final entry = await showDialog<String>(
+    context: context,
+    builder: (_) => const _ManualPeerDialog(),
+  );
+  if (entry == null) return;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final peers = prefs.getStringList('manualSyncPeers') ?? <String>[];
+    if (!peers.contains(entry)) {
+      peers.add(entry);
+      await prefs.setStringList('manualSyncPeers', peers);
+    }
+    final parts = entry.split(':');
+    await SyncManager.instance.connectManualPeer(
+      parts.first,
+      int.parse(parts[1]),
+    );
+  } catch (_) {
+    if (context.mounted) {
+      showClipyMessage(context, context.l10n.operationFailed);
+    }
+  }
+}
+
 class ManualPeerSection extends StatefulWidget {
   const ManualPeerSection({super.key});
   @override
-  State<ManualPeerSection> createState() => _ManualPeerSectionState();
+  State<ManualPeerSection> createState() => ManualPeerSectionState();
 }
 
-class _ManualPeerSectionState extends State<ManualPeerSection> {
+class ManualPeerSectionState extends State<ManualPeerSection> {
   List<String> _peers = [];
   bool _busy = false;
   @override
@@ -575,6 +602,8 @@ class _ManualPeerSectionState extends State<ManualPeerSection> {
     super.initState();
     _load();
   }
+
+  Future<void> reload() => _load();
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -610,7 +639,8 @@ class _ManualPeerSectionState extends State<ManualPeerSection> {
     }
   }
 
-  Future<void> _add() async {
+  Future<void> add() async {
+    if (_busy || !SyncManager.instance.isEnabled) return;
     final entry = await showDialog<String>(
       context: context,
       builder: (_) => const _ManualPeerDialog(),
@@ -633,7 +663,7 @@ class _ManualPeerSectionState extends State<ManualPeerSection> {
               ),
             ),
             IconButton(
-              onPressed: SyncManager.instance.isEnabled && !_busy ? _add : null,
+              onPressed: SyncManager.instance.isEnabled && !_busy ? add : null,
               tooltip: context.l10n.addDevice,
               icon: const Icon(Icons.add_rounded),
             ),

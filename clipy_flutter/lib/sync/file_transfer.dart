@@ -15,43 +15,44 @@ extension SyncFileTransferMethods on SyncManager {
   // Outbound
   // -----------------------------------------------------------------------
 
-  Future<bool> sendFileToPeerImpl(File file, {required String peerId}) async {
+  /// Stops only this outbound send. Already buffered bytes may reach the peer;
+  /// its existing idle timeout removes incomplete data (no new wire message).
+  void cancelFileTransfer(String fileId) {
+    _outgoingFileCancellations[fileId]?.cancel();
+  }
+
+  Future<bool> sendFileToPeerImpl(
+    File file, {
+    required String peerId,
+    String? fileId,
+  }) async {
     final epoch = _runLifecycle.epoch;
-    if (!_isRunCurrent(epoch)) return false;
-    if (!await file.exists()) return false;
-    final length = await file.length();
-    if (length > SyncManager.fileMaxBytes) {
-      appLog(
-        'sendFile: ${file.path} exceeds '
-        '${SyncManager.fileMaxBytes} bytes',
-        level: 'warning',
-      );
+    fileId ??= const Uuid().v4();
+    if (_outgoingFileCancellations.containsKey(fileId) ||
+        _outgoingFilePeers.contains(peerId)) {
       return false;
     }
-
-    final session = await _waitForSession(peerId, const Duration(seconds: 8));
-    if (session == null) {
-      appLog(
-        'sendFile: no session with ${peerId.substring(0, peerId.length.clamp(0, 8))}',
-        level: 'warning',
-      );
-      return false;
-    }
-
-    final fileId = const Uuid().v4();
-    final fileName = file.path.split(Platform.pathSeparator).last;
-    const chunkSize = SyncManager.fileChunkSize;
-    final chunkCount = length == 0
-        ? 0
-        : ((length + chunkSize - 1) ~/ chunkSize);
-
-    void emit(double progress, {bool completed = false, bool failed = false}) {
+    _outgoingFilePeers.add(peerId);
+    Future<void>? pendingFlush;
+    final cancellation = FileSendCancellation();
+    _outgoingFileCancellations[fileId] = cancellation;
+    var length = 0;
+    var sentBytes = 0;
+    final fileName = file.uri.pathSegments.last;
+    void emit(
+      double progress, {
+      bool completed = false,
+      bool failed = false,
+      bool cancelled = false,
+    }) {
       _fileProgressController.add(
         FileProgress(
-          fileId: fileId,
+          fileId: fileId!,
+          peerId: peerId,
+          isCancelled: cancelled,
           fileName: fileName,
           progress: progress,
-          receivedBytes: (length * progress).round(),
+          receivedBytes: sentBytes,
           totalBytes: length,
           isCompleted: completed,
           isFailed: failed,
@@ -60,9 +61,27 @@ extension SyncFileTransferMethods on SyncManager {
       );
     }
 
-    emit(0);
     try {
-      final sha256Hex = await _hashFile(file);
+      if (!_isRunCurrent(epoch)) throw StateError('Sync stopped');
+      if (!await cancellation.wait(file.exists())) {
+        throw StateError('File missing');
+      }
+      length = await cancellation.wait(file.length());
+      if (length > SyncManager.fileMaxBytes) throw StateError('File too large');
+      emit(0);
+      final session = await _waitForSession(
+        peerId,
+        const Duration(seconds: 8),
+        cancellation: cancellation,
+      );
+      cancellation.check();
+      if (session == null) throw StateError('Device offline');
+      const chunkSize = SyncManager.fileChunkSize;
+      final chunkCount = length == 0
+          ? 0
+          : (length + chunkSize - 1) ~/ chunkSize;
+      final sha256Hex = await _hashFile(file, cancellation: cancellation);
+      cancellation.check();
       if (!_isRunCurrent(epoch)) {
         emit(0, failed: true);
         return false;
@@ -98,8 +117,9 @@ extension SyncFileTransferMethods on SyncManager {
         emit(0, failed: true);
         return false;
       }
+      cancellation.check();
       session.socket.add(metaFrame);
-      await session.socket.flush();
+      await cancellation.wait(pendingFlush = session.socket.flush());
 
       final raf = await file.open();
       try {
@@ -111,6 +131,7 @@ extension SyncFileTransferMethods on SyncManager {
         var outstanding = 0;
         const outstandingLimit = 4 * 1024 * 1024;
         for (var index = 0; index < chunkCount; index++) {
+          cancellation.check();
           if (!_isRunCurrent(epoch)) break;
           // The receiver may reject (oversize / disk full) mid-stream; stop
           // burning bandwidth once it has answered.
@@ -145,19 +166,22 @@ extension SyncFileTransferMethods on SyncManager {
             emit(0, failed: true);
             return false;
           }
+          cancellation.check();
           session.socket.add(frame);
           outstanding += frame.length;
           if (outstanding >= outstandingLimit) {
-            await session.socket.flush();
+            await cancellation.wait(pendingFlush = session.socket.flush());
             outstanding = 0;
           }
           sentChunks++;
+          sentBytes = (sentChunks * chunkSize).clamp(0, length);
           emit((sentChunks * chunkSize).clamp(0, length) / length);
         }
-        await session.socket.flush();
+        await cancellation.wait(pendingFlush = session.socket.flush());
       } finally {
         await raf.close();
       }
+      cancellation.check();
       if (!_isRunCurrent(epoch)) {
         emit(1, failed: true);
         return false;
@@ -174,9 +198,14 @@ extension SyncFileTransferMethods on SyncManager {
       final timeout = Duration(
         seconds: (45 + length ~/ (200 * 1024)).clamp(45, 600),
       );
-      final ok = await waiter.future.timeout(timeout, onTimeout: () => false);
+      final ok = await cancellation.wait(
+        waiter.future.timeout(timeout, onTimeout: () => false),
+      );
       emit(1, completed: ok, failed: !ok);
       return ok;
+    } on FileSendCancelled {
+      emit(length == 0 ? 0 : sentBytes / length, failed: true, cancelled: true);
+      return false;
     } on SocketException catch (e) {
       appLog('sendFile socket error: $e', level: 'warning');
       await _closeSession(peerId, scheduleReconnect: true);
@@ -187,17 +216,33 @@ extension SyncFileTransferMethods on SyncManager {
       emit(1, failed: true);
       return false;
     } finally {
+      // Cancellation interrupts our wait, not IOSink's flush. Do not permit a
+      // retry to write to that same sink while it is still bound to the flush.
+      if (pendingFlush != null) {
+        try {
+          await pendingFlush;
+        } catch (_) {
+          /* Original error is reported above. */
+        }
+      }
       _fileAckWaiters.remove(fileId);
+      _outgoingFileCancellations.remove(fileId);
+      _outgoingFilePeers.remove(peerId);
     }
   }
 
   /// Dial `direct` (no auth, like the text send) and poll for the session.
-  Future<_Session?> _waitForSession(String peerId, Duration timeout) async {
+  Future<_Session?> _waitForSession(
+    String peerId,
+    Duration timeout, {
+    FileSendCancellation? cancellation,
+  }) async {
     final epoch = _runLifecycle.epoch;
     if (!_isRunCurrent(epoch)) return null;
     final deadline = DateTime.now().add(timeout);
     var dialed = false;
     while (_isRunCurrent(epoch) && DateTime.now().isBefore(deadline)) {
+      cancellation?.check();
       final session = _sessions[peerId];
       if (session != null) return session;
       if (!dialed) {
@@ -238,10 +283,14 @@ extension SyncFileTransferMethods on SyncManager {
     return _isRunCurrent(epoch) ? _sessions[peerId] : null;
   }
 
-  Future<String> _hashFile(File file) async {
+  Future<String> _hashFile(
+    File file, {
+    FileSendCancellation? cancellation,
+  }) async {
     final collector = _DigestCollector();
     final input = sha256.startChunkedConversion(collector);
     await for (final data in file.openRead()) {
+      cancellation?.check();
       input.add(data);
     }
     input.close();
@@ -321,6 +370,7 @@ extension SyncFileTransferMethods on SyncManager {
     _fileProgressController.add(
       FileProgress(
         fileId: fileId,
+        peerId: incoming.peerId,
         fileName: incoming.fileName,
         progress: 0,
         receivedBytes: 0,
@@ -408,6 +458,7 @@ extension SyncFileTransferMethods on SyncManager {
     _fileProgressController.add(
       FileProgress(
         fileId: incoming.fileId,
+        peerId: incoming.peerId,
         fileName: incoming.fileName,
         progress: (received / incoming.chunkCount).clamp(0.0, 1.0),
         receivedBytes: (received * incoming.chunkSize).clamp(
@@ -497,6 +548,7 @@ extension SyncFileTransferMethods on SyncManager {
       _fileProgressController.add(
         FileProgress(
           fileId: incoming.fileId,
+          peerId: incoming.peerId,
           fileName: incoming.fileName,
           progress: 1,
           receivedBytes: incoming.fileSize,
@@ -535,6 +587,7 @@ extension SyncFileTransferMethods on SyncManager {
     _fileProgressController.add(
       FileProgress(
         fileId: incoming.fileId,
+        peerId: incoming.peerId,
         fileName: incoming.fileName,
         progress: 0,
         receivedBytes: 0,

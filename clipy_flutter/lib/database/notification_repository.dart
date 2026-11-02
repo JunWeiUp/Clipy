@@ -105,7 +105,9 @@ class NotificationRepository {
     return entry.title.trim().isEmpty &&
         (entry.subtitle ?? '').trim().isEmpty &&
         entry.body.trim().isEmpty &&
-        entry.extras.values.every((v) => v.toString().trim().isEmpty);
+        entry.extras.entries
+            .where((entry) => !entry.key.startsWith('clipyWindows'))
+            .every((entry) => entry.value.toString().trim().isEmpty);
   }
 
   /// Upserts a notification entry.
@@ -304,6 +306,7 @@ class NotificationRepository {
     required int offset,
     required int limit,
     String query = '',
+    bool unreadOnly = false,
   }) async {
     final trimmed = query.trim();
     final escaped = trimmed
@@ -311,17 +314,46 @@ class NotificationRepository {
         .replaceAll('%', r'\%')
         .replaceAll('_', r'\_');
     final pattern = '%$escaped%';
+    final conditions = [
+      if (unreadOnly)
+        "COALESCE(json_extract(extras_json, '\$.clipyWindowsRead'), 0) = 0",
+      if (trimmed.isNotEmpty)
+        "(app_name LIKE ? ESCAPE '\\' OR package_name LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR subtitle LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')",
+    ];
     final rows = await (await _db).query(
       'notifications',
-      where: trimmed.isEmpty
-          ? null
-          : "(app_name LIKE ? ESCAPE '\\' OR package_name LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR subtitle LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')",
+      where: conditions.isEmpty ? null : conditions.join(' AND '),
       whereArgs: trimmed.isEmpty ? null : List.filled(5, pattern),
-      orderBy: 'post_time DESC',
+      orderBy: 'post_time DESC, id DESC',
       limit: limit,
       offset: offset,
     );
     return rows.map(_fromRow).toList();
+  }
+
+  /// Local read state lives with its notification, so deletion/retention also
+  /// removes it. No separate ever-growing ID cache or cross-platform sync bit.
+  Future<void> markWindowsRead(String id) async {
+    await (await _db).rawUpdate(
+      "UPDATE notifications SET extras_json = json_set(extras_json, '\$.clipyWindowsRead', 1) WHERE id = ?",
+      [id],
+    );
+  }
+
+  Future<List<Map<String, Object?>>> windowsSourceSummary() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+    return (await _db).rawQuery(
+      '''
+      SELECT json_extract(extras_json, '\$.clipyWindowsSourceId') AS sourceId,
+        json_extract(extras_json, '\$.clipyWindowsSourceName') AS sourceName,
+        COUNT(*) AS total,
+        SUM(CASE WHEN COALESCE(json_extract(extras_json, '\$.clipyWindowsRead'), 0) = 0 THEN 1 ELSE 0 END) AS unread,
+        SUM(CASE WHEN COALESCE(json_extract(extras_json, '\$.clipyWindowsReceivedAt'), post_time) >= ? THEN 1 ELSE 0 END) AS today
+      FROM notifications GROUP BY sourceId ORDER BY MAX(post_time) DESC
+    ''',
+      [today],
+    );
   }
 
   Future<void> removeById(String id) async {

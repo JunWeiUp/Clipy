@@ -1,3 +1,4 @@
+import '../../ui/windows_title_bar.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -140,7 +141,7 @@ class _SharedFilesPageState extends State<SharedFilesPage>
       child: Scaffold(
         appBar: Platform.isIOS
             ? CupertinoNavigationBar(middle: Text(l10n.sharedFiles))
-            : AppBar(title: Text(l10n.sharedFiles)),
+            : platformAppBar(context, title: Text(l10n.sharedFiles)),
         body: ListView(
           padding: const EdgeInsets.all(20),
           children: [
@@ -262,8 +263,9 @@ class _SharedFilesPageState extends State<SharedFilesPage>
                                 await Navigator.push<void>(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => Scaffold(
-                                      appBar: AppBar(
+                                    builder: (context) => Scaffold(
+                                      appBar: platformAppBar(
+                                        context,
                                         title: Text(l10n.lanDevices),
                                       ),
                                       body: const DevicesPage(),

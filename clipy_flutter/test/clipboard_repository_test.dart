@@ -23,6 +23,47 @@ void main() {
   );
 
   test(
+    'sidebar counts match each full-database category, including empty',
+    () async {
+      expect((await repository.categoryCounts()).values, everyElement(0));
+      final values = <(String, Object)>[
+        ('text', 'note'),
+        ('text', ' HTTPS://example.com '),
+        ('image', '/tmp/image.png'),
+        ('fileURL', '/tmp/a'),
+        ('fileURLs', <String>['/tmp/b', '/tmp/c']),
+      ];
+      for (var i = 0; i < values.length; i++) {
+        await repository.insert(
+          HistoryEntry(
+            item: HistoryItem(type: values[i].$1, value: values[i].$2),
+            date: DateTime.fromMillisecondsSinceEpoch(i),
+            contentHash: 'count-$i',
+          ),
+        );
+      }
+      final counts = await repository.categoryCounts();
+      for (final filter in counts.keys) {
+        expect(
+          counts[filter],
+          (await repository.fetchPage(
+            offset: 0,
+            limit: 100,
+            filter: filter,
+          )).length,
+        );
+      }
+      expect(counts, {
+        'all': 5,
+        'text': 2,
+        'links': 1,
+        'images': 1,
+        'files': 2,
+      });
+    },
+  );
+
+  test(
     'today uses local calendar bounds before pagination and search',
     () async {
       final now = DateTime.now();

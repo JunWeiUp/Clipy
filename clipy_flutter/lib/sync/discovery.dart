@@ -5,8 +5,23 @@ extension SyncDiscoveryMethods on SyncManager {
   // Discovery
   // -----------------------------------------------------------------------
 
-  /// Foreground requests coalesce across pages. Sharing is an explicit device
-  /// selection flow, but repeated opens/resumes use the automatic cooldown.
+  /// Invalidate queued workers and upgrades without stopping sync sessions.
+  /// Probes already on the network finish within their existing timeouts.
+  void cancelDiscovery() {
+    _discoveryGeneration++;
+    _scanDebounceTimer?.cancel();
+    _scanDebounceTimer = null;
+    _pendingAutoFullScan = false;
+    _discoveryRefresh.reset();
+    final progress = discoveryProgress.value;
+    discoveryProgress.value = DiscoveryProgress(
+      completed: progress.completed,
+      total: progress.total,
+    );
+  }
+
+  /// Foreground requests coalesce across pages. Repeated opens/resumes use
+  /// the automatic cooldown; an explicit refresh can upgrade to a subnet scan.
   Future<void> refreshDiscovery({bool automatic = false}) {
     if (!isEnabled) return Future.value();
     return _discoveryRefresh.refresh(
@@ -24,15 +39,18 @@ extension SyncDiscoveryMethods on SyncManager {
     bool scanFullSubnet = true,
   }) async {
     if (!isEnabled) return;
+    final generation = _discoveryGeneration;
     await ensureStartedIfEnabled();
+    if (generation != _discoveryGeneration) return;
     final epoch = _runLifecycle.epoch;
     _probeNetworkSessions();
     _relay?.refreshPeers();
-    if (!_isRunCurrent(epoch) || !isServerRunning) {
+    if (!(_isRunCurrent(epoch) && generation == _discoveryGeneration) ||
+        !isServerRunning) {
       throw StateError('Sync listener is not running');
     }
     final cache = await _readEndpointCache();
-    if (!_isRunCurrent(epoch)) return;
+    if (!(_isRunCurrent(epoch) && generation == _discoveryGeneration)) return;
     final cacheById = <String, Map<String, dynamic>>{
       for (final e in cache)
         if (e['peerId'] is String) e['peerId'] as String: e,
@@ -57,13 +75,15 @@ extension SyncDiscoveryMethods on SyncManager {
     _discoveredPeers
       ..clear()
       ..addAll(kept);
-    if (!_isRunCurrent(epoch)) return;
+    if (!(_isRunCurrent(epoch) && generation == _discoveryGeneration)) return;
     _emitPeers();
     _scanDebounceTimer?.cancel();
     _pendingAutoFullScan = false;
     // Explicit refresh bypasses debounce and waits through the actual scan.
     await _runDiscovery(scanFullSubnet: scanFullSubnet, userInitiated: true);
-    if (pruneCache && _isRunCurrent(epoch)) {
+    if (pruneCache &&
+        _isRunCurrent(epoch) &&
+        generation == _discoveryGeneration) {
       await _rewriteEndpointCacheAfterRefresh(availablePeers, cache);
     }
   }
@@ -127,14 +147,18 @@ extension SyncDiscoveryMethods on SyncManager {
     bool userInitiated = false,
   }) async {
     final epoch = _runLifecycle.epoch;
+    final generation = _discoveryGeneration;
     if (!_isRunCurrent(epoch)) return;
     final active = _discoveryTask;
     if (active != null) {
       final covered =
+          generation == _activeDiscoveryGeneration &&
           (!scanFullSubnet || _activeDiscoveryFull) &&
           (!userInitiated || _activeDiscoveryExplicit);
       await active;
-      if (!covered && _isRunCurrent(epoch)) {
+      if (!covered &&
+          _isRunCurrent(epoch) &&
+          generation == _discoveryGeneration) {
         await _runDiscovery(
           scanFullSubnet: scanFullSubnet,
           userInitiated: userInitiated,
@@ -142,11 +166,13 @@ extension SyncDiscoveryMethods on SyncManager {
       }
       return;
     }
+    _activeDiscoveryGeneration = generation;
     _activeDiscoveryFull = scanFullSubnet;
     _activeDiscoveryExplicit = userInitiated;
     discoveryProgress.value = const DiscoveryProgress(running: true);
     final task = _performDiscovery(
       epoch,
+      generation: generation,
       scanFullSubnet: scanFullSubnet,
       userInitiated: userInitiated,
     );
@@ -154,22 +180,28 @@ extension SyncDiscoveryMethods on SyncManager {
     try {
       await task;
     } finally {
-      if (_isRunCurrent(epoch) && identical(_discoveryTask, task)) {
+      if (identical(_discoveryTask, task)) {
         _discoveryTask = null;
-        final progress = discoveryProgress.value;
-        discoveryProgress.value = DiscoveryProgress(
-          completed: progress.completed,
-          total: progress.total,
-        );
+        if (_isRunCurrent(epoch) && generation == _discoveryGeneration) {
+          final progress = discoveryProgress.value;
+          discoveryProgress.value = DiscoveryProgress(
+            completed: progress.completed,
+            total: progress.total,
+          );
+        }
       }
     }
   }
 
   Future<void> _performDiscovery(
     int epoch, {
+    required int generation,
     required bool scanFullSubnet,
     required bool userInitiated,
   }) async {
+    bool isCurrent() =>
+        _isRunCurrent(epoch) && generation == _discoveryGeneration;
+    if (!isCurrent()) return;
     final auth = authorizedPeerIds.toSet();
     final targets =
         <String, ({String host, int port, String? id, String reason})>{};
@@ -184,7 +216,7 @@ extension SyncDiscoveryMethods on SyncManager {
     // Explicit refresh tries remembered and manual endpoints first, including
     // peers whose outgoing sharing toggles are off. Background work stays gated.
     for (final e in await _readEndpointCache()) {
-      if (!_isRunCurrent(epoch)) return;
+      if (!isCurrent()) return;
       final id = e['peerId'] as String?;
       final host = e['host'] as String?;
       final peerPort = e['port'] as int?;
@@ -195,7 +227,7 @@ extension SyncDiscoveryMethods on SyncManager {
       add(host, peerPort, id, userInitiated ? 'scan' : 'cache');
     }
     final prefs = await SharedPreferences.getInstance();
-    if (!_isRunCurrent(epoch)) return;
+    if (!isCurrent()) return;
     for (final entry in prefs.getStringList('manualSyncPeers') ?? <String>[]) {
       final parts = entry.split(':');
       if (parts.first.isEmpty) continue;
@@ -209,7 +241,7 @@ extension SyncDiscoveryMethods on SyncManager {
     }
     if (scanFullSubnet) {
       final myIPs = await _enumerateLocalIPv4s(forScan: true);
-      if (!_isRunCurrent(epoch)) return;
+      if (!isCurrent()) return;
       final connectedHosts = _sessions.values.map((s) => s.host).toSet();
       final prefixes = <String>{};
       for (final ip in myIPs) {
@@ -234,8 +266,9 @@ extension SyncDiscoveryMethods on SyncManager {
     await runDiscoveryScan(
       targets.keys.toList(),
       concurrency: SyncManager._scanConcurrency,
-      isCurrent: () => _isRunCurrent(epoch),
+      isCurrent: isCurrent,
       onProgress: (completed, total) {
+        if (!isCurrent()) return;
         // Publish at most 10 intermediate updates/second, plus start and end.
         if (completed != 0 &&
             completed != total &&
@@ -264,7 +297,7 @@ extension SyncDiscoveryMethods on SyncManager {
         );
       },
     );
-    if (_isRunCurrent(epoch)) {
+    if (isCurrent()) {
       appLog(
         'Discovery finished: ${started.elapsedMilliseconds}ms, '
         'peers=${_sessions.length}, failures=$failures',

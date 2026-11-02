@@ -1,3 +1,4 @@
+import '../../ui/windows_title_bar.dart';
 import 'relay_group_legacy_view.dart';
 import '../../sync/relay_configuration.dart';
 import 'relay_group_member_tile.dart';
@@ -844,7 +845,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
               child: const Icon(CupertinoIcons.refresh),
             ),
           )
-        : AppBar(
+        : platformAppBar(
+            context,
             title: Text(t('公网设备组', 'Relay device group')),
             actions: [
               IconButton(
@@ -1046,7 +1048,10 @@ class _InvitationScannerState extends State<_InvitationScanner> {
   bool _done = false;
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(widget.zh ? '扫描邀请二维码' : 'Scan invitation')),
+    appBar: platformAppBar(
+      context,
+      title: Text(widget.zh ? '扫描邀请二维码' : 'Scan invitation'),
+    ),
     body: MobileScanner(
       onDetect: (capture) {
         if (_done) return;

@@ -104,7 +104,11 @@ class _WindowsHotkeySettingsState extends State<WindowsHotkeySettings> {
           for (final kind in ['history', 'screenshot'])
             WindowsSettingRow(
               icon: kind == 'history' ? Icons.keyboard : Icons.crop_free,
-              title: kind == 'history' ? l10n.history : l10n.screenshot,
+              title: kind == 'history'
+                  ? (l10n.language == AppLanguage.zh
+                        ? '打开剪贴板快速面板'
+                        : 'Open clipboard quick panel')
+                  : l10n.screenshot,
               subtitle: _recording == kind
                   ? l10n.pressShortcut
                   : _status[kind] == true
@@ -130,6 +134,15 @@ class _WindowsHotkeySettingsState extends State<WindowsHotkeySettings> {
                 ],
               ),
             ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text(
+              l10n.language == AppLanguage.zh
+                  ? '不覆盖系统 Win+V。截图时按 Tab 切换区域、窗口和显示器。'
+                  : 'Keeps Windows Win+V unchanged. Press Tab during capture to switch region, window and display.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
           if (_message != null)
             Padding(
               padding: const EdgeInsets.all(8),

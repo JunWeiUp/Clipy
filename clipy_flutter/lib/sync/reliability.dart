@@ -404,6 +404,9 @@ extension SyncReliabilityMethods on SyncManager {
     );
   }
 
-  Future<bool> sendFileToPeer(File file, {required String peerId}) =>
-      sendFileToPeerImpl(file, peerId: peerId);
+  Future<bool> sendFileToPeer(
+    File file, {
+    required String peerId,
+    String? fileId,
+  }) => sendFileToPeerImpl(file, peerId: peerId, fileId: fileId);
 }

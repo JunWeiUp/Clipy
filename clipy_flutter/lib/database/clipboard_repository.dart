@@ -37,6 +37,19 @@ class ClipboardRepository {
     String query = '',
     String filter = 'all',
   }) async {
+    final (where, args) = _selection(query, filter);
+    final rows = await (await _db).query(
+      'clipboard_history',
+      where: where,
+      whereArgs: args,
+      orderBy: 'created_at DESC, id DESC',
+      limit: limit,
+      offset: offset,
+    );
+    return rows.map(_fromRow).toList();
+  }
+
+  (String?, List<Object?>) _selection(String query, String filter) {
     final conditions = <String>[];
     final args = <Object?>[];
     if (query.trim().isNotEmpty) {
@@ -70,15 +83,18 @@ class ClipboardRepository {
       case 'images':
         conditions.add("item_type = 'image'");
     }
+    return (conditions.isEmpty ? null : conditions.join(' AND '), args);
+  }
+
+  Future<int> countMatching({String query = '', String filter = 'all'}) async {
+    final (where, args) = _selection(query, filter);
     final rows = await (await _db).query(
       'clipboard_history',
-      where: conditions.isEmpty ? null : conditions.join(' AND '),
+      columns: ['COUNT(*) AS c'],
+      where: where,
       whereArgs: args,
-      orderBy: 'created_at DESC, id DESC',
-      limit: limit,
-      offset: offset,
     );
-    return rows.map(_fromRow).toList();
+    return Sqflite.firstIntValue(rows) ?? 0;
   }
 
   Future<int> count() async {
@@ -86,6 +102,25 @@ class ClipboardRepository {
       'SELECT COUNT(*) AS c FROM clipboard_history',
     );
     return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  /// Aggregate only: sidebar badges never load history bodies into memory.
+  Future<Map<String, int>> categoryCounts() async {
+    final rows = await (await _db).rawQuery('''
+      SELECT COUNT(*) AS all_count,
+        COALESCE(SUM(item_type = 'text'), 0) AS text_count,
+        COALESCE(SUM(item_type = 'text' AND
+          (LOWER(TRIM(item_value)) LIKE 'https://%' OR
+           LOWER(TRIM(item_value)) LIKE 'http://%')), 0) AS links_count,
+        COALESCE(SUM(item_type = 'image'), 0) AS images_count,
+        COALESCE(SUM(item_type IN ('fileURL', 'fileURLs')), 0) AS files_count
+      FROM clipboard_history
+    ''');
+    final row = rows.single;
+    return {
+      for (final key in ['all', 'text', 'links', 'images', 'files'])
+        key: (row['${key}_count'] as num).toInt(),
+    };
   }
 
   /// The most-recent history entry (highest created_at), or null if empty.

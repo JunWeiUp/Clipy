@@ -68,7 +68,7 @@ class _WindowsSettingsPageState extends State<WindowsSettingsPage> {
       padding: const EdgeInsets.fromLTRB(36, 28, 36, 28),
       children: [
         Text(
-          '${l10n.settings}  ›  ${categories[_section]}',
+          categories[_section],
           style: Theme.of(context).textTheme.headlineLarge,
         ),
         const SizedBox(height: 14),
@@ -186,6 +186,12 @@ class _WindowsSettingsPageState extends State<WindowsSettingsPage> {
           const SizedBox(height: 8),
           const WindowsHotkeySettings(),
           const SizedBox(height: 16),
+          Text(
+            l10n.language == AppLanguage.zh ? '网络' : 'Network',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const WindowsFirewallSettings(),
+          const SizedBox(height: 16),
           settingCard(
             child: ListTile(
               leading: const Icon(Icons.tune),
@@ -275,11 +281,29 @@ class _WindowsSettingsPageState extends State<WindowsSettingsPage> {
                           height: 44,
                         ),
                         const SizedBox(width: 12),
-                        const Text('Clipy'),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Clipy'),
+                              const SizedBox(height: 4),
+                              FutureBuilder<String>(
+                                future: _version,
+                                builder: (context, snapshot) => Text(
+                                  snapshot.data ?? '—',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: colors.onSurfaceVariant,
+                                      ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  for (final i in [2, 0, 1])
+                  for (final i in [0, 2, 1])
                     ListTile(
                       dense: true,
                       selected: i == _section,

@@ -1,3 +1,4 @@
+import '../../ui/windows_title_bar.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -149,7 +150,7 @@ class _ReceivedFilesPageState extends State<ReceivedFilesPage> {
     return Scaffold(
       appBar: Platform.isIOS
           ? CupertinoNavigationBar(middle: Text(l10n.receivedFiles))
-          : AppBar(title: Text(l10n.receivedFiles)),
+          : platformAppBar(context, title: Text(l10n.receivedFiles)),
       body: SafeArea(
         top: false,
         child: Column(

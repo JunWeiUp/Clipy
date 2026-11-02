@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:clipy_flutter/app_localizations.dart';
-import 'package:clipy_flutter/features/devices/device_widgets.dart';
+import 'package:clipy_flutter/features/devices/devices_page.dart';
 import 'package:clipy_flutter/features/history/history_feed_controller.dart';
 import 'package:clipy_flutter/features/history/remote_notifications_page.dart';
 import 'package:clipy_flutter/features/history/windows_capture_result.dart';
@@ -188,7 +188,10 @@ void main() {
             onOpenLogs: () {},
             onOpenReceivedFiles: () {},
           ),
-          'devices' => const _OfflineDevicesFixture(),
+          'devices' => DevicesPage(
+            windowsLayout: true,
+            addressLoader: () async => ['192.0.2.1'],
+          ),
           'notifications' => RemoteNotificationsPage(
             windowsLayout: true,
             loader: ({required offset, required limit, required query}) async =>
@@ -251,30 +254,4 @@ void main() {
       });
     }
   }
-}
-
-/// Test-only shell around the real device list; never enumerates local interfaces.
-class _OfflineDevicesFixture extends StatelessWidget {
-  const _OfflineDevicesFixture();
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(24),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 16),
-        const Card(
-          child: ListTile(
-            leading: Icon(Icons.computer),
-            title: Text('Fictional Windows PC'),
-            subtitle: Text('Local network'),
-            trailing: Switch(value: false, onChanged: null),
-          ),
-        ),
-        const SizedBox(height: 16),
-        const Expanded(child: SyncTargetDeviceList()),
-      ],
-    ),
-  );
 }

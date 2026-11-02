@@ -1,3 +1,4 @@
+import '../../ui/windows_title_bar.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -85,7 +86,8 @@ class _SyncDiagnosticsPageState extends State<SyncDiagnosticsPage> {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     return Scaffold(
-      appBar: AppBar(
+      appBar: platformAppBar(
+        context,
         title: Text(l10n.syncDiagnosticsTitle),
         actions: [
           IconButton(

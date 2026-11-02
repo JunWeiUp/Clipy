@@ -20,8 +20,17 @@ int main() {
       for (const bool cancel : {true, false}) {
         int callbacks = 0;
         bool valid_result = false;
+        int png_width = 0, png_height = 0;
         ScreenshotCapture capture(owner, [&](std::vector<uint8_t> png, std::string error) {
           ++callbacks;
+          if (png.size() > 24) {
+            auto integer = [&](size_t offset) {
+              return static_cast<int>((static_cast<uint32_t>(png[offset]) << 24) |
+                  (static_cast<uint32_t>(png[offset + 1]) << 16) |
+                  (static_cast<uint32_t>(png[offset + 2]) << 8) | png[offset + 3]);
+            };
+            png_width = integer(16); png_height = integer(20);
+          }
           valid_result = error.empty() && (cancel ? png.empty() :
               png.size() > 8 && png[0] == 137 && png[1] == 80 && png[2] == 78);
         });
@@ -41,6 +50,20 @@ int main() {
           SendMessageW(overlay, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(point.x, point.y));
           if (mode == ScreenshotMode::kRegion) { point.x += 120; point.y += 80; }
           SendMessageW(overlay, WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
+          if (mode == ScreenshotMode::kRegion) {
+            Check(callbacks == 0 && capture.active(), "region remains adjustable after release");
+            // Move from inside, then extend the bottom-right handle.
+            POINT inside{point.x - 60, point.y - 40};
+            SendMessageW(overlay, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(inside.x, inside.y));
+            SendMessageW(overlay, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(inside.x + 20, inside.y + 20));
+            SendMessageW(overlay, WM_LBUTTONUP, 0, MAKELPARAM(inside.x + 20, inside.y + 20));
+            point.x += 20; point.y += 20;
+            SendMessageW(overlay, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(point.x, point.y));
+            SendMessageW(overlay, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(point.x + 20, point.y + 10));
+            SendMessageW(overlay, WM_LBUTTONUP, 0, MAKELPARAM(point.x + 20, point.y + 10));
+            SendMessageW(overlay, WM_KEYDOWN, VK_RETURN, 0);
+            Check(png_width == 140 && png_height == 90, "moved and resized region dimensions");
+          }
         }
         Check(valid_result, "PNG result or cancellation mismatch");
         Check(callbacks == 1 && !capture.active(), "single completion and overlay released");
@@ -51,7 +74,7 @@ int main() {
       Check(capture.Start(ScreenshotMode::kRegion), "repeat start");
       capture.Cancel();
     }
-    std::cout << "PASS: region/window/display PNG, Esc/cancel, single completion, 10 repeated sessions\n";
+    std::cout << "PASS: adjustable region/window/display PNG, Enter/Esc/cancel, single completion, 10 repeated sessions\n";
   } catch (const std::exception& error) {
     std::cerr << "FAIL: " << error.what() << '\n';
     DestroyWindow(candidate); DestroyWindow(owner); Gdiplus::GdiplusShutdown(token);

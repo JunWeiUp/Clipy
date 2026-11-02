@@ -1,3 +1,4 @@
+import '../../ui/windows_title_bar.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -88,7 +89,8 @@ class _LogPageState extends State<LogPage> {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     return Scaffold(
-      appBar: AppBar(
+      appBar: platformAppBar(
+        context,
         title: Text(l10n.appLogs),
         actions: [
           IconButton(

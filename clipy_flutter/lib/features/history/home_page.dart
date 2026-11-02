@@ -6,6 +6,9 @@ import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import '../../clipboard_manager.dart';
+import '../../database/clipboard_repository.dart';
+import '../../notification_manager.dart';
+import '../../ui/windows_title_bar.dart';
 import '../../sync_manager.dart';
 import '../../notification_sync_page.dart';
 import 'remote_notifications_page.dart';
@@ -61,6 +64,60 @@ class _HomePageState extends State<HomePage>
   int _presentationRevision = 0;
   ({String path, bool copied})? _captureResult;
   bool _sendingCapture = false;
+  Map<String, int> _historyCounts = const {};
+  int? _notificationCount;
+  StreamSubscription? _sidebarPeers;
+  StreamSubscription? _sidebarNotifications;
+  Timer? _sidebarRefresh;
+  bool _countLoading = false;
+  bool _countDirty = false;
+
+  void _scheduleSidebarCounts() {
+    _sidebarRefresh?.cancel();
+    _sidebarRefresh = Timer(
+      const Duration(milliseconds: 250),
+      _loadSidebarCounts,
+    );
+  }
+
+  Future<void> _loadSidebarCounts() async {
+    if (!mounted) return;
+    if (_countLoading) {
+      _countDirty = true;
+      return;
+    }
+    _countLoading = true;
+    try {
+      final counts = await ClipboardRepository.instance.categoryCounts();
+      final notifications = await NotificationManager.instance.count();
+      if (mounted) {
+        setState(() {
+          _historyCounts = counts;
+          _notificationCount = notifications;
+        });
+      }
+    } catch (_) {
+      // Startup storage may not be ready. Never substitute a fabricated count.
+    } finally {
+      _countLoading = false;
+      if (_countDirty && mounted) {
+        _countDirty = false;
+        _scheduleSidebarCounts();
+      }
+    }
+  }
+
+  Widget _sidebarCount(int? count) => count == null
+      ? const SizedBox.shrink()
+      : Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: Text(
+            '$count',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        );
   static const _trayChannel = MethodChannel(
     'com.clipyclone.clipy_android/tray',
   );
@@ -76,6 +133,15 @@ class _HomePageState extends State<HomePage>
       WidgetsBinding.instance.addObserver(this);
       unawaited(_syncWindowsPresentation());
       unawaited(WindowsHotkeys.initialize());
+      ClipboardManager.instance.addListener(_scheduleSidebarCounts);
+      _sidebarNotifications = NotificationManager
+          .instance
+          .onNotificationsChanged
+          .listen((_) => _scheduleSidebarCounts());
+      _sidebarPeers = SyncManager.instance.onPeersChanged.listen((_) {
+        if (mounted) setState(() {});
+      });
+      unawaited(_loadSidebarCounts());
     }
     if (Platform.isAndroid || Platform.isIOS) {
       WidgetsBinding.instance.addObserver(this);
@@ -131,7 +197,13 @@ class _HomePageState extends State<HomePage>
 
   @override
   void dispose() {
-    if (_windows) _trayChannel.setMethodCallHandler(null);
+    if (_windows) {
+      _trayChannel.setMethodCallHandler(null);
+      ClipboardManager.instance.removeListener(_scheduleSidebarCounts);
+    }
+    _sidebarRefresh?.cancel();
+    _sidebarPeers?.cancel();
+    _sidebarNotifications?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _incomingShares?.dispose();
     _sharePeersSubscription?.cancel();
@@ -227,6 +299,8 @@ class _HomePageState extends State<HomePage>
         _select(0);
       case 'devices':
         _select(1);
+      case 'notifications':
+        _select(2);
       case 'settings':
         _select(3);
       case 'files':
@@ -289,6 +363,7 @@ class _HomePageState extends State<HomePage>
       final png = await _screenshotChannel.invokeMethod<Uint8List>('capture', {
         'mode': mode,
         'delaySeconds': delaySeconds,
+        'language': AppLanguageController.instance.locale.languageCode,
       });
       if (png == null || png.isEmpty) return; // Esc or right-click cancelled.
       final result = await ClipboardManager.instance.ingestWindowsScreenshot(
@@ -572,7 +647,6 @@ class _HomePageState extends State<HomePage>
   Widget _settings() => _windows
       ? WindowsSettingsPage(
           onOpenLogs: _openLogs,
-          onBack: () => _select(0),
           onOpenReceivedFiles: _openFiles,
         )
       : ListView(
@@ -690,7 +764,9 @@ class _HomePageState extends State<HomePage>
         enabled: !_windows && _selectedIndex != 1,
         pageIdentity: _selectedIndex,
         scrollDepth: _selectedIndex == 2 && Platform.isAndroid ? 1 : 0,
-        header: _selectedIndex == 1 || (_windows && _selectedIndex == 3)
+        header:
+            _selectedIndex == 1 ||
+                (_windows && (_selectedIndex == 3 || _selectedIndex == 2))
             ? const SizedBox.shrink()
             : Padding(
                 padding: _windows
@@ -717,7 +793,8 @@ class _HomePageState extends State<HomePage>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (_activeTransfers.isNotEmpty)
+            if (_activeTransfers.isNotEmpty &&
+                !(_windows && _selectedIndex == 1))
               ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 140),
                 child: SingleChildScrollView(child: _transfers()),
@@ -797,96 +874,110 @@ class _HomePageState extends State<HomePage>
             if (!didPop) _select(0);
           },
           child: Scaffold(
-            appBar: AppBar(
-              title: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Image.asset(
-                    'assets/branding/clipy-logo.png',
-                    width: _windows ? 16 : 32,
-                    height: _windows ? 16 : 32,
-                    excludeFromSemantics: true,
-                  ),
-                  const SizedBox(width: 10),
-                  const Text('Clipy'),
-                  if (_windows && _selectedIndex == 0) ...[
-                    const SizedBox(width: 136),
-                    Flexible(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 360),
-                        child: TextField(
-                          controller: _windowsSearch,
-                          focusNode: _windowsSearchFocus,
-                          decoration: InputDecoration(
-                            hintText: '${l10n.searchHistory}  Ctrl+F',
-                            prefixIcon: const Icon(Icons.search, size: 16),
-                            suffixIcon: IconButton(
-                              tooltip: l10n.clearSearch,
-                              icon: const Icon(Icons.close, size: 16),
-                              onPressed: _windowsSearch.clear,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
+            appBar: _windows
+                ? WindowsTitleBar(
+                    title: Row(
+                      children: [
+                        if (_selectedIndex == 3)
+                          IconButton(
+                            tooltip: l10n.history,
+                            onPressed: () => _select(0),
+                            icon: const Icon(Icons.arrow_back, size: 18),
+                          ),
+                        Image.asset(
+                          'assets/branding/clipy-logo.png',
+                          width: 16,
+                          height: 16,
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          _selectedIndex == 3 ? l10n.settings : 'Clipy',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        if (_selectedIndex == 0) ...[
+                          const SizedBox(width: 120),
+                          Flexible(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 360),
+                              child: SizedBox(
+                                height: 32,
+                                child: TextField(
+                                  controller: _windowsSearch,
+                                  focusNode: _windowsSearchFocus,
+                                  style: const TextStyle(fontSize: 13),
+                                  decoration: InputDecoration(
+                                    hintText: '${l10n.searchHistory}  Ctrl+F',
+                                    prefixIcon: const Icon(
+                                      Icons.search,
+                                      size: 16,
+                                    ),
+                                    suffixIcon:
+                                        ValueListenableBuilder<
+                                          TextEditingValue
+                                        >(
+                                          valueListenable: _windowsSearch,
+                                          builder: (_, value, _) =>
+                                              value.text.isEmpty
+                                              ? const SizedBox.shrink()
+                                              : IconButton(
+                                                  tooltip: l10n.clearSearch,
+                                                  icon: const Icon(
+                                                    Icons.close,
+                                                    size: 16,
+                                                  ),
+                                                  onPressed:
+                                                      _windowsSearch.clear,
+                                                ),
+                                        ),
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
+                        ],
+                      ],
                     ),
-                  ],
-                ],
-              ),
-              actions: [
-                if (_windows && _selectedIndex == 0)
-                  PopupMenuButton<String>(
-                    tooltip: l10n.screenshot,
-                    icon: const Icon(Icons.crop_free_rounded),
-                    enabled: !_capturingScreenshot,
-                    onSelected: _onScreenshotMenu,
-                    itemBuilder: (_) => [
-                      PopupMenuItem(
-                        value: 'region',
-                        child: Text(l10n.screenshotRegion),
-                      ),
-                      PopupMenuItem(
-                        value: 'window',
-                        child: Text(l10n.screenshotWindow),
-                      ),
-                      PopupMenuItem(
-                        value: 'fullscreen',
-                        child: Text(l10n.screenshotFullscreen),
-                      ),
-                      PopupMenuItem(
-                        value: 'options',
-                        child: Text(l10n.screenshotOptions),
-                      ),
-                    ],
-                  ),
-                IconButton(
-                  onPressed: _openFiles,
-                  tooltip: l10n.receivedFiles,
-                  icon: const Icon(Icons.folder_open_rounded),
-                ),
-                if (_selectedIndex == 0)
-                  PopupMenuButton<String>(
-                    tooltip: l10n.moreActions,
-                    onSelected: (value) {
-                      if (value == 'clear') _clearHistory();
-                    },
-                    itemBuilder: (_) => [
-                      PopupMenuItem(
-                        value: 'clear',
-                        enabled: !_clearing,
-                        child: Text(
-                          l10n.clearHistory,
-                          style: TextStyle(color: colors.error),
+                  )
+                : AppBar(
+                    title: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Image.asset(
+                          'assets/branding/clipy-logo.png',
+                          width: 32,
+                          height: 32,
+                          excludeFromSemantics: true,
                         ),
+                        const SizedBox(width: 10),
+                        const Text('Clipy'),
+                      ],
+                    ),
+                    actions: [
+                      IconButton(
+                        onPressed: _openFiles,
+                        tooltip: l10n.receivedFiles,
+                        icon: const Icon(Icons.folder_open_rounded),
                       ),
+                      if (_selectedIndex == 0)
+                        PopupMenuButton<String>(
+                          tooltip: l10n.moreActions,
+                          onSelected: (value) {
+                            if (value == 'clear') _clearHistory();
+                          },
+                          itemBuilder: (_) => [
+                            PopupMenuItem(
+                              value: 'clear',
+                              enabled: !_clearing,
+                              child: Text(
+                                l10n.clearHistory,
+                                style: TextStyle(color: colors.error),
+                              ),
+                            ),
+                          ],
+                        ),
+                      const SizedBox(width: 8),
                     ],
                   ),
-                const SizedBox(width: 8),
-              ],
-            ),
             body: Row(
               children: [
                 if (wide && _windows && _selectedIndex != 3)
@@ -928,8 +1019,8 @@ class _HomePageState extends State<HomePage>
                                           l10n.allItems,
                                           Icons.filter_list,
                                         ),
-                                        ('text', l10n.textItems, Icons.notes),
                                         ('links', l10n.linkItems, Icons.link),
+                                        ('text', l10n.textItems, Icons.notes),
                                         (
                                           'images',
                                           l10n.imageItems,
@@ -959,6 +1050,9 @@ class _HomePageState extends State<HomePage>
                                                   style: const TextStyle(
                                                     fontSize: 14,
                                                   ),
+                                                ),
+                                                trailing: _sidebarCount(
+                                                  _historyCounts[filter.$1],
                                                 ),
                                                 onTap: () {
                                                   _select(0);
@@ -1011,6 +1105,16 @@ class _HomePageState extends State<HomePage>
                                                   ),
                                                 ),
                                               ),
+                                              _sidebarCount(switch (i) {
+                                                0 => _historyCounts['all'],
+                                                1 =>
+                                                  SyncManager
+                                                      .instance
+                                                      .availablePeers
+                                                      .length,
+                                                2 => _notificationCount,
+                                                _ => null,
+                                              }),
                                             ],
                                           ),
                                         ),

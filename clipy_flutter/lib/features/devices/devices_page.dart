@@ -1,3 +1,4 @@
+import '../../ui/windows_title_bar.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -8,14 +9,19 @@ import '../../notification_manager.dart';
 import '../../sync_manager.dart';
 import '../../sync/relay_client.dart';
 import '../../ui/app_components.dart';
+import '../../ui/windows_controls.dart';
 import 'device_widgets.dart';
 import 'sync_diagnostics_page.dart';
 import 'relay_settings.dart';
+import 'windows_transfer_panel.dart';
+import 'windows_transfer_controller.dart';
 
 class DevicesPage extends StatefulWidget {
-  const DevicesPage({super.key, this.windowsLayout});
+  const DevicesPage({super.key, this.windowsLayout, this.addressLoader});
   @visibleForTesting
   final bool? windowsLayout;
+  @visibleForTesting
+  final Future<List<String>> Function()? addressLoader;
   @override
   State<DevicesPage> createState() => _DevicesPageState();
 }
@@ -28,13 +34,32 @@ class _DevicesPageState extends State<DevicesPage> {
   List<DiscoveredPeer> _windowsPeers = [];
   String? _selectedPeerId;
   bool _refreshingWindows = false;
+  bool _windowsScanCancelled = false;
   bool _peerChangeBusy = false;
+  final _manualPeers = GlobalKey<ManualPeerSectionState>();
+  Set<String> _transferPeerIds = {};
+
+  void _windowsTransfersChanged() {
+    final ids = WindowsTransferController.instance.rows
+        .map((row) => row.peerId)
+        .toSet();
+    if (_transferPeerIds.length == ids.length &&
+        _transferPeerIds.containsAll(ids)) {
+      return;
+    }
+    if (mounted) setState(() => _transferPeerIds = ids);
+  }
 
   @override
   void initState() {
     super.initState();
-    _addresses = SyncManager.instance.localIPv4Addresses();
+    _addresses =
+        (widget.addressLoader ?? SyncManager.instance.localIPv4Addresses)();
     if (widget.windowsLayout ?? Platform.isWindows) {
+      _transferPeerIds = WindowsTransferController.instance.rows
+          .map((row) => row.peerId)
+          .toSet();
+      WindowsTransferController.instance.addListener(_windowsTransfersChanged);
       _windowsPeers = SyncManager.instance.availablePeers;
       _windowsPeerSubscription = SyncManager.instance.onPeersChanged.listen((
         peers,
@@ -56,6 +81,11 @@ class _DevicesPageState extends State<DevicesPage> {
   @override
   void dispose() {
     _windowsPeerSubscription?.cancel();
+    if (widget.windowsLayout ?? Platform.isWindows) {
+      WindowsTransferController.instance.removeListener(
+        _windowsTransfersChanged,
+      );
+    }
     SyncManager.instance.connectionRevision.removeListener(_connectionChanged);
     SyncManager.instance.discoveryProgress.removeListener(_connectionChanged);
     super.dispose();
@@ -84,7 +114,7 @@ class _DevicesPageState extends State<DevicesPage> {
       } else {
         await manager.stop();
       }
-      _addresses = manager.localIPv4Addresses();
+      _addresses = (widget.addressLoader ?? manager.localIPv4Addresses)();
     } catch (_) {
       manager.isEnabled = previous;
       final prefs = await SharedPreferences.getInstance();
@@ -103,13 +133,19 @@ class _DevicesPageState extends State<DevicesPage> {
       builder: (_) => const ConnectionEditor(),
     );
     if (saved == true && mounted) {
-      setState(() => _addresses = SyncManager.instance.localIPv4Addresses());
+      setState(
+        () => _addresses =
+            (widget.addressLoader ?? SyncManager.instance.localIPv4Addresses)(),
+      );
     }
   }
 
   Future<void> _refreshWindows() async {
     if (_refreshingWindows || !SyncManager.instance.isEnabled) return;
-    setState(() => _refreshingWindows = true);
+    setState(() {
+      _refreshingWindows = true;
+      _windowsScanCancelled = false;
+    });
     try {
       await SyncManager.instance.refreshDiscovery();
       if (mounted) {
@@ -167,7 +203,10 @@ class _DevicesPageState extends State<DevicesPage> {
       context,
       MaterialPageRoute<void>(
         builder: (context) => Scaffold(
-          appBar: AppBar(title: Text(context.l10n.connectionSettings)),
+          appBar: platformAppBar(
+            context,
+            title: Text(context.l10n.connectionSettings),
+          ),
           body: ListView(
             padding: const EdgeInsets.all(24),
             children: [
@@ -214,13 +253,18 @@ class _DevicesPageState extends State<DevicesPage> {
     final manager = SyncManager.instance;
     final colors = Theme.of(context).colorScheme;
     final onlineIds = _windowsPeers.map((p) => p.peerId).toSet();
-    final ids = {...manager.authorizedPeerIds, ...onlineIds}.toList()
-      ..sort((a, b) {
-        if (onlineIds.contains(a) != onlineIds.contains(b)) {
-          return onlineIds.contains(a) ? -1 : 1;
-        }
-        return a.compareTo(b);
-      });
+    final ids =
+        {
+          ...manager.authorizedPeerIds,
+          ...onlineIds,
+          // A dropped connection must not hide a failed transfer and its retry action.
+          ..._transferPeerIds,
+        }.toList()..sort((a, b) {
+          if (onlineIds.contains(a) != onlineIds.contains(b)) {
+            return onlineIds.contains(a) ? -1 : 1;
+          }
+          return a.compareTo(b);
+        });
     final selectedId = ids.contains(_selectedPeerId)
         ? _selectedPeerId
         : (ids.isEmpty ? null : ids.first);
@@ -239,13 +283,14 @@ class _DevicesPageState extends State<DevicesPage> {
               future: _addresses,
               builder: (context, snapshot) => Text(
                 snapshot.data?.isNotEmpty == true
-                    ? '${l10n.myIPAddress}: ${snapshot.data!.join(', ')}'
+                    ? '${snapshot.data!.join(', ')}:${manager.port}'
                     : l10n.localNetwork,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            trailing: Switch(
+            trailing: WindowsToggle(
+              label: l10n.syncStart,
               value: manager.isEnabled,
               onChanged: _busy ? null : _toggle,
             ),
@@ -256,12 +301,30 @@ class _DevicesPageState extends State<DevicesPage> {
           LinearProgressIndicator(value: progress.fraction),
           const SizedBox(height: 6),
           Text(
-            l10n.discoveryScanning(
-              progress.completed,
-              progress.total,
-              _windowsPeers.length,
-            ),
+            _windowsScanCancelled
+                ? windowsDeviceText(
+                    context,
+                    '扫描已停止，正在结束当前探测…',
+                    'Scan stopped · finishing current probes…',
+                  )
+                : l10n.discoveryScanning(
+                    progress.completed,
+                    progress.total,
+                    _windowsPeers.length,
+                  ),
             style: Theme.of(context).textTheme.bodySmall,
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: progress.running
+                  ? () {
+                      setState(() => _windowsScanCancelled = true);
+                      manager.cancelDiscovery();
+                    }
+                  : null,
+              child: Text(windowsDeviceText(context, '停止扫描', 'Stop scanning')),
+            ),
           ),
         ],
         if (ids.isEmpty && !refreshing)
@@ -271,46 +334,57 @@ class _DevicesPageState extends State<DevicesPage> {
               manager.isEnabled ? l10n.noDevicesFound : l10n.diagSyncOff,
             ),
           ),
-        for (final id in ids)
-          Builder(
-            builder: (context) {
-              final found = _windowsPeers.where((p) => p.peerId == id);
-              final item = found.isEmpty ? null : found.first;
-              final active = selectedId == id;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Card(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(6),
-                    side: BorderSide(
-                      color: active
-                          ? colors.primary
-                          : colors.outlineVariant.withValues(alpha: .5),
+        for (final online in [true, false]) ...[
+          if (ids.any((id) => onlineIds.contains(id) == online))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+              child: Text(
+                '${online ? l10n.deviceOnline : l10n.deviceOffline} · ${ids.where((id) => onlineIds.contains(id) == online).length}',
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ),
+          for (final id in ids.where((id) => onlineIds.contains(id) == online))
+            Builder(
+              builder: (context) {
+                final found = _windowsPeers.where((p) => p.peerId == id);
+                final item = found.isEmpty ? null : found.first;
+                final active = selectedId == id;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Card(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                      side: BorderSide(
+                        color: active
+                            ? colors.primary
+                            : colors.outlineVariant.withValues(alpha: .5),
+                      ),
+                    ),
+                    child: ListTile(
+                      selected: active,
+                      leading: Icon(
+                        item == null
+                            ? Icons.devices_other_outlined
+                            : Icons.devices,
+                      ),
+                      title: Text(
+                        item?.displayName ?? manager.resolvedPeerLabel(id),
+                      ),
+                      subtitle: Text(
+                        item == null
+                            ? l10n.deviceOffline
+                            : '${l10n.deviceOnline} · ${item.host.startsWith('relay:') ? l10n.internetRelay : item.host}',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => setState(() => _selectedPeerId = id),
                     ),
                   ),
-                  child: ListTile(
-                    selected: active,
-                    leading: Icon(
-                      item == null
-                          ? Icons.devices_other_outlined
-                          : Icons.devices,
-                    ),
-                    title: Text(
-                      item?.displayName ?? manager.resolvedPeerLabel(id),
-                    ),
-                    subtitle: Text(
-                      item == null
-                          ? l10n.deviceOffline
-                          : '${l10n.deviceOnline} · ${item.host.startsWith('relay:') ? l10n.internetRelay : item.host}',
-                    ),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => setState(() => _selectedPeerId = id),
-                  ),
-                ),
-              );
-            },
-          ),
+                );
+              },
+            ),
+        ],
         const SizedBox(height: 12),
+        Card(child: ManualPeerSection(key: _manualPeers)),
         OutlinedButton.icon(
           onPressed: _openWindowsNetworkSettings,
           icon: const Icon(Icons.settings_ethernet),
@@ -349,22 +423,31 @@ class _DevicesPageState extends State<DevicesPage> {
               Card(
                 child: Column(
                   children: [
-                    SwitchListTile(
+                    ListTile(
                       title: Text(l10n.syncClipboardToDevice),
-                      value: manager.clipboardSyncPeerIds.contains(selectedId),
-                      onChanged: _peerChangeBusy
-                          ? null
-                          : (v) => _setPeerSync(selectedId, v, clipboard: true),
-                    ),
-                    SwitchListTile(
-                      title: Text(l10n.syncNotificationsToDevice),
-                      value: manager.notificationSyncPeerIds.contains(
-                        selectedId,
+                      trailing: WindowsToggle(
+                        label: l10n.syncClipboardToDevice,
+                        value: manager.clipboardSyncPeerIds.contains(
+                          selectedId,
+                        ),
+                        onChanged: _peerChangeBusy
+                            ? null
+                            : (v) =>
+                                  _setPeerSync(selectedId, v, clipboard: true),
                       ),
-                      onChanged: _peerChangeBusy
-                          ? null
-                          : (v) =>
-                                _setPeerSync(selectedId, v, clipboard: false),
+                    ),
+                    ListTile(
+                      title: Text(l10n.syncNotificationsToDevice),
+                      trailing: WindowsToggle(
+                        label: l10n.syncNotificationsToDevice,
+                        value: manager.notificationSyncPeerIds.contains(
+                          selectedId,
+                        ),
+                        onChanged: _peerChangeBusy
+                            ? null
+                            : (v) =>
+                                  _setPeerSync(selectedId, v, clipboard: false),
+                      ),
                     ),
                   ],
                 ),
@@ -375,32 +458,19 @@ class _DevicesPageState extends State<DevicesPage> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Wrap(
-                    spacing: 10,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      const Icon(Icons.upload_file_outlined, size: 30),
-                      Text(l10n.sendFile),
-                      FilledButton.icon(
-                        onPressed: peer == null || !manager.isEnabled
-                            ? null
-                            : () => pickAndSendFileToDevice(context, peer),
-                        icon: const Icon(Icons.attach_file),
-                        label: Text(l10n.sendFile),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: peer == null || !manager.isEnabled
-                            ? null
-                            : () => showSendTextToDeviceDialog(context, peer),
-                        icon: const Icon(Icons.send_outlined),
-                        label: Text(l10n.sendText),
-                      ),
-                    ],
-                  ),
+              WindowsTransferPanel(
+                peerId: selectedId,
+                enabled: peer != null && manager.isEnabled,
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: peer == null || !manager.isEnabled
+                      ? null
+                      : () => showSendTextToDeviceDialog(context, peer),
+                  icon: const Icon(Icons.send_outlined),
+                  label: Text(l10n.sendText),
                 ),
               ),
             ],
@@ -432,9 +502,14 @@ class _DevicesPageState extends State<DevicesPage> {
                     : const Icon(Icons.refresh),
               ),
               OutlinedButton.icon(
-                onPressed: _openWindowsNetworkSettings,
+                onPressed: manager.isEnabled
+                    ? () async {
+                        await showAddManualPeer(context);
+                        if (mounted) await _manualPeers.currentState?.reload();
+                      }
+                    : null,
                 icon: const Icon(Icons.add),
-                label: Text(l10n.addDevice),
+                label: Text(windowsDeviceText(context, '按 IP 添加', 'Add by IP')),
               ),
             ],
           ),

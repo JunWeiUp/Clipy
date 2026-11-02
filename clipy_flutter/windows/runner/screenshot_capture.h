@@ -18,7 +18,8 @@ class ScreenshotCapture {
       std::function<void(std::vector<uint8_t> png, std::string error)>;
 
   ScreenshotCapture(HWND owner, Completion completion,
-                    std::function<void(const char*)> trace = {});
+                    std::function<void(const char*)> trace = {},
+                    const std::string& language = {});
   ~ScreenshotCapture();
 
   ScreenshotCapture(const ScreenshotCapture&) = delete;
@@ -46,6 +47,16 @@ class ScreenshotCapture {
   void Paint(HWND window);
   void SetMode(ScreenshotMode mode);
   int ToolbarItemAt(POINT point) const;
+  int SelectionHit(POINT point) const;
+  void UpdateSelection(POINT point);
+  void Confirm();
+  void CaptureSelection();
+  bool chinese_ = false;
+  int dpi_ = 96;
+  int selection_drag_ = 0;
+  RECT drag_original_{};
+  int delay_seconds_ = 0;
+  bool waiting_ = false;
   std::vector<uint8_t> CaptureRect(RECT screen_rect) const;
   std::vector<uint8_t> CaptureWindow(HWND window) const;
   void Complete(std::vector<uint8_t> png = {}, std::string error = {});

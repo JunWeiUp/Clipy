@@ -19,6 +19,7 @@
 namespace {
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kScreenshotCompletedMessage = WM_APP + 2;
+constexpr UINT kWindowActionMessage = WM_APP + 3;
 constexpr UINT kTrayId = 1;
 constexpr UINT kShowCommand = 1001;
 constexpr UINT kExitCommand = 1002;
@@ -131,6 +132,12 @@ bool FlutterWindow::OnCreate() {
   window_mode_ = WindowMode::kMain;
   window_transition_ = false;
   CaptureTrace("window-created-ready");
+  // Keep the real Win32 sizing frame and system menu, but let Flutter render
+  // the sole caption. Default non-client hit testing still owns edge resizing.
+  SetWindowLongPtrW(GetHandle(), GWL_STYLE,
+                   GetWindowLongPtrW(GetHandle(), GWL_STYLE) & ~WS_CAPTION);
+  SetWindowPos(GetHandle(), nullptr, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
   RECT frame = GetClientArea();
 
   // The size here must match the window dimensions to avoid unnecessary surface
@@ -184,6 +191,9 @@ void FlutterWindow::OnDestroy() {
   if (storage_channel_) storage_channel_->SetMethodCallHandler(nullptr);
   if (tray_channel_) tray_channel_->SetMethodCallHandler(nullptr);
   while (!receipt_paths_.empty()) RemoveReceipt(receipt_paths_.begin()->first);
+  while (!phone_notifications_.empty()) RemovePhoneNotification(phone_notifications_.begin()->first);
+  if (phone_notification_channel_) phone_notification_channel_->SetMethodCallHandler(nullptr);
+  phone_notification_channel_.reset();
   if (receipt_channel_) receipt_channel_->SetMethodCallHandler(nullptr);
   receipt_channel_.reset();
   if (open_folder_channel_) open_folder_channel_->SetMethodCallHandler(nullptr);
@@ -222,6 +232,20 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     limits->ptMinTrackSize = POINT{MulDiv(900, dpi, 96), MulDiv(580, dpi, 96)};
     return 0;
   }
+  if (message == kWindowActionMessage) {
+    if (IsPanelOpen() || shutting_down_) return 0;
+    if (wparam == SC_MOVE) {
+      // The pointer may have been released before this posted action arrived.
+      if (!(GetAsyncKeyState(VK_LBUTTON) & 0x8000)) return 0;
+      ReleaseCapture();
+      SendMessageW(hwnd, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, 0);
+    } else if (wparam == SC_MAXIMIZE) {
+      ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+    } else if (wparam == SC_MINIMIZE) {
+      ShowWindow(hwnd, SW_MINIMIZE);
+    }
+    return 0;
+  }
   const bool capture_message = (message == WM_TIMER && wparam == kScreenshotDelayTimer) || message == kScreenshotCompletedMessage;
   if (capture_message) CaptureTrace(message == WM_TIMER ? "timer-received" : "completion-received");
   // Give Flutter, including plugins, an opportunity to handle window messages.
@@ -242,6 +266,7 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
 
   if (message == taskbar_created_message_ && taskbar_created_message_ != 0) {
     receipt_paths_.clear();
+    phone_notifications_.clear();
     tray_added_ = false;
     AddTrayIcon();
     return 0;
@@ -302,13 +327,23 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       }
       return 0;
     case kTrayMessage: {
-      const UINT event = tray_version4_ ? LOWORD(lparam) : static_cast<UINT>(lparam);
-      const UINT id = tray_version4_ ? HIWORD(lparam) : static_cast<UINT>(wparam);
+      const bool version4 = tray_version4_ || phone_notifications_.count(HIWORD(lparam)) != 0;
+      const UINT event = version4 ? LOWORD(lparam) : static_cast<UINT>(lparam);
+      const UINT id = version4 ? HIWORD(lparam) : static_cast<UINT>(wparam);
       if (id == kTrayId && (event == WM_LBUTTONUP || event == WM_LBUTTONDBLCLK ||
                            event == NIN_SELECT || event == NIN_KEYSELECT)) {
         char stage[128]{};
         sprintf_s(stage, "tray-event=%u v4=%d panel=%d", event, tray_version4_, IsPanelOpen());
         CaptureTrace(stage);
+      }
+      if (phone_notifications_.count(id)) {
+        if (event == NIN_BALLOONUSERCLICK || event == NIN_SELECT || event == NIN_KEYSELECT) {
+          RemovePhoneNotification(id);
+          DispatchTrayAction("notifications");
+        } else if (event == NIN_BALLOONTIMEOUT || event == NIN_BALLOONHIDE) {
+          RemovePhoneNotification(id);
+        }
+        return 0;
       }
       if (id != kTrayId) {
         auto receipt = receipt_paths_.find(id);
@@ -361,6 +396,21 @@ void FlutterWindow::InstallPlatformChannels() {
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           messenger, "com.clipyclone.clipy_android/tray", codec);
   tray_channel_->SetMethodCallHandler([this](const auto& call, auto result) {
+    if (call.method_name() == "beginWindowDrag" ||
+        call.method_name() == "toggleMaximize" ||
+        call.method_name() == "minimizeWindow" ||
+        call.method_name() == "closeWindow") {
+      if (IsPanelOpen() || shutting_down_) {
+        result->Success(flutter::EncodableValue(false));
+        return;
+      }
+      const bool close = call.method_name() == "closeWindow";
+      const WPARAM action = call.method_name() == "beginWindowDrag" ? SC_MOVE :
+          call.method_name() == "toggleMaximize" ? SC_MAXIMIZE : SC_MINIMIZE;
+      result->Success(flutter::EncodableValue(PostMessageW(GetHandle(),
+          close ? WM_CLOSE : kWindowActionMessage, action, 0) != FALSE));
+      return;
+    }
     if (call.method_name() == "getWindowsBehavior") {
       result->Success(flutter::EncodableValue(flutter::EncodableMap{
           {flutter::EncodableValue("startup"), flutter::EncodableValue(StartupEnabled())},
@@ -580,6 +630,8 @@ void FlutterWindow::InstallPlatformChannels() {
         screenshot_capture_.reset();
         // Exclude Clipy's own window from the frozen desktop. Restore it when
         // selection completes or fails, including cancellation.
+        const auto* language_value = MapValue(call.arguments(), "language");
+        const auto* language = language_value ? std::get_if<std::string>(language_value) : nullptr;
         screenshot_result_ = std::move(result);
         screenshot_capture_ = std::make_unique<ScreenshotCapture>(
             GetHandle(),
@@ -588,7 +640,7 @@ void FlutterWindow::InstallPlatformChannels() {
               CaptureTrace("overlay-complete");
               screenshot_completion_.emplace(std::move(png), std::move(error));
               PostMessageW(GetHandle(), kScreenshotCompletedMessage, 0, 0);
-            }, CaptureTrace);
+            }, CaptureTrace, language ? *language : std::string{});
         CaptureTrace("arm-timer");
         // Do not hide/show native windows inside Flutter's platform-message
         // callback: activation and resize synchronously re-enter the engine.
@@ -634,6 +686,26 @@ void FlutterWindow::InstallPlatformChannels() {
     const auto* name = name_value ? std::get_if<std::string>(name_value) : nullptr;
     if (path && name && NotifyReceivedFile(*path, *name)) result->Success();
     else result->Error("NOTIFICATION", "Could not post file receipt");
+  });
+
+  phone_notification_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      messenger, "com.clipyclone.clipy/windows_notifications", codec);
+  phone_notification_channel_->SetMethodCallHandler([this](const auto& call, auto result) {
+    if (call.method_name() != "showRemoteNotification") { result->NotImplemented(); return; }
+    auto text = [&](const char* key) -> std::string {
+      const auto* value = MapValue(call.arguments(), key);
+      const auto* string = value ? std::get_if<std::string>(value) : nullptr;
+      return string ? string->substr(0, 4096) : std::string{};
+    };
+    const auto id = text("id");
+    const auto title = text("title");
+    const auto body = text("body");
+    const auto app = text("appName");
+    const auto device = text("sourceDevice");
+    const auto heading = device.empty() ? app : device + (app.empty() ? "" : " · " + app);
+    result->Success(flutter::EncodableValue(!id.empty() && !shutting_down_ &&
+        NotifyPhone(id, heading.empty() ? "Clipy" : heading,
+                    title + (title.empty() || body.empty() ? "" : "\n") + body)));
   });
 
   open_folder_channel_ =
@@ -920,7 +992,7 @@ void FlutterWindow::RemoveReceipt(UINT id) {
 bool FlutterWindow::NotifyReceivedFile(const std::string& path, const std::string& name) {
   // Bounded native resources, released on tap, timeout, Explorer restart or exit.
   if (receipt_paths_.size() >= 32) RemoveReceipt(receipt_paths_.begin()->first);
-  if (next_receipt_id_ > 65535) next_receipt_id_ = 10;
+  if (next_receipt_id_ >= 32768) next_receipt_id_ = 10;
   const UINT id = next_receipt_id_++;
   if (receipt_paths_.count(id)) RemoveReceipt(id);
   NOTIFYICONDATAW icon{};
@@ -947,5 +1019,54 @@ bool FlutterWindow::NotifyReceivedFile(const std::string& path, const std::strin
   receipt_paths_[id] = path;
   if (Shell_NotifyIconW(NIM_MODIFY, &icon)) return true;
   RemoveReceipt(id);
+  return false;
+}
+
+void FlutterWindow::RemovePhoneNotification(UINT id) {
+  NOTIFYICONDATAW icon{};
+  icon.cbSize = sizeof(icon);
+  icon.hWnd = GetHandle();
+  icon.uID = id;
+  Shell_NotifyIconW(NIM_DELETE, &icon);
+  phone_notifications_.erase(id);
+}
+
+bool FlutterWindow::NotifyPhone(const std::string& key, const std::string& title,
+                                const std::string& body) {
+  // A duplicate replaces its native presentation; file receipt IDs use 10..32767.
+  for (auto it = phone_notifications_.begin(); it != phone_notifications_.end(); ++it) {
+    if (it->second == key) { RemovePhoneNotification(it->first); break; }
+  }
+  if (phone_notifications_.size() >= 16) RemovePhoneNotification(phone_notifications_.begin()->first);
+  if (next_phone_notification_id_ > 65535) next_phone_notification_id_ = 32768;
+  const UINT id = next_phone_notification_id_++;
+  if (phone_notifications_.count(id)) RemovePhoneNotification(id);
+  NOTIFYICONDATAW icon{};
+  icon.cbSize = sizeof(icon);
+  icon.hWnd = GetHandle();
+  icon.uID = id;
+  icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+  icon.uCallbackMessage = kTrayMessage;
+  icon.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APP_ICON));
+  wcscpy_s(icon.szTip, L"Clipy");
+  if (!Shell_NotifyIconW(NIM_ADD, &icon)) return false;
+  icon.uVersion = NOTIFYICON_VERSION_4;
+  if (!Shell_NotifyIconW(NIM_SETVERSION, &icon)) {
+    Shell_NotifyIconW(NIM_DELETE, &icon);
+    return false;
+  }
+  auto wide = [](const std::string& text) {
+    const int length = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    std::wstring value(static_cast<size_t>(length), L'\0');
+    if (length) MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), value.data(), length);
+    return value;
+  };
+  wcsncpy_s(icon.szInfoTitle, wide(title).c_str(), _TRUNCATE);
+  wcsncpy_s(icon.szInfo, wide(body).c_str(), _TRUNCATE);
+  icon.uFlags = NIF_INFO;
+  icon.dwInfoFlags = NIIF_INFO;
+  phone_notifications_[id] = key;
+  if (Shell_NotifyIconW(NIM_MODIFY, &icon)) return true;
+  RemovePhoneNotification(id);
   return false;
 }

@@ -62,6 +62,30 @@ void main() {
   );
 
   test(
+    'Windows source metadata does not turn an empty post into content',
+    () async {
+      final result = await repository.upsert(
+        NotificationEntry(
+          id: 'empty',
+          packageName: 'example.app',
+          appName: 'Example',
+          title: '',
+          body: '',
+          postTime: 1,
+          extras: {
+            'clipyWindowsSourceId': 'peer',
+            'clipyWindowsSourceName': 'Phone',
+            'clipyWindowsReceivedAt': 1234,
+            'clipyWindowsRead': false,
+          },
+        ),
+      );
+      expect(result.accepted, isFalse);
+      expect(await repository.count(), 0);
+    },
+  );
+
+  test(
     'remote post is stored before ACK and duplicate delivery is ACKed',
     () async {
       final post = jsonEncode(entry('post-1', key: 'chat-1').toJson());
@@ -125,6 +149,84 @@ void main() {
       expect(await repository.count(), 0);
     },
   );
+  test(
+    'Windows read state persists on the row and filters before paging',
+    () async {
+      for (var i = 0; i < 45; i++) {
+        await repository.upsert(
+          entry('item-$i', key: 'key-$i').copyWith(
+            postTime: i,
+            extras: {
+              'clipyWindowsSourceId': 'phone',
+              'clipyWindowsSourceName': 'Test phone',
+              'clipyWindowsReceivedAt': DateTime.now().millisecondsSinceEpoch,
+            },
+          ),
+        );
+        if (i >= 3) await repository.markWindowsRead('item-$i');
+      }
+      final reopened = NotificationRepository.forDatabase(db);
+      expect(
+        (await reopened.fetchPage(
+          offset: 0,
+          limit: 2,
+          unreadOnly: true,
+        )).map((e) => e.id),
+        ['item-2', 'item-1'],
+      );
+      expect(
+        (await reopened.fetchPage(
+          offset: 2,
+          limit: 2,
+          unreadOnly: true,
+        )).map((e) => e.id),
+        ['item-0'],
+      );
+      expect(
+        (await reopened.fetchPage(
+          offset: 0,
+          limit: 40,
+          query: 'item-1',
+          unreadOnly: true,
+        )).map((e) => e.id),
+        ['item-1'],
+      );
+      final summary = (await reopened.windowsSourceSummary()).single;
+      expect(summary['sourceId'], 'phone');
+      expect(summary['sourceName'], 'Test phone');
+      expect(summary['total'], 45);
+      expect(summary['unread'], 3);
+      expect(summary['today'], 45);
+      await reopened.removeById('item-44');
+      expect((await reopened.windowsSourceSummary()).single['total'], 44);
+    },
+  );
+
+  test(
+    'duplicate receipt preserves local read state, changed content is unread',
+    () async {
+      final original = entry('local', key: 'local-key').copyWith(
+        extras: {'clipyWindowsSourceId': 'phone', 'clipyWindowsRead': false},
+      );
+      await repository.upsert(original);
+      await repository.markWindowsRead(original.id);
+      expect((await repository.upsert(original)).accepted, false);
+      expect(
+        await repository.fetchPage(offset: 0, limit: 10, unreadOnly: true),
+        isEmpty,
+      );
+      await repository.upsert(original.copyWith(body: 'Changed message'));
+      expect(
+        (await repository.fetchPage(
+          offset: 0,
+          limit: 10,
+          unreadOnly: true,
+        )).single.body,
+        'Changed message',
+      );
+    },
+  );
+
   test(
     'notification search matches stored data and escapes SQL wildcards',
     () async {
