@@ -50,6 +50,11 @@ struct UIExpiringMisses<Key: Hashable> {
     let limit: Int
     let ttl: TimeInterval
     private var deadlines: [Key: TimeInterval] = [:]
+    init(limit: Int, ttl: TimeInterval) {
+        self.limit = limit
+        self.ttl = ttl
+    }
+
     var count: Int { deadlines.count }
 
     mutating func contains(_ key: Key, now: TimeInterval) -> Bool {
