@@ -131,7 +131,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.38** · Source build **12374** (Android arm64 `versionCode` **14374**) · Latest published release: **[v1.0.36](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.36)** · [Build metadata](clipy_flutter/pubspec.yaml)
+Current source version: **1.0.38** · Source build **12374** (Android arm64 `versionCode` **14374**) · Latest published release: **[v1.0.38](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.38)** · [Build metadata](clipy_flutter/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see sync version notes (local document: `docs/GETTING_STARTED.md#sync-version-notes`).
 
@@ -356,7 +356,7 @@ Full wire notes, headless Android channel rules, and code map: `docs/PROTOCOL.md
 
 Current source also supports an opt-in self-hosted Internet relay (local document: `docs/COMMON-RELAY-SDK.md`): LAN first, authenticated WSS fallback for text, notifications and files. Enroll each relay device with its own identity and verified peer public keys; LAN sending remains pairing-free. The native iOS Share Extension remains LAN-only. Available in v1.0.32; a compatible common-relay server is required.
 
-Unreleased source adds a **server access password**, separate from the device key. New QR invitations and encrypted short links include it; scanning or pasting an invitation securely saves it for that relay address before joining. Creating a group or connecting manually still requires configuring the password first; legacy invitations without one require it to be entered if not already saved. Sharing a full invitation grants access, so share it only with trusted devices. Authentication failures preserve the device identity and LAN configuration. Source uses Common Relay v0.1.5; see dependency details (local document: `docs/COMMON-RELAY-SDK.md`).
+Version 1.0.38 adds a **server access password**, separate from the device key. New QR invitations and encrypted short links include it; scanning or pasting an invitation securely saves it for that relay address before joining. Creating a group or connecting manually still requires configuring the password first; legacy invitations without one require it to be entered if not already saved. Sharing a full invitation grants access, so share it only with trusted devices. Authentication failures preserve the device identity and LAN configuration. Source uses Common Relay v0.1.5; see dependency details (local document: `docs/COMMON-RELAY-SDK.md`).
 
 ## 📁 Project structure
 
