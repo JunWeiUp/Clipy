@@ -132,11 +132,12 @@ final class ModelTranslationService: NSObject, URLSessionTaskDelegate {
               let message = first["message"] as? [String: Any],
               let content = message["content"] as? String else { throw ModelTranslationError.response }
         let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, text.count <= 10_000 else { throw ModelTranslationError.response }
+        guard !text.isEmpty, text.count <= 50_000 else { throw ModelTranslationError.response }
         return text
     }
 
     func translate(_ text: String, direction: WordTranslation.Direction) async throws -> WordTranslation {
+        let text = try WordQuery.modelText(text)
         let request = try Self.request(text, configuration: .current,
                                        key: ModelTranslationKeychain.read(), direction: direction)
         let data = try await fetch(request)
@@ -173,8 +174,8 @@ final class ModelTranslationService: NSObject, URLSessionTaskDelegate {
 
     private func fetch(_ request: URLRequest) async throws -> Data {
         let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 45
-        config.timeoutIntervalForResource = 60
+        config.timeoutIntervalForRequest = request.httpMethod == "POST" ? 120 : 45
+        config.timeoutIntervalForResource = request.httpMethod == "POST" ? 180 : 60
         config.urlCache = nil
         config.httpCookieStorage = nil
         let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)

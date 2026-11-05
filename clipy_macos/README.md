@@ -14,8 +14,8 @@ install, launch, terminate apps or reset permissions. The deployment target is
 macOS 13; newer capture/translation APIs are availability-guarded.
 
 `Sources/` is organized by feature. `Resources/Info.plist` is the reviewed bundle
-metadata template. See [Architecture](../docs/ARCHITECTURE.md) and
-[Development](../docs/DEVELOPMENT.md) for module boundaries, build options,
+metadata template. See Architecture (local document: `docs/ARCHITECTURE.md`) and
+Development (local document: `docs/DEVELOPMENT.md`) for module boundaries, build options,
 signing and device verification.
 
 The distributed macOS application includes the screenshot port under

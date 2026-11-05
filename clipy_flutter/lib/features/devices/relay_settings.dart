@@ -11,7 +11,12 @@ import '../../sync/relay_configuration.dart';
 import '../../ui/app_components.dart';
 
 class RelaySettings extends StatefulWidget {
-  const RelaySettings({super.key, this.onSettingsChanged});
+  const RelaySettings({
+    super.key,
+    this.onSettingsChanged,
+    this.showGroupManagement = true,
+  });
+  final bool showGroupManagement;
   final VoidCallback? onSettingsChanged;
   @override
   State<RelaySettings> createState() => _RelaySettingsState();
@@ -21,6 +26,8 @@ class _RelaySettingsState extends State<RelaySettings> {
   final _url = TextEditingController();
   final _device = TextEditingController();
   final _key = TextEditingController();
+  final _password = TextEditingController();
+  bool _showPassword = false;
   final _enrollment = TextEditingController();
   bool _enabled = false, _loaded = false, _saving = false, _configured = false;
   String? _error;
@@ -39,11 +46,18 @@ class _RelaySettingsState extends State<RelaySettings> {
       final config = RelayConfiguration.decode(
         await ClipyRelayIdentity.config(),
       );
+      final url =
+          prefs.getString('syncRelayURL') ??
+          'wss://relay.example.test/relay/v1/ws';
+      final accessPassword = await ClipyRelayIdentity.accessPassword(url);
       if (!mounted) return;
       setState(() {
+        _password.text = accessPassword;
+        _showPassword = false;
         _enabled = prefs.getBool('syncRelayEnabled') ?? false;
         _url.text =
-            prefs.getString('syncRelayURL') ?? 'wss://relay.example.test/relay/v1/ws';
+            prefs.getString('syncRelayURL') ??
+            'wss://relay.example.test/relay/v1/ws';
         _device.text =
             prefs.getString('syncRelayDeviceId') ??
             config['device'] as String? ??
@@ -68,6 +82,7 @@ class _RelaySettingsState extends State<RelaySettings> {
     _url.dispose();
     _device.dispose();
     _key.dispose();
+    _password.dispose();
     _enrollment.dispose();
     super.dispose();
   }
@@ -84,6 +99,7 @@ class _RelaySettingsState extends State<RelaySettings> {
         url: _url.text,
         deviceId: _device.text,
         accessKey: _key.text,
+        accessPassword: _password.text,
         token: _enrollment.text,
       );
       if (!mounted) return;
@@ -98,7 +114,18 @@ class _RelaySettingsState extends State<RelaySettings> {
       if (!mounted) return;
       setState(
         () => _error =
-            error is FormatException && error.message == 'enrollmentRequired'
+            error is FormatException && error.message == 'relayPasswordRequired'
+            ? t(
+                '启用中继前请填写访问密码。',
+                'Enter the access password before enabling relay.',
+              )
+            : error is FormatException &&
+                  error.message == 'invalidRelayPassword'
+            ? t(
+                '访问密码须为 8–128 位 ASCII 可见字符，不可包含空格。',
+                'Use 8–128 printable ASCII characters without spaces.',
+              )
+            : error is FormatException && error.message == 'enrollmentRequired'
             ? t(
                 '首次配置请先导入本设备接入配置，之后可单独更换公网 Key。',
                 'Import device enrollment once; then the Internet Key can be replaced separately.',
@@ -157,30 +184,31 @@ class _RelaySettingsState extends State<RelaySettings> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.devices),
-            title: Text(t('管理公网设备组', 'Manage relay device group')),
-            subtitle: Text(
-              t('查看设备、添加设备或扫码加入', 'View devices, invite or scan to join'),
+          if (widget.showGroupManagement)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.devices),
+              title: Text(t('管理公网设备组', 'Manage relay device group')),
+              subtitle: Text(
+                t('查看设备、添加设备或扫码加入', 'View devices, invite or scan to join'),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () async {
+                await Navigator.of(context).push(
+                  Platform.isIOS
+                      ? CupertinoPageRoute<void>(
+                          builder: (_) => const RelayGroupPage(),
+                        )
+                      : MaterialPageRoute<void>(
+                          builder: (_) => const RelayGroupPage(),
+                        ),
+                );
+                if (mounted) {
+                  await _load();
+                  widget.onSettingsChanged?.call();
+                }
+              },
             ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () async {
-              await Navigator.of(context).push(
-                Platform.isIOS
-                    ? CupertinoPageRoute<void>(
-                        builder: (_) => const RelayGroupPage(),
-                      )
-                    : MaterialPageRoute<void>(
-                        builder: (_) => const RelayGroupPage(),
-                      ),
-              );
-              if (mounted) {
-                await _load();
-                widget.onSettingsChanged?.call();
-              }
-            },
-          ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: Text(t('启用公网中继', 'Enable Internet relay')),
@@ -192,6 +220,13 @@ class _RelaySettingsState extends State<RelaySettings> {
           TextField(
             key: const PageStorageKey('relay-url'),
             controller: _url,
+            onChanged: (_) {
+              // Never carry a displayed credential to another server draft.
+              setState(() {
+                _password.clear();
+                _showPassword = false;
+              });
+            },
             enabled: _loaded && !_saving,
             autocorrect: false,
             textDirection: TextDirection.ltr,
@@ -200,6 +235,35 @@ class _RelaySettingsState extends State<RelaySettings> {
             textInputAction: TextInputAction.next,
             inputFormatters: [FilteringTextInputFormatter.singleLineFormatter],
             decoration: InputDecoration(labelText: t('中继地址', 'Relay URL')),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const PageStorageKey('relay-access-password'),
+            controller: _password,
+            enabled: _loaded && !_saving,
+            obscureText: !_showPassword,
+            autocorrect: false,
+            enableSuggestions: false,
+            textDirection: TextDirection.ltr,
+            decoration: InputDecoration(
+              labelText: t('访问密码', 'Access password'),
+              helperMaxLines: 8,
+              helperText: t(
+                '仅保存在本机安全存储，不包含在邀请中。8–128 位可见 ASCII 字符，不含空格；关闭中继后可留空清除。启用前须填写；修改地址后请重新填写。',
+                'Stored securely on this device, never in invitations. 8–128 printable ASCII characters, no spaces. Clear while relay is disabled. Required before enabling; re-enter after changing URL.',
+              ),
+              suffixIcon: IconButton(
+                tooltip: _showPassword
+                    ? t('隐藏密码', 'Hide password')
+                    : t('显示密码', 'Show password'),
+                onPressed: _loaded && !_saving
+                    ? () => setState(() => _showPassword = !_showPassword)
+                    : null,
+                icon: Icon(
+                  _showPassword ? Icons.visibility_off : Icons.visibility,
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 12),
           TextField(

@@ -155,6 +155,7 @@ final class SearchViewModel: ObservableObject {
     func prepareForClose() {
         saveSearchState()
         clearLoadedData()
+        AppIconCache.removeAll()
         // A panel query arriving while the view is off screen waits for onAppear,
         // which would otherwise overwrite it with the saved search state.
         hasAppeared = false
@@ -1378,11 +1379,14 @@ private struct LazyHistoryThumbnailView: View {
     /// Aspect-fill the frame (V3 row thumbnails) instead of stretching.
     var fill = false
 
-    @State private var thumbnail: NSImage?
+    @StateObject private var thumbnailState = HistoryRowThumbnailState()
+    private var thumbnailKey: HistoryRowThumbnailKey {
+        .init(path: path, width: size.width, height: size.height)
+    }
 
     var body: some View {
         Group {
-            if let thumbnail {
+            if let thumbnail = thumbnailState.image {
                 Image(nsImage: thumbnail)
                     .resizable()
                     .aspectRatio(contentMode: fill ? .fill : .fit)
@@ -1396,25 +1400,9 @@ private struct LazyHistoryThumbnailView: View {
                     .background(HistoryKind.image.tintBackground, in: RoundedRectangle(cornerRadius: cornerRadius))
             }
         }
-        .onAppear {
-            loadThumbnailIfNeeded()
-        }
-        .onChange(of: path) { _ in
-            thumbnail = nil
-            loadThumbnailIfNeeded()
-        }
-    }
-
-    private func loadThumbnailIfNeeded() {
-        guard thumbnail == nil else { return }
-        let path = path
-        let size = size
-        DispatchQueue.global(qos: .utility).async {
-            let image = HistoryThumbnailCache.thumbnail(for: path, size: size)
-            DispatchQueue.main.async {
-                self.thumbnail = image
-            }
-        }
+        .onAppear { thumbnailState.show(thumbnailKey) }
+        .onChange(of: thumbnailKey) { thumbnailState.update($0) }
+        .onDisappear { thumbnailState.hide() }
     }
 }
 
@@ -1451,20 +1439,23 @@ enum AppIconCache {
     private static let cache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 64
+        cache.totalCostLimit = 64 * 32 * 32 * 4
         return cache
     }()
-    private static var misses = Set<String>()
+    private static var misses = UIExpiringMisses<String>(limit: 128, ttl: 60)
 
     static func icon(for bundleID: String?) -> NSImage? {
-        guard let bundleID, !bundleID.isEmpty, !misses.contains(bundleID) else { return nil }
+        dispatchPrecondition(condition: .onQueue(.main))
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let bundleID, !bundleID.isEmpty, !misses.contains(bundleID, now: now) else { return nil }
         if let cached = cache.object(forKey: bundleID as NSString) { return cached }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            misses.insert(bundleID)
+            misses.insert(bundleID, now: now)
             return nil
         }
-        let icon = NSWorkspace.shared.icon(forFile: url.path)
-        icon.size = NSSize(width: 16, height: 16)
-        cache.setObject(icon, forKey: bundleID as NSString)
+        guard let icon = UIIconRasterizer.rasterize(NSWorkspace.shared.icon(forFile: url.path),
+                                                  pointSize: 16, scale: 2) else { return nil }
+        cache.setObject(icon, forKey: bundleID as NSString, cost: 32 * 32 * 4)
         return icon
     }
 

@@ -18,6 +18,11 @@ func runSyncTransportRegressionTests() {
     runNetworkHandoffChecks()
     runRelayConfigurationChecks()
     let manager = SyncManager()
+    let scanTime = Date()
+    check(manager.reserveScanDial(host: "192.168.31.85", port: 5566, reason: "cache", now: scanTime), "cached dial blocked")
+    check(manager.reserveScanDial(host: "192.168.31.85", port: 5566, reason: "scan", now: scanTime), "cached old identity suppressed explicit discovery")
+    check(!manager.reserveScanDial(host: "192.168.31.85", port: 5566, reason: "scan", now: scanTime), "repeated scan bypassed throttling")
+    check(manager.reserveScanDial(host: "192.168.31.85", port: 5566, reason: "scan", now: scanTime.addingTimeInterval(manager.dialDedupTTL)), "scan did not recover after cooldown")
     useSecret("transport-test-secret-A")
     runCryptoChecks(manager, useSecret: useSecret)
     useSecret("transport-test-secret-A")
@@ -41,6 +46,7 @@ func runSyncTransportRegressionTests() {
     runHandshakeChecks(manager, useSecret: useSecret)
     useSecret("transport-test-secret-A")
     runSessionReaderChecks(manager)
+    runInboundBackpressureChecks()
 }
 
 private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -113,6 +119,13 @@ private func runFramingChecks(_ m: SyncManager) {
         }
         check(m.readOneFrame(fd: a, timeout: 2) == frame.dropFirst(4), "fragmented frame not reassembled")
     }
+    // Coalesced handshake + business frames must not lose the second frame.
+    do {
+        let (a, b) = makePair(); defer { Darwin.close(a); Darwin.close(b) }
+        rawWrite(b, frame + frame)
+        check(m.readOneFrame(fd: a, timeout: 1) == frame.dropFirst(4), "first coalesced frame")
+        check(m.readOneFrame(fd: a, timeout: 1) == frame.dropFirst(4), "coalesced next frame lost")
+    }
     // Zero / oversized length prefixes and silence all fail cleanly.
     for (prefix, label) in [(lengthPrefix(0), "zero length"),
                             (lengthPrefix(UInt32(SyncManager.maxHandshakeFrameLength + 1)), "oversized handshake frame")] {
@@ -171,7 +184,7 @@ private func runHandshakeChecks(_ m: SyncManager, useSecret: (String) -> Void) {
     check(handshake(m, expectedPeerId: "expected-relay-peer") { fd in
         _ = m.readOneFrame(fd: fd, timeout: 2)
         sendHello(fd, m, peerId: remoteId)
-    } == .badType, "relay tunnel adopted an unexpected peer")
+    } == .peerIdentityChanged, "relay tunnel adopted an unexpected peer")
     do {
         let (local, remote) = makePair(); defer { Darwin.close(remote) }
         m.performHandshake(fd: local, host: "relay:old", port: 5566, inbound: false,
@@ -275,6 +288,18 @@ private func runRelayConfigurationChecks() {
     check(SyncRelayClient.Access.parse(renamed)?.token == parsed.token, "ID edit erased saved key")
     check((try? SyncRelaySettings.preparedConfiguration(existing: raw, deviceID: "bad id", accessKey: "", enrollment: "")) == nil, "invalid device accepted")
     check((try? SyncRelaySettings.preparedConfiguration(existing: raw, deviceID: "mac_old", accessKey: "short", enrollment: "")) == nil, "short key accepted")
+    var imported = original
+    imported["password"] = "Fixture-Only!"
+    let importedRaw = String(decoding: try! JSONSerialization.data(withJSONObject: imported), as: UTF8.self)
+    let sanitized = try! SyncRelaySettings.preparedConfiguration(existing: "", deviceID: "mac_old", accessKey: "", enrollment: importedRaw)
+    let sanitizedObject = try! JSONSerialization.jsonObject(with: Data(sanitized.utf8)) as! [String:Any]
+    check(sanitizedObject["password"] == nil, "Enrollment JSON persisted a server access password")
+    check(SyncRelayClient.Access.parse(sanitized)?.secret_key == parsed.secret_key, "Password sanitization lost identity")
+    check(SyncRelayClient.Access.parse(sanitized)?.trusted_peers == parsed.trusted_peers, "Password sanitization lost trusted peers")
+    let noChange = try! SyncRelaySettings.preparedConfiguration(existing: raw, deviceID: "mac_old", accessKey: "", enrollment: "")
+    check(noChange == raw, "Unchanged settings should not restart relay or LAN")
+    check(!SyncRelayGroups.isAuthenticationFailure(NSError(domain: "network", code: 401)), "Unrelated NSError code was reported as relay authentication failure")
+    check(SyncRelayGroups.isAuthenticationFailure(NSError(domain: NSURLErrorDomain, code: NSURLErrorUserAuthenticationRequired)), "URLSession auth failure was not recognized")
     let lan = "12345678-1234-1234-1234-123456789abc"
     check(SyncRelayClient.lanPeerID(relayID: "phone_new", presence: ["peerId": lan]) == lan, "custom relay ID lost LAN identity")
     check(SyncRelayClient.lanPeerID(relayID: lan, presence: [:]) == lan, "legacy identity mapping")
@@ -315,4 +340,112 @@ private func runNetworkHandoffChecks() {
         for id in Array(manager.sessions.keys) { manager.closeSession(peerId:id,scheduleReconnect:false) }
     }
     for fd in peers.values { Darwin.close(fd) }
+}
+
+/// No sleep, app launch, clipboard, DB, or timing-based producer/consumer race:
+/// manually advance the main executor while the real socket reader is budgeted.
+private func runInboundBackpressureChecks() {
+    for host in ["127.0.0.1", "relay:fixture"] {
+        let m = SyncManager(), peerID = "inbound-fixture"
+        var jobs: [() -> Void] = [], stored: [String] = []
+        m.inboundMainDispatchForTesting = { jobs.append($0) }
+        m.inboundApplyForTesting = { type, text in
+            stored.append(text ?? type)
+            if type == SyncType.notifPost { m.sendNotificationAck(hash: "notice", to: peerID) }
+        }
+        func install() -> Int32 {
+            let (local, remote) = makePair()
+            m.setNonBlocking(local)
+            let source = DispatchSource.makeReadSource(fileDescriptor: local, queue: m.syncQueue)
+            source.setEventHandler {} // Tests explicitly advance the reader on its queue.
+            m.sessions[peerID] = SyncManager.Session(peerId: peerID, host: host, port: 0,
+                fd: local, readSource: source, writer: SyncSocketWriter(fd: local, queue: m.syncQueue) {},
+                isClient: false)
+            source.resume()
+            return remote
+        }
+        func frame(_ type: String, _ text: String, hash: String) -> Data {
+            m.encodeFrame(SyncEnvelope.make(type: type, peerId: peerID, hash: hash, payload: m.encrypt(text)))!
+        }
+        let one = frame(SyncType.history, "one", hash: "one")
+        let two = frame(SyncType.notifPost, "two", hash: "notice")
+        let three = frame(SyncType.historyDirect, "three", hash: "three")
+        var remote: Int32 = -1
+        m.syncQueue.sync {
+            m.inboundBudget = SyncInboundBudget(limits: .init(sessionBytes: 4096, sessionTasks: 2,
+                                                              globalBytes: 8192, globalTasks: 2))
+            remote = install()
+            rawWrite(remote, one + two + three)
+            m.onSessionReadable(peerId: peerID)
+            check(jobs.count == 2 && m.inboundBudget.total.tasks == 2, "burst admission bound")
+            check(m.sessions[peerID]!.readSuspended, "reader must pause")
+            check(m.sessions[peerID]!.buffer == three, "denied frame retained verbatim")
+            m.onSessionReadable(peerId: peerID)
+            check(jobs.count == 2, "stale readable callback must not bypass pause")
+        }
+        var byte: UInt8 = 0
+        check(Darwin.recv(remote, &byte, 1, MSG_DONTWAIT) == -1 && errno == EAGAIN,
+              "ACK must not precede main-thread store")
+        jobs.removeFirst()()
+        m.syncQueue.sync {
+            check(stored == ["one"], "first store ordering")
+            check(jobs.count == 2, "completion must drain already buffered frame without new socket data")
+            check(m.sessions[peerID]!.buffer.isEmpty && !m.sessions[peerID]!.readSuspended,
+                  "buffer must drain before reader resumes")
+        }
+        check(m.readOneFrame(fd: remote, timeout: 2).flatMap(m.decodeEnvelope)?.hash == "one", "post-store history ACK")
+        jobs.removeFirst()()
+        m.syncQueue.sync {}
+        check(m.readOneFrame(fd: remote, timeout: 2).flatMap(m.decodeEnvelope)?.type == SyncType.notifAck,
+              "post-store notification ACK")
+        jobs.removeFirst()()
+        m.syncQueue.sync {
+            check(stored == ["one", "two", "three"], "mixed business frame FIFO")
+            check(m.inboundBudget.total == .init(), "all charges released")
+        }
+        _ = m.readOneFrame(fd: remote, timeout: 2)
+
+        // Fill again, close while suspended, and replace before old jobs run.
+        m.syncQueue.sync {
+            rawWrite(remote, one + two + three)
+            m.onSessionReadable(peerId: peerID)
+            check(m.sessions[peerID]!.readSuspended, "replacement fixture paused")
+            m.closeSession(peerId: peerID, scheduleReconnect: false)
+        }
+        var pfd = pollfd(fd: remote, events: Int16(POLLIN), revents: 0)
+        check(poll(&pfd, 1, 2000) > 0 && Darwin.recv(remote, &byte, 1, 0) == 0,
+              "suspended source cancellation must close descriptor")
+        Darwin.close(remote)
+        m.syncQueue.sync {
+            remote = install()
+            rawWrite(remote, three)
+            m.onSessionReadable(peerId: peerID)
+            check(m.sessions[peerID]!.readSuspended && jobs.count == 2,
+                  "retired jobs must stay globally charged across replacement")
+        }
+        jobs.removeFirst()() // Stale job skipped; releases capacity for the new session.
+        m.syncQueue.sync { check(jobs.count == 2, "new session drains after stale completion") }
+        jobs.removeFirst()() // Second stale job.
+        m.syncQueue.sync {}
+        check(stored == ["one", "two", "three"], "old task reentered replacement")
+        jobs.removeFirst()() // New session's three.
+        m.syncQueue.sync {
+            check(stored == ["one", "two", "three", "three"], "replacement store")
+            check(m.inboundBudget.total == .init(), "replacement leaked budget")
+        }
+        check(m.readOneFrame(fd: remote, timeout: 2).flatMap(m.decodeEnvelope)?.hash == "three",
+              "old session ACK leaked to replacement")
+
+        // Generation invalidation is immediate even before queued stop cleanup.
+        m.syncQueue.sync { rawWrite(remote, one); m.onSessionReadable(peerId: peerID) }
+        m.scanStateLock.lock(); m.serviceGeneration &+= 1; m.scanStateLock.unlock()
+        jobs.removeFirst()()
+        m.syncQueue.sync {
+            check(stored.count == 4 && m.inboundBudget.total == .init(), "stop generation rejected stale store")
+            m.closeSession(peerId: peerID, scheduleReconnect: false)
+        }
+        Darwin.close(remote)
+        m.inboundApplyForTesting = nil
+        m.inboundMainDispatchForTesting = nil
+    }
 }

@@ -28,6 +28,6 @@ Android platform channels and services are in `android/app/src/main/kotlin/`.
 The `ios/` target is experimental: it is not validated in CI and does not provide
 the Android-native notification/background-service integration.
 
-See [Development and signing](../docs/DEVELOPMENT.md),
-[Architecture](../docs/ARCHITECTURE.md), [Protocol](../docs/PROTOCOL.md),
+See Development and signing (local document: `docs/DEVELOPMENT.md`),
+Architecture (local document: `docs/ARCHITECTURE.md`), Protocol (local document: `docs/PROTOCOL.md`),
 [Contributing](../CONTRIBUTING.md) and [Security](../SECURITY.md).

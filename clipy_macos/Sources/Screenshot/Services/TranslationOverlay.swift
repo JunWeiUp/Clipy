@@ -1,10 +1,10 @@
 import Cocoa
-import Vision
 
 /// Handles text translation overlay: OCR → translate → create overlay annotations.
 enum TranslateOverlay {
 
     /// Perform OCR + translation on the selected region. Calls completion with overlay annotations.
+    @discardableResult
     static func translate(
         screenshot: NSImage,
         selectionRect: NSRect,
@@ -12,9 +12,10 @@ enum TranslateOverlay {
         targetLang: String,
         onError: @escaping (String) -> Void,
         completion: @escaping ([Annotation]) -> Void
-    ) {
+    ) -> OCRTask? {
         let regionImage = NSImage(size: selectionRect.size, flipped: false) { _ in
-            screenshot.draw(in: NSRect(x: -selectionRect.origin.x, y: -selectionRect.origin.y,
+            screenshot.draw(in: NSRect(x: captureDrawRect.origin.x - selectionRect.origin.x,
+                                        y: captureDrawRect.origin.y - selectionRect.origin.y,
                                        width: captureDrawRect.width, height: captureDrawRect.height),
                             from: .zero, operation: .copy, fraction: 1.0)
             return true
@@ -24,74 +25,79 @@ enum TranslateOverlay {
               let bitmap = NSBitmapImageRep(data: tiffData),
               let cgImage = bitmap.cgImage else {
             onError("Failed to process image")
-            return
+            return nil
         }
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            VisionOCR.performTextRecognition(cgImage: cgImage) { request, error in
-                if let error = error {
-                    DispatchQueue.main.async { onError("OCR failed: \(error.localizedDescription)") }
-                    return
-                }
+        weak var token: OCRTask?
+        let task = VisionOCR.performTextRecognition(cgImage: cgImage) { observations, error in
+            guard let token, !token.isCancelled else { return }
+            if let error = error {
+                onError("OCR failed: \(error.localizedDescription)")
+                return
+            }
 
-                guard let observations = request.results as? [VNRecognizedTextObservation],
-                      !observations.isEmpty else {
-                    DispatchQueue.main.async { onError("No text found in selection.") }
-                    return
-                }
+            guard
+                  !observations.isEmpty else {
+                onError("No text found in selection.")
+                return
+            }
 
-                let blocks = observations.compactMap { obs -> (text: String, box: CGRect)? in
-                    guard let top = obs.topCandidates(1).first else { return nil }
-                    let t = top.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !t.isEmpty else { return nil }
-                    return (t, obs.boundingBox)
-                }
+            let blocks = observations.compactMap { obs -> (text: String, box: CGRect)? in
+                let t = obs.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !t.isEmpty else { return nil }
+                return (t, obs.boundingBox)
+            }
 
-                TranslationService.translateBatch(texts: blocks.map { $0.text }, targetLang: targetLang) { result in
-                    switch result {
-                    case .failure(let error):
-                        onError("Translation failed: \(error.localizedDescription)")
+            // Sample now: translation retains only small colors/boxes, not the image.
+            let colors = blocks.map { block in
+                sampleAverageColor(in: cgImage, region: CGRect(
+                    x: block.box.minX * CGFloat(cgImage.width),
+                    y: block.box.minY * CGFloat(cgImage.height),
+                    width: block.box.width * CGFloat(cgImage.width),
+                    height: block.box.height * CGFloat(cgImage.height)))
+            }
+            TranslationService.translateBatch(texts: blocks.map { $0.text }, targetLang: targetLang, cancellation: token) { [weak token] result in
+                guard let token, !token.isCancelled else { return }
+                switch result {
+                case .failure(let error):
+                    onError("Translation failed: \(error.localizedDescription)")
 
-                    case .success(let translations):
-                        var annotations: [Annotation] = []
-                        let groupID = UUID()
+                case .success(let translations):
+                    var annotations: [Annotation] = []
+                    let groupID = UUID()
 
-                        for (i, block) in blocks.enumerated() {
-                            guard i < translations.count else { continue }
-                            let translated = translations[i].trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !translated.isEmpty else { continue }
+                    for (i, block) in blocks.enumerated() {
+                        guard i < translations.count else { continue }
+                        let translated = translations[i].trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !translated.isEmpty else { continue }
 
-                            let box = block.box
-                            let padding: CGFloat = 1
-                            let viewX = selectionRect.origin.x + box.origin.x * selectionRect.width - padding
-                            let viewY = selectionRect.origin.y + box.origin.y * selectionRect.height - padding
-                            let viewW = box.width * selectionRect.width + padding * 2
-                            let viewH = box.height * selectionRect.height + padding * 2
+                        let box = block.box
+                        let padding: CGFloat = 1
+                        let viewX = selectionRect.origin.x + box.origin.x * selectionRect.width - padding
+                        let viewY = selectionRect.origin.y + box.origin.y * selectionRect.height - padding
+                        let viewW = box.width * selectionRect.width + padding * 2
+                        let viewH = box.height * selectionRect.height + padding * 2
 
-                            let bgColor = sampleAverageColor(in: cgImage, region: CGRect(
-                                x: box.origin.x * CGFloat(cgImage.width),
-                                y: box.origin.y * CGFloat(cgImage.height),
-                                width: box.width * CGFloat(cgImage.width),
-                                height: box.height * CGFloat(cgImage.height)
-                            ))
+                        let bgColor = colors[i]
 
-                            let ann = Annotation(
-                                tool: .translateOverlay,
-                                startPoint: NSPoint(x: viewX, y: viewY),
-                                endPoint: NSPoint(x: viewX + viewW, y: viewY + viewH),
-                                color: bgColor, strokeWidth: 0
-                            )
-                            ann.text = translated
-                            ann.fontSize = max(8, viewH * 0.65)
-                            ann.groupID = groupID
-                            annotations.append(ann)
-                        }
-
-                        DispatchQueue.main.async { completion(annotations) }
+                        let ann = Annotation(
+                            tool: .translateOverlay,
+                            startPoint: NSPoint(x: viewX, y: viewY),
+                            endPoint: NSPoint(x: viewX + viewW, y: viewY + viewH),
+                            color: bgColor, strokeWidth: 0
+                        )
+                        ann.text = translated
+                        ann.fontSize = max(8, viewH * 0.65)
+                        ann.groupID = groupID
+                        annotations.append(ann)
                     }
+
+                    completion(annotations)
                 }
             }
         }
+        token = task
+        return task
     }
 
     // MARK: - Helpers

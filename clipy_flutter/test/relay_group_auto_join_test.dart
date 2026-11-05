@@ -96,6 +96,107 @@ Future<void> settle(WidgetTester tester) async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  for (final valid in [true, false]) {
+    test(
+      'scanned password is adopted only after invitation validation: $valid',
+      () async {
+        const url = 'wss://example.invalid/relay/v1/ws';
+        const access = 'invitation-fixture-only';
+        SharedPreferences.setMockInitialValues({'syncRelayURL': url});
+        FlutterSecureStorage.setMockInitialValues({});
+        final sodium = await SodiumInit.init();
+        final invitation = <String, dynamic>{
+          'version': 1,
+          'app': 'clipy',
+          'url': url,
+          'id': '12' * 16,
+          'group': 'fixture',
+          'expires': valid
+              ? DateTime.now().millisecondsSinceEpoch ~/ 1000 + 600
+              : 1,
+        };
+        final key = sodium.randombytes.buf(32);
+        final link = cr.RelayInvitationLinks.make(
+          invitation,
+          key,
+          password: access,
+        );
+        final packet = cr.RelayInvitationLinks.seal(
+          sodium,
+          invitation,
+          key,
+          sodium.randombytes.buf(24),
+        );
+        var requests = 0;
+        final previous = HttpOverrides.current;
+        HttpOverrides.global = _MockNetwork((uri) {
+          requests++;
+          expect(uri.host, 'example.invalid');
+          return {'version': 1, 'packet': packet};
+        });
+        addTearDown(() => HttpOverrides.global = previous);
+        if (valid) {
+          final resolved = await ClipyRelayGroups.resolveInvitation(link);
+          expect(resolved['group'], 'fixture');
+          expect(resolved.containsKey('password'), isFalse);
+          expect(await ClipyRelayIdentity.accessPassword(url), access);
+          await ClipyRelayGroups.requireAccess();
+          final draft = await ClipyRelayGroups.draft(resolved, 'phone');
+          draft.config['enrollment_invitation'] = resolved;
+          await ClipyRelayGroups.savePending(draft);
+          expect(
+            await ClipyRelayIdentity.groupDraft(),
+            isNot(contains(access)),
+          );
+        } else {
+          await expectLater(
+            ClipyRelayGroups.resolveInvitation(link),
+            throwsStateError,
+          );
+          expect(await ClipyRelayIdentity.accessPassword(url), '');
+        }
+        expect(requests, 1);
+        final other = Map<String, dynamic>.from(invitation)
+          ..['url'] = 'wss://other.invalid/relay/v1/ws';
+        final foreign = cr.RelayInvitationLinks.make(
+          other,
+          key,
+          password: access,
+        );
+        await expectLater(
+          ClipyRelayGroups.resolveInvitation(foreign),
+          throwsFormatException,
+        );
+        expect(requests, 1);
+      },
+    );
+  }
+  test(
+    'resumed QR refreshes old fragment with the current server password',
+    () async {
+      const url = 'wss://example.invalid/relay/v1/ws';
+      SharedPreferences.setMockInitialValues({'syncRelayURL': url});
+      FlutterSecureStorage.setMockInitialValues({});
+      final sodium = await SodiumInit.init();
+      final inv = <String, dynamic>{
+        'version': 1,
+        'app': 'clipy',
+        'url': url,
+        'id': '34' * 16,
+        'group': 'fixture',
+      };
+      final key = sodium.randombytes.buf(32);
+      inv['short_link'] = cr.RelayInvitationLinks.make(inv, key);
+      await ClipyRelayIdentity.saveAccessPassword(url, 'current-fixture-only');
+      final updated = await ClipyRelayGroups.invitationForSharing(inv);
+      final parsed = cr.RelayInvitationLinks.parse(
+        ClipyRelayGroups.encodeInvitation(updated),
+      );
+      expect(parsed.password, 'current-fixture-only');
+      expect(parsed.key, key);
+      expect(updated.containsKey('password'), isFalse);
+    },
+  );
   for (final applicant in [true, false]) {
     testWidgets(
       applicant
@@ -108,6 +209,7 @@ void main() {
         });
         SharedPreferences.setMockInitialValues({
           'appLanguage': 'zh',
+          'syncRelayURL': 'wss://example.invalid/relay/v1/ws',
           'syncRelayDeviceId': applicant ? 'phone' : 'mac',
         });
         await AppLanguageController.instance.init();
@@ -175,6 +277,12 @@ void main() {
             )['public_key'],
           }),
         });
+        await ClipyRelayIdentity.saveAccessPassword(
+          'wss://example.invalid/relay/v1/ws',
+          'fixture-access-123',
+        );
+        manager.config['password'] = 'fixture-access-123';
+        phone.config['password'] = 'fixture-access-123';
         if (applicant) {
           phone.config['pending_join'] = {
             'invitation': invitation,

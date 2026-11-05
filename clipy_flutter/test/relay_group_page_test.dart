@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sodium/sodium.dart';
 import 'package:clipy_flutter/sync/relay_groups.dart';
+import 'package:clipy_flutter/sync/relay_identity.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -61,6 +62,10 @@ void main() {
           },
         }),
       });
+      await ClipyRelayIdentity.saveAccessPassword(
+        'wss://example.invalid/relay/v1/ws',
+        'fixture-access-123',
+      );
       await tester.pumpWidget(const MaterialApp(home: RelayGroupPage()));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(find.text('解散设备组'), 200);

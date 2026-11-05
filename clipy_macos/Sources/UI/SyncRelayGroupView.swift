@@ -48,19 +48,24 @@ struct SyncRelayGroupView: View {
         .disabled(model.busy)
         .task { if !isFixture { model.perform { try await model.refresh() } } }
         .onDisappear { if !isFixture { model.close() } }
+        .onReceive(SyncRelayConnectionState.shared.$status) { status in
+            if !isFixture, status == .authenticationRequired, !model.accessDenied {
+                model.handleFailure(SyncRelayAccessPolicy.Failure.missingPassword)
+            }
+        }
         .sheet(item:$renaming) { item in
             RelayDeviceNameEditor(name:item.name,zh:model.t("中","en")=="中") { value in model.perform { try await model.rename(item.id,name:value) } }
         }
         .sheet(item:$exiting) { action in
             VStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle").font(.system(size: 28)).foregroundStyle(SplitV3Color.danger)
-                Text(model.revoked ? model.t("清除失效的组配置？","Clear unavailable group configuration?") : action.disband ? model.t("解散整个设备组？","Disband this group?") : model.t("退出当前设备组？","Leave this group?")).font(.system(size: 15, weight: .semibold))
-                Text(model.revoked ? model.t("只清除本机已失效的公网组配置，保留历史记录和局域网设置。然后可创建或加入其他设备组。","Clear only this device’s unavailable relay configuration. Local history and LAN settings are preserved. You can then create or join another group.") : action.disband ? model.t("所有设备将失去本组公网访问权限，未使用的邀请会失效。此操作不可撤销。本机历史记录和局域网配置会保留。","All devices lose relay access and invitations expire. This cannot be undone. Local history and LAN settings are preserved.") : model.t("仅本机离开，其他设备继续使用。若组内只剩本机，空组会同时关闭。本机历史记录和局域网配置会保留。","Only this device leaves; other devices continue using the group. Empty groups close. Local history and LAN settings are preserved."))
+                Text((model.revoked || model.accessDenied) ? model.t("清除失效的组配置？","Clear unavailable group configuration?") : action.disband ? model.t("解散整个设备组？","Disband this group?") : model.t("退出当前设备组？","Leave this group?")).font(.system(size: 15, weight: .semibold))
+                Text((model.revoked || model.accessDenied) ? model.t("只清除本机已失效的公网组配置，保留历史记录和局域网设置。然后可创建或加入其他设备组。","Clear only this device’s unavailable relay configuration. Local history and LAN settings are preserved. You can then create or join another group.") : action.disband ? model.t("所有设备将失去本组公网访问权限，未使用的邀请会失效。此操作不可撤销。本机历史记录和局域网配置会保留。","All devices lose relay access and invitations expire. This cannot be undone. Local history and LAN settings are preserved.") : model.t("仅本机离开，其他设备继续使用。若组内只剩本机，空组会同时关闭。本机历史记录和局域网配置会保留。","Only this device leaves; other devices continue using the group. Empty groups close. Local history and LAN settings are preserved."))
                     .font(.system(size: 12.5)).foregroundStyle(SplitV3Color.text2).multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true).padding(.bottom, 10)
                 HStack(spacing: 8) {
                     Button(model.t("取消","Cancel")) { exiting=nil }.buttonStyle(RelayWideButtonStyle()).keyboardShortcut(.cancelAction)
-                    Button(model.revoked ? model.t("清除并继续","Clear and continue") : action.disband ? model.t("确认解散","Disband group") : model.t("确认退出","Leave group")) { exiting=nil;model.perform { try await model.exitGroup(disband:action.disband);creating=true;groupName="";text="" } }
+                    Button((model.revoked || model.accessDenied) ? model.t("清除并继续","Clear and continue") : action.disband ? model.t("确认解散","Disband group") : model.t("确认退出","Leave group")) { exiting=nil;model.perform { if model.accessDenied { try await model.clearUnavailableEnrollment() } else { try await model.exitGroup(disband:action.disband) };creating=true;groupName="";text="" } }
                         .buttonStyle(RelayWideButtonStyle(kind: .dangerFill))
                 }
             }.padding(20).frame(width:400)
@@ -77,7 +82,7 @@ struct SyncRelayGroupView: View {
 
     // MARK: Toolbar
 
-    private var isFresh: Bool { model.loaded && !model.enrolled && !model.legacy && !model.revoked && model.pendingCode.isEmpty && !model.creationPending }
+    private var isFresh: Bool { model.loaded && !model.enrolled && !model.legacy && !(model.revoked || model.accessDenied) && model.pendingCode.isEmpty && !model.creationPending }
 
     private var toolbar: some View {
         SplitV3Toolbar {
@@ -112,7 +117,8 @@ struct SyncRelayGroupView: View {
             if !model.loaded {
                 Text(model.t("正在读取设备组配置…", "Loading group configuration…"))
                     .font(.system(size: 13)).foregroundStyle(SplitV3Color.text2).padding(.top, 18)
-            } else if model.revoked { unavailableGroup.padding(.top, 18) }
+            } else if model.accessDenied { deniedAccess.padding(.top, 18) }
+            else if model.revoked { unavailableGroup.padding(.top, 18) }
             else if model.enrolled { groupHeader; requestCard; memberList }
             else if model.legacy { existingGroup.padding(.top, 18) }
             else if !model.pendingCode.isEmpty { pendingJoin.padding(.top, 18) }
@@ -169,7 +175,7 @@ struct SyncRelayGroupView: View {
     }
 
     @ViewBuilder private var requestCard: some View {
-        if !model.revoked, let req = model.request, let parsed = try? RelayGroups.unpack(req), let member = parsed["member"] as? [String:Any] {
+        if !(model.revoked || model.accessDenied), let req = model.request, let parsed = try? RelayGroups.unpack(req), let member = parsed["member"] as? [String:Any] {
             let code = ((try? SyncRelayGroups.code(req)) ?? "").replacingOccurrences(of: " ", with: "")
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 12) {
@@ -263,7 +269,7 @@ struct SyncRelayGroupView: View {
 
     private var rightColumn: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if model.enrolled && !model.revoked {
+            if model.enrolled && !(model.revoked || model.accessDenied) {
                 if let inv = model.invitation { invitation(inv) }
                 else if model.manager { addDeviceCard }
                 if model.manager {
@@ -290,7 +296,7 @@ struct SyncRelayGroupView: View {
                 VStack(spacing: 8) {
                     Image(systemName: "qrcode").font(.system(size: 30, weight: .light)).foregroundStyle(SplitV3Color.text3)
                     Text(model.t("邀请与申请","Invitations and requests")).font(.system(size: 14, weight: .semibold))
-                    Text(model.t("加入设备组后，可在这里生成二维码邀请其他设备。","After joining a group, invite other devices with a QR code here."))
+                    Text(model.accessDenied ? model.t("恢复认证后再显示邀请与组管理。","Invitations and group management return after authentication is restored.") : model.t("加入设备组后，可在这里生成二维码邀请其他设备。","After joining a group, invite other devices with a QR code here."))
                         .font(.system(size: 12)).foregroundStyle(SplitV3Color.text3).multilineTextAlignment(.center)
                 }.padding(.horizontal, 16).padding(.vertical, 18).frame(maxWidth: .infinity).devicesCard(radius: 12)
                 Spacer(minLength: 0)
@@ -313,7 +319,7 @@ struct SyncRelayGroupView: View {
         let code = try? SyncRelayGroups.encode(inv)
         return VStack(spacing: 0) {
             Text(model.t("邀请设备加入","Invite a device")).font(.system(size: 14, weight: .semibold))
-            Text(model.t("让新设备扫码，邀请 10 分钟内有效。","Scan on the new device. Invitation expires in 10 minutes."))
+            Text(model.t("邀请 10 分钟内有效，含服务器访问密码。仅分享给你信任的设备。","Invitation expires in 10 minutes and includes the server access password. Share only with trusted devices."))
                 .font(.system(size: 11.5)).foregroundStyle(SplitV3Color.text3).padding(.top, 4)
             if let code, let image = qr(code) {
                 Image(nsImage:image).interpolation(.none).resizable().frame(width:148,height:148).padding(10)
@@ -345,6 +351,30 @@ struct SyncRelayGroupView: View {
 
     // MARK: Other states
 
+    private var deniedAccess: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(model.t("中继拒绝访问", "Relay access denied"), systemImage: "lock.trianglebadge.exclamationmark")
+                .font(.system(size: 15, weight: .semibold))
+            Text(model.t("请先更新或确认访问密码。设备 Key 失效、本机被移除或组已解散也可能造成认证失败；暂时隐藏成员与邀请，局域网不受影响。", "Check or update the access password first. An invalid device key, removal or a closed group may also cause authentication failure. Members and invitations are hidden; LAN is unaffected."))
+                .font(.system(size: 12.5)).foregroundStyle(SplitV3Color.text2)
+            Button(model.t("检查中继设置", "Check relay settings")) { navigateToSettings() }.buttonStyle(SplitV3ButtonStyle(kind: .primary))
+            Button(model.t("确认无法恢复？清除本机组配置…", "Unable to recover? Clear local group configuration…")) { exiting=GroupExit(disband:false) }
+                .buttonStyle(SplitV3ButtonStyle())
+        }.padding(16).frame(maxWidth:.infinity,alignment:.leading).devicesCard(radius:12)
+    }
+    private func navigateToSettings() {
+        if !embedded { dismiss() }
+        if let openSettings { openSettings() } else { MainWindow.shared.showDevices(page: .relaySettings) }
+    }
+    private var accessHint: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(model.hasAccessPassword
+                 ? model.t("访问密码已设置。新邀请会携带密码，扫码或粘贴后自动安全保存。", "Access password is set. New invitations include it; scanning or pasting securely saves it automatically.")
+                 : model.t("加入时从新邀请自动取得访问密码，无需手填。创建组或使用未携密码的旧邀请时，请先在中继设置保存密码。", "New invitations supply and securely save the access password automatically. To create a group or use an older invitation without one, save it in Relay settings first."))
+                .font(.system(size: 11.5)).foregroundStyle(SplitV3Color.text3)
+            Button(model.t("中继设置", "Relay settings")) { navigateToSettings() }.buttonStyle(SplitV3ButtonStyle())
+        }
+    }
     private var unavailableGroup: some View {
         VStack(alignment:.leading,spacing:12) {
             Label(model.t("设备组不可用","Group unavailable"),systemImage:"exclamationmark.circle").font(.system(size: 15, weight: .semibold))
@@ -386,8 +416,9 @@ struct SyncRelayGroupView: View {
                 Spacer()
                 Button { model.perform { try await model.createGroup(title:groupName,name:name) } } label: {
                     Label(model.creationPending ? model.t("继续创建","Continue creating") : model.t("创建设备组","Create group"),systemImage:"plus.circle")
-                }.buttonStyle(SplitV3ButtonStyle(kind: .primary))
+                }.buttonStyle(SplitV3ButtonStyle(kind: .primary)).disabled(!model.hasAccessPassword)
             }
+            accessHint
             if model.creationPending { Text(model.t("创建进度已保存，重试不会重复建组。","Progress saved. Retrying will not create a duplicate group.")).font(.system(size: 11.5)).foregroundStyle(SplitV3Color.text3) }
         }.padding(16).frame(maxWidth:.infinity,alignment:.leading).devicesCard(radius: 12)
     }
@@ -397,12 +428,13 @@ struct SyncRelayGroupView: View {
             Text(model.legacy ? model.t("服务端升级后，导入当前组的初始化邀请或管理设备发出的升级邀请。现有身份和密钥会保留。","After the server update, import initialization or upgrade approval for your current group. Your identity and keys are preserved.") : model.t("在另一台设备上点击「添加设备」，然后粘贴邀请链接或读取二维码图片。","Tap Add device on another device, then paste its invitation or read a QR image."))
                 .font(.system(size: 12.5)).foregroundStyle(SplitV3Color.text2).fixedSize(horizontal: false, vertical: true)
             VStack(alignment:.leading,spacing:6) { Text(model.t("本机名称","Device name")).font(.system(size: 12)).foregroundStyle(SplitV3Color.text2);TextField(model.t("本机名称","Device name"),text:$name) }
+            accessHint
             TextField(model.t("邀请链接或初始化邀请","Invitation link or initialization invitation"),text:$text,axis:.vertical).lineLimit(3...5)
                 .font(.system(size: 12, design: .monospaced))
             HStack(spacing:8) {
                 Button { readQR() } label: { Label(model.t("从二维码图片读取","Read QR image"), systemImage: "photo") }.buttonStyle(SplitV3ButtonStyle())
                 Spacer()
-                Button(model.legacy ? model.t("升级当前组配置","Upgrade current group") : model.t("申请加入","Request to join")) { model.perform { try await model.join(text:text,name:name) } }.buttonStyle(SplitV3ButtonStyle(kind: .primary))
+                Button(model.legacy ? model.t("升级当前组配置","Upgrade current group") : model.t("申请加入","Request to join")) { model.perform { try await model.join(text:text,name:name);text = "" } }.buttonStyle(SplitV3ButtonStyle(kind: .primary)).disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }.padding(16).frame(maxWidth:.infinity,alignment:.leading).devicesCard(radius: 12)
     }
@@ -418,8 +450,10 @@ struct SyncRelayGroupView: View {
                 let request = VNDetectBarcodesRequest();request.symbologies = [.qr];try VNImageRequestHandler(url:url).perform([request])
                 guard let code = request.results?.compactMap(\.payloadStringValue).first(where: {$0.hasPrefix("common-relay://")}) else { throw RelayError.invalid("invitation QR") };return code
             }.value
+            try Task.checkCancellation()
             text = value
             try await model.join(text:value,name:name)
+            text = ""
         }
     }
 }

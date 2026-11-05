@@ -3,160 +3,187 @@ import Foundation
 import ImageIO
 import Vision
 
-/// OCR in a throwaway child process.
-///
-/// Vision keeps its recognition models (~100MB after first use) resident for
-/// the lifetime of the calling process and offers no API to release them. The
-/// main app is a permanently-resident menu bar agent, so loading Vision there
-/// raised its idle footprint floor permanently. Instead the parent spawns this
-/// same executable with `--clipy-ocr-child`, streams a JSON request batch
-/// through stdin and reads JSON results from stdout; when the child exits,
-/// every byte of Vision memory goes back to the system. If the child cannot be
-/// spawned or the protocol fails, callers fall back to in-process Vision so
-/// recognition never breaks — at the cost of the residency this exists to avoid.
+/// All recognition runs in a throwaway child, including empty/error cases.
+/// One process at a time across history indexing and interactive recognition. No parent
+/// Vision fallback: a failed worker is reported/retried by the caller, not made permanent.
 enum OCRSubprocess {
     static let childModeArgument = "--clipy-ocr-child"
-    /// Generous: accurate-level recognition of a 2048px image takes well under
-    /// a second on Apple Silicon; the timeout only guards a hung child.
+    static let maximumResultBytes = 2 * 1_024 * 1_024
     private static let timeout: TimeInterval = 30
+    private static let processGate = DispatchSemaphore(value: 1)
 
-    private struct Request: Codable {
-        let path: String
-        let maxPixelSize: Int
-        let languages: [String]
-    }
-
-    private struct Result: Codable {
-        let ok: Bool
-        let text: String?
-    }
-
-    // MARK: - Parent side
-
-    /// Recognizes text in the image file at `path` (plain readable bytes —
-    /// decrypt encrypted media before calling). Returns nil when the child
-    /// could not be used, so callers can fall back.
     static func recognizeText(at path: String, maxPixelSize: Int, languages: [String]) -> String? {
-        guard let executable = Bundle.main.executableURL else { return nil }
-        let request = Request(path: path, maxPixelSize: maxPixelSize, languages: languages)
-        guard let requestData = try? JSONEncoder().encode([request]) else { return nil }
+        do {
+            return try perform(OCRRequest(path: path, maxPixelSize: maxPixelSize, languages: languages), task: OCRTask()).text
+        } catch {
+            // Do not log image paths or recognized text.
+            appLog("OCR worker failed: \(error.localizedDescription)", level: .warning)
+            return nil
+        }
+    }
 
+    static func perform(_ request: OCRRequest, task: OCRTask) throws -> OCRResponse {
+        // Only active work waits here (no idle timer). A cancelled interactive job
+        // must not retain its staging image for the history worker's full timeout.
+        while processGate.wait(timeout: .now() + 0.1) == .timedOut {
+            if task.isCancelled { throw OCRServiceError.cancelled }
+        }
+        defer { processGate.signal() }
+        guard !task.isCancelled else { throw OCRServiceError.cancelled }
+        guard let executable = Bundle.main.executableURL else { throw OCRServiceError.workerFailed }
+        let data = try JSONEncoder().encode(request)
+        guard data.count <= 65_536 else { throw OCRServiceError.resultTooLarge }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("clipy-ocr-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                                               attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let inputURL = directory.appendingPathComponent("request.json")
+        let outputURL = directory.appendingPathComponent("result.json")
+        try data.write(to: inputURL)
+        guard FileManager.default.createFile(atPath: outputURL.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
+            throw OCRServiceError.workerFailed
+        }
+        let input = try FileHandle(forReadingFrom: inputURL)
+        defer { try? input.close() }
         let process = Process()
         process.executableURL = executable
         process.arguments = [childModeArgument]
-        let input = Pipe()
-        let output = Pipe()
         process.standardInput = input
-        process.standardOutput = output
+        // A dedicated result file avoids pipe deadlock AND Vision/Espresso stdout
+        // diagnostics corrupting JSON (observed in repeated recognition on macOS).
+        process.environment = ProcessInfo.processInfo.environment.merging(
+            ["CLIPY_OCR_RESULT_PATH": outputURL.path], uniquingKeysWith: { _, new in new })
+        process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return nil
+        try task.launch(process)
+        defer { task.detachProcess() }
+        let deadline = DispatchWorkItem {
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
         }
-        input.fileHandleForWriting.write(requestData)
-        try? input.fileHandleForWriting.close()
-
-        let exited = DispatchSemaphore(value: 0)
-        DispatchQueue.global(qos: .utility).async {
-            process.waitUntilExit()
-            exited.signal()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: deadline)
+        let start = Date()
+        process.waitUntilExit()
+        deadline.cancel()
+        guard !task.isCancelled else { throw OCRServiceError.cancelled }
+        guard process.terminationStatus == 0 else {
+            throw Date().timeIntervalSince(start) >= timeout ? OCRServiceError.timedOut : OCRServiceError.workerFailed
         }
-        if exited.wait(timeout: .now() + timeout) == .timedOut, process.isRunning {
-            process.terminate()
-            process.waitUntilExit()
-        }
-
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        guard process.terminationStatus == 0,
-              let results = try? JSONDecoder().decode([Result].self, from: data),
-              let result = results.first else { return nil }
-        return result.ok ? result.text : nil
+        let size = try outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard size > 0, size <= maximumResultBytes else { throw OCRServiceError.resultTooLarge }
+        return try JSONDecoder().decode(OCRResponse.self, from: Data(contentsOf: outputURL)).validated()
     }
 
-    /// In-memory image variant: encodes a temporary PNG and routes it through
-    /// the child, falling back to in-process Vision when that is unavailable.
-    static func recognize(cgImage: CGImage, languages: ScreenshotOCRLanguage) -> String? {
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("clipy-ocr-\(UUID().uuidString).png")
-        guard let destination = CGImageDestinationCreateWithURL(
-            tempURL as CFURL, "public.png" as CFString, 1, nil) else {
-            return ImageOCRService.recognizeInProcess(cgImage: cgImage, languages: languages)
-        }
-        CGImageDestinationAddImage(destination, cgImage, nil)
-        guard CGImageDestinationFinalize(destination) else {
-            return ImageOCRService.recognizeInProcess(cgImage: cgImage, languages: languages)
-        }
-        defer { try? FileManager.default.removeItem(at: tempURL) }
-        if let text = recognizeText(
-            at: tempURL.path,
-            maxPixelSize: max(cgImage.width, cgImage.height),
-            languages: languages.recognitionLanguages) {
-            return text
-        }
-        return ImageOCRService.recognizeInProcess(cgImage: cgImage, languages: languages)
-    }
-
-    // MARK: - Child side (runs before any AppKit initialization)
-
-    /// Entry for `--clipy-ocr-child`, branched at the very top of main.swift.
-    /// Reads `[Request]` JSON from stdin, writes `[Result]` JSON to stdout.
-    /// Must stay free of AppKit singletons — it runs instead of
-    /// `NSApplication.shared`, and its whole process is discarded afterwards.
+    /// Branch before NSApplication initialization (also in the regression executable).
     static func runChildMode() -> Never {
-        let input = FileHandle.standardInput.readDataToEndOfFile()
-        var results: [Result] = []
-        if let requests = try? JSONDecoder().decode([Request].self, from: input) {
-            for request in requests {
-                guard let cgImage = downsampledCGImage(at: request.path, maxPixelSize: request.maxPixelSize) else {
-                    results.append(Result(ok: false, text: nil))
-                    continue
+        let response: OCRResponse = autoreleasepool {
+            do {
+                let input = try FileHandle.standardInput.read(upToCount: 65_537) ?? Data()
+                guard input.count <= 65_536 else { throw OCRServiceError.resultTooLarge }
+                let request = try JSONDecoder().decode(OCRRequest.self, from: input)
+                guard request.maxPixelSize > 0, request.maxPixelSize <= 16_384,
+                      request.matchingPatterns.count <= 32,
+                      request.matchingPatterns.allSatisfy({ $0.utf8.count <= 2_048 }),
+                      request.languages.count <= 32,
+                      let image = downsampledCGImage(at: request.path, maxPixelSize: request.maxPixelSize) else {
+                    throw OCRServiceError.invalidImage
                 }
-                results.append(Result(ok: true, text: childRecognize(cgImage: cgImage, languages: request.languages)))
+                return try recognize(image: image, request: request).validated()
+            } catch {
+                return OCRResponse(status: .failure, error: "recognition-failed")
             }
         }
-        if let data = try? JSONEncoder().encode(results) {
-            FileHandle.standardOutput.write(data)
-        }
-        exit(0)
+        guard let outputPath = ProcessInfo.processInfo.environment["CLIPY_OCR_RESULT_PATH"],
+              let data = try? JSONEncoder().encode(response), data.count <= maximumResultBytes else { exit(1) }
+        do {
+            // Parent created this 0600 file inside its unique 0700 staging directory.
+            // Never use stdout for the protocol: frameworks may write diagnostics there.
+            let output = try FileHandle(forWritingTo: URL(fileURLWithPath: outputPath))
+            try output.truncate(atOffset: 0)
+            try output.write(contentsOf: data)
+            try output.close()
+            exit(0)
+        } catch { exit(1) }
     }
 
     private static func downsampledCGImage(at path: String, maxPixelSize: Int) -> CGImage? {
-        guard maxPixelSize > 0,
-              let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else {
-            return nil
-        }
-        let options: [CFString: Any] = [
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCache: false,
             kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-        ]
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        ] as CFDictionary)
     }
 
-    private static func childRecognize(cgImage: CGImage, languages: [String]) -> String? {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-        // Auto mode: leave recognitionLanguages empty so Vision picks all
-        // supported languages; otherwise filter the requested tags to what
-        // this OS actually supports (mirrors ImageOCRService's old logic).
-        if !languages.isEmpty {
-            let supported = (try? request.supportedRecognitionLanguages()) ?? []
-            request.recognitionLanguages = languages.filter { supported.contains($0) }
-            if request.recognitionLanguages.isEmpty {
-                request.recognitionLanguages = supported
+    private static func recognize(image: CGImage, request: OCRRequest) throws -> OCRResponse {
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        switch request.kind {
+        case .faces:
+            let detect = VNDetectFaceRectanglesRequest()
+            try handler.perform([detect])
+            return OCRResponse(status: .success, boxes: (detect.results ?? []).map(\.boundingBox))
+        case .people:
+            let detect = VNDetectHumanRectanglesRequest()
+            try handler.perform([detect])
+            return OCRResponse(status: .success, boxes: (detect.results ?? []).map(\.boundingBox))
+        case .text, .textAndQR:
+            let regexes = try request.matchingPatterns.map { try NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
+            func recognizeText(level: VNRequestTextRecognitionLevel) throws -> [OCRTextObservation] {
+                let detect = VNRecognizeTextRequest()
+                detect.recognitionLevel = level
+                detect.usesLanguageCorrection = true
+                detect.automaticallyDetectsLanguage = request.automaticLanguageDetection
+                if !request.languages.isEmpty {
+                    let supported = try detect.supportedRecognitionLanguages()
+                    let selected = request.languages.filter { supported.contains($0) }
+                    detect.recognitionLanguages = selected.isEmpty ? supported : selected
+                }
+                try handler.perform([detect])
+                let results = detect.results ?? []
+                guard results.count <= 2_000 else { throw OCRServiceError.resultTooLarge }
+                var totalTextBytes = 0
+                var totalMatches = 0
+                return try results.compactMap { observation in
+                    guard let candidate = observation.topCandidates(1).first else { return nil }
+                    let text = candidate.string
+                    totalTextBytes += text.utf8.count
+                    guard totalTextBytes <= 131_072 else { throw OCRServiceError.resultTooLarge }
+                    var matches: [CGRect] = []
+                    for regex in regexes {
+                        for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                            guard let range = Range(match.range, in: text), let box = try? candidate.boundingBox(for: range) else { continue }
+                            matches.append(box.boundingBox)
+                            totalMatches += 1
+                            guard matches.count <= 2_000, totalMatches <= 8_000 else { throw OCRServiceError.resultTooLarge }
+                        }
+                    }
+                    return OCRTextObservation(text: text, boundingBox: observation.boundingBox, matchedBoxes: matches)
+                }
             }
+            var observations: [OCRTextObservation] = []
+            var textError: Error?
+            do {
+                do { observations = try recognizeText(level: .accurate) }
+                catch let error as OCRServiceError { throw error }
+                catch { observations = try recognizeText(level: .fast) }
+            } catch { textError = error }
+            // QR-only captures must remain usable even if a text model is unavailable.
+            var codes: [String] = []
+            var qrError: Error?
+            if request.kind == .textAndQR {
+                let detect = VNDetectBarcodesRequest()
+                detect.symbologies = [.qr, .microQR]
+                // Barcode support varies by OS; preserve successfully recognized text.
+                do { try handler.perform([detect]) } catch { qrError = error }
+                var seen = Set<String>()
+                codes = (detect.results ?? []).compactMap { observation in
+                    guard let text = observation.payloadStringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+                          !text.isEmpty, seen.insert(text).inserted else { return nil }
+                    return text
+                }
+            }
+            return try OCRResponse.recognized(observations: observations, qrCodes: codes,
+                                              textError: textError, qrError: qrError)
         }
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        do {
-            try handler.perform([request])
-        } catch {
-            return nil
-        }
-        let lines = request.results?.compactMap { $0.topCandidates(1).first?.string } ?? []
-        let text = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : text
     }
 }

@@ -1,9 +1,0 @@
-{
-  "upstream": "https://github.com/JunWeiUp/common-relay",
-  "source_commit": "00a9de180ce0986231a5ccc75b773164f64b5133",
-  "version": "0.1.3",
-  "maven": "com.github.JunWeiUp.common-relay:java:v0.1.3",
-  "repository": "https://jitpack.io",
-  "min_sdk": 26,
-  "working_tree_patch": false
-}

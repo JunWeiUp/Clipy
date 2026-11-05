@@ -19,7 +19,7 @@
 
 </div>
 
-Android 正式版与公共构建脚本使用 Flutter 版。原生 Kotlin/Compose 移植保留在 `clipy_android_native` 作为备选（[迁移与验收计划](docs/NATIVE_MIGRATION.md)），沿用相同包名、签名与数据文件，仅由 `./build_android_native_apk.sh` 构建。
+Android 开发和发布统一使用 Flutter 版。原生 Kotlin/Compose 移植已从当前工作树退役，源码保留在 Git 历史（`native-android-14286`）中。
 
 <br />
 
@@ -53,7 +53,7 @@ Mac 原生菜单栏应用还集成了**截图标注、OCR 文字识别、屏幕�
 </tr>
 </table>
 
-实验性功能：可选的[手机控制 Mac 锁屏](docs/SCREEN_CONTROL.md)，密码在 Mac 本地钥匙串配置，连接手机可直接操作、无需控制密钥；通过系统辅助功能控件解锁，无需额外组件。真实锁屏解锁验收待完成，这项可选能力尚未经过生产环境验证。
+实验性功能：可选的手机控制 Mac 锁屏（本地文档：`docs/SCREEN_CONTROL.md`），密码在 Mac 本地钥匙串配置，连接手机可直接操作、无需控制密钥；通过系统辅助功能控件解锁，无需额外组件。真实锁屏解锁验收待完成，这项可选能力尚未经过生产环境验证。
 
 ## 平台支持
 
@@ -120,20 +120,20 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标和最�
 
 ## 三步开始使用
 
-1. **安装 Clipy。** Mac 解压后移入「应用程序」，Windows 完整解压 ZIP，Android 安装 APK。Mac 端入口在菜单栏；Windows 关闭窗口后仍保留系统托盘入口。详见[安装指南](docs/GETTING_STARTED_ZH.md)与 [macOS 首次启动说明](docs/MACOS_INSTALL.md)。
+1. **安装 Clipy。** Mac 解压后移入「应用程序」，Windows 完整解压 ZIP，Android 安装 APK。Mac 端入口在菜单栏；Windows 关闭窗口后仍保留系统托盘入口。详见安装指南（本地文档：`docs/GETTING_STARTED_ZH.md`）与 macOS 首次启动说明（本地文档：`docs/MACOS_INSTALL.md`）。
 2. **复制一段想留下的内容。** Android 首次测试时保持 Clipy 打开；在 Mac 上按 <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> 搜索历史。
-3. **连接你的设备。** 连到同一个可信 Wi-Fi，刷新设备列表后直接发送，或开启自动共享。[按步骤连接](docs/GETTING_STARTED_ZH.md#连接-mac-与-android)。
+3. **连接你的设备。** 连到同一个可信 Wi-Fi，刷新设备列表后直接发送，或开启自动共享。按步骤连接（本地文档：`docs/GETTING_STARTED_ZH.md#连接-mac-与-android`）。
 
-**[安装与常见问题](docs/GETTING_STARTED_ZH.md)** · **[反馈问题](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[建议新功能](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
+**安装与常见问题（本地文档：`docs/GETTING_STARTED_ZH.md`）** · **[反馈问题](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[建议新功能](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
 
 > **开始共享前：** 当前源码同步采用内置默认加密密钥，无需配对；适用于可信局域网，请了解[安全边界](SECURITY.md)。macOS 应用包含修改过的 macshot 截图模块，按 [GPLv3](LICENSE.GPL-3.0) 分发；[来源与源码获取方式](THIRD_PARTY_NOTICES.md)另见声明。
 
 <details>
 <summary><b>版本、下载与源码构建</b></summary>
 
-当前源码版本：**1.0.36** · 源码构建号 **12367**（Android arm64 `versionCode` **14367**） · 最新正式版：**[v1.0.36](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.36)** · [构建版本配置](clipy_flutter/pubspec.yaml)
+当前源码版本：**1.0.37** · 源码构建号 **12373**（Android arm64 `versionCode` **14373**） · 最新正式版：**[v1.0.36](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.36)** · [构建版本配置](clipy_flutter/pubspec.yaml)
 
-安装包请前往[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，具体应用版本和构建号以发布说明为准。Android 改版已在 v1.0.19 发布；后续开发期间，源码版本可能领先于公开安装包。Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读[同步版本差异](docs/GETTING_STARTED_ZH.md#同步版本差异)。
+安装包请前往[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，具体应用版本和构建号以发布说明为准。Android 改版已在 v1.0.19 发布；后续开发期间，源码版本可能领先于公开安装包。Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读同步版本差异（本地文档：`docs/GETTING_STARTED_ZH.md#同步版本差异`）。
 
 </details>
 
@@ -212,11 +212,11 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标和最�
 - 原生标题栏、清晰的浅色/深色内容背景，以及统一的 SF Symbols、间距与控件样式。
 - 按 <kbd>Esc</kbd> 关闭当前聚焦的窗口，包括设置、搜索、查词、单词表、片段及图片／视频编辑器、OCR 结果和贴图；保留原有保存提示，输入法组词、快捷键录入和模态对话框优先处理取消操作。
 - **轻量控制面板：** 左键点击菜单栏图标，打开原生浮层，顶部一行包含搜索、置顶和设置，下面是直出的隐藏图标、「剪贴板 / 片段 / 设备 / 工具」四个标签（设备页可刷新，每台设备直接提供「发送文本」「发送文件」），以及通知页面。详情页采用更小的返回／标题布局；工具页集中四个入口：截图模式直达、查词／单词本、生成密码；顶部隐藏图标栏和其他标签保持一致，切换工具时维持相同面板尺寸；底部保留保持唤醒与通知，设置齿轮直接打开偏好设置窗口；通知弹窗在通知窗口配置，隐藏图标在偏好设置中管理，退出位于应用菜单。搜索异步覆盖历史、片段与工具，首页展示最近六条复制内容；点击历史行会复制并粘贴支持的文本类型，行内「复制」按钮只复制并保持浮层打开。可固定面板，点击外部不关闭；右键点击菜单栏图标不执行操作。
-- 偏好设置与截图设置可连续滚动浏览各类选项，侧边分类随滚动高亮，也支持点击跳转。界面开发规范见 [macOS 设计标准](docs/MACOS_DESIGN.md)。
+- 偏好设置与截图设置可连续滚动浏览各类选项，侧边分类随滚动高亮，也支持点击跳转。界面开发规范见 macOS 设计标准（本地文档：`docs/MACOS_DESIGN.md`）。
 
 ### ⌨️ 全局快捷键 与 🌍 国际化
 - 搜索、单词查询、截图、每个片段均可绑定快捷键。
-- 中/英文界面；macOS 与 Android 源码采用原生实现，Windows 和 iOS 当前仍使用 Flutter。Windows 新增本机文字／图片／文件历史与系统托盘；iOS 支持用户主动粘贴及前台局域网同步，不能在后台持续读取其他应用的剪贴板或通知。CI 对 iOS 进行无签名构建，目前没有可安装的 iOS 发布包。
+- 中/英文界面；macOS 采用原生实现，Android、Windows 和 iOS 使用 Flutter。Windows 新增本机文字／图片／文件历史与系统托盘；iOS 支持用户主动粘贴及前台局域网同步，不能在后台持续读取其他应用的剪贴板或通知。CI 对 iOS 进行无签名构建，目前没有可安装的 iOS 发布包。
 
 <details>
 <summary><b>🔐 关于安全的说明</b></summary>
@@ -249,19 +249,19 @@ macOS、Android 和 iOS 的应用图标使用同一份设计母版。更新各�
 INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh
 ```
 
-本地 macOS 构建使用 ad-hoc 签名，不含 Developer ID 签名或公证。详见[构建与签名选项](docs/DEVELOPMENT.md#macos)。
+本地 macOS 构建使用 ad-hoc 签名，不含 Developer ID 签名或公证。详见构建与签名选项（本地文档：`docs/DEVELOPMENT.md#macos`）。
 
 **在 GitHub 打包：**打开 [Actions → macOS Build](https://github.com/JunWeiUp/Clipy/actions/workflows/macos.yml)，点击 **Run workflow**，即可单独构建 Mac 应用，无需签名密钥或 Android 配置。推送到 `main`/`master` 和提交涉及 macOS 的 PR 时，CI 也会调用同一 Mac 任务；发布检查仍覆盖所有平台。
 
 Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留 30 天），其中只包含 **Apple Silicon / macOS 13+** 应用 ZIP；运行摘要提供安装指南链接，打包步骤会输出 SHA-256 摘要。
 
-这些是临时签名的开发构建，不代表已正式发布；首次打开的「**隐私与安全 → 仍要打开**」操作和更新后授权说明见[安装指南](docs/MACOS_INSTALL.md)。完成发布清单后，版本标签会触发三个平台的正式发布。
+这些是临时签名的开发构建，不代表已正式发布；首次打开的「**隐私与安全 → 仍要打开**」操作和更新后授权说明见安装指南（本地文档：`docs/MACOS_INSTALL.md`）。完成发布清单后，版本标签会触发三个平台的正式发布。
 
 ### Android（Flutter）
 
 环境要求：Flutter **3.41.7**（见 `.fvmrc`）、JDK 17 与 Android SDK。
 
-每台构建机器首次使用时，需按 [Android 签名指南](docs/DEVELOPMENT.md#android)配置固定发布密钥，使用 Git 忽略的 `clipy_flutter/android/key.properties` 或签名环境变量。配置完成后，直接运行：
+每台构建机器首次使用时，需按 Android 签名指南（本地文档：`docs/DEVELOPMENT.md#android`）配置固定发布密钥，使用 Git 忽略的 `clipy_flutter/android/key.properties` 或签名环境变量。配置完成后，直接运行：
 
 ```bash
 ./build_android_apk.sh
@@ -281,7 +281,6 @@ Mac 任务成功后，从运行摘要下载 artifact（需登录 GitHub，保留
 
 调试包位于 `clipy_flutter/build/app/outputs/flutter-apk/app-debug.apk`。调试包与发布包签名不同，不能假设可互相覆盖安装；如确需卸载重装，请先备份应用数据。
 
-原生备选（相同包名与签名，不发布）：`./build_android_native_apk.sh` 用 JDK 17 与 Android SDK 36 构建 `clipy_android_native`，无需 Flutter。显式 `BUILD_NUMBER` 即实际 versionCode（默认源码 +2000）；只能覆盖更低的 versionCode，切回 Flutter 时同样使用更高的构建号。
 
 ### Windows（Flutter + Win32）
 
@@ -292,14 +291,14 @@ cd clipy_flutter
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.36
+./scripts/package_windows.ps1 -Version 1.0.37
 ```
 
-产物为 `dist/ClipyClone-Windows-x64-v1.0.36.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。v1.0.24 在「历史记录」提供「截图」菜单，支持区域、窗口和显示器截图；完成后复制 PNG 并保存到本机历史。窗口截图使用 Windows `PrintWindow`：目标应用可能拒绝捕获，也可能返回空白画面，受保护或使用 GPU 绘制的内容尤其需要实机检查。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。v1.0.33 修复托盘、通知与截图提示中的中文乱码，保留 32 位剪贴板位图的透明度，其他程序短暂占用剪贴板时会重试，并拒绝读取异常位图以免越界。Windows 源码构建与正式版 ZIP 均未签名；公开版本以发布页为准。
+产物为 `dist/ClipyClone-Windows-x64-v1.0.37.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。v1.0.24 在「历史记录」提供「截图」菜单，支持区域、窗口和显示器截图；完成后复制 PNG 并保存到本机历史。窗口截图使用 Windows `PrintWindow`：目标应用可能拒绝捕获，也可能返回空白画面，受保护或使用 GPU 绘制的内容尤其需要实机检查。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。v1.0.33 修复托盘、通知与截图提示中的中文乱码，保留 32 位剪贴板位图的透明度，其他程序短暂占用剪贴板时会重试，并拒绝读取异常位图以免越界。Windows 源码构建与正式版 ZIP 均未签名；公开版本以发布页为准。
 
 ### iOS（Flutter + Swift）
 
-要签名构建并安装到连接的 iPhone，请参照[真机构建与安装指南](docs/DEVELOPMENT.md#install-on-a-connected-iphone)。
+要签名构建并安装到连接的 iPhone，请参照真机构建与安装指南（本地文档：`docs/DEVELOPMENT.md#install-on-a-connected-iphone`）。
 iOS 入口已适配场景生命周期，界面提供主动粘贴与前台同步的专属说明。
 
 iOS 15+ 目标已纳入 CI 无签名构建，目前不提供 IPA 或 TestFlight 下载。支持查看本地历史、通过系统粘贴按钮主动导入文字、前台同步、文件收发及查看 Android 镜像通知。iOS 限制后台持续运行和读取其他应用通知；公开分发前仍需签名真机验证权限与同步。
@@ -312,7 +311,7 @@ Android、iOS 和 Windows 在设置底部显示版本号与构建号，macOS 在
 
 源码版本仍取自 [`clipy_flutter/pubspec.yaml`](clipy_flutter/pubspec.yaml) 的 `X.Y.Z+N`；它为所有客户端提供共用版本元数据。`APP_VERSION` 可覆盖 `X.Y.Z`。macOS 默认构建号为 `N`；Android 公共脚本默认实际 `versionCode = N + 2000`，延续旧 Flutter ARM64 分包的编号。公共 Flutter 分包会在基础构建号上为 ARM32 加 1000、ARM64 加 2000。
 
-公共 Flutter Android 脚本显式传入的 `BUILD_NUMBER` 是**基础构建号**，分包仍追加对应 ABI 偏移；只有原生 Android 备选工程将显式值作为最终 versionCode。Release CI 中 Android 使用 `N + 工作流运行序号 + 2000`，macOS/Windows 使用 `N + 工作流运行序号`。覆盖升级 Android 时须保留签名，并选择高于手机已装 APK 的实际构建号（包括旧 Flutter 分包偏移）；默认值可能低于已装的 CI 或本地包。修改源码版本时同步更新**中英文 README**；源码版本和最新正式版在上方分别列出。
+公共 Flutter Android 脚本显式传入的 `BUILD_NUMBER` 是**基础构建号**，分包仍追加对应 ABI 偏移。Release CI 中 Android 使用 `N + 工作流运行序号 + 2000`，macOS/Windows 使用 `N + 工作流运行序号`。覆盖升级 Android 时须保留签名，并选择高于手机已装 APK 的实际构建号（包括旧 Flutter 分包偏移）；默认值可能低于已装的 CI 或本地包。修改源码版本时同步更新**中英文 README**；源码版本和最新正式版在上方分别列出。
 
 在仓库根目录运行 `bash scripts/check.sh all` 可执行质量检查。macOS 上还需运行 `bash scripts/test_macos_core.sh`，验证搜索、单词查询与 socket 回归用例；它使用临时测试程序和隔离的 AppKit 鼠标测试宿主，不安装或启动你的 Clipy 实例。
 
@@ -331,7 +330,7 @@ Android、iOS 和 Windows 在设置底部显示版本号与构建号，macOS 在
 - `NotificationManager` —— 手机通知镜像。
 - `PreferencesManager`、`SettingsWindow`、`LogWindow` —— 配置与编辑界面。
 
-**Android 应用** —— Flutter（`clipy_flutter`）配合 Kotlin 平台通道、前台服务、通知监听与倒计时部件。原生 Kotlin/Compose 备选实现（`clipy_android_native`）沿用相同数据契约、包名与密钥，但不用于正式发布。
+**Android 应用** —— Flutter（`clipy_flutter`）配合 Kotlin 平台通道、前台服务、通知监听与倒计时部件。
 
 **Windows/iOS 应用与 Android 对照参考** —— Flutter/Dart：
 - `lib/main.dart` —— 默认入口；`lib/app/` 负责初始化与无界面引擎桥接。
@@ -352,20 +351,23 @@ Clipy 使用面向局域网的协议 v3 处理剪贴板历史与通知：
 - **可靠投递** —— 历史帧需在落库成功后 `ack`；有界离线队列 + 端点缓存用于重连。
 - **环路防止** —— 内容哈希避免重复广播。
 
-完整线协议、无 UI 保活通道规则与代码地图见 [`docs/PROTOCOL.md`](docs/PROTOCOL.md)。
+完整线协议、无 UI 保活通道规则与代码地图见 `docs/PROTOCOL.md`。
 
-当前源码新增可选的[自托管公网中继](docs/COMMON-RELAY-SDK.md)：优先局域网直连，不可用时通过带访问密钥的 WSS 中继传输文字、通知和文件。公网中继为每台设备登记独立身份并核对对端公钥；局域网发送仍无需配对。iOS 原生分享扩展仍仅支持局域网。已随 v1.0.32 发布，需要兼容的 common-relay 服务。
+当前源码新增可选的自托管公网中继（本地文档：`docs/COMMON-RELAY-SDK.md`）：优先局域网直连，不可用时通过带访问密钥的 WSS 中继传输文字、通知和文件。公网中继为每台设备登记独立身份并核对对端公钥；局域网发送仍无需配对。iOS 原生分享扩展仍仅支持局域网。已随 v1.0.32 发布，需要兼容的 common-relay 服务。
+
+未发布源码新增独立于设备 Key 的**服务器访问密码**。新二维码和加密邀请短链接默认携带密码；扫码或粘贴后，自动按中继地址保存到系统安全存储，再加入设备组。创建组或手动连接仍需先配置密码；无密码的旧邀请在本机未保存密码时才需补填。完整邀请会授予访问权限，请仅分享给可信设备。认证失败会保留设备身份和局域网配置。源码使用 Common Relay v0.1.5，详见依赖说明（本地文档：`docs/COMMON-RELAY-SDK.md`）。
 
 ## 📁 项目结构
 
-Android 最低支持 **Android 8.0（API 26）**；Flutter 正式版与原生备选版采用相同要求。
+`docs/` 下的文档和设计稿仅在本地维护，整体由 Git 忽略。设计稿入口为 `docs/design/design-v3/index.html`。
 
-Flutter 工程由 `clipy_android` 更名为 `clipy_flutter`，应用标识与用户数据保持兼容。完整目录职责与依赖规则见[目录说明](docs/REPOSITORY_LAYOUT.md)。
+Android 最低支持 **Android 8.0（API 26）**。
+
+Flutter 工程由 `clipy_android` 更名为 `clipy_flutter`，应用标识与用户数据保持兼容。完整目录职责与依赖规则见目录说明（本地文档：`docs/REPOSITORY_LAYOUT.md`）。
 
 ```
 clipy_macos/Sources/      # macOS Swift/AppKit 源码
 clipy_flutter/lib/        # Android、Windows 与 iOS 的 Flutter/Dart 源码
-clipy_android_native/     # 原生 Kotlin/Compose Android 备选实现（不发布）
 clipy_nsh/                # 已暂停的实验实现（保留，不用于发布）
 packages/relay-swift/     # macOS 的 Swift 包依赖与锁文件
 scripts/                  # 构建、检查、图标与测试工具
@@ -381,7 +383,7 @@ assets/                   # Logo 与应用图标
 
 ## 🤝 贡献
 
-欢迎用中文或英文提交 Issue 和 Pull Request！先阅读[贡献规范](CONTRIBUTING.md)、[架构地图](docs/ARCHITECTURE.md)与[修改指引](docs/AI_CHANGE_GUIDE.md)。贡献代码：
+欢迎用中文或英文提交 Issue 和 Pull Request！先阅读[贡献规范](CONTRIBUTING.md)、架构地图（本地文档：`docs/ARCHITECTURE.md`）与修改指引（本地文档：`docs/AI_CHANGE_GUIDE.md`）。贡献代码：
 
 1. Fork 仓库并创建功能分支。
 2. 运行 `bash scripts/check.sh all`，并构建受影响的原生平台。
@@ -389,7 +391,7 @@ assets/                   # Logo 与应用图标
 
 ## 📦 发布
 
-完成[发布清单](docs/DEVELOPMENT.md#release-checklist)、配置发布签名并更新 `clipy_flutter/pubspec.yaml` 和中英文 README 后提交改动，再推送与源码版本一致的**全新、未使用过的版本标签**。所有检查通过后，工作流会直接发布正式版：
+完成发布清单（本地文档：`docs/DEVELOPMENT.md#release-checklist`）、配置发布签名并更新 `clipy_flutter/pubspec.yaml` 和中英文 README 后提交改动，再推送与源码版本一致的**全新、未使用过的版本标签**。所有检查通过后，工作流会直接发布正式版：
 
 ```bash
 VERSION="$(awk '/^version:/ {split($2, v, "+"); print v[1]; exit}' clipy_flutter/pubspec.yaml)"
@@ -401,7 +403,7 @@ git push origin "v${VERSION}"
 
 工作流发布正式最新版，只上传三个安装包：macOS ZIP、Android arm64 APK 和 Windows x64 ZIP。GitHub 在每个附件旁显示 SHA-256 摘要，不再单独上传校验清单、符号包、许可或声明文件；macOS 应用内附 MIT、GPLv3 全文与第三方声明，Windows ZIP 内附适用的 MIT 文本与声明。GitHub 另行自动生成源码压缩包。发布后检查附件链接，并同步更新中英文 README 和两份入门指南中的已发布版本。详见 [GitHub 发布说明](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)。
 
-可使用[更新说明模板](docs/RELEASE_NOTES_TEMPLATE.md)，说明用户可见的变化、升级步骤与实际提供的平台版本。
+可使用更新说明模板（本地文档：`docs/RELEASE_NOTES_TEMPLATE.md`），说明用户可见的变化、升级步骤与实际提供的平台版本。
 
 ## 📄 许可证
 
@@ -419,9 +421,9 @@ Clipy 自有代码仍采用 [MIT](LICENSE)。macOS 组合应用包含修改过�
 
 </div>
 
-[Common Relay SDK upgrade / 通用中继 SDK 升级](docs/COMMON-RELAY-SDK.md)
+Common Relay SDK upgrade / 通用中继 SDK 升级（本地文档：`docs/COMMON-RELAY-SDK.md`）
 
-1.0.32：公网中继设置新增 **管理公网设备组**，支持查看在线/离线成员、二维码或链接邀请、批准加入与移除设备。需要兼容的 common-relay 服务，创建新组需服务端开启自助创建；详见 [中继 SDK 与设备组](docs/COMMON-RELAY-SDK.md)。已有旧组可通过可信管理员邀请启用管理。
+1.0.32：公网中继设置新增 **管理公网设备组**，支持查看在线/离线成员、二维码或链接邀请、批准加入与移除设备。需要兼容的 common-relay 服务，创建新组需服务端开启自助创建；详见 中继 SDK 与设备组（本地文档：`docs/COMMON-RELAY-SDK.md`）。已有旧组可通过可信管理员邀请启用管理。
 
 
 公网设备组支持直接创建新组或通过二维码加入。创建者可邀请、查看和移除设备；邀请、配对审批与成员列表分区展示。已接入的旧组保留原配置，可通过管理员邀请升级管理信任。
@@ -434,7 +436,7 @@ Clipy 自有代码仍采用 [MIT](LICENSE)。macOS 组合应用包含修改过�
 
 ### 源码界面对齐
 
-界面遵循各平台设计规范：[macOS](docs/MACOS_DESIGN.md)、[Android](docs/ANDROID_DESIGN.md)，iOS 使用 Cupertino 外观，Windows 使用 Fluent 风格控件。HTML 设计稿与本机验收资料仅在本地维护，不包含在公开源码中。
+界面遵循各平台设计规范：macOS（本地文档：`docs/MACOS_DESIGN.md`）、Android（本地文档：`docs/ANDROID_DESIGN.md`），iOS 使用 Cupertino 外观，Windows 使用 Fluent 风格控件。HTML 设计稿与本机验收资料仅在本地维护，不包含在公开源码中。
 
 macOS 可在 **偏好设置 → 通用 → 主题** 切换跟随系统、浅色或深色，即时生效并在重启后保留。
 

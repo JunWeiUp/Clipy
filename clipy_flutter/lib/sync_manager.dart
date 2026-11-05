@@ -1,3 +1,4 @@
+import 'sync/relay_configuration.dart';
 import 'sync/relay_identity.dart';
 import 'sync/network_handoff.dart';
 import 'dart:async';
@@ -669,15 +670,28 @@ class SyncManager with WidgetsBindingObserver {
     required String token,
     String? deviceId,
     String accessKey = '',
+    String? accessPassword,
     bool forceRelayRestart = false,
   }) async {
+    if (accessPassword != null &&
+        !RelayConfiguration.validPassword(accessPassword)) {
+      throw const FormatException('invalidRelayPassword');
+    }
     url = url.trim();
+    if (!SyncRelayClient.validUrl(url)) {
+      throw const FormatException('invalidRelayURL');
+    }
     token = token.trim();
     accessKey = accessKey.trim();
     final prefs = await SharedPreferences.getInstance();
     final savedDevice = prefs.getString('syncRelayDeviceId') ?? peerId;
     final device = (deviceId ?? savedDevice).trim();
+    final savedPassword = await ClipyRelayIdentity.accessPassword(url);
+    if (enabled && (accessPassword ?? savedPassword).isEmpty) {
+      throw const FormatException('relayPasswordRequired');
+    }
     if (!forceRelayRestart &&
+        (accessPassword == null || accessPassword == savedPassword) &&
         token.isEmpty &&
         accessKey.isEmpty &&
         device == savedDevice &&
@@ -694,6 +708,9 @@ class SyncManager with WidgetsBindingObserver {
     );
     if (enabled && (!SyncRelayClient.validUrl(url) || configured.isEmpty)) {
       throw const FormatException('enrollmentRequired');
+    }
+    if (accessPassword != null && accessPassword != savedPassword) {
+      await ClipyRelayIdentity.saveAccessPassword(url, accessPassword);
     }
     if (configured != existing) await ClipyRelayIdentity.saveConfig(configured);
     await prefs.setString('syncRelayDeviceId', device);

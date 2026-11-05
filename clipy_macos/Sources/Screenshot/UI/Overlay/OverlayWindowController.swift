@@ -651,21 +651,23 @@ extension OverlayWindowController: OverlayViewDelegate {
     }
 
     func overlayViewDidRequestOCR() {
-        guard let image = captureRegion() else { return }
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+        guard let view = overlayView else { return }
+        let generation = view.scanRecognition.begin()
+        guard let image = captureRegion(),
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            view.showOverlayError("Failed to process image")
             return
         }
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            VisionOCR.performTextAndQRCodeRecognition(cgImage: cgImage) { [weak self] result in
-                guard let self = self else { return }
-                let capturedImage = image  // capture before dismiss
-                DispatchQueue.main.async {
-                    self.playCopySound()
-                    self.dismiss()
-                    self.overlayDelegate?.overlayDidRequestOCR(self, result: result, image: capturedImage)
-                }
+        view.scanRecognition.task = VisionOCR.performTextAndQRCodeRecognition(cgImage: cgImage) { [weak self, weak view] result in
+            guard let self, let view, view.scanRecognition.isCurrent(generation) else { return }
+            view.scanRecognition.finish(generation)
+            if let error = result.error {
+                view.showOverlayError("OCR failed: \(error.localizedDescription)")
+                return
             }
+            self.playCopySound()
+            self.dismiss()
+            self.overlayDelegate?.overlayDidRequestOCR(self, result: result, image: image)
         }
     }
 

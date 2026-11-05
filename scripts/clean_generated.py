@@ -9,8 +9,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUTS = (
     "dist", "clipy_flutter/build", "clipy_flutter/.dart_tool",
-    "clipy_flutter/android/.gradle", "clipy_android_native/app/build",
-    "clipy_android_native/.gradle", "clipy_android_native/upgradeProbe/build",
+    "clipy_flutter/android/.gradle",
     "packages/relay-swift/.build", "clipy_macos/ClipyClone.app",
     "clipy_macos/ClipyClone.app.dSYM",
     "docs/design/menubar-redesign/prototype/node_modules",

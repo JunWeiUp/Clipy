@@ -72,8 +72,13 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
         modelError = nil
         isLoading = false
         let term: String
-        do { term = try WordQuery.normalize(query) }
-        catch { errorKey = .wordInvalidQuery; return }
+        do { term = try usesModelTranslation ? WordQuery.modelText(query) : WordQuery.normalize(query) }
+        catch {
+            if usesModelTranslation {
+                modelError = ModelTranslationText.t("请输入 1–10,000 字的待翻译文本。", "Enter 1–10,000 characters to translate.")
+            } else { errorKey = .wordInvalidQuery }
+            return
+        }
         query = term
         if usesModelTranslation {
             isLoading = true

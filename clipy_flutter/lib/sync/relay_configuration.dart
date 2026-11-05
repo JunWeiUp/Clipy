@@ -21,6 +21,23 @@ class RelayConfiguration {
         : RelayGroupAccess.legacy;
   }
 
+  /// Empty means no server access credential; whitespace is never trimmed.
+  static bool validPassword(String value) =>
+      value.isEmpty ||
+      (value.length >= 8 &&
+          value.length <= 128 &&
+          value.codeUnits.every((c) => c >= 0x21 && c <= 0x7e));
+
+  static String passwordScope(String url) {
+    final uri = Uri.parse(url.trim());
+    return Uri(
+      scheme: uri.scheme,
+      host: uri.host.toLowerCase(),
+      port: uri.port == 443 ? null : uri.port,
+      path: uri.path,
+    ).toString();
+  }
+
   static bool validDevice(String value) =>
       RegExp(r'^[A-Za-z0-9_-]{1,80}$').hasMatch(value);
   static Map<String, dynamic> decode(String raw) =>
@@ -45,6 +62,7 @@ class RelayConfiguration {
     if (enrollment.isNotEmpty && value['device'] != device) {
       throw const FormatException('deviceMismatch');
     }
+    value.remove('password'); // Enrollment never supplies a local credential.
     value['device'] = device;
     if (accessKey.isNotEmpty) value['token'] = accessKey;
     final key = value['token'];

@@ -77,6 +77,10 @@ class AppStrings {
   String get syncRelayConnecting => _t('正在连接中继中', 'Connecting to relay');
   String get syncRelayReady =>
       _t('中继已连接，等待设备上线', 'Relay ready · waiting for devices');
+  String get syncRelayAccessDenied => _t(
+    '中继访问被拒绝，请检查服务器密码或设备身份',
+    'Relay access denied; check server password or device identity',
+  );
   String get syncRelayRetrying =>
       _t('中继连接断开，正在重试', 'Relay disconnected · retrying');
   String get syncSearching => _t('正在查找局域网设备', 'Searching for LAN devices');

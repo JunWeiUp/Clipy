@@ -377,14 +377,8 @@ extension ScreenshotSessionCoordinator: OverlayWindowControllerDelegate {
     func overlayDidRequestOCR(_ controller: OverlayWindowController,
                               result: OCRScanResult,
                               image: NSImage?) {
-        // OCR already ran (Vision). Copy the text so the common case needs no
-        // extra click, then show the result window, which also offers per-line
-        // copy, language selection, translation and QR payload actions.
+        // The shared result controller copies recognized text before presentation.
         let text = result.text
-        if !text.isEmpty {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-        }
         // OCR is a terminal action: tear down overlays on ALL screens so the
         // other monitors' captures are dismissed too. The originating controller
         // already dismissed itself (see OverlayWindowController.overlayViewDidRequestOCR),

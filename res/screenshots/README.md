@@ -25,4 +25,4 @@ Panel fixtures localize both the interface and fictional clipboard contents/file
 
 `android-history-en.png`, `android-devices-en.png` and `android-settings-dark-en.png` are direct, unretouched emulator screenshots of the redesigned Flutter application, at 1080 × 2340. The history contains fictional sample text and a sample file; sync remains off, and no personal clipboard, contacts, notifications or credentials are used.
 
-The emulator has its own disposable data partition. Capture with Android's `screencap -p` after the page settles. Do not redraw the actual interface through image generation. See [Android design](../../docs/ANDROID_DESIGN.md) for implementation and interaction rules.
+The emulator has its own disposable data partition. Capture with Android's `screencap -p` after the page settles. Do not redraw the actual interface through image generation. See Android design (local document: `docs/ANDROID_DESIGN.md`) for implementation and interaction rules.

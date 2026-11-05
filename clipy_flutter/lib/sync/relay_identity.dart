@@ -26,6 +26,42 @@ class ClipyRelayIdentity {
     return value;
   }
 
+  // Separate from enrollment and invitation drafts; bound to one server URL.
+  static Future<String> accessPassword(String url) async {
+    final raw = await _store.read(key: 'commonRelayAccessPassword');
+    if (raw == null || raw.isEmpty) return '';
+    try {
+      final saved = jsonDecode(raw) as Map<String, dynamic>;
+      final value = saved['password'];
+      return saved['url'] == RelayConfiguration.passwordScope(url) &&
+              value is String &&
+              RelayConfiguration.validPassword(value)
+          ? value
+          : '';
+    } on FormatException {
+      return '';
+    } on TypeError {
+      return '';
+    }
+  }
+
+  static Future<void> saveAccessPassword(String url, String value) async {
+    if (!RelayConfiguration.validPassword(value)) {
+      throw const FormatException('invalidRelayPassword');
+    }
+    await _store.write(
+      key: 'commonRelayAccessPassword',
+      value: jsonEncode({
+        'url': RelayConfiguration.passwordScope(url),
+        'password': value,
+      }),
+    );
+  }
+
+  static Map<String, dynamic> withoutAccessPassword(
+    Map<String, dynamic> config,
+  ) => Map<String, dynamic>.from(config)..remove('password');
+
   static Future<Map<String, dynamic>> localIdentity() => _identity();
   static Future<String> groupExit() async =>
       await _store.read(key: 'commonRelayGroupExit') ?? '';

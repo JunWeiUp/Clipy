@@ -1,4 +1,5 @@
 import 'relay_groups.dart';
+import 'relay_identity.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -8,7 +9,13 @@ import 'package:sodium/sodium.dart';
 import '../storage_paths.dart';
 import 'relay_configuration.dart';
 
-enum RelayConnectionState { disabled, connecting, ready, retrying }
+enum RelayConnectionState {
+  disabled,
+  connecting,
+  ready,
+  retrying,
+  accessDenied,
+}
 
 class SyncRelayClient {
   SyncRelayClient({
@@ -23,6 +30,8 @@ class SyncRelayClient {
     required this.onSocket,
     this.onStateChanged,
     this.onPeerAvailable,
+    this.journal,
+    this.allowLocalTest = false,
   });
   final String url, token, id, name;
   final int port;
@@ -32,6 +41,8 @@ class SyncRelayClient {
   final void Function(String, Socket) onSocket;
   final void Function(RelayConnectionState)? onStateChanged;
   final void Function()? onPeerAvailable;
+  final cr.RelayJournal? journal;
+  final bool allowLocalTest;
   cr.RelayClient? _refreshingClient;
   RelayConnectionState state = RelayConnectionState.disabled;
   static Future<cr.RelayJournal>? _journal;
@@ -143,6 +154,7 @@ class SyncRelayClient {
     _setState(RelayConnectionState.connecting);
     cr.RelayClient? client;
     SecureKey? key;
+    bool denied = false;
     try {
       var c = jsonDecode(token) as Map<String, dynamic>;
       if (c.containsKey('group_entry')) {
@@ -174,16 +186,22 @@ class SyncRelayClient {
           (name, value) => MapEntry(name, cr.unhex(value as String)),
         ),
       );
-      final journal = await (_journal ??= _loadJournal().catchError((
-        Object error,
-      ) {
-        _journal = null;
-        throw error;
-      }));
+      final journal =
+          this.journal ??
+          await (_journal ??= _loadJournal().catchError((Object error) {
+            _journal = null;
+            throw error;
+          }));
       if (_stopped || _restartRequested) return;
       client = cr.RelayClient(identity, journal: journal);
       _client = client;
-      await client.connect(url, c['token'] as String);
+      final accessPassword = await ClipyRelayIdentity.accessPassword(url);
+      await client.connect(
+        url,
+        c['token'] as String,
+        password: accessPassword.isEmpty ? null : accessPassword,
+        allowLocalTest: allowLocalTest,
+      );
       if (_stopped || _restartRequested) return;
       _retry = 1;
       _setState(RelayConnectionState.ready);
@@ -267,7 +285,8 @@ class SyncRelayClient {
             break;
         }
       }
-    } catch (_) {
+    } catch (error) {
+      denied = RegExp(r'\b401\b').hasMatch(error.toString());
       /* No request/credential logging. */
     } finally {
       _timer?.cancel();
@@ -283,12 +302,18 @@ class SyncRelayClient {
       final restart = _restartRequested;
       _restartRequested = false;
       if (!_stopped) {
-        _setState(RelayConnectionState.retrying);
-        _timer = Timer(
-          restart ? Duration.zero : Duration(seconds: _retry),
-          () => unawaited(_run()),
+        _setState(
+          denied
+              ? RelayConnectionState.accessDenied
+              : RelayConnectionState.retrying,
         );
-        _retry = (_retry * 2).clamp(1, 30);
+        if (!denied || restart) {
+          _timer = Timer(
+            restart ? Duration.zero : Duration(seconds: _retry),
+            () => unawaited(_run()),
+          );
+          _retry = (_retry * 2).clamp(1, 30);
+        }
       }
     }
   }

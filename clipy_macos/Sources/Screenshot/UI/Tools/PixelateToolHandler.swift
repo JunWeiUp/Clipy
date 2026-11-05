@@ -6,6 +6,27 @@ import Cocoa
 final class PixelateToolHandler: AnnotationToolHandler {
 
     let tool: AnnotationTool = .pixelate
+    private let recognition = ScreenshotOCRGestureTasks()
+
+    struct TextRedaction {
+        let screenshot: NSImage
+        let selectionRect: NSRect
+        let captureDrawRect: NSRect
+        let color: NSColor
+        let sourceImage: NSImage?
+        let sourceImageBounds: NSRect
+    }
+    typealias RedactText = (TextRedaction, @escaping (String) -> Void, @escaping ([Annotation]) -> Void) -> OCRTask?
+    private let redactText: RedactText
+
+    init(redactText: @escaping RedactText = { request, onError, completion in
+        AutoRedactor.redactAllText(screenshot: request.screenshot, selectionRect: request.selectionRect,
+            captureDrawRect: request.captureDrawRect, redactTool: .pixelate, color: request.color,
+            sourceImage: request.sourceImage, sourceImageBounds: request.sourceImageBounds,
+            onError: onError, completion: completion)
+    }) { self.redactText = redactText }
+
+    func reset() { recognition.cancel() }
 
     func start(at point: NSPoint, canvas: AnnotationCanvas) -> Annotation? {
         let mode = CensorMode(rawValue: UserDefaults.standard.integer(forKey: "censorMode")) ?? .pixelate
@@ -57,18 +78,25 @@ final class PixelateToolHandler: AnnotationToolHandler {
             canvas.activeAnnotation = nil
             canvas.setNeedsDisplay()
             guard let screenshot = canvas.screenshotImage else { return }
-            AutoRedactor.redactAllText(
-                screenshot: screenshot, selectionRect: drawnRect,
-                captureDrawRect: canvas.captureDrawRect,
-                redactTool: .pixelate, color: canvas.currentColor,
-                sourceImage: sourceImg, sourceImageBounds: sourceImgBounds
-            ) { [weak canvas] anns in
-                guard let canvas = canvas, !anns.isEmpty else { return }
+            guard let gestureID = recognition.reserve() else {
+                canvas.showOverlayError("Text redaction is busy. Please wait for the current strokes to finish and try again.")
+                return
+            }
+            let request = TextRedaction(screenshot: screenshot, selectionRect: drawnRect,
+                captureDrawRect: canvas.captureDrawRect, color: canvas.currentColor,
+                sourceImage: sourceImg, sourceImageBounds: sourceImgBounds)
+            let task = redactText(request, { [weak self, weak canvas] message in
+                guard let self, self.recognition.finish(gestureID) else { return }
+                canvas?.showOverlayError(message)
+            }, { [weak self, weak canvas] anns in
+                guard let self, let canvas, self.recognition.finish(gestureID) else { return }
+                guard !anns.isEmpty else { return }
                 canvas.annotations.append(contentsOf: anns)
                 canvas.undoStack.append(contentsOf: anns.map { .added($0) })
                 canvas.redoStack.removeAll()
                 canvas.setNeedsDisplay()
-            }
+            })
+            recognition.attach(task, to: gestureID)
         } else {
             commitAnnotation(annotation, canvas: canvas)
         }

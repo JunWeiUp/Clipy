@@ -6,6 +6,6 @@ let package = Package(
     name: "ClipyRelayDependencies",
     platforms: [.macOS(.v13)],
     products: [.library(name: "ClipyRelayDependencies", type: .static, targets: ["ClipyRelayDependencies"])],
-    dependencies: [.package(url: "https://github.com/JunWeiUp/common-relay.git", exact: "0.1.3")],
+    dependencies: [.package(url: "https://github.com/JunWeiUp/common-relay.git", exact: "0.1.5")],
     targets: [.target(name: "ClipyRelayDependencies", dependencies: [.product(name: "CommonRelay", package: "common-relay")])]
 )

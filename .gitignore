@@ -5,8 +5,8 @@ AGENTS.md
 build/
 Kim_AGENTS.md
 
-# Local HTML UI designs
-/UI/
+# Local documentation and design assets (including former UI/ contents)
+/docs/
 
 # Build artifacts (distribute via CI/release assets, not git)
 dist/

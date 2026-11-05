@@ -34,7 +34,7 @@ independent security audit.
 - Allow-lists primarily control outgoing automatic sync and history replay.
   Incoming history can be accepted without reciprocal authorization; one-shot
   `history.direct` and file transfers also do not require mutual authorization.
-  See [the protocol](docs/PROTOCOL.md).
+  See the protocol (local document: `docs/PROTOCOL.md`).
   Disable sync when receiving unsolicited LAN data would be unacceptable.
 
 ## Local data
@@ -58,7 +58,7 @@ identity implicitly. Android release builds require explicit signing configurati
 debug-signed builds are for local validation only. The macOS build is ad-hoc signed
 unless a signing identity is supplied and is **not notarized** by this workflow.
 
-Before publishing, complete the [release checklist](docs/DEVELOPMENT.md#release-checklist),
+Before publishing, complete the release checklist (local document: `docs/DEVELOPMENT.md#release-checklist`),
 including the [macOS GPLv3 license and source checks](THIRD_PARTY_NOTICES.md).
 
 ## Optional Internet relay
@@ -68,4 +68,4 @@ SDK end-to-end encrypted streams over WSS. This outer encryption is independent
 of the public v3 LAN payload key. LAN sending requires no relay enrollment;
 importing relay credentials cannot change LAN encryption. The public LAN key
 still has the limitations above. Raw TCP 5566 must remain private. See
-[the current SDK integration and LAN boundary](docs/COMMON-RELAY-SDK.md).
+the current SDK integration and LAN boundary (local document: `docs/COMMON-RELAY-SDK.md`).

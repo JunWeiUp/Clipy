@@ -17,6 +17,8 @@ final class SyncRelayClient: @unchecked Sendable {
     let queue = DispatchQueue(label: "com.clipy.relay")
     private let url: URL, id: String, name: String
     private var token: String
+    private let accessPassword: String?
+    private let statusOwner = UUID()
     private let port: UInt16, addresses: [String], onPeers: ([Peer]) -> Void
     private static let journal: Result<RelayJournal, Error> = Result {
         let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -42,10 +44,11 @@ final class SyncRelayClient: @unchecked Sendable {
         guard let url = URL(string: text), url.scheme == "wss", url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { return false }
         return url.path == "/relay/v1/ws"
     }
-    init(url: URL, token: String, id: String, name: String, port: UInt16, addresses: [String], onPeers: @escaping ([Peer]) -> Void) {
+    init(url: URL, token: String, id: String, name: String, port: UInt16, addresses: [String], accessPassword: String? = nil, onPeers: @escaping ([Peer]) -> Void) {
+        self.accessPassword = accessPassword
         self.url = url; self.token = token; self.id = id; self.name = name; self.port = port; self.addresses = addresses; self.onPeers = onPeers
     }
-    func start() { queue.async { self.connect() } }
+    func start() { SyncRelayConnectionState.shared.begin(statusOwner); queue.async { self.connect() } }
     func refreshPeers() {
         queue.async {
             guard !self.stopped else { return }
@@ -63,9 +66,9 @@ final class SyncRelayClient: @unchecked Sendable {
             let raw = token, endpoint = url.absoluteString
             Task { @MainActor [weak self] in
                 do {
-                    let value = try await SyncRelayGroups.refreshedConfiguration(raw,url:endpoint)
-                    self?.queue.async { guard let self else { return };self.refreshingMembership = false;self.membershipChecked = true;self.token = value;self.connect() }
-                } catch { self?.queue.async { guard let self else { return };self.refreshingMembership = false;self.lost(self.generation) } }
+                    let value = try await SyncRelayGroups.refreshedConfiguration(raw,url:endpoint,accessPassword:self?.accessPassword)
+                    self?.queue.async { guard let self, !self.stopped else { return };self.refreshingMembership = false;self.membershipChecked = true;self.token = value;self.connect() }
+                } catch { self?.queue.async { guard let self, !self.stopped else { return };self.refreshingMembership = false;self.report(error);self.lost(self.generation) } }
             }
             return
         }
@@ -78,17 +81,22 @@ final class SyncRelayClient: @unchecked Sendable {
         runTask = Task { [weak self] in
             do {
                 guard let self else { return }
-                let events = try await connection.connect(url: self.url, token: access.token)
+                let events = try await connection.connect(url: self.url, token: access.token, password: self.accessPassword)
                 self.queue.async {
                     guard current == self.generation, !self.stopped else { return }
+                    SyncRelayConnectionState.shared.update(.connected, owner: self.statusOwner)
                     self.backoff = 1; self.refresh(connection, current)
                     let timer = DispatchSource.makeTimerSource(queue: self.queue)
                     timer.schedule(deadline: .now() + 30, repeating: 30)
                     timer.setEventHandler { [weak self] in self?.refresh(connection, current) }; self.timer = timer; timer.resume()
                 }
                 for try await event in events { self.queue.async { guard current == self.generation, !self.stopped else { return }; self.handle(event, connection, current) } }
-            } catch { self?.queue.async { self?.lost(current) } }
+            } catch { self?.queue.async { guard let self, !self.stopped, current == self.generation else { return }; self.report(error); self.lost(current) } }
         }
+    }
+    private func report(_ error: Error) {
+        guard !stopped else { return }
+        SyncRelayConnectionState.shared.update(SyncRelayGroups.isAuthenticationFailure(error) ? .authenticationRequired : .unavailable, owner: statusOwner)
     }
     private func announce(_ peer: String, _ connection: CommonRelay.RelayClient, _ current: Int) {
         guard Access.parse(token)?.trusted_peers[peer] != nil else { return }
@@ -168,12 +176,13 @@ final class SyncRelayClient: @unchecked Sendable {
     private func lost(_ current: Int) {
         membershipChecked = false
         guard current == generation, !stopped else { return }; generation += 1
+        SyncRelayConnectionState.shared.disconnected(statusOwner)
         timer?.cancel(); timer = nil; metadata.removeAll(); pending.removeAll(); callbacks.removeAll(); opening.removeAll()
         for bridge in Array(bridges.values) { bridge.close() }; bridges.removeAll()
         if let connection = client { Task { await connection.close() } }; client = nil
         let work = DispatchWorkItem { [weak self] in self?.connect() }; retry = work; queue.asyncAfter(deadline: .now() + backoff, execute: work); backoff = min(backoff * 2, 30)
     }
-    func stop() { queue.async { self.stopped = true; self.generation += 1; self.retry?.cancel(); self.timer?.cancel(); self.runTask?.cancel(); if let client = self.client { Task { await client.close() } }; self.client = nil; for bridge in Array(self.bridges.values) { bridge.close() }; self.bridges.removeAll(); self.callbacks.removeAll(); self.pending.removeAll() } }
+    func stop() { queue.async { self.stopped = true; SyncRelayConnectionState.shared.end(self.statusOwner); self.generation += 1; self.retry?.cancel(); self.timer?.cancel(); self.runTask?.cancel(); if let client = self.client { Task { await client.close() } }; self.client = nil; for bridge in Array(self.bridges.values) { bridge.close() }; self.bridges.removeAll(); self.callbacks.removeAll(); self.pending.removeAll() } }
 }
 
 private final class RelayByteBridge: @unchecked Sendable {

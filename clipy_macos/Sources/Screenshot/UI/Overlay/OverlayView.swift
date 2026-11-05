@@ -97,6 +97,7 @@ class OverlayView: NSView {
 
     var screenshotImage: NSImage? {
         didSet {
+            cancelRecognition()
             cachedCompositedImage = nil
             cachedEffectsScreenshot = nil
             cachedOpaqueRect = nil
@@ -158,7 +159,23 @@ class OverlayView: NSView {
     var zoomAnchorView: NSPoint = .zero
 
     // Selection
-    private(set) var selectionRect: NSRect = .zero
+    private(set) var selectionRect: NSRect = .zero {
+        didSet { if selectionRect != oldValue { cancelRecognition() } }
+    }
+
+    // Fixed-size task ownership; pooled overlays must never retain an old session's OCR.
+    let scanRecognition = ScreenshotOCRTaskOwner()
+    let redactionRecognition = ScreenshotOCRTaskOwner()
+    let translationRecognition = ScreenshotOCRTaskOwner()
+
+    func cancelRecognition() {
+        scanRecognition.cancel()
+        redactionRecognition.cancel()
+        translationRecognition.cancel()
+        isTranslating = false
+        (toolHandlers[.marker] as? MarkerToolHandler)?.reset()
+        (toolHandlers[.pixelate] as? PixelateToolHandler)?.reset()
+    }
     /// Selection rect from another overlay (in this view's local coords), drawn during cross-screen drag.
     var remoteSelectionRect: NSRect = .zero
     /// The full (unclipped) remote selection in this view's local coords — used for resize anchor calculation.
@@ -595,7 +612,9 @@ class OverlayView: NSView {
         UserDefaults.standard.object(forKey: "pencilPressureEnabled") as? Bool ?? false
     var currentPressure: CGFloat = 1.0
     var smartMarkerEnabled: Bool =
-        UserDefaults.standard.object(forKey: "smartMarkerEnabled") as? Bool ?? false
+        UserDefaults.standard.object(forKey: "smartMarkerEnabled") as? Bool ?? false {
+        didSet { if !smartMarkerEnabled { (toolHandlers[.marker] as? MarkerToolHandler)?.reset() } }
+    }
 
 
     var currentLoupeSize: CGFloat = {
@@ -652,7 +671,9 @@ class OverlayView: NSView {
     private var cachedOpaqueRect: NSRect?  // cached opaque content bounds of screenshotImage
 
     var isTranslating: Bool = false
-    var translateEnabled: Bool = false
+    var translateEnabled: Bool = false {
+        didSet { if !translateEnabled { translationRecognition.cancel(); isTranslating = false } }
+    }
 
     // Crop tool state
     private var isCropDragging: Bool = false
@@ -9005,6 +9026,7 @@ class OverlayView: NSView {
 
         switch event.keyCode {
         case 53:  // Escape
+            cancelRecognition()
             if isScrollCapturing {
                 overlayDelegate?.overlayViewDidRequestStopScrollCapture()
                 return
@@ -9291,6 +9313,7 @@ class OverlayView: NSView {
     // MARK: - Undo/Redo
 
     func undo() {
+        cancelRecognition()
         guard let entry = undoStack.last else { return }
         undoStack.removeLast()
         switch entry {
@@ -9365,6 +9388,7 @@ class OverlayView: NSView {
     }
 
     func redo() {
+        cancelRecognition()
         guard let entry = redoStack.last else { return }
         redoStack.removeLast()
         switch entry {
@@ -9886,6 +9910,7 @@ class OverlayView: NSView {
     }
 
     func reset() {
+        cancelRecognition()
         state = .idle
         annotationToolsVisible = true
         selectionRect = .zero
@@ -10052,6 +10077,15 @@ extension OverlayView: AnnotationCanvas {
 
     func setNeedsDisplay() {
         needsDisplay = true
+    }
+
+    func invalidateAnnotationRendering() {
+        cachedAnnotationLayer = nil
+        cachedAnnotationLayerExcludingSelected = nil
+        cachedCompositedImage = nil
+        cachedEffectsScreenshot = nil
+        needsDisplay = true
+        onContentChanged?()
     }
 }
 

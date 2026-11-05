@@ -6,6 +6,7 @@ import '../../clipboard_manager.dart';
 import '../../ui/app_components.dart';
 import '../../ui/app_theme.dart';
 import '../devices/devices_page.dart';
+import '../devices/relay_settings.dart';
 import 'windows_hotkey_settings.dart';
 import 'windows_behavior_settings.dart';
 
@@ -192,6 +193,17 @@ class _WindowsSettingsPageState extends State<WindowsSettingsPage> {
           ),
           const WindowsFirewallSettings(),
           const SizedBox(height: 16),
+          settingCard(
+            child: ExpansionTile(
+              key: const PageStorageKey('windows-relay-settings'),
+              leading: const Icon(Icons.public),
+              title: Text(
+                l10n.language == AppLanguage.zh ? '公网中继' : 'Internet relay',
+              ),
+              children: const [RelaySettings()],
+            ),
+          ),
+
           settingCard(
             child: ListTile(
               leading: const Icon(Icons.tune),

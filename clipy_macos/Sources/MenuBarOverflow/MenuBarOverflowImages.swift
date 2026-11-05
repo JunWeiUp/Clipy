@@ -3,7 +3,12 @@ import ScreenCaptureKit
 
 /// Screen Recording is optional. Capture only explicitly matched menu-item windows,
 /// never a screen rectangle that might now contain another application's content.
-final class MenuBarOverflowImages {
+protocol MenuBarOverflowImageLoading {
+    func load(_ items: [MenuBarOverflowItem], cancellation: MenuBarOverflowCancellation,
+              completion: @escaping ([MenuBarOverflowIdentity: NSImage]) -> Void)
+}
+
+final class MenuBarOverflowImages: MenuBarOverflowImageLoading {
     private var busy = false
 
     func load(_ items: [MenuBarOverflowItem], cancellation: MenuBarOverflowCancellation,
@@ -35,7 +40,8 @@ final class MenuBarOverflowImages {
                          results: [MenuBarOverflowIdentity: NSImage],
                          cancellation: MenuBarOverflowCancellation,
                          completion: @escaping ([MenuBarOverflowIdentity: NSImage]) -> Void) {
-        guard let pair = remaining.first, !cancellation.isCancelled, CGPreflightScreenCaptureAccess() else {
+        guard !cancellation.isCancelled else { busy = false; completion([:]); return }
+        guard let pair = remaining.first, CGPreflightScreenCaptureAccess() else {
             busy = false; completion(results); return
         }
         let config = SCStreamConfiguration()
@@ -45,6 +51,7 @@ final class MenuBarOverflowImages {
         SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: pair.1), configuration: config) { [weak self] cgImage, _ in
             DispatchQueue.main.async {
                 guard let self else { return }
+                guard !cancellation.isCancelled else { self.busy = false; completion([:]); return }
                 var updated = results
                 if let cgImage, Self.hasVisiblePixels(cgImage) {
                     updated[pair.0] = NSImage(cgImage: cgImage, size: pair.1.frame.size)

@@ -1,5 +1,4 @@
 import Cocoa
-import Vision
 
 /// Handles PII auto-redaction: regex pattern matching + Vision OCR to find sensitive text,
 /// creates redaction annotations (filled rect, blur, or pixelate).
@@ -45,7 +44,7 @@ enum AutoRedactor {
 
     // MARK: - Public API
 
-    /// Redact PII patterns in the selected region. Runs OCR on background thread, calls completion with annotations.
+    @discardableResult
     static func redactPII(
         screenshot: NSImage,
         selectionRect: NSRect,
@@ -54,32 +53,27 @@ enum AutoRedactor {
         color: NSColor,
         sourceImage: NSImage?,
         sourceImageBounds: NSRect,
+        onError: @escaping (String) -> Void = { _ in },
         completion: @escaping ([Annotation]) -> Void
-    ) {
-        let cgImage = cropToCGImage(screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect)
-        guard let cgImage = cgImage else { completion([]); return }
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            VisionOCR.performTextRecognition(cgImage: cgImage) { request, _ in
-                // Vision calls back on its own queue; completion mutates the
-                // overlay's annotation/undo state, so every exit must hop to main.
-                guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                    DispatchQueue.main.async { completion([]) }
-                    return
-                }
-                let annotations = buildPIIRedactions(
-                    observations: observations, selectionRect: selectionRect,
-                    redactTool: redactTool, color: color,
-                    sourceImage: sourceImage, sourceImageBounds: sourceImageBounds
-                )
-                let censorMode = CensorMode(rawValue: UserDefaults.standard.integer(forKey: "censorMode")) ?? .pixelate
-                for ann in annotations { ann.censorMode = censorMode; ann.bakePixelate() }
-                DispatchQueue.main.async { completion(annotations) }
-            }
+    ) -> OCRTask? {
+        guard let cgImage = cropToCGImage(screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect) else {
+            onError("Failed to process image")
+            return nil
+        }
+        let enabledTypes = UserDefaults.standard.array(forKey: "enabledRedactTypes") as? [String]
+        let patterns = sensitivePatterns.filter { enabledTypes == nil || enabledTypes!.contains($0.name) }.map { $0.pattern.pattern }
+        return VisionOCR.performTextRecognition(cgImage: cgImage, matchingPatterns: patterns) { observations, error in
+            if let error { onError("OCR failed: \(error.localizedDescription)"); return }
+            let annotations = buildPIIRedactions(
+                observations: observations, selectionRect: selectionRect,
+                redactTool: redactTool, color: color,
+                sourceImage: sourceImage, sourceImageBounds: sourceImageBounds)
+            bake(annotations)
+            completion(annotations)
         }
     }
 
-    /// Redact ALL text in the selected region (not just PII). Runs OCR, calls completion with annotations.
+    @discardableResult
     static func redactAllText(
         screenshot: NSImage,
         selectionRect: NSRect,
@@ -88,49 +82,25 @@ enum AutoRedactor {
         color: NSColor,
         sourceImage: NSImage?,
         sourceImageBounds: NSRect,
+        onError: @escaping (String) -> Void = { _ in },
         completion: @escaping ([Annotation]) -> Void
-    ) {
-        let cgImage = cropToCGImage(screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect)
-        guard let cgImage = cgImage else { completion([]); return }
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            VisionOCR.performTextRecognition(cgImage: cgImage) { request, _ in
-                guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                    DispatchQueue.main.async { completion([]) }
-                    return
-                }
-                let groupID = UUID()
-                let padding: CGFloat = 2
-                var annotations: [Annotation] = []
-
-                for observation in observations {
-                    let box = observation.boundingBox
-                    let viewX = selectionRect.origin.x + box.origin.x * selectionRect.width - padding
-                    let viewY = selectionRect.origin.y + box.origin.y * selectionRect.height - padding
-                    let viewW = box.width * selectionRect.width + padding * 2
-                    let viewH = box.height * selectionRect.height + padding * 2
-                    let ann = Annotation(tool: redactTool,
-                        startPoint: NSPoint(x: viewX, y: viewY),
-                        endPoint: NSPoint(x: viewX + viewW, y: viewY + viewH),
-                        color: color, strokeWidth: 0)
-                    ann.groupID = groupID
-                    if redactTool == .rectangle { ann.rectFillStyle = .fill }
-                    else if redactTool == .blur || redactTool == .pixelate {
-                        ann.sourceImage = sourceImage
-                        ann.sourceImageBounds = sourceImageBounds
-                    }
-                    annotations.append(ann)
-                }
-                let censorMode = CensorMode(rawValue: UserDefaults.standard.integer(forKey: "censorMode")) ?? .pixelate
-                for ann in annotations { ann.censorMode = censorMode; ann.bakePixelate() }
-                DispatchQueue.main.async { completion(annotations) }
-            }
+    ) -> OCRTask? {
+        guard let cgImage = cropToCGImage(screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect) else {
+            onError("Failed to process image")
+            return nil
+        }
+        return VisionOCR.performTextRecognition(cgImage: cgImage) { observations, error in
+            if let error { onError("OCR failed: \(error.localizedDescription)"); return }
+            let annotations = buildRedactions(
+                boxes: observations.map(\.boundingBox), selectionRect: selectionRect,
+                padding: 2, redactTool: redactTool, color: color,
+                sourceImage: sourceImage, sourceImageBounds: sourceImageBounds)
+            bake(annotations)
+            completion(annotations)
         }
     }
 
-    // MARK: - Face redaction
-
-    /// Detect faces in the selected region and create blur/pixelate/filled-rect annotations over each face.
+    @discardableResult
     static func redactFaces(
         screenshot: NSImage,
         selectionRect: NSRect,
@@ -139,56 +109,25 @@ enum AutoRedactor {
         color: NSColor,
         sourceImage: NSImage?,
         sourceImageBounds: NSRect,
+        onError: @escaping (String) -> Void = { _ in },
         completion: @escaping ([Annotation]) -> Void
-    ) {
-        let cgImage = cropToCGImage(screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect)
-        guard let cgImage = cgImage else { completion([]); return }
-
-        let request = VNDetectFaceRectanglesRequest { request, _ in
-            guard let observations = request.results as? [VNFaceObservation] else {
-                DispatchQueue.main.async { completion([]) }
-                return
-            }
-            let groupID = UUID()
-            let padding: CGFloat = 4
-            var annotations: [Annotation] = []
-
-            for observation in observations {
-                let box = observation.boundingBox
-                let viewX = selectionRect.origin.x + box.origin.x * selectionRect.width - padding
-                let viewY = selectionRect.origin.y + box.origin.y * selectionRect.height - padding
-                let viewW = box.width * selectionRect.width + padding * 2
-                let viewH = box.height * selectionRect.height + padding * 2
-                let ann = Annotation(tool: redactTool,
-                    startPoint: NSPoint(x: viewX, y: viewY),
-                    endPoint: NSPoint(x: viewX + viewW, y: viewY + viewH),
-                    color: color, strokeWidth: 0)
-                ann.groupID = groupID
-                if redactTool == .rectangle { ann.rectFillStyle = .fill }
-                else if redactTool == .blur || redactTool == .pixelate {
-                    ann.sourceImage = sourceImage
-                    ann.sourceImageBounds = sourceImageBounds
-                }
-                annotations.append(ann)
-            }
-            let censorMode = CensorMode(rawValue: UserDefaults.standard.integer(forKey: "censorMode")) ?? .pixelate
-            for ann in annotations { ann.censorMode = censorMode; ann.bakePixelate() }
-            DispatchQueue.main.async { completion(annotations) }
+    ) -> OCRTask? {
+        guard let cgImage = cropToCGImage(screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect) else {
+            onError("Failed to process image")
+            return nil
         }
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
-            } catch {
-                // Without this the completion handler is never called on a
-                // throwing perform, leaving the caller waiting forever.
-                appLog("AutoRedactor face detection failed: \(error.localizedDescription)", level: .warning)
-                DispatchQueue.main.async { completion([]) }
-            }
+        return VisionOCR.performDetection(cgImage: cgImage, kind: .faces) { observations, error in
+            if let error { onError("OCR failed: \(error.localizedDescription)"); return }
+            let annotations = buildRedactions(
+                boxes: observations, selectionRect: selectionRect,
+                padding: 4, redactTool: redactTool, color: color,
+                sourceImage: sourceImage, sourceImageBounds: sourceImageBounds)
+            bake(annotations)
+            completion(annotations)
         }
     }
 
-    /// Detect human bodies in the selected region and create blur/pixelate/filled-rect annotations over each person.
+    @discardableResult
     static func redactPeople(
         screenshot: NSImage,
         selectionRect: NSRect,
@@ -197,50 +136,21 @@ enum AutoRedactor {
         color: NSColor,
         sourceImage: NSImage?,
         sourceImageBounds: NSRect,
+        onError: @escaping (String) -> Void = { _ in },
         completion: @escaping ([Annotation]) -> Void
-    ) {
-        let cgImage = cropToCGImage(screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect)
-        guard let cgImage = cgImage else { completion([]); return }
-
-        let request = VNDetectHumanRectanglesRequest { request, _ in
-            guard let observations = request.results as? [VNHumanObservation] else {
-                DispatchQueue.main.async { completion([]) }
-                return
-            }
-            let groupID = UUID()
-            let padding: CGFloat = 4
-            var annotations: [Annotation] = []
-
-            for observation in observations {
-                let box = observation.boundingBox
-                let viewX = selectionRect.origin.x + box.origin.x * selectionRect.width - padding
-                let viewY = selectionRect.origin.y + box.origin.y * selectionRect.height - padding
-                let viewW = box.width * selectionRect.width + padding * 2
-                let viewH = box.height * selectionRect.height + padding * 2
-                let ann = Annotation(tool: redactTool,
-                    startPoint: NSPoint(x: viewX, y: viewY),
-                    endPoint: NSPoint(x: viewX + viewW, y: viewY + viewH),
-                    color: color, strokeWidth: 0)
-                ann.groupID = groupID
-                if redactTool == .rectangle { ann.rectFillStyle = .fill }
-                else if redactTool == .blur || redactTool == .pixelate {
-                    ann.sourceImage = sourceImage
-                    ann.sourceImageBounds = sourceImageBounds
-                }
-                annotations.append(ann)
-            }
-            let censorMode = CensorMode(rawValue: UserDefaults.standard.integer(forKey: "censorMode")) ?? .pixelate
-            for ann in annotations { ann.censorMode = censorMode; ann.bakePixelate() }
-            DispatchQueue.main.async { completion(annotations) }
+    ) -> OCRTask? {
+        guard let cgImage = cropToCGImage(screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect) else {
+            onError("Failed to process image")
+            return nil
         }
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
-            } catch {
-                appLog("AutoRedactor person detection failed: \(error.localizedDescription)", level: .warning)
-                DispatchQueue.main.async { completion([]) }
-            }
+        return VisionOCR.performDetection(cgImage: cgImage, kind: .people) { observations, error in
+            if let error { onError("OCR failed: \(error.localizedDescription)"); return }
+            let annotations = buildRedactions(
+                boxes: observations, selectionRect: selectionRect,
+                padding: 4, redactTool: redactTool, color: color,
+                sourceImage: sourceImage, sourceImageBounds: sourceImageBounds)
+            bake(annotations)
+            completion(annotations)
         }
     }
 
@@ -248,7 +158,8 @@ enum AutoRedactor {
 
     private static func cropToCGImage(screenshot: NSImage, selectionRect: NSRect, captureDrawRect: NSRect) -> CGImage? {
         let regionImage = NSImage(size: selectionRect.size, flipped: false) { _ in
-            screenshot.draw(in: NSRect(x: -selectionRect.origin.x, y: -selectionRect.origin.y,
+            screenshot.draw(in: NSRect(x: captureDrawRect.origin.x - selectionRect.origin.x,
+                                         y: captureDrawRect.origin.y - selectionRect.origin.y,
                                         width: captureDrawRect.width, height: captureDrawRect.height),
                             from: .zero, operation: .copy, fraction: 1.0)
             return true
@@ -258,8 +169,36 @@ enum AutoRedactor {
         return bitmap.cgImage
     }
 
+    private static func bake(_ annotations: [Annotation]) {
+        let mode = CensorMode(rawValue: UserDefaults.standard.integer(forKey: "censorMode")) ?? .pixelate
+        for annotation in annotations { annotation.censorMode = mode; annotation.bakePixelate() }
+    }
+
+    private static func buildRedactions(
+        boxes: [CGRect], selectionRect: NSRect, padding: CGFloat,
+        redactTool: AnnotationTool, color: NSColor,
+        sourceImage: NSImage?, sourceImageBounds: NSRect
+    ) -> [Annotation] {
+        let groupID = UUID()
+        return boxes.map { box in
+            let rect = CGRect(x: selectionRect.minX + box.minX * selectionRect.width - padding,
+                              y: selectionRect.minY + box.minY * selectionRect.height - padding,
+                              width: box.width * selectionRect.width + padding * 2,
+                              height: box.height * selectionRect.height + padding * 2)
+            let annotation = Annotation(tool: redactTool, startPoint: rect.origin,
+                endPoint: NSPoint(x: rect.maxX, y: rect.maxY), color: color, strokeWidth: 0)
+            annotation.groupID = groupID
+            if redactTool == .rectangle { annotation.rectFillStyle = .fill }
+            else if redactTool == .blur || redactTool == .pixelate {
+                annotation.sourceImage = sourceImage
+                annotation.sourceImageBounds = sourceImageBounds
+            }
+            return annotation
+        }
+    }
+
     private static func buildPIIRedactions(
-        observations: [VNRecognizedTextObservation],
+        observations: [OCRTextObservation],
         selectionRect: NSRect,
         redactTool: AnnotationTool,
         color: NSColor,
@@ -289,21 +228,14 @@ enum AutoRedactor {
             annotations.append(ann)
         }
 
-        // Pass 1: regex matching
+        // Child-provided exact substring boxes preserve PII precision; never expand
+        // a matched email/token to the full text line.
         let enabledTypes = UserDefaults.standard.array(forKey: "enabledRedactTypes") as? [String]
-        let activePatterns = sensitivePatterns.filter { enabledTypes == nil || enabledTypes!.contains($0.name) }
-
+        func enabled(_ name: String) -> Bool { enabledTypes == nil || enabledTypes!.contains(name) }
         for (i, obs) in observations.enumerated() {
-            guard let candidate = obs.topCandidates(1).first else { continue }
-            let text = candidate.string
-            let fullRange = NSRange(location: 0, length: (text as NSString).length)
-            for (_, regex) in activePatterns {
-                for match in regex.matches(in: text, options: [], range: fullRange) {
-                    guard let swiftRange = Range(match.range, in: text),
-                          let box = try? candidate.boundingBox(for: swiftRange) else { continue }
-                    addRedaction(box: box.boundingBox)
-                    redactedObservations.insert(i)
-                }
+            for box in obs.matchedBoxes {
+                addRedaction(box: box)
+                redactedObservations.insert(i)
             }
         }
 
@@ -311,8 +243,8 @@ enum AutoRedactor {
         struct DigitObs { let index: Int; let midY: CGFloat; let midX: CGFloat; let box: CGRect; let digitCount: Int }
         var digitObs: [DigitObs] = []
         for (i, obs) in observations.enumerated() {
-            guard !redactedObservations.contains(i), let c = obs.topCandidates(1).first else { continue }
-            let digits = c.string.filter(\.isNumber)
+            guard enabled("credit_card"), !redactedObservations.contains(i) else { continue }
+            let digits = obs.text.filter(\.isNumber)
             if digits.count >= 3 && digits.count <= 6 {
                 digitObs.append(DigitObs(index: i, midY: obs.boundingBox.midY, midX: obs.boundingBox.midX, box: obs.boundingBox, digitCount: digits.count))
             }
@@ -339,10 +271,10 @@ enum AutoRedactor {
             let cvv = try? NSRegularExpression(pattern: #"^\d{3,4}$"#)
             let expiry = try? NSRegularExpression(pattern: #"^\d{4}[-/]\d{2}$|^\d{2}[-/]\d{2,4}$"#)
             for (i, obs) in observations.enumerated() {
-                guard !redactedObservations.contains(i), let c = obs.topCandidates(1).first else { continue }
-                let text = c.string.trimmingCharacters(in: .whitespaces)
+                guard !redactedObservations.contains(i) else { continue }
+                let text = obs.text.trimmingCharacters(in: .whitespaces)
                 let range = NSRange(location: 0, length: (text as NSString).length)
-                if cvv?.firstMatch(in: text, range: range) != nil || expiry?.firstMatch(in: text, range: range) != nil {
+                if (enabled("cvv") && cvv?.firstMatch(in: text, range: range) != nil) || (enabled("expiry") && expiry?.firstMatch(in: text, range: range) != nil) {
                     addRedaction(box: obs.boundingBox); redactedObservations.insert(i)
                 }
             }

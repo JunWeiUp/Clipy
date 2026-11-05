@@ -1,5 +1,4 @@
 import Cocoa
-import Vision
 
 /// Handles marker/highlighter tool interaction.
 /// Accumulates freeform points on drag, semi-transparent wide stroke.
@@ -14,8 +13,37 @@ final class MarkerToolHandler: AnnotationToolHandler {
     private var shiftAnchor: NSPoint = .zero
 
     /// Cached OCR observations for the current selection, to avoid re-running OCR on every stroke.
-    private var cachedObservations: [VNRecognizedTextObservation]?
+    private var cachedObservations: [OCRTextObservation]?
     private var cachedSelectionRect: NSRect = .zero
+    private let recognition = ScreenshotOCRTaskOwner()
+    typealias Recognize = (CGImage, @escaping ([OCRTextObservation], Error?) -> Void) -> OCRTask
+    private let recognize: Recognize
+
+    init(recognize: @escaping Recognize = { image, completion in
+        VisionOCR.performTextRecognition(cgImage: image, completionHandler: completion)
+    }) { self.recognize = recognize }
+
+    private struct PendingSnap {
+        weak var annotation: Annotation?
+        let points: [NSPoint]
+        let strokeWidth: CGFloat
+        let minX: CGFloat
+        let maxX: CGFloat
+        let y: CGFloat
+    }
+    // Many strokes share one selection OCR. Overflow keeps the already committed
+    // raw strokes and reports that smart refinement could not be scheduled.
+    private var pendingSnaps: [PendingSnap] = []
+    private static let maximumPendingSnaps = 64
+
+    func reset() {
+        recognition.cancel()
+        pendingSnaps.removeAll()
+        cachedObservations = nil
+        cachedSelectionRect = .zero
+        freeformShiftDirection = 0
+        shiftAnchor = .zero
+    }
 
     var cursor: NSCursor? { nil }  // dot preview replaces system cursor in normal mode
 
@@ -117,7 +145,10 @@ final class MarkerToolHandler: AnnotationToolHandler {
         }
 
         if canvas.smartMarkerEnabled {
-            // Smart marker: find text lines under the stroke and snap to them
+            // Commit immediately: each completed gesture must survive another
+            // stroke, a tool switch, or a failed/cancelled OCR refinement.
+            if let lastPoint = annotation.points?.last { canvas.drawingCursorPoint = lastPoint }
+            commitAnnotation(annotation, canvas: canvas)
             snapToTextLines(annotation: annotation, canvas: canvas)
         } else {
             // Update marker preview position so it doesn't jump back to the pre-drag location
@@ -132,79 +163,47 @@ final class MarkerToolHandler: AnnotationToolHandler {
     // MARK: - Smart marker OCR snapping
 
     private func snapToTextLines(annotation: Annotation, canvas: AnnotationCanvas) {
-        guard let screenshot = canvas.screenshotImage else {
-            commitAnnotation(annotation, canvas: canvas)
-            return
-        }
-
         let selectionRect = canvas.selectionRect
-        let captureDrawRect = canvas.captureDrawRect
-
-        // Build the stroke's bounding rect (with generous vertical padding for text detection)
-        guard let points = annotation.points, let firstPt = points.first else {
-            commitAnnotation(annotation, canvas: canvas)
-            return
-        }
-        // Safe: `points.first` above already proved the array is non-empty.
-        let xs = points.map(\.x)
-        guard let minX = xs.min(), let maxX = xs.max() else {
-            commitAnnotation(annotation, canvas: canvas)
-            return
-        }
-        let strokeY = firstPt.y  // horizontal line, Y is constant
-
-        // Use cached observations if selection hasn't changed
+        guard let points = annotation.points, let firstPoint = points.first,
+              let minX = points.map(\.x).min(), let maxX = points.map(\.x).max() else { return }
         if let cached = cachedObservations, cachedSelectionRect == selectionRect {
             applySmartSnap(annotation: annotation, observations: cached,
-                           strokeMinX: minX, strokeMaxX: maxX, strokeY: strokeY,
+                           strokeMinX: minX, strokeMaxX: maxX, strokeY: firstPoint.y,
                            selectionRect: selectionRect, canvas: canvas)
             return
         }
-
-        // Crop the selection region to a CGImage for OCR. The screenshot fills
-        // captureDrawRect; offset it so the part inside selectionRect lands at the
-        // region image's origin. In overlay mode captureDrawRect.origin is .zero
-        // (so this is -selectionRect.origin); in the editor captureDrawRect ==
-        // selectionRect, so the offset is .zero — using captureDrawRect.origin
-        // here avoids double-counting selectionRect.origin in editor mode.
-        let regionImage = NSImage(size: selectionRect.size, flipped: false) { _ in
-            screenshot.draw(in: NSRect(x: captureDrawRect.origin.x - selectionRect.origin.x,
-                                        y: captureDrawRect.origin.y - selectionRect.origin.y,
-                                        width: captureDrawRect.width, height: captureDrawRect.height),
-                            from: .zero, operation: .copy, fraction: 1.0)
-            return true
-        }
-        guard let tiffData = regionImage.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffData),
-              let cgImage = bitmap.cgImage else {
-            commitAnnotation(annotation, canvas: canvas)
+        guard pendingSnaps.count < Self.maximumPendingSnaps else {
+            canvas.showOverlayError("Smart marker is busy. The stroke was kept without text snapping.")
             return
         }
+        pendingSnaps.append(PendingSnap(annotation: annotation, points: points,
+            strokeWidth: annotation.strokeWidth, minX: minX, maxX: maxX, y: firstPoint.y))
+        ensureOCRCache(canvas: canvas)
+    }
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            VisionOCR.performTextRecognition(cgImage: cgImage) { [weak self, weak canvas] request, _ in
-                guard let self = self, let canvas = canvas else { return }
-                let observations = request.results as? [VNRecognizedTextObservation] ?? []
-                DispatchQueue.main.async {
-                    self.cachedObservations = observations
-                    self.cachedSelectionRect = selectionRect
-                    self.applySmartSnap(annotation: annotation, observations: observations,
-                                        strokeMinX: minX, strokeMaxX: maxX, strokeY: strokeY,
-                                        selectionRect: selectionRect, canvas: canvas)
-                }
-            }
+    private func refinePendingStrokes(observations: [OCRTextObservation], selectionRect: NSRect,
+                                      canvas: AnnotationCanvas) {
+        let pending = pendingSnaps
+        pendingSnaps.removeAll()
+        for snap in pending {
+            guard let annotation = snap.annotation,
+                  canvas.annotations.contains(where: { $0 === annotation }),
+                  annotation.points == snap.points, annotation.strokeWidth == snap.strokeWidth else { continue }
+            applySmartSnap(annotation: annotation, observations: observations,
+                           strokeMinX: snap.minX, strokeMaxX: snap.maxX, strokeY: snap.y,
+                           selectionRect: selectionRect, canvas: canvas)
         }
     }
 
     private func applySmartSnap(
         annotation: Annotation,
-        observations: [VNRecognizedTextObservation],
+        observations: [OCRTextObservation],
         strokeMinX: CGFloat, strokeMaxX: CGFloat, strokeY: CGFloat,
         selectionRect: NSRect,
         canvas: AnnotationCanvas
     ) {
         // Find the text line whose bounding box best overlaps with the stroke
-        var bestObservation: VNRecognizedTextObservation?
+        var bestObservation: OCRTextObservation?
         var bestOverlap: CGFloat = 0
 
         for observation in observations {
@@ -247,26 +246,20 @@ final class MarkerToolHandler: AnnotationToolHandler {
             annotation.points = [annotation.startPoint, annotation.endPoint]
             annotation.strokeWidth = smartStrokeWidth
         }
-        // else: no matching text line — commit the stroke as-is
-
-        if let lastPt = annotation.points?.last {
-            canvas.drawingCursorPoint = lastPt
-        }
-        commitAnnotation(annotation, canvas: canvas)
+        // This is a refinement of an existing annotation, not a new commit.
+        // Never clear a newer active stroke or move its drawing cursor.
+        canvas.invalidateAnnotationRendering()
     }
 
     // MARK: - Live text line height detection
-
-    private var ocrInFlight = false
 
     /// Eagerly start OCR if not already cached. Called on mouseMoved in smart marker mode.
     func ensureOCRCache(canvas: AnnotationCanvas) {
         let selectionRect = canvas.selectionRect
         if cachedObservations != nil && cachedSelectionRect == selectionRect { return }
-        guard !ocrInFlight else { return }
+        guard recognition.task == nil else { return }
         guard let screenshot = canvas.screenshotImage else { return }
 
-        ocrInFlight = true
         let captureDrawRect = canvas.captureDrawRect
 
         // See the matching crop in finishSmartMarker: offset by
@@ -282,25 +275,33 @@ final class MarkerToolHandler: AnnotationToolHandler {
         guard let tiffData = regionImage.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffData),
               let cgImage = bitmap.cgImage else {
-            ocrInFlight = false
+            canvas.showOverlayError("Failed to process image")
+            cachedObservations = []
+            cachedSelectionRect = selectionRect
+            pendingSnaps.removeAll()
             return
         }
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            VisionOCR.performTextRecognition(cgImage: cgImage) { [weak self] request, _ in
-                let observations = request.results as? [VNRecognizedTextObservation] ?? []
-                DispatchQueue.main.async { [weak self] in
-                    self?.cachedObservations = observations
-                    self?.cachedSelectionRect = selectionRect
-                    self?.ocrInFlight = false
-                }
+        let generation = recognition.begin()
+        recognition.task = recognize(cgImage) { [weak self, weak canvas] observations, error in
+            guard let self, let canvas, self.recognition.isCurrent(generation),
+                  canvas.selectionRect == selectionRect else { return }
+            self.recognition.finish(generation)
+            // Cache the failed attempt too; hovering must not create a retry storm.
+            self.cachedObservations = observations
+            self.cachedSelectionRect = selectionRect
+            if let error {
+                self.pendingSnaps.removeAll()
+                canvas.showOverlayError("OCR failed: \(error.localizedDescription)")
+            } else {
+                self.refinePendingStrokes(observations: observations, selectionRect: selectionRect, canvas: canvas)
             }
         }
     }
 
     /// Returns the text line height at the given canvas point, or nil if no text detected there.
     func textLineHeight(at point: NSPoint, canvas: AnnotationCanvas) -> CGFloat? {
-        guard let observations = cachedObservations else { return nil }
+        guard let observations = cachedObservations, cachedSelectionRect == canvas.selectionRect else { return nil }
         let selectionRect = canvas.selectionRect
 
         var bestHeight: CGFloat?

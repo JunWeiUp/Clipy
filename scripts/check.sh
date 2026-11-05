@@ -5,12 +5,11 @@ cd "${REPO_ROOT}"
 
 check_repo() {
   git diff --check
-  bash -n build_macos_app.sh build_android_apk.sh build_android_native_apk.sh scripts/check.sh scripts/lib/build_common.sh scripts/test_build_config.sh scripts/test_macos_core.sh
+  bash -n build_macos_app.sh build_android_apk.sh scripts/check.sh scripts/lib/build_common.sh scripts/test_build_config.sh scripts/test_macos_core.sh
   bash scripts/test_build_config.sh
   python3 scripts/check_repository.py
   python3 -B scripts/test_repository_privacy.py
   python3 scripts/check_icons.py
-  python3 scripts/check_native_android_schema.py
 }
 
 check_flutter() {

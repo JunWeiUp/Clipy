@@ -3,6 +3,7 @@ import 'package:common_relay/common_relay.dart' as cr;
 import 'package:sodium/sodium.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'relay_identity.dart';
+import 'relay_configuration.dart';
 
 /// Serializes management actions; pending enrollment survives closing the page.
 class ClipyRelayGroups {
@@ -21,16 +22,55 @@ class ClipyRelayGroups {
 
   static String encodeInvitation(Map<String, dynamic> value) =>
       value['short_link'] as String? ??
-      'common-relay://join#${base64Url.encode(utf8.encode(jsonEncode(value)))}';
+      'common-relay://join#${base64Url.encode(utf8.encode(jsonEncode(ClipyRelayIdentity.withoutAccessPassword(value))))}';
   static Future<Map<String, dynamic>> resolveInvitation(String text) async {
     final raw = text.trim();
     if (raw.startsWith('common-relay://') &&
         !raw.startsWith('common-relay://join#')) {
+      final endpoint = cr.RelayInvitationLinks.parse(raw);
+      await _checkServer(endpoint.url);
       final g = await load();
+      final previousPassword = g.config['password'] as String? ?? '';
+      if (endpoint.password == null) await requireAccess();
       g.config['app'] = 'clipy';
-      return g.resolveInvitation(raw);
+      final invitation = await g.resolveInvitation(raw);
+      // Only adopt a credential after the encrypted invitation's scope and expiry
+      // have been verified. A late response must not overwrite edited settings.
+      await _checkServer(endpoint.url);
+      if (await ClipyRelayIdentity.accessPassword(endpoint.url) !=
+          previousPassword) {
+        throw StateError('Access credential changed during request');
+      }
+      if (endpoint.password != null) {
+        await ClipyRelayIdentity.saveAccessPassword(
+          endpoint.url,
+          endpoint.password!,
+        );
+      }
+      return ClipyRelayIdentity.withoutAccessPassword(invitation);
     }
+    await requireAccess();
     return decodeInvitation(raw);
+  }
+
+  /// Refresh the fragment when resuming an invitation made before password links
+  /// or after the administrator changes the server credential.
+  static Future<Map<String, dynamic>> invitationForSharing(
+    Map<String, dynamic> invitation,
+  ) async {
+    final result = ClipyRelayIdentity.withoutAccessPassword(invitation);
+    final link = result['short_link'] as String?;
+    if (link == null) return result;
+    final endpoint = cr.RelayInvitationLinks.parse(link);
+    await _checkServer(endpoint.url);
+    final password = await ClipyRelayIdentity.accessPassword(endpoint.url);
+    if (password.isEmpty) throw const FormatException('relayPasswordRequired');
+    result['short_link'] = cr.RelayInvitationLinks.make(
+      result,
+      endpoint.key,
+      password: password,
+    );
+    return result;
   }
 
   static Map<String, dynamic> decodeInvitation(String text) {
@@ -47,7 +87,7 @@ class ClipyRelayGroups {
         code['group'] is! String) {
       throw const FormatException('Invalid Clipy invitation');
     }
-    return code;
+    return ClipyRelayIdentity.withoutAccessPassword(code);
   }
 
   static Future<cr.RelayGroups> load() async {
@@ -63,10 +103,58 @@ class ClipyRelayGroups {
         : saved.isNotEmpty
         ? saved
         : 'wss://relay.example.test/relay/v1/ws';
-    return cr.RelayGroups(await SodiumInit.init(), c);
+    return _withAccess(await SodiumInit.init(), c);
+  }
+
+  static Future<String> _selectedURL() async {
+    final prefs = await SharedPreferences.getInstance();
+    final selected = prefs.getString('syncRelayURL')?.trim() ?? '';
+    if (selected.isNotEmpty) return selected;
+    final raw = await ClipyRelayIdentity.config();
+    final saved = raw.isEmpty
+        ? null
+        : (jsonDecode(raw) as Map)['url'] as String?;
+    return saved?.trim().isNotEmpty == true
+        ? saved!
+        : 'wss://relay.example.test/relay/v1/ws';
+  }
+
+  static Future<void> requireAccess() async {
+    if ((await ClipyRelayIdentity.accessPassword(
+      await _selectedURL(),
+    )).isEmpty) {
+      throw const FormatException('relayPasswordRequired');
+    }
+  }
+
+  static Future<void> _checkServer(String url) async {
+    if (RelayConfiguration.passwordScope(url) !=
+        RelayConfiguration.passwordScope(await _selectedURL())) {
+      throw const FormatException('relayServerMismatch');
+    }
+  }
+
+  static Future<cr.RelayGroups> _withAccess(
+    Sodium sodium,
+    Map<String, dynamic> c,
+  ) async {
+    await _checkServer(c['url'] as String);
+    c.remove('password');
+    final password = await ClipyRelayIdentity.accessPassword(
+      c['url'] as String,
+    );
+    if (password.isNotEmpty) c['password'] = password;
+    return cr.RelayGroups(sodium, c);
   }
 
   static Future<void> persist(cr.RelayGroups groups) async {
+    await _checkServer(groups.config['url'] as String);
+    final currentPassword = await ClipyRelayIdentity.accessPassword(
+      groups.config['url'] as String,
+    );
+    if ((groups.config['password'] as String? ?? '') != currentPassword) {
+      throw StateError('Access credential changed during request');
+    }
     final raw = await ClipyRelayIdentity.config();
     if (raw.isNotEmpty) {
       final current = jsonDecode(raw) as Map<String, dynamic>;
@@ -90,7 +178,8 @@ class ClipyRelayGroups {
     final value = Map<String, dynamic>.from(groups.config)
       ..remove('enrollment_invitation')
       ..remove('enrollment_name')
-      ..remove('creation_draft');
+      ..remove('creation_draft')
+      ..remove('password');
     await ClipyRelayIdentity.saveConfig(jsonEncode(value));
   }
 
@@ -136,7 +225,7 @@ class ClipyRelayGroups {
     c['url'] = invitation['url'] ?? c['url'];
     c['trusted_peers'] ??= <String, dynamic>{};
     c.putIfAbsent('token', () => cr.hex(existing.sodium.randombytes.buf(32)));
-    return cr.RelayGroups(existing.sodium, c);
+    return _withAccess(existing.sodium, c);
   }
 
   static Future<cr.RelayGroups> creationDraft(
@@ -164,7 +253,7 @@ class ClipyRelayGroups {
           device,
       ...await ClipyRelayIdentity.localIdentity(),
     };
-    final g = cr.RelayGroups(existing.sodium, c);
+    final g = await _withAccess(existing.sodium, c);
     g.prepareCreate(title, name);
     g.config['creation_draft'] = true;
     await savePending(g);
@@ -186,18 +275,24 @@ class ClipyRelayGroups {
       raw = '';
       saved = null;
     }
-    final g = saved == null ? current : cr.RelayGroups(current.sodium, saved);
+    final g = saved == null
+        ? current
+        : await _withAccess(current.sodium, saved);
     if (raw.isNotEmpty && g.config['exit_disband'] != disband) {
       throw StateError('Retry the pending exit operation');
     }
     await g.prepareExit(disband: disband);
     g.config['exit_disband'] = disband;
-    await ClipyRelayIdentity.saveGroupExit(jsonEncode(g.config));
+    await ClipyRelayIdentity.saveGroupExit(
+      jsonEncode(ClipyRelayIdentity.withoutAccessPassword(g.config)),
+    );
     try {
       await g.exit();
     } catch (error) {
       if (error.toString().contains('409')) {
-        await ClipyRelayIdentity.saveGroupExit(jsonEncode(g.config));
+        await ClipyRelayIdentity.saveGroupExit(
+          jsonEncode(ClipyRelayIdentity.withoutAccessPassword(g.config)),
+        );
       }
       rethrow;
     }
@@ -219,11 +314,13 @@ class ClipyRelayGroups {
   }
 
   static Future<void> savePending(cr.RelayGroups groups) =>
-      ClipyRelayIdentity.saveGroupDraft(jsonEncode(groups.config));
+      ClipyRelayIdentity.saveGroupDraft(
+        jsonEncode(ClipyRelayIdentity.withoutAccessPassword(groups.config)),
+      );
   static Future<cr.RelayGroups?> pending() async {
     final raw = await ClipyRelayIdentity.groupDraft();
     if (raw.isEmpty) return null;
-    return cr.RelayGroups(
+    return _withAccess(
       await SodiumInit.init(),
       jsonDecode(raw) as Map<String, dynamic>,
     );

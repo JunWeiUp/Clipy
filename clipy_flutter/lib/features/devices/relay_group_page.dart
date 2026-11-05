@@ -1,3 +1,4 @@
+import 'relay_settings.dart';
 import '../../ui/windows_title_bar.dart';
 import 'relay_group_legacy_view.dart';
 import '../../sync/relay_configuration.dart';
@@ -40,6 +41,7 @@ class _RelayGroupPageState extends State<RelayGroupPage>
   List<String> _trustedDevices = [];
   bool _creating = true, _creationPending = false, _revoked = false;
   bool _automaticJoin = true, _pendingAutomatic = false;
+  bool _accessMissing = false;
   bool _busy = false, _grantManager = false, _pending = false;
   bool get zh => AppLanguageController.instance.language == AppLanguage.zh;
   String t(String cn, String en) => zh ? cn : en;
@@ -126,13 +128,23 @@ class _RelayGroupPageState extends State<RelayGroupPage>
           ].any((status) => e.toString().contains(status))) {
         _watchStopped = true;
       }
-      if (_state != null && e.toString().contains('401')) _revoked = true;
+      if (e.toString().contains('401')) _revoked = true;
       if (mounted) {
         setState(
           () => _message = _revoked
               ? t(
-                  '当前设备的组接入已失效，请返回创建或加入。',
-                  'This group access is no longer valid. Return to create or join a group.',
+                  '中继访问被拒绝：访问密码或设备身份不可用。请检查密码后重试；本机身份与局域网设置已保留。',
+                  'Relay access denied: the access password or device identity is unavailable. Check the password and retry. Local identity and LAN settings are preserved.',
+                )
+              : e is FormatException && e.message == 'relayPasswordRequired'
+              ? t(
+                  '此操作缺少访问密码。创建组或使用无密码的旧邀请时，请先在中继设置中保存密码。',
+                  'Access password required. Save it in relay settings to create a group or use a legacy invitation without a password.',
+                )
+              : e is FormatException && e.message == 'relayServerMismatch'
+              ? t(
+                  '此请求属于其他中继。请先将中继地址切换到邀请中的服务器，再扫描；新邀请会自动提供访问密码。',
+                  'This request belongs to another relay. Switch the relay URL to the invitation’s server, then scan again. New invitations provide the access password automatically.',
                 )
               : e.toString().contains('429')
               ? t(
@@ -153,12 +165,34 @@ class _RelayGroupPageState extends State<RelayGroupPage>
     }
   }
 
+  Future<void> _editRelayAccess() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => Scaffold(
+          appBar: Platform.isIOS
+              ? CupertinoNavigationBar(
+                  middle: Text(t('中继访问设置', 'Relay access settings')),
+                )
+              : platformAppBar(
+                  context,
+                  title: Text(t('中继访问设置', 'Relay access settings')),
+                ),
+          body: const SingleChildScrollView(
+            child: RelaySettings(showGroupManagement: false),
+          ),
+        ),
+      ),
+    );
+    if (mounted) await _work(_refresh);
+  }
+
   Future<void> _refresh() async {
     final g = await ClipyRelayGroups.load();
     if (!mounted) return;
     final access = RelayConfiguration.groupAccess(g.config);
     setState(() {
       _loaded = true;
+      _accessMissing = g.config['password'] == null;
       _legacy = access == RelayGroupAccess.legacy;
       _onlineKnown = false;
       _self = g.config['device'] as String? ?? '';
@@ -202,7 +236,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
       final inv = jsonDecode(outgoing) as Map<String, dynamic>;
       if ((inv['expires'] as int) >
           DateTime.now().millisecondsSinceEpoch ~/ 1000) {
-        _invitation = inv;
+        _invitation = await ClipyRelayGroups.invitationForSharing(inv);
+        await ClipyRelayIdentity.saveGroupInvitation(jsonEncode(_invitation));
       } else {
         await ClipyRelayIdentity.saveGroupInvitation('');
         _invitation = null;
@@ -211,6 +246,10 @@ class _RelayGroupPageState extends State<RelayGroupPage>
     }
     if (!mounted) return;
     if (g.config.containsKey('group_entry')) {
+      if (_accessMissing) {
+        _revoked = true;
+        throw const FormatException('relayPasswordRequired');
+      }
       final result = await g.refresh();
       await ClipyRelayGroups.persist(g);
       if (mounted) {
@@ -252,6 +291,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
   }
 
   Future<void> _create() async {
+    await ClipyRelayGroups.requireAccess();
+    if (!mounted) return;
     if (!_creationPending &&
         (_groupName.text.trim().isEmpty ||
             _name.text.trim().isEmpty ||
@@ -289,6 +330,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
 
   Future<void> _join() async {
     final code = await ClipyRelayGroups.resolveInvitation(_code.text);
+    if (!mounted) return;
+    setState(() => _accessMissing = false);
     _pendingAutomatic = code['mode'] == 'auto';
     final g = await ClipyRelayGroups.draft(code, SyncManager.instance.peerId);
     g.config['enrollment_invitation'] = code;
@@ -317,6 +360,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
   }
 
   Future<void> _finish() async {
+    await ClipyRelayGroups.requireAccess();
+    if (!mounted) return;
     final g = await ClipyRelayGroups.pending();
     if (g == null) return;
     if (!g.config.containsKey('pending_join')) {
@@ -344,6 +389,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
   }
 
   Future<void> _invite() async {
+    await ClipyRelayGroups.requireAccess();
+    if (!mounted) return;
     final g = await ClipyRelayGroups.load();
     final inv = await g.invite(
       mode: _automaticJoin ? 'auto' : 'manual',
@@ -362,6 +409,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
   }
 
   Future<void> _check() async {
+    await ClipyRelayGroups.requireAccess();
+    if (!mounted) return;
     final g = await ClipyRelayGroups.load();
     final req = await g.pending(_invitation!);
     if (_invitation!['mode'] == 'auto') {
@@ -393,6 +442,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
   }
 
   Future<void> _approve() async {
+    await ClipyRelayGroups.requireAccess();
+    if (!mounted) return;
     final g = await ClipyRelayGroups.load();
     await g.approve(_invitation!, _request!, manager: _grantManager);
     await ClipyRelayGroups.persist(g);
@@ -411,6 +462,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
   }
 
   Future<void> _remove(Map m) async {
+    await ClipyRelayGroups.requireAccess();
+    if (!mounted) return;
     final yes = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
@@ -444,6 +497,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
   }
 
   Future<void> _rename(Map member) async {
+    await ClipyRelayGroups.requireAccess();
+    if (!mounted) return;
     final value = await showDialog<String>(
       context: context,
       builder: (_) => _DeviceNameDialog(name: member['name'] as String, zh: zh),
@@ -530,7 +585,7 @@ class _RelayGroupPageState extends State<RelayGroupPage>
           await ClipyRelayGroups.exitGroup(disband: disband);
         }
       } catch (e) {
-        if (disband || !e.toString().contains('401')) rethrow;
+        rethrow; // A 401 can be a server password failure; preserve enrollment.
       }
       await ClipyRelayGroups.clearEnrollment();
       await SyncManager.instance.updateRelaySettings(
@@ -619,8 +674,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
             'You become the manager and can invite phones and computers.',
           )
         : t(
-            '在另一台设备上选择「添加设备」，然后扫描或粘贴邀请。',
-            'Choose Add device on another device, then scan or paste its invitation.',
+            '扫描或粘贴另一台设备的邀请，自动安全保存服务器密码后加入。旧邀请无密码时需补填。',
+            'Scan or paste an invitation to securely save its server password and join. Legacy invitations without a password need one entered.',
           ),
     [
       if (!_legacy && _creating) ...[
@@ -748,8 +803,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
   Widget get _inviteSection => _section(
     t('邀请新设备', 'Invite a device'),
     t(
-      '用新设备扫描二维码。邀请有效期为 10 分钟。',
-      'Scan with the new device. Invitations expire after 10 minutes.',
+      '邀请含服务器密码，10 分钟内有效。仅分享给可信设备，完整邀请会授予访问权限。',
+      'Includes the server password; valid for 10 minutes. Share only with trusted devices: the full invitation grants access.',
     ),
     [
       Center(
@@ -878,15 +933,40 @@ class _RelayGroupPageState extends State<RelayGroupPage>
                 ),
                 const SizedBox(height: 20),
               ],
+              if (!_revoked && (_accessMissing || _message.isNotEmpty)) ...[
+                if (_accessMissing)
+                  Text(
+                    t(
+                      '尚未保存访问密码。扫描新邀请会自动导入；创建组、手动连接或使用无密码的旧邀请时，请先配置密码。',
+                      'No access password saved. New invitations import it automatically. Set it first to create a group, connect manually or use a legacy invitation without one.',
+                    ),
+                  ),
+                TextButton.icon(
+                  onPressed: _busy ? null : _editRelayAccess,
+                  icon: const Icon(Icons.lock_outline),
+                  label: Text(t('中继访问设置', 'Relay access settings')),
+                ),
+                const SizedBox(height: 12),
+              ],
               if (_revoked)
                 _section(
                   t('设备组不可用', 'Group unavailable'),
                   t(
-                    '组可能已解散，或本机已被移除。旧名单不再代表当前成员，也不能用于添加设备。',
-                    'The group may have been disbanded or this device removed. The saved roster is no longer current.',
+                    '访问密码可能未填写或已变更，也可能是组已解散或设备被移除。验证成功前隐藏旧名单。',
+                    'The access password may be missing or changed, or this device/group may be unavailable. The cached roster is hidden until verified.',
                   ),
                   [
                     FilledButton.icon(
+                      onPressed: _busy ? null : _editRelayAccess,
+                      icon: const Icon(Icons.lock_outline),
+                      label: Text(t('修改访问密码', 'Edit access password')),
+                    ),
+                    TextButton.icon(
+                      onPressed: _busy ? null : () => _work(_refresh),
+                      icon: const Icon(Icons.refresh),
+                      label: Text(t('重试验证', 'Retry verification')),
+                    ),
+                    TextButton.icon(
                       onPressed: _busy ? null : () => _exitGroup(false),
                       icon: const Icon(Icons.logout),
                       label: Text(t('返回创建或加入', 'Return to create or join')),

@@ -10,6 +10,10 @@ func runCoreRegressionTests() {
     runAppearanceRegressionTests()
     runSettingsSearchRegressionTests()
     runKeepAwakeRegressionTests()
+    runOCRMemoryRegressionTests()
+    MainActor.assumeIsolated { runScreenshotOCRGestureRegressionTests() }
+    runUIMemoryPolicyRegressionTests()
+    runUIMemoryLifecycleRegressionTests()
     runMenuBarPanelRegressionTests()
     runMenuBarOverflowRegressionTests()
     runSyncTransportRegressionTests()

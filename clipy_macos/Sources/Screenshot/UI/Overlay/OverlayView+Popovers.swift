@@ -501,12 +501,20 @@ extension OverlayView {
         guard state == .selected, let screenshot = screenshotImage else { return }
         let tool: AnnotationTool = currentTool == .pixelate ? .pixelate : .rectangle
         let sourceImg = tool == .pixelate ? screenshotImage : nil
-        AutoRedactor.redactPII(
+        let generation = redactionRecognition.begin()
+        redactionRecognition.task = AutoRedactor.redactPII(
             screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect,
             redactTool: tool, color: currentColor, sourceImage: sourceImg,
-            sourceImageBounds: captureDrawRect
+            sourceImageBounds: captureDrawRect,
+            onError: { [weak self] message in
+                guard let self, self.redactionRecognition.isCurrent(generation) else { return }
+                self.redactionRecognition.finish(generation)
+                self.showOverlayError(message)
+            }
         ) { [weak self] anns in
-            guard let self = self, !anns.isEmpty else { return }
+            guard let self, self.redactionRecognition.isCurrent(generation) else { return }
+            self.redactionRecognition.finish(generation)
+            guard !anns.isEmpty else { return }
             self.annotations.append(contentsOf: anns)
             self.undoStack.append(contentsOf: anns.map { .added($0) })
             self.redoStack.removeAll()
@@ -519,12 +527,20 @@ extension OverlayView {
         guard state == .selected, let screenshot = screenshotImage else { return }
         let tool: AnnotationTool = currentTool == .pixelate ? .pixelate : .rectangle
         let sourceImg = tool == .pixelate ? screenshotImage : nil
-        AutoRedactor.redactAllText(
+        let generation = redactionRecognition.begin()
+        redactionRecognition.task = AutoRedactor.redactAllText(
             screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect,
             redactTool: tool, color: currentColor, sourceImage: sourceImg,
-            sourceImageBounds: captureDrawRect
+            sourceImageBounds: captureDrawRect,
+            onError: { [weak self] message in
+                guard let self, self.redactionRecognition.isCurrent(generation) else { return }
+                self.redactionRecognition.finish(generation)
+                self.showOverlayError(message)
+            }
         ) { [weak self] anns in
-            guard let self = self, !anns.isEmpty else { return }
+            guard let self, self.redactionRecognition.isCurrent(generation) else { return }
+            self.redactionRecognition.finish(generation)
+            guard !anns.isEmpty else { return }
             self.annotations.append(contentsOf: anns)
             self.undoStack.append(contentsOf: anns.map { .added($0) })
             self.redoStack.removeAll()
@@ -537,12 +553,20 @@ extension OverlayView {
         guard state == .selected, let screenshot = screenshotImage else { return }
         let tool: AnnotationTool = currentTool == .pixelate ? .pixelate : .rectangle
         let sourceImg = tool == .pixelate ? screenshotImage : nil
-        AutoRedactor.redactFaces(
+        let generation = redactionRecognition.begin()
+        redactionRecognition.task = AutoRedactor.redactFaces(
             screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect,
             redactTool: tool, color: currentColor, sourceImage: sourceImg,
-            sourceImageBounds: captureDrawRect
+            sourceImageBounds: captureDrawRect,
+            onError: { [weak self] message in
+                guard let self, self.redactionRecognition.isCurrent(generation) else { return }
+                self.redactionRecognition.finish(generation)
+                self.showOverlayError(message)
+            }
         ) { [weak self] anns in
-            guard let self = self, !anns.isEmpty else { return }
+            guard let self, self.redactionRecognition.isCurrent(generation) else { return }
+            self.redactionRecognition.finish(generation)
+            guard !anns.isEmpty else { return }
             self.annotations.append(contentsOf: anns)
             self.undoStack.append(contentsOf: anns.map { .added($0) })
             self.redoStack.removeAll()
@@ -555,12 +579,20 @@ extension OverlayView {
         guard state == .selected, let screenshot = screenshotImage else { return }
         let tool: AnnotationTool = currentTool == .pixelate ? .pixelate : .rectangle
         let sourceImg = tool == .pixelate ? screenshotImage : nil
-        AutoRedactor.redactPeople(
+        let generation = redactionRecognition.begin()
+        redactionRecognition.task = AutoRedactor.redactPeople(
             screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect,
             redactTool: tool, color: currentColor, sourceImage: sourceImg,
-            sourceImageBounds: captureDrawRect
+            sourceImageBounds: captureDrawRect,
+            onError: { [weak self] message in
+                guard let self, self.redactionRecognition.isCurrent(generation) else { return }
+                self.redactionRecognition.finish(generation)
+                self.showOverlayError(message)
+            }
         ) { [weak self] anns in
-            guard let self = self, !anns.isEmpty else { return }
+            guard let self, self.redactionRecognition.isCurrent(generation) else { return }
+            self.redactionRecognition.finish(generation)
+            guard !anns.isEmpty else { return }
             self.annotations.append(contentsOf: anns)
             self.undoStack.append(contentsOf: anns.map { .added($0) })
             self.redoStack.removeAll()
@@ -608,20 +640,24 @@ extension OverlayView {
 
     func performTranslate(targetLang: String) {
         guard state == .selected, let screenshot = screenshotImage else { return }
+        let generation = translationRecognition.begin()
         annotations.removeAll { $0.tool == .translateOverlay }
         isTranslating = true
         needsDisplay = true
 
-        TranslateOverlay.translate(
+        translationRecognition.task = TranslateOverlay.translate(
             screenshot: screenshot, selectionRect: selectionRect, captureDrawRect: captureDrawRect,
             targetLang: targetLang,
             onError: { [weak self] msg in
-                self?.isTranslating = false
-                self?.showOverlayError(msg)
-                self?.needsDisplay = true
+                guard let self, self.translationRecognition.isCurrent(generation) else { return }
+                self.translationRecognition.finish(generation)
+                self.isTranslating = false
+                self.showOverlayError(msg)
+                self.needsDisplay = true
             },
             completion: { [weak self] anns in
-                guard let self = self else { return }
+                guard let self, self.translationRecognition.isCurrent(generation) else { return }
+                self.translationRecognition.finish(generation)
                 self.isTranslating = false
                 self.annotations.removeAll { $0.tool == .translateOverlay }
                 self.annotations.append(contentsOf: anns)

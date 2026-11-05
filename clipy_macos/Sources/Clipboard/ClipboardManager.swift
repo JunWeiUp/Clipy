@@ -990,9 +990,8 @@ class ClipboardManager {
         // bitmap and briefly holds several large buffers; schedule the
         // debounced reclaim that presses the pages back to the system.
         MemoryFootprintReclaimer.scheduleDelayedReclaim()
-        // Each recognition keeps Vision's models resident (~100MB, first use,
-        // not releasable); the preference lets users trade searchable image
-        // history for the standing footprint.
+        // Recognition runs in a short-lived child. This preference controls
+        // searchable image text and background CPU, not parent model residency.
         guard PreferencesManager.shared.isHistoryImageOCRIndexingEnabled else { return }
         guard !pendingIndexHashes.contains(hash) else { return }
         pendingIndexHashes.insert(hash)

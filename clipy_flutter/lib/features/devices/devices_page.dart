@@ -972,6 +972,8 @@ String syncButtonLabel(
       return l10n.syncRelayConnecting;
     case RelayConnectionState.ready:
       return l10n.syncRelayReady;
+    case RelayConnectionState.accessDenied:
+      return l10n.syncRelayAccessDenied;
     case RelayConnectionState.retrying:
       return l10n.syncRelayRetrying;
     case RelayConnectionState.disabled:

@@ -38,8 +38,8 @@ enum HistorySearchIndexBuilder {
     /// fired, leaking the hash from the pending set forever).
     ///
     /// Recognition runs in the OCR child process (see `OCRSubprocess`) so the
-    /// Vision models never stay resident in the main app; in-process Vision is
-    /// only the fallback when the child cannot be spawned.
+    /// Vision models never stay resident in the main app. Empty success and failure
+    /// both finish indexing without loading a fallback model in the parent.
     static func scheduleOCR(for entry: HistoryEntry, contentHash: String, updater: @escaping (String, String) -> Void) {
         guard case .image(let path) = entry.item else { return }
 
@@ -50,34 +50,36 @@ enum HistorySearchIndexBuilder {
             // The child reads the file directly, so encrypted media must be
             // decrypted here and staged as plain bytes in a temp file.
             var stagedTemp: URL?
+            defer { if let stagedTemp { try? FileManager.default.removeItem(at: stagedTemp) } }
             let plainPath: String
             if PreferencesManager.shared.isHistoryEncryptionEnabled {
                 guard let data = HistoryMediaStore.shared.data(at: path) else {
                     DispatchQueue.main.async { updater(contentHash, "") }
                     return
                 }
-                let temp = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("clipy-ocr-\(UUID().uuidString).img")
+                let directory = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("clipy-ocr-history-\(UUID().uuidString)", isDirectory: true)
+                let temp = directory.appendingPathComponent("input.img")
                 do {
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                                                           attributes: [.posixPermissions: 0o700])
+                    stagedTemp = directory
                     try data.write(to: temp, options: .atomic)
                 } catch {
                     DispatchQueue.main.async { updater(contentHash, "") }
                     return
                 }
-                stagedTemp = temp
                 plainPath = temp.path
             } else {
                 plainPath = path
             }
-            defer { if let stagedTemp { try? FileManager.default.removeItem(at: stagedTemp) } }
 
             let languagePref = PreferencesManager.shared.screenshotOCRLanguage
             let text = OCRSubprocess.recognizeText(
                 at: plainPath,
                 maxPixelSize: ocrMaxPixelSize,
                 languages: languagePref.recognitionLanguages
-            ) ?? ImageDownsampler.cgImage(at: plainPath, maxPixelSize: ocrMaxPixelSize)
-                .flatMap { ImageOCRService.recognizeInProcess(cgImage: $0, languages: languagePref) }
+            )
             guard let text, !text.isEmpty else {
                 DispatchQueue.main.async { updater(contentHash, "") }
                 return

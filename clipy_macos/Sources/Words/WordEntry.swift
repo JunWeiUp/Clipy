@@ -52,6 +52,16 @@ enum WordQuery {
     /// Explicitly submitted text may contain sentences, numbers and punctuation.
     /// Clipboard prefill and remote dictionary candidates retain stricter limits.
     static let maximumLength = 500
+    static let modelMaximumLength = 10_000
+
+    static func modelText(_ input: String) throws -> String {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.count <= modelMaximumLength else {
+            throw WordLookupError.invalidQuery
+        }
+        return value
+    }
+
 
     static func normalize(_ input: String) throws -> String {
         let value = input.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -15,6 +15,9 @@ class OCRResultController: NSObject {
     private var qrCodes: [QRCodePayload]
     private var isShowingTranslation = false
     private var translationGeneration = 0
+    private var translationTask: OCRTask?
+
+    deinit { translationTask?.cancel() }
 
     /// Invoked once when the window closes (either close button or title-bar
     /// red-X), so the owner can drop its reference to this controller.
@@ -23,6 +26,12 @@ class OCRResultController: NSObject {
     init(text: String, image: NSImage?, qrCodes: [QRCodePayload] = []) {
         self.qrCodes = qrCodes
         super.init()
+        // All OCR entry points copy recognized text before presenting the result.
+        // Empty recognition must leave the existing clipboard untouched.
+        if !text.isEmpty {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
         buildWindow(text: text, image: image, qrCodes: qrCodes)
     }
 
@@ -318,8 +327,20 @@ class OCRResultController: NSObject {
 
     private func tearDown() {
         translationGeneration += 1
+        translationTask?.cancel()
+        translationTask = nil
         window?.delegate = nil
+        window?.contentView = nil
         window = nil
+        textView = nil
+        translatedView = nil
+        charCountLabel = nil
+        translateButton = nil
+        langPopup = nil
+        copyButton = nil
+        spinnerView = nil
+        translationPlaceholder = nil
+        qrCodes = []
         onClose?()
         onClose = nil
         MainActor.assumeIsolated {
@@ -365,6 +386,8 @@ class OCRResultController: NSObject {
         // A pending response belongs to the old language; discard it.
         let wasTranslating = spinnerView?.isHidden == false
         translationGeneration += 1
+        translationTask?.cancel()
+        translationTask = nil
         if isShowingTranslation || wasTranslating {
             performTranslation(targetLang: code)
         }
@@ -383,7 +406,11 @@ class OCRResultController: NSObject {
               sourceText != L("(No text detected in the selected area)") else { return }
 
         translationGeneration += 1
+        translationTask?.cancel()
+        translationTask = nil
         let generation = translationGeneration
+        let task = OCRTask()
+        translationTask = task
 
         translateButton?.isEnabled = false
         translationPlaceholder?.isHidden = true
@@ -394,9 +421,10 @@ class OCRResultController: NSObject {
         let lines = sourceText.components(separatedBy: "\n")
         let nonEmpty = lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-        TranslationService.translateBatch(texts: nonEmpty, targetLang: targetLang) { [weak self] result in
+        TranslationService.translateBatch(texts: nonEmpty, targetLang: targetLang, cancellation: task) { [weak self] result in
             guard let self = self, self.window != nil,
                   self.translationGeneration == generation else { return }
+            self.translationTask = nil
             self.spinnerView?.stopAnimation(nil)
             self.spinnerView?.isHidden = true
             self.translateButton?.isEnabled = true
@@ -510,6 +538,8 @@ extension OCRResultController: NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         guard let view = notification.object as? NSTextView, view === textView else { return }
         translationGeneration += 1
+        translationTask?.cancel()
+        translationTask = nil
         spinnerView?.stopAnimation(nil)
         spinnerView?.isHidden = true
         translateButton?.isEnabled = true

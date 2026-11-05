@@ -19,7 +19,9 @@ final class NotificationViewModel: ObservableObject {
     /// nil = all phone notifications; otherwise a package filter.
     @Published private(set) var selectedPackage: String?
     @Published var selectedIDs = Set<String>()
-    @Published var searchText = ""
+    @Published var searchText = "" {
+        didSet { if oldValue != searchText { onSearchTextChange() } }
+    }
     @Published var bannerKeywordsText: String
     @Published var blockedKeywordsText: String
     @Published var notificationAuthorized: UNAuthorizationStatus = .notDetermined
@@ -32,8 +34,10 @@ final class NotificationViewModel: ObservableObject {
         appSummaries = apps
         totalCount = total
     }
+    func activateSearchForTesting() { isActive = true }
+    func flushSearchForTesting() { recomputeFiltered() }
     #endif
-    private let manager = NotificationManager.shared
+    private lazy var manager = NotificationManager.shared
     private var isActive = false
     /// Tracks the last full reload so the window can refresh on (re)show when
     /// notifications arrived while it was closed. SwiftUI's `onAppear` does not
@@ -49,10 +53,14 @@ final class NotificationViewModel: ObservableObject {
     /// Search results are capped — SQL-side search (repository.search) means
     /// the window never materializes the whole table to filter it.
     private static let searchResultCap = 500
-    /// Bumped whenever the paging window resets, so an in-flight background
-    /// fetch can tell its rows are stale.
-    private var dataGeneration: UInt64 = 0
     private var searchDebounceWorkItem: DispatchWorkItem?
+    private struct SearchRequest {
+        let query: String
+        let package: String?
+    }
+    private var searchWork = LatestOnlyUIWork<SearchRequest>()
+    private var searchCancellation: UIWorkCancellation?
+    private let searchNotifications: (String, Int) -> [NotificationManager.NotificationEntry]
 
     private let detailFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -66,9 +74,14 @@ final class NotificationViewModel: ObservableObject {
         return formatter
     }()
 
-    init() {
-        bannerKeywordsText = NotificationManager.shared.bannerKeywords.joined(separator: ", ")
-        blockedKeywordsText = NotificationManager.shared.blockedKeywords.joined(separator: ", ")
+    init(searchNotifications: @escaping (String, Int) -> [NotificationManager.NotificationEntry] = {
+        NotificationManager.shared.searchNotifications(query: $0, limit: $1)
+    }, initialBannerKeywords: [String]? = nil, initialBlockedKeywords: [String]? = nil) {
+        self.searchNotifications = searchNotifications
+        // Injected settings keep query/lifecycle tests independent of the live
+        // notification service (and its bundle-only authorization setup).
+        bannerKeywordsText = (initialBannerKeywords ?? NotificationManager.shared.bannerKeywords).joined(separator: ", ")
+        blockedKeywordsText = (initialBlockedKeywords ?? NotificationManager.shared.blockedKeywords).joined(separator: ", ")
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(notificationsDidChange),
@@ -79,6 +92,7 @@ final class NotificationViewModel: ObservableObject {
 
     deinit {
         searchDebounceWorkItem?.cancel()
+        searchCancellation?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -96,6 +110,9 @@ final class NotificationViewModel: ObservableObject {
         isActive = false
         searchDebounceWorkItem?.cancel()
         searchDebounceWorkItem = nil
+        searchWork.invalidate()
+        searchCancellation?.cancel()
+        lastReloadAt = .distantPast
         // Release all notification data immediately to minimize memory footprint.
         entries = []
         filteredEntries = []
@@ -107,13 +124,12 @@ final class NotificationViewModel: ObservableObject {
         loadedCount = 0
         hasMore = false
         isLoadingMore = false
-        dataGeneration &+= 1
     }
 
     @objc private func notificationsDidChange() {
         DispatchQueue.main.async { [weak self] in
             // Only reload when the window is actually visible. After close the
-            // VM may stay alive for a few minutes (WindowSession teardown delay)
+            // VM may stay alive briefly (WindowSession's configurable reuse delay)
             // and still receive this broadcast; reloading then would pull the
             // full notification table back into memory for nothing. The menu
             // bar count is maintained independently in NotificationManager and
@@ -153,7 +169,6 @@ final class NotificationViewModel: ObservableObject {
     func reload() {
         lastReloadAt = Date()
         isLoadingMore = false
-        dataGeneration &+= 1
         loadedCount = 0
         totalCount = manager.notificationCount
         appSummaries = manager.appSummaries()
@@ -201,37 +216,58 @@ final class NotificationViewModel: ObservableObject {
     }
 
     func onSearchTextChange() {
+        // Invalidate on the keystroke, not after debounce: A→B→A is three
+        // generations even when an old A finishes before the next SQL starts.
         searchDebounceWorkItem?.cancel()
+        let generation = searchWork.invalidate()
+        searchCancellation?.cancel()
+        guard isActive else { return }
         let work = DispatchWorkItem { [weak self] in
-            self?.recomputeFiltered()
+            guard let self, self.isActive, self.searchWork.generation == generation else { return }
+            self.searchDebounceWorkItem = nil
+            self.enqueueSearch(generation: generation)
         }
         searchDebounceWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.searchDebounce, execute: work)
     }
 
     private func recomputeFiltered() {
+        searchDebounceWorkItem?.cancel()
+        searchDebounceWorkItem = nil
+        let generation = searchWork.invalidate()
+        searchCancellation?.cancel()
+        guard isActive else { return }
+        enqueueSearch(generation: generation)
+    }
+
+    private func enqueueSearch(generation: UInt64) {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             filteredEntries = entries
             ensureSelection()
             return
         }
-        // SQL-side search on a background queue; the paging window (`entries`)
-        // is left untouched, so clearing the query restores it without a
-        // refetch. A stale result (query changed since) is simply dropped —
-        // the newer debounce pass supersedes it.
-        let generation = dataGeneration
-        let query = trimmed
-        let package = selectedPackage
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let found = NotificationManager.shared.searchNotifications(
-                query: query, limit: Self.searchResultCap)
-                .filter { package == nil || $0.packageName == package }
-            DispatchQueue.main.async {
-                guard let self, self.isActive else { return }
-                guard self.dataGeneration == generation, self.selectedPackage == package else { return }
-                self.filteredEntries = found
-                self.ensureSelection()
+        let request = SearchRequest(query: trimmed, package: selectedPackage)
+        if let ticket = searchWork.submit(request, generation: generation) { runSearch(ticket) }
+    }
+
+    private func runSearch(_ ticket: LatestOnlyUIWork<SearchRequest>.Ticket) {
+        let cancellation = UIWorkCancellation()
+        searchCancellation = cancellation
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, searchNotifications] in
+            // SQL already executing is allowed to finish, but not refill a closed
+            // view. Queued work cancelled before execution does not touch storage.
+            let found = cancellation.isCancelled ? [] : searchNotifications(
+                ticket.request.query, Self.searchResultCap)
+                .filter { ticket.request.package == nil || $0.packageName == ticket.request.package }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if self.isActive, self.searchWork.accepts(ticket), !cancellation.isCancelled {
+                    self.filteredEntries = found
+                    self.ensureSelection()
+                }
+                self.searchCancellation = nil
+                if let next = self.searchWork.finish(ticket) { self.runSearch(next) }
             }
         }
     }
@@ -653,9 +689,7 @@ struct NotificationView: View {
     private var listColumn: some View {
         VStack(spacing: 0) {
             SplitV3Toolbar(leading: 14, trailing: 14) {
-                SplitV3SearchField(placeholder: L10n.t(.searchApps), text: $viewModel.searchText) {
-                    viewModel.onSearchTextChange()
-                }
+                SplitV3SearchField(placeholder: L10n.t(.searchApps), text: $viewModel.searchText)
                 Button(action: viewModel.exportJSON) { Image(systemName: "square.and.arrow.up") }
                     .buttonStyle(SplitV3IconButtonStyle())
                     .help(L10n.t(.exportAction)).accessibilityLabel(L10n.t(.exportAction))

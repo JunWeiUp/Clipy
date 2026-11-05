@@ -200,6 +200,30 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
 
     private var window: NSPanel?
     private var dismissTask: DispatchWorkItem?
+    let scanRecognition = ScreenshotOCRTaskOwner()
+    private var recognitionInProgress = false
+
+    func setRecognitionInProgress(_ active: Bool) {
+        recognitionInProgress = active
+        if active { pauseAutoDismiss() }
+        else if window != nil { scheduleAutoDismiss() }
+    }
+
+    func showRecognitionError(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = L("OCR failed")
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        if let window {
+            let generation = scanRecognition.generation
+            alert.beginSheetModal(for: window) { [weak self] _ in
+                guard let self, self.scanRecognition.isCurrent(generation) else { return }
+                self.setRecognitionInProgress(false)
+            }
+        } else {
+            setRecognitionInProgress(false)
+        }
+    }
     /// Full-resolution image, dropped once `offloadedImageURL` is written.
     private var inMemoryImage: NSImage?
     /// Backing file for the full-resolution image. A 4K capture is 30-50MB in
@@ -230,6 +254,8 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
             return previewImage
         }
         set {
+            scanRecognition.cancel()
+            setRecognitionInProgress(false)
             inMemoryImage = newValue
             offloadedImageURL = nil
             encodedPngData = nil
@@ -475,6 +501,7 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
     private func scheduleAutoDismiss() {
         dismissTask?.cancel()
         dismissTask = nil
+        guard !recognitionInProgress else { return }
         let seconds = UserDefaults.standard.object(forKey: "thumbnailAutoDismiss") as? Int ?? 5
         guard seconds > 0 else { return }
         let task = DispatchWorkItem { [weak self] in self?.animateOut() }
@@ -483,6 +510,8 @@ class FloatingThumbnailController: NSObject, NSDraggingSource, QLPreviewPanelDat
     }
 
     func dismiss() {
+        scanRecognition.cancel()
+        recognitionInProgress = false
         dismissTask?.cancel()
         dismissTask = nil
         offloadWorkItem?.cancel()

@@ -92,22 +92,32 @@ final class FloatingThumbnailPresenter {
             DetachedEditorWindowController.open(image: img, fromCapture: false)
         }
         controller.onOCR = { [weak self, weak controller] in
-            guard let self, let image = controller?.image,
-                  let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
-            DispatchQueue.global(qos: .userInitiated).async {
-                VisionOCR.performTextAndQRCodeRecognition(cgImage: cgImage) { [weak self] result in
-                    DispatchQueue.main.async {
-                        guard let self else { return }
-                        if self.ocrWindows.count >= 8 { self.ocrWindows.first?.close() }
-                        let window = OCRResultController(text: result.text, image: image, qrCodes: result.qrCodes)
-                        window.onClose = { [weak self, weak window] in
-                            guard let window else { return }
-                            self?.ocrWindows.removeAll { $0 === window }
-                        }
-                        self.ocrWindows.append(window)
-                        window.show()
-                    }
+            guard let self, let controller else { return }
+            let generation = controller.scanRecognition.begin()
+            // OCR does not dismiss its thumbnail. Pause its timer until delivery;
+            // explicit dismiss/replacement still cancels the request immediately.
+            controller.setRecognitionInProgress(true)
+            let image = controller.image
+            guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                controller.showRecognitionError(L("Failed to process image"))
+                return
+            }
+            controller.scanRecognition.task = VisionOCR.performTextAndQRCodeRecognition(cgImage: cgImage) { [weak self, weak controller] result in
+                guard let self, let controller, controller.scanRecognition.isCurrent(generation) else { return }
+                controller.scanRecognition.finish(generation)
+                if let error = result.error {
+                    controller.showRecognitionError(error.localizedDescription)
+                    return
                 }
+                controller.setRecognitionInProgress(false)
+                if self.ocrWindows.count >= 8 { self.ocrWindows.first?.close() }
+                let window = OCRResultController(text: result.text, image: image, qrCodes: result.qrCodes)
+                window.onClose = { [weak self, weak window] in
+                    guard let window else { return }
+                    self?.ocrWindows.removeAll { $0 === window }
+                }
+                self.ocrWindows.append(window)
+                window.show()
             }
         }
         controller.show(at: NSPoint(x: xOrigin, y: yOrigin), corner: corner)

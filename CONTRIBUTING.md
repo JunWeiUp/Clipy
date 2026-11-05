@@ -4,8 +4,8 @@
 
 ## Before making changes
 
-- Read [Development](docs/DEVELOPMENT.md) for setup and validation commands.
-- Use the [Architecture map](docs/ARCHITECTURE.md) to locate the owning module.
+- Read Development (local document: `docs/DEVELOPMENT.md`) for setup and validation commands.
+- Use the Architecture map (local document: `docs/ARCHITECTURE.md`) to locate the owning module.
 - Discuss large features, protocol changes, and data migrations in an issue first.
 - Report vulnerabilities according to [SECURITY.md](SECURITY.md), not a public
   issue containing private clipboard contents or exploit details.

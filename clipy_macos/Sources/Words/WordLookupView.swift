@@ -138,7 +138,7 @@ struct WordLookupView: View {
         placeholder(
           symbol: "character.book.closed", title: L10n.t(.wordWelcome),
           detail: viewModel.usesModelTranslation
-            ? ModelTranslationText.t("先在 API 设置中填写接口和模型，再输入句子并点击翻译。⌘ 回车也可提交。", "Configure your API endpoint and model, then enter a sentence and click Translate or press ⌘ Return.")
+            ? ModelTranslationText.t("先在 API 设置中填写接口和模型，再输入文本（最多 10,000 字）并点击翻译。⌘ 回车也可提交。", "Configure your API endpoint and model, then enter text (up to 10,000 characters) and click Translate or press ⌘ Return.")
             : L10n.t(.wordWelcomeDetail))
       }
     }

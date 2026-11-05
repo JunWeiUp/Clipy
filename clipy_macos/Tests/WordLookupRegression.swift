@@ -183,6 +183,12 @@ func runWordLookupRegressionTests() {
     }
     wordCheck((try? WordQuery.normalize(" 学习 方法 ")) == "学习 方法", "Chinese input rejected")
     wordCheck((try? WordQuery.normalize("学习 study")) == "学习 study", "Mixed-language input rejected")
+    let longModelText = String(repeating: "长文本翻译。", count: 200) + "\n\nSecond paragraph."
+    wordCheck((try? WordQuery.modelText(longModelText)) == longModelText, "Model input lost long text or paragraphs")
+    wordCheck((try? WordQuery.normalize(longModelText)) == nil, "Dictionary limit changed")
+    wordCheck((try? WordQuery.modelText(String(repeating: "字", count: 10_000))) != nil, "Model boundary rejected")
+    wordCheck((try? WordQuery.modelText(String(repeating: "字", count: 10_001))) == nil, "Model limit exceeded")
+    wordCheck((try? WordQuery.modelText(" \n ")) == nil, "Empty model input accepted")
     for text in ["Fine-grained personal", "Can you help me?", "请在 3:30 提醒我，带上文件！", "A&B costs $20 = 140元.", String(repeating: "a", count: 500)] {
         wordCheck((try? WordQuery.normalize(text)) == text, "Sentence or punctuation rejected")
     }

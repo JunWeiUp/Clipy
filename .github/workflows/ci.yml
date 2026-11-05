@@ -65,7 +65,7 @@ jobs:
                     all=true ;;
                   clipy_flutter/lib/*|clipy_flutter/assets/*|clipy_flutter/pubspec.*|clipy_flutter/analysis_options.yaml|clipy_flutter/devtools_options.yaml|.fvmrc)
                     android=true windows=true ios=true ;;
-                  clipy_android_native/*|clipy_flutter/android/*|clipy_flutter/test/*|clipy_flutter/tool/*|build_android_apk.sh|build_android_native_apk.sh)
+                  clipy_flutter/android/*|clipy_flutter/test/*|clipy_flutter/tool/*|build_android_apk.sh)
                     android=true ;;
                   clipy_flutter/windows/*|scripts/package_windows.ps1)
                     windows=true ;;
@@ -101,28 +101,8 @@ jobs:
           persist-credentials: false
       - run: bash scripts/check.sh repo
 
-  android:
-    name: Native Android (kept alternative) tests, lint and build
-    needs: changes
-    if: needs.changes.outputs.android == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      - name: Install Android SDK packages
-        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"'
-      - name: Check and build isolated native preview
-        working-directory: clipy_android_native
-        run: bash ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
-
   flutter:
-    name: Shared Flutter reference and desktop/mobile checks
+    name: Flutter Android and desktop/mobile checks
     needs: changes
     if: needs.changes.outputs.android == 'true' || needs.changes.outputs.windows == 'true' || needs.changes.outputs.ios == 'true'
     runs-on: ubuntu-latest

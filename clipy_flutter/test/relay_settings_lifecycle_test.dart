@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:clipy_flutter/sync_manager.dart';
 import 'package:clipy_flutter/ui/app_theme.dart';
 import 'package:clipy_flutter/features/devices/relay_settings.dart';
@@ -27,6 +28,13 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(secureStore, (call) async {
             if (call.method == 'write') secureWrites++;
+            if (call.method == 'read' &&
+                call.arguments['key'] == 'commonRelayAccessPassword') {
+              return jsonEncode({
+                'url': 'wss://example.com/relay/v1/ws',
+                'password': 'fixture-access-123',
+              });
+            }
             return null;
           });
       addTearDown(
@@ -60,6 +68,7 @@ void main() {
         enabled: false,
         url: 'wss://example.com/relay/v1/ws',
         token: '',
+        accessPassword: 'fixture-access-123',
       );
       expect(
         secureWrites,

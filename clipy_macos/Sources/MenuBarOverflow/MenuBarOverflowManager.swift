@@ -10,7 +10,9 @@ final class MenuBarOverflowManager: ObservableObject {
     @Published private(set) var items: [MenuBarOverflowItem] = []
     private let provider: MenuBarOverflowProviding
     private let environment: MenuBarOverflowEnvironment
-    private let images = MenuBarOverflowImages()
+    private let images: MenuBarOverflowImageLoading
+    private let fallbackIcon: (pid_t) -> NSImage?
+    private var presentationGeneration: UInt64 = 0
     private let queue = DispatchQueue(label: "clipy.menu-bar-overflow", qos: .utility)
     private var timer: Timer?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
@@ -25,9 +27,16 @@ final class MenuBarOverflowManager: ObservableObject {
     private var presentationActive = false
     private var lastDiagnostic: String?
 
-    init(provider: MenuBarOverflowProviding = MenuBarItemProvider(), environment: MenuBarOverflowEnvironment = .live) {
+    init(provider: MenuBarOverflowProviding = MenuBarItemProvider(), environment: MenuBarOverflowEnvironment = .live,
+         images: MenuBarOverflowImageLoading = MenuBarOverflowImages(),
+         fallbackIcon: @escaping (pid_t) -> NSImage? = { pid in
+             guard let icon = NSRunningApplication(processIdentifier: pid)?.icon else { return nil }
+             return UIIconRasterizer.rasterize(icon, pointSize: 24, scale: 2)
+         }) {
         self.provider = provider
         self.environment = environment
+        self.images = images
+        self.fallbackIcon = fallbackIcon
         enabled = environment.loadEnabled()
     }
 
@@ -91,8 +100,15 @@ final class MenuBarOverflowManager: ObservableObject {
     }
 
     func refreshForMenu() {
+        if !presentationActive { presentationGeneration &+= 1 }
         presentationActive = true
         wantsOriginalIcons = true
+        // Resolve app icons only when the strip has an actual consumer.
+        items = items.map { item in
+            var item = item
+            if item.image == nil { item.image = fallbackIcon(item.id.pid) }
+            return item
+        }
         refresh()
     }
 
@@ -102,10 +118,18 @@ final class MenuBarOverflowManager: ObservableObject {
     func endMenuPresentation() {
         dispatchPrecondition(condition: .onQueue(.main))
         presentationActive = false
+        presentationGeneration &+= 1
         wantsOriginalIcons = false
         timer?.invalidate()
         timer = nil
         scanCancellation?.cancel()
+        // Keep AX identity/metadata for handoff; no screenshot or app icon is
+        // useful while closed. Do not invalidate the independent AXPress action.
+        items = items.map { item in
+            var item = item
+            item.image = nil
+            return item
+        }
     }
 
     func recordMenuPresentation() {
@@ -157,8 +181,10 @@ final class MenuBarOverflowManager: ObservableObject {
                 })
                 self.items = found.items.map { item in
                     var item = item
-                    if item.image == nil {
-                        item.image = previousImages[item.id] ?? NSRunningApplication(processIdentifier: item.id.pid)?.icon
+                    if !self.presentationActive {
+                        item.image = nil
+                    } else if item.image == nil {
+                        item.image = previousImages[item.id] ?? self.fallbackIcon(item.id.pid)
                     }
                     return item
                 }
@@ -166,10 +192,12 @@ final class MenuBarOverflowManager: ObservableObject {
                 self.recordDiagnostic()
                 // Idle refreshes enumerate metadata only. Do not run ScreenCaptureKit
                 // every 15 seconds while the main menu is closed.
-                guard self.wantsOriginalIcons else { return }
+                guard self.presentationActive, self.wantsOriginalIcons else { return }
                 self.wantsOriginalIcons = false
+                let imageGeneration = self.presentationGeneration
                 self.images.load(found.items, cancellation: cancellation) { [weak self] icons in
-                    guard let self, self.revision == capturedRevision, !cancellation.isCancelled else { return }
+                    guard let self, self.presentationActive, self.presentationGeneration == imageGeneration,
+                          self.revision == capturedRevision, !cancellation.isCancelled else { return }
                     self.items = self.items.map { item in
                         var item = item
                         if let image = icons[item.id] { item.image = image }

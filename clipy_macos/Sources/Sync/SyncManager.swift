@@ -17,6 +17,15 @@ final class SyncManager: NSObject {
     /// Allocated on first recv — a 64KB buffer used to live here even when
     /// sync was disabled entirely.
     var receiveScratch = Data()
+    // Owned by syncQueue. Retired-session work stays charged until main completes.
+    var inboundBudget = SyncInboundBudget()
+    // Main-thread-only scope: NotificationManager's existing post-store ACK is
+    // routed back to the exact receiving session, never a replacement connection.
+    var inboundNotificationAckHandler: ((String, String) -> Void)?
+    #if CLIPY_CORE_TESTS
+    var inboundMainDispatchForTesting: ((@escaping () -> Void) -> Void)?
+    var inboundApplyForTesting: ((String, String?) -> Void)?
+    #endif
 
     static let maxFrameLength = 2 * 1024 * 1024
     static let maxHandshakeFrameLength = 64 * 1024
@@ -87,6 +96,9 @@ final class SyncManager: NSObject {
         let port: UInt16
         var fd: Int32
         var readSource: DispatchSourceRead?
+        let inboundID = UUID()
+        var inboundGeneration: Int?
+        var readSuspended = false
         var writer: SyncSocketWriter?
         var historyReplayRows: [Int64] = []
         var buffer = Data()
@@ -327,6 +339,10 @@ final class SyncManager: NSObject {
 
     func sendNotificationAck(hash: String, to senderPeerId: String) {
         guard !hash.isEmpty, !senderPeerId.isEmpty else { return }
+        if Thread.isMainThread, let handler = inboundNotificationAckHandler {
+            handler(hash, senderPeerId)
+            return
+        }
         sendEnvelope(SyncEnvelope.make(type: SyncType.notifAck, peerId: peerId, hash: hash), to: senderPeerId, reliable: false)
     }
 
@@ -362,7 +378,9 @@ final class SyncManager: NSObject {
 
     // MARK: - Business dispatch
 
-    func handleFrame(_ data: Data, from remotePeerId: String, host: String) {
+    func handleFrame(_ data: Data, from remotePeerId: String, host: String, ticket: SyncInboundBudget.Ticket) {
+        var dispatchedToMain = false
+        defer { if !dispatchedToMain { inboundBudget.release(ticket) } }
         guard let env = decodeEnvelope(data), env.v == SyncEnvelope.version else {
             diagnostics.noteError(peerId: remotePeerId, "badEnvelope")
             return
@@ -384,10 +402,9 @@ final class SyncManager: NSObject {
             // Inbound accept is unilateral: sender's allow-list gates who they push to;
             // receiver does not require reciprocal authorization (same as notifications).
             guard let text = decryptPayload(env, from: remotePeerId) else { return }
-            DispatchQueue.main.async { [weak self] in
-                ClipboardManager.shared.handleRemoteSync(content: text, hash: env.hash ?? "")
-                self?.syncQueue.async { self?.replyAck(to: remotePeerId, hash: env.hash) }
-            }
+            dispatchedToMain = true
+            dispatchInboundStore(type: env.type, text: text, hash: env.hash,
+                                 from: remotePeerId, ticket: ticket)
         case SyncType.historyFetch:
             // Responding = sending our history: only to clipboard-authorized peers.
             guard clipboardAuthIds().contains(remotePeerId) else {
@@ -395,14 +412,15 @@ final class SyncManager: NSObject {
                 return
             }
             respondToHistoryFetch(from: remotePeerId)
-        case SyncType.notifPost:
+        case SyncType.notifPost, SyncType.notifDismiss:
             guard let text = decryptPayload(env, from: remotePeerId) else { return }
-            DispatchQueue.main.async { NotificationManager.shared.handleRemoteNotification(text, from: env.peerId) }
-        case SyncType.notifDismiss:
-            guard let text = decryptPayload(env, from: remotePeerId) else { return }
-            DispatchQueue.main.async { NotificationManager.shared.handleRemoteDismiss(text) }
+            dispatchedToMain = true
+            dispatchInboundStore(type: env.type, text: text, hash: env.hash,
+                                 from: remotePeerId, ticket: ticket)
         case SyncType.notifClear:
-            DispatchQueue.main.async { NotificationManager.shared.handleRemoteClearAll() }
+            dispatchedToMain = true
+            dispatchInboundStore(type: env.type, text: nil, hash: env.hash,
+                                 from: remotePeerId, ticket: ticket)
         case SyncType.notifConfig: appLog("Ignored remote notification config", level: .warning)
         case SyncType.fileMeta:
             handleFileMeta(env, from: remotePeerId)
@@ -474,7 +492,7 @@ final class SyncManager: NSObject {
         guard let data = encodeFrame(SyncEnvelope.make(type: SyncType.ping, peerId: peerId)) else { return }
         let cutoff = Date().addingTimeInterval(-Self.pingInterval * 3)
         for id in Array(sessions.keys) {
-            guard let session = sessions[id] else { continue }
+            guard let session = sessions[id], !session.readSuspended else { continue }
             if session.lastPong < cutoff { closeSession(peerId: id, scheduleReconnect: true, keepaliveDriven: true); continue }
             if !sendSessionFrame(session.fd, data) { appLog("ping send failed to \(id.prefix(8))", level: .warning) }
             retryStalePendingHistory(for: id)
@@ -513,7 +531,7 @@ final class SyncManager: NSObject {
             guard let self else { return }; self.networkProbe = nil
             guard generation == self.currentGeneration else { return }
             for (id, old) in captured {
-                guard let current = self.sessions[id],
+                guard let current = self.sessions[id], !old.readSuspended, !current.readSuspended,
                     current.fd == old.fd, current.readSource === old.readSource,
                     current.lastPong <= old.lastPong else { continue }
                 self.closeSession(peerId:id,scheduleReconnect:true)

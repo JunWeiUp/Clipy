@@ -62,6 +62,8 @@ protocol AnnotationCanvas: AnyObject {
 
     // Display
     func setNeedsDisplay()
+    func showOverlayError(_ message: String)
+    func invalidateAnnotationRendering()
 
     // Snap guides (for tools that use alignment snapping)
     var snapGuideX: CGFloat? { get set }

@@ -51,7 +51,7 @@ This is a provenance inventory, not a claim that every dependency has been audit
 
 ## Common Relay SDK and Sodium
 
-Flutter and macOS depend on the official Common Relay v0.1.3 Git package, pinned by `clipy_flutter/pubspec.lock` and `packages/relay-swift/Package.resolved`. The native Android alternative uses `com.github.JunWeiUp.common-relay:java:v0.1.3` via JitPack; its packaged SOURCE.json records the version, revision and coordinates. No Common Relay implementation is copied into app sources. macOS links CommonRelay and swift-sodium 0.11.0 / libsodium statically. Flutter retains generated dependency notices.
+Flutter and macOS depend on the official Common Relay v0.1.5 package (Swift exact `0.1.5`, Dart Git tag `v0.1.5`) at revision `2c79e3f2218bd5d5e001a744d4e7e1cfdbec110f`, pinned by `clipy_flutter/pubspec.lock` and `packages/relay-swift/Package.resolved`. No Common Relay implementation is copied into app sources. macOS links CommonRelay and swift-sodium 0.11.0 / libsodium statically. Flutter retains generated dependency notices.
 
 ### Common Relay — MIT
 

@@ -1,5 +1,10 @@
 import AppKit
 
+// Worker dispatch precedes every app/test entry, so it never builds NSApplication.
+if CommandLine.arguments.contains(OCRSubprocess.childModeArgument) {
+    OCRSubprocess.runChildMode()
+}
+
 #if CLIPY_CORE_TESTS
 if CommandLine.arguments.contains("--clipy-history-selection-tests") {
     runHistorySelectionApplicationTests()
@@ -23,13 +28,6 @@ if CommandLine.arguments.contains("--clipy-history-selection-tests") {
     runCoreRegressionTests()
 }
 #else
-// OCR child mode must branch before any AppKit state exists: this same
-// executable is re-invoked with a flag as a short-lived Vision worker, and
-// must never build NSApplication.
-if CommandLine.arguments.contains(OCRSubprocess.childModeArgument) {
-    OCRSubprocess.runChildMode()
-}
-
 // Local, explicit administration; credentials are read from a private file, never command arguments.
 if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--relay-device-id" {
     print(SyncRelaySettings.deviceID)

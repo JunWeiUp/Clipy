@@ -24,7 +24,7 @@ extension SyncManager {
     }
 
     enum HandshakeFailure {
-        case writeFail, readTimeout, versionMismatch, selfHandshake, badType
+        case writeFail, readTimeout, versionMismatch, selfHandshake, badType, peerIdentityChanged
         var label: String {
             switch self {
             case .writeFail: return "writeFail"
@@ -32,6 +32,7 @@ extension SyncManager {
             case .versionMismatch: return "versionMismatch"
             case .selfHandshake: return "selfHandshake"
             case .badType: return "badType"
+            case .peerIdentityChanged: return "peerIdentityChanged"
             }
         }
     }
@@ -86,20 +87,26 @@ extension SyncManager {
         return loadEndpointCacheEntries().first(where: { $0.host == host && $0.port == port })?.peerId
     }
 
+    /// Cache/manual attempts validate a remembered identity. They must not hide
+    /// the same address from a user scan, which may discover a replacement peer.
+    /// Only scans participate in scan-to-scan throttling; no new resident state.
+    func reserveScanDial(host: String, port: UInt16, reason: String, now: Date = Date()) -> Bool {
+        guard reason == "scan" else { return true }
+        let key = "\(host):\(port)"
+        dialDedupLock.lock()
+        defer { dialDedupLock.unlock() }
+        if let last = lastDialAt[key], now.timeIntervalSince(last) < dialDedupTTL { return false }
+        lastDialAt[key] = now
+        return true
+    }
+
     func dialOnScanQueue(host: String, port: UInt16, reason: String, peerId: String? = nil, timeout: TimeInterval, stats: ScanStats?) {
         guard !host.hasPrefix("relay:") else { return }
         let resolvedPeerId = peerId ?? (reason == "scan" ? nil : resolvePeerId(host: host, port: port))
         if !allowsProactiveDial(reason: reason, peerId: resolvedPeerId) {
             return
         }
-        let key = "\(host):\(port)", now = Date()
-        dialDedupLock.lock()
-        if let last = lastDialAt[key], now.timeIntervalSince(last) < dialDedupTTL, reason == "scan" {
-            dialDedupLock.unlock()
-            return
-        }
-        lastDialAt[key] = now
-        dialDedupLock.unlock()
+        guard reserveScanDial(host: host, port: port, reason: reason) else { return }
         if syncQueue.sync(execute: { sessions.values.contains { $0.host == host } }) { return }
 
         if reason == "scan" { stats?.recordAttempt() }
@@ -143,7 +150,7 @@ extension SyncManager {
         guard env.type == SyncType.welcome || env.type == SyncType.hello, env.peerId != peerId, !env.peerId.isEmpty else {
             onFailure?(env.peerId == peerId ? .selfHandshake : .badType); Darwin.close(fd); return
         }
-        guard expectedPeerId == nil || expectedPeerId == env.peerId else { onFailure?(.badType); Darwin.close(fd); return }
+        guard expectedPeerId == nil || expectedPeerId == env.peerId else { onFailure?(.peerIdentityChanged); Darwin.close(fd); return }
         if env.type == SyncType.hello {
             let welcome = SyncEnvelope.make(type: SyncType.welcome, peerId: peerId, name: displayName, port: Int(syncPort))
             if let data = encodeFrame(welcome), !writeAll(fd, data) {
@@ -166,6 +173,7 @@ extension SyncManager {
             }
             if let client = self.acceptingClients.removeValue(forKey: fd) { client.source.cancel() }
             var session = Session(peerId: peerId, host: host, port: port, fd: fd, isClient: self.peerId < peerId)
+            session.inboundGeneration = generation
             setNonBlocking(fd)
             // Chunked file transfer writes single frames up to ~1.4MB; make sure
             // the kernel buffers can absorb several of them so a blocking
@@ -211,7 +219,7 @@ extension SyncManager {
     }
 
     func onSessionReadable(peerId: String) {
-        guard var session = sessions[peerId] else { return }
+        guard var session = sessions[peerId], !session.readSuspended else { return }
         if receiveScratch.count < 262144 { receiveScratch = Data(count: 262144) }
         // Drain everything available in one event: chunked file transfers push
         // multi-megabyte back-to-back frames, and one 64KB recv per event
@@ -225,7 +233,8 @@ extension SyncManager {
                 session.buffer.append(receiveScratch.prefix(count))
                 sessions[peerId] = session
                 drainBuffer(peerId: peerId)
-                guard let current = sessions[peerId] else { return }
+                guard let current = sessions[peerId], current.inboundID == session.inboundID,
+                      !current.readSuspended else { return }
                 session = current
                 continue
             }
@@ -252,11 +261,16 @@ extension SyncManager {
                 closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true); return
             }
             guard session.buffer.count >= 4 + length else { sessions[peerId] = session; return }
+            guard let ticket = inboundBudget.reserve(bytes: length, sessionID: session.inboundID) else {
+                // Do not consume/drop the denied frame, or recv more bytes behind it.
+                pauseInboundReader(peerId: peerId)
+                return
+            }
             let frame = session.buffer.subdata(in: 4..<(4 + length))
             if session.buffer.count == 4 + length { session.buffer = Data() } else { session.buffer.removeSubrange(0..<(4 + length)) }
             sessions[peerId] = session
-            handleFrame(frame, from: peerId, host: session.host)
-            guard let current = sessions[peerId] else { return }
+            handleFrame(frame, from: peerId, host: session.host, ticket: ticket)
+            guard let current = sessions[peerId], current.inboundID == session.inboundID else { return }
             session = current
         }
     }
@@ -268,6 +282,9 @@ extension SyncManager {
             cancellations.enter()
             source.setCancelHandler { cancellations.leave() }
             source.cancel()
+            // A suspended dispatch source never invokes its cancel handler until
+            // balanced. Otherwise the group (and fd/writer) leak forever on stop.
+            if session.readSuspended { source.resume() }
         }
         if let writer = session.writer {
             cancellations.enter()
@@ -411,7 +428,15 @@ extension SyncManager {
             var pollFD = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
             let remain = deadline.timeIntervalSinceNow
             guard remain > 0, poll(&pollFD, 1, Int32(remain * 1000)) > 0 else { return nil }
-            let count = scratch.withUnsafeMutableBytes { raw -> Int in guard let base = raw.baseAddress else { return -1 }; return Darwin.recv(fd, base, raw.count, 0) }
+            // Do not eat a coalesced business frame after hello/welcome. It must
+            // remain on the socket for the adopted, budgeted session reader.
+            let needed: Int
+            if buffer.count < 4 { needed = 4 - buffer.count }
+            else {
+                let length = buffer.withUnsafeBytes { Int(UInt32(bigEndian: $0.loadUnaligned(as: UInt32.self))) }
+                needed = 4 + length - buffer.count
+            }
+            let count = scratch.withUnsafeMutableBytes { raw -> Int in guard let base = raw.baseAddress else { return -1 }; return Darwin.recv(fd, base, min(raw.count, needed), 0) }
             // Non-blocking fd: a spurious wakeup can leave nothing to read.
             if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) { continue }
             guard count > 0 else { return nil }; buffer.append(scratch.prefix(count))

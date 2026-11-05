@@ -144,6 +144,7 @@ enum TranslationService {
     static func translateBatch(
         texts: [String],
         targetLang: String,
+        cancellation: OCRTask? = nil,
         completion: @escaping (Result<[String], Error>) -> Void
     ) {
         guard !texts.isEmpty else {
@@ -152,9 +153,9 @@ enum TranslationService {
         }
 
         if #available(macOS 15.0, *), provider == .apple {
-            translateBatchApple(texts: texts, targetLang: targetLang, completion: completion)
+            translateBatchApple(texts: texts, targetLang: targetLang, cancellation: cancellation, completion: completion)
         } else {
-            translateBatchGoogle(texts: texts, targetLang: targetLang, completion: completion)
+            translateBatchGoogle(texts: texts, targetLang: targetLang, cancellation: cancellation, completion: completion)
         }
     }
 
@@ -163,48 +164,48 @@ enum TranslationService {
     private static func translateBatchGoogle(
         texts: [String],
         targetLang: String,
+        cancellation: OCRTask? = nil,
         completion: @escaping (Result<[String], Error>) -> Void
     ) {
+        // At most one network request per batch. A cancelled overlay never starts
+        // the next line, and releases its current URL task immediately.
         var results = Array(repeating: "", count: texts.count)
-        let group = DispatchGroup()
-        var firstError: Error?
-        let lock = NSLock()
-
-        for (i, text) in texts.enumerated() {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else {
-                results[i] = text
-                continue
-            }
-            group.enter()
-            translateOneGoogle(text: trimmed, targetLang: targetLang) { result in
-                lock.lock()
-                switch result {
-                case .success(let translated):
-                    results[i] = translated
-                case .failure(let error):
-                    if firstError == nil { firstError = error }
-                    results[i] = ""
-                }
-                lock.unlock()
-                group.leave()
-            }
-        }
-
-        group.notify(queue: .main) {
-            if let error = firstError {
-                completion(.failure(error))
-            } else {
+        func next(_ index: Int) {
+            guard cancellation?.isCancelled != true else { return }
+            guard index < texts.count else {
+                cancellation?.onCancel(nil)
                 completion(.success(results))
+                return
             }
+            let trimmed = texts[index].trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                results[index] = texts[index]
+                next(index + 1)
+                return
+            }
+            let request = translateOneGoogle(text: trimmed, targetLang: targetLang) { result in
+                DispatchQueue.main.async {
+                    guard cancellation?.isCancelled != true else { return }
+                    cancellation?.onCancel(nil)
+                    switch result {
+                    case .success(let text):
+                        results[index] = text
+                        next(index + 1)
+                    case .failure(let error):
+                        completion(.failure(error))
+                    }
+                }
+            }
+            cancellation?.onCancel { request?.cancel() }
         }
+        DispatchQueue.main.async { next(0) }
     }
 
     private static func translateOneGoogle(
         text: String,
         targetLang: String,
         completion: @escaping (Result<String, Error>) -> Void
-    ) {
+    ) -> URLSessionDataTask? {
         var components = URLComponents(string: "https://translate.googleapis.com/translate_a/single")!
         components.queryItems = [
             URLQueryItem(name: "client", value: "gtx"),
@@ -215,14 +216,14 @@ enum TranslationService {
         ]
         guard let url = components.url else {
             completion(.failure(TranslationError.badURL))
-            return
+            return nil
         }
 
         var request = URLRequest(url: url)
         request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 10
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
                 completion(.failure(error))
                 return
@@ -242,7 +243,9 @@ enum TranslationService {
                 return
             }
             completion(.success(translated))
-        }.resume()
+        }
+        task.resume()
+        return task
     }
 
     // MARK: - Apple Translation (macOS 15.0+ via SwiftUI bridge)
@@ -251,6 +254,7 @@ enum TranslationService {
     private static func translateBatchApple(
         texts: [String],
         targetLang: String,
+        cancellation: OCRTask? = nil,
         completion: @escaping (Result<[String], Error>) -> Void
     ) {
         let target = appleLocale(from: targetLang)
@@ -275,7 +279,8 @@ enum TranslationService {
         let config = TranslationSession.Configuration(source: source, target: target)
         // Must dispatch to main — TranslationBridge adds a SwiftUI view which requires main thread
         DispatchQueue.main.async {
-            TranslationBridge.shared.translate(texts: texts, configuration: config, completion: completion)
+            guard cancellation?.isCancelled != true else { return }
+            TranslationBridge.shared.translate(texts: texts, configuration: config, cancellation: cancellation, completion: completion)
         }
     }
 
@@ -306,24 +311,36 @@ final class TranslationBridge: ObservableObject {
     private var pendingCompletion: ((Result<[String], Error>) -> Void)?
 
     private var translationID: UUID?
+    private var translationTask: Task<Void, Never>?
+    private weak var cancellationToken: OCRTask?
 
     func translate(
         texts: [String],
         configuration: TranslationSession.Configuration,
+        cancellation: OCRTask? = nil,
         completion: @escaping (Result<[String], Error>) -> Void
     ) {
         // Cancel any in-flight translation before starting a new one
-        if pendingCompletion != nil {
+        if let previous = pendingCompletion {
             cleanup()
+            previous(.failure(TranslationError.appleTranslation("Translation was replaced by a newer request.")))
         }
 
         let thisID = UUID()
         translationID = thisID
+        cancellationToken = cancellation
+        cancellation?.onCancel { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, self.translationID == thisID else { return }
+                self.cleanup()
+            }
+        }
+        guard cancellation?.isCancelled != true else { cleanup(); return }
         pendingTexts = texts
         pendingCompletion = completion
 
         // Create hidden SwiftUI view and attach to a window
-        let view = TranslationBridgeView(bridge: self)
+        let view = TranslationBridgeView(bridge: self, requestID: thisID)
         let hosting = NSHostingView(rootView: view)
         hosting.frame = NSRect(x: -1, y: -1, width: 1, height: 1)
         if let window = NSApp.windows.first(where: { $0.contentView != nil }) {
@@ -343,13 +360,13 @@ final class TranslationBridge: ObservableObject {
         }
     }
 
-    fileprivate func sessionReady(_ session: TranslationSession) {
+    fileprivate func sessionReady(_ session: TranslationSession, requestID: UUID) {
         // Ignore stale sessions from cancelled translations
-        guard pendingCompletion != nil else { return }
+        guard translationID == requestID, pendingCompletion != nil, translationTask == nil else { return }
         let texts = pendingTexts
         let completion = pendingCompletion
         let activeID = translationID
-        Task {
+        translationTask = Task {
             do {
                 var results = Array(repeating: "", count: texts.count)
                 for (i, text) in texts.enumerated() {
@@ -382,6 +399,11 @@ final class TranslationBridge: ObservableObject {
     }
 
     private func cleanup() {
+        translationID = nil
+        translationTask?.cancel()
+        translationTask = nil
+        cancellationToken?.onCancel(nil)
+        cancellationToken = nil
         hostingView?.removeFromSuperview()
         hostingView = nil
         pendingTexts = []
@@ -393,13 +415,14 @@ final class TranslationBridge: ObservableObject {
 @available(macOS 15.0, *)
 private struct TranslationBridgeView: View {
     @ObservedObject var bridge: TranslationBridge
+    let requestID: UUID
 
     var body: some View {
         Color.clear
             .frame(width: 1, height: 1)
             .translationTask(bridge.config) { session in
                 await MainActor.run {
-                    bridge.sessionReady(session)
+                    bridge.sessionReady(session, requestID: requestID)
                 }
             }
     }
