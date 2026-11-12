@@ -131,7 +131,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.40** · Source build **12379** (Android arm64 `versionCode` **14379**) · Latest published release: **[v1.0.39](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.39)** · [Build metadata](clipy_flutter/pubspec.yaml)
+Current source version: **1.0.40** · Source build **12379** (Android arm64 `versionCode` **14379**) · Latest published release: **[v1.0.40](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.40)** · [Build metadata](clipy_flutter/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see sync version notes (local document: `docs/GETTING_STARTED.md#sync-version-notes`).
 
