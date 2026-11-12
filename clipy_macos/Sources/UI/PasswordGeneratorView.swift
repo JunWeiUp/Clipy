@@ -278,45 +278,92 @@ private struct PasswordV3ButtonStyle: ButtonStyle {
     }
 }
 
-final class PasswordGeneratorWindow {
-    private static var shared: PasswordGeneratorWindow?
+/// 主窗口「工具 › 生成密码 / 保持唤醒」：密码卡片与保持唤醒卡片并排（V3 `mac-tools` 嵌入布局）。
+struct ToolsUtilitiesView: View {
+    @EnvironmentObject private var languageObserver: AppLanguageObserver
+    @ObservedObject var passwordModel: PasswordViewModel
+    @ObservedObject private var keepAwake = KeepAwakeManager.shared
+    @State private var keepAwakeFailed = false
 
-    private let session = WindowSession<PasswordGeneratorView>()
-    private var viewModel: PasswordViewModel?
+    private var chinese: Bool { PreferencesManager.shared.appLanguage == .zh }
+    private func text(_ zh: String, _ en: String) -> String { chinese ? zh : en }
 
-    static func show() {
-        if shared == nil {
-            shared = PasswordGeneratorWindow()
+    var body: some View {
+        let _ = languageObserver.revision
+        VStack(spacing: 0) {
+            HStack {
+                Text(text("生成密码与保持唤醒", "Password & Keep Awake"))
+                    .font(.system(size: 15, weight: .semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .frame(height: 52)
+            Rectangle().fill(PasswordV3Style.line).frame(height: 0.5)
+            ScrollView {
+                HStack(alignment: .top, spacing: 24) {
+                    VStack(spacing: 0) {
+                        HStack {
+                            Text(L10n.t(.generatePassword)).font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                        }
+                        .padding(.horizontal, 20).frame(height: 44)
+                        PasswordGeneratorView(viewModel: passwordModel)
+                    }
+                    .frame(width: AppWindowSize.passwordGenerator.width,
+                           height: AppWindowSize.passwordGenerator.height + 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(PasswordV3Style.line, lineWidth: 0.5))
+                    keepAwakeCard
+                        .frame(width: 320)
+                    Spacer(minLength: 0)
+                }
+                .padding(24)
+            }
         }
-        shared?.showWindow()
+        .background(WordsV3Style.secondaryContent)
     }
 
-    private func showWindow() {
-        session.present(
-            create: { [self] in
-                let viewModel = PasswordViewModel()
-                self.viewModel = viewModel
-                return HostingWindow(
-                    title: L10n.t(.generatePassword),
-                    size: AppWindowSize.passwordGenerator,
-                    minSize: AppWindowSize.passwordGeneratorMin,
-                    frameAutosaveName: "PasswordGeneratorWindow"
-                ) {
-                    PasswordGeneratorView(viewModel: viewModel)
+    private var keepAwakeCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: keepAwake.isActive ? "sun.max.fill" : "moon.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(keepAwake.isActive ? Color.white : PasswordV3Style.text3)
+                    .frame(width: 40, height: 40)
+                    .background(
+                        keepAwake.isActive
+                            ? AnyShapeStyle(LinearGradient(colors: [Color(red: 0.99, green: 0.73, blue: 0.45),
+                                                                    Color(red: 0.92, green: 0.35, blue: 0.05)],
+                                                           startPoint: .top, endPoint: .bottom))
+                            : AnyShapeStyle(PasswordV3Style.control),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L10n.t(.keepAwakeTitle)).font(.system(size: 14, weight: .semibold))
+                    Text(text("菜单栏面板 · 底部同一开关", "Same switch as the menu bar panel"))
+                        .font(.system(size: 11.5)).foregroundStyle(PasswordV3Style.text3)
                 }
-            },
-            onPrepareForClose: {},
-            onTeardown: { [weak self] in
-                self?.viewModel = nil
-                PasswordGeneratorWindow.shared = nil
-            },
-            update: { window in
-                window.title = L10n.t(.generatePassword)
-                // Keep passwords visible while the user switches to the destination app.
-                window.level = .floating
-                window.hidesOnDeactivate = false
-                window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+                Spacer()
+                Toggle(L10n.t(.keepAwakeTitle), isOn: Binding(
+                    get: { keepAwake.isActive },
+                    set: { keepAwakeFailed = !keepAwake.setEnabled($0) }))
+                    .toggleStyle(.switch).controlSize(.small).labelsHidden()
             }
-        )
+            Text(L10n.t(keepAwake.isActive ? .keepAwakeOn : .keepAwakeOff))
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(keepAwake.isActive ? AppColor.accent : PasswordV3Style.text3)
+            Text(L10n.t(.keepAwakeHint))
+                .font(.system(size: 12)).foregroundStyle(PasswordV3Style.text3)
+                .fixedSize(horizontal: false, vertical: true)
+            if keepAwakeFailed {
+                Text(L10n.t(.keepAwakeFailed)).font(.system(size: 12)).foregroundStyle(.red)
+            }
+            Rectangle().fill(PasswordV3Style.line).frame(height: 0.5)
+            Label(text("退出 Clipy 时自动关闭", "Turns off when Clipy quits"), systemImage: "info.circle")
+                .font(.system(size: 11.5)).foregroundStyle(PasswordV3Style.text3)
+        }
+        .padding(16)
+        .background(PasswordV3Style.content, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(PasswordV3Style.line, lineWidth: 0.5))
     }
 }

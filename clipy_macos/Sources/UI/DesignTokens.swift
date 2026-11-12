@@ -87,7 +87,6 @@ enum AppCornerRadius {
 }
 
 enum AppWindowSize {
-    static let settings = CGSize(width: 980, height: 726)
     static let settingsMin = CGSize(width: 760, height: 480)
     static let search = CGSize(width: 1080, height: 720)
     static let log = CGSize(width: 800, height: 500)

@@ -9,6 +9,8 @@ struct NotificationDaySection: Identifiable {
 }
 
 final class NotificationViewModel: ObservableObject {
+    /// 设置模块「通知同步」直达：递增即弹出通知设置 popover。
+    @Published var settingsPopoverRequest = 0
     /// Loaded paging window (newest first). Only this window lives in memory.
     @Published private(set) var entries: [NotificationManager.NotificationEntry] = []
     /// `entries`, or the SQL search result while a query is active.
@@ -608,6 +610,7 @@ struct NotificationView: View {
             viewModel.onDisappear()
         }
         .frame(minWidth: 900, minHeight: AppWindowSize.notificationMin.height)
+        .onChange(of: viewModel.settingsPopoverRequest) { _ in showSettingsPopover = true }
     }
 
     // MARK: Sidebar
@@ -644,7 +647,7 @@ struct NotificationView: View {
             }
             .font(.system(size: 12)).foregroundStyle(SplitV3Color.text2)
             .padding(10)
-            MainWindowSidebarFooter().padding(.bottom, 10)
+            Color.clear.frame(height: 10)
         }
         .padding(.horizontal, 10).padding(.bottom, 0)
         .frame(width: MainWindowMetrics.sidebarWidth).frame(maxHeight: .infinity, alignment: .top)
@@ -967,6 +970,18 @@ struct NotificationView: View {
                 .textFieldStyle(.roundedBorder)
                 .onSubmit { viewModel.commitBlockedKeywords() }
             popoverNote(L10n.t(.blockedKeywordsHint))
+            SplitV3Hairline().padding(.vertical, 10)
+            // 相关设置在主窗口内直达
+            HStack(spacing: 10) {
+                SettingsJumpLink(L10n.t(.notifSettingsConnection)) {
+                    showSettingsPopover = false
+                    MainWindow.shared.showDevices(page: .lan)
+                }
+                SettingsJumpLink(L10n.t(.notifSettingsPermissions)) {
+                    showSettingsPopover = false
+                    MainWindow.shared.showSettings(page: "permissions")
+                }
+            }
         }
         .font(.system(size: 13))
         .padding(16)

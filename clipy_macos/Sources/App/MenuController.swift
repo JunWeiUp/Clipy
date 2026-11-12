@@ -267,12 +267,12 @@ class MenuController: NSObject {
 
     @objc private func openPreferences() {
         NSApp.activate(ignoringOtherApps: true)
-        SettingsWindow.shared.makeKeyAndOrderFront(nil)
+        MainWindow.shared.showSettings()
     }
 
     @objc private func openScreenshotPreferences() {
         NSApp.activate(ignoringOtherApps: true)
-        SettingsWindow.shared.show(page: ScreenshotSettingsView.pagePrefix + "capture")
+        MainWindow.shared.showSettings(page: ScreenshotSettingsView.pagePrefix + "capture")
     }
     
     @objc private func openSnippetEditor() {
@@ -286,16 +286,18 @@ class MenuController: NSObject {
     }
 
     @objc private func openWordBook() {
-        WordBookWindow.shared.showWindow()
+        NSApp.activate(ignoringOtherApps: true)
+        MainWindow.shared.showTools(.book)
     }
 
     @objc private func openWordLookup() {
-        WordLookupWindow.shared.showWindow()
+        NSApp.activate(ignoringOtherApps: true)
+        MainWindow.shared.showTools(.lookup)
     }
 
     @objc private func openPasswordGenerator() {
         NSApp.activate(ignoringOtherApps: true)
-        PasswordGeneratorWindow.show()
+        MainWindow.shared.showTools(.utilities)
     }
 
     @objc private func registerGlobalHotKeys() {

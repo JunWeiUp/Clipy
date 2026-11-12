@@ -124,7 +124,6 @@ struct DevicesView: View {
                                  : DevicesText.t("局域网同步已关闭", "LAN sync is off"))
                     .font(.system(size: 12)).foregroundStyle(SplitV3Color.text2).lineLimit(1)
             }.padding(10)
-            MainWindowSidebarFooter()
         }
         .padding(.horizontal, 10).padding(.bottom, 10)
         .frame(width: MainWindowMetrics.sidebarWidth).frame(maxHeight: .infinity, alignment: .top)

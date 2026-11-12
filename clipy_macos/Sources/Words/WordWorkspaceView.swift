@@ -1,44 +1,6 @@
 import AppKit
 import SwiftUI
 
-final class WordLookupWindow {
-    static let shared = WordLookupWindow()
-    private let session = WindowSession<WordWorkspaceView>()
-    private let navigation = WordWorkspaceNavigation()
-    private var viewModel: WordLookupViewModel?
-
-    func showWindow(query: String? = nil, showBook: Bool = false) {
-        navigation.showBook = showBook
-        let items = NSPasteboard.general.pasteboardItems ?? []
-        let clipboardText = items.count == 1 && !items[0].types.contains(.fileURL)
-            ? items[0].string(forType: .string) : nil
-        session.present(create: { [self] in
-            let model = WordLookupViewModel()
-            viewModel = model
-            return HostingWindow(title: L10n.t(.wordLookup), size: CGSize(width: 1112, height: 712),
-                                 minSize: CGSize(width: 1000, height: 500), fullSizeContent: true, frameAutosaveName: "WordLookupWindow") {
-                WordWorkspaceView(model: model, navigation: navigation)
-            }
-        }, onPrepareForClose: { [weak self] in
-            self?.viewModel?.prepareForClose()
-        }, onTeardown: { [weak self] in
-            self?.viewModel = nil
-            MemoryFootprintReclaimer.reclaimIfIdle()
-        }, update: { [weak self] window in
-            window.title = L10n.t(.wordLookup)
-            // update runs for both first creation and cached-window reopening.
-            if showBook {
-                self?.viewModel?.prepareForClose()
-            } else if let query, let model = self?.viewModel {
-                model.query = query
-                model.search()
-            } else {
-                self?.viewModel?.prepareForPresentation(clipboardText: clipboardText)
-            }
-        })
-    }
-}
-
 enum WordGlobalHotKeyManager {
     private static let hotKeyID: UInt32 = 0x574F_5244 // 'WORD'
 
@@ -50,14 +12,25 @@ enum WordGlobalHotKeyManager {
             return true
         }
         return HotKeyManager.shared.register(keyCode: combo.keyCode, modifiers: combo.modifierFlags, id: hotKeyID) {
-            DispatchQueue.main.async { WordLookupWindow.shared.showWindow() }
+            DispatchQueue.main.async {
+                NSApp.activate(ignoringOtherApps: true)
+                MainWindow.shared.showTools(.lookup)
+            }
         }
     }
 }
 
+/// 工具模块的页面：单词查询 / 单词表 / 生成密码与保持唤醒。
+enum WordWorkspacePage: Equatable { case lookup, book, utilities }
+
 final class WordWorkspaceNavigation: ObservableObject {
-    @Published var showBook = false
+    @Published var page: WordWorkspacePage = .lookup
     @Published var showsModelSettings = false
+
+    var showBook: Bool {
+        get { page == .book }
+        set { page = newValue ? .book : .lookup }
+    }
 }
 
 /// V3 word workspace palette (UI/design-v3/mac.css), resolved per appearance.
@@ -87,12 +60,17 @@ struct WordWorkspaceView: View {
     @ObservedObject var model: WordLookupViewModel
     @ObservedObject var navigation: WordWorkspaceNavigation
     @ObservedObject private var store: WordBookStore
+    @ObservedObject private var keepAwake = KeepAwakeManager.shared
+    @Environment(\.mainWindowNavigator) private var mainWindowNavigator
     @State private var modelName = ModelTranslationConfiguration.current.model
+    /// 主窗口传入（切走即释放）；单独预览时退回本地实例。
+    private let passwordModel: PasswordViewModel?
 
-    init(model: WordLookupViewModel, navigation: WordWorkspaceNavigation) {
+    init(model: WordLookupViewModel, navigation: WordWorkspaceNavigation, passwordModel: PasswordViewModel? = nil) {
         self.model = model
         self.navigation = navigation
         self.store = model.wordBook
+        self.passwordModel = passwordModel
     }
 
     private func t(_ zh: String, _ en: String) -> String { ModelTranslationText.t(zh, en) }
@@ -107,10 +85,13 @@ struct WordWorkspaceView: View {
         HStack(spacing: 0) {
             sidebar
             Group {
-                if navigation.showBook {
+                switch navigation.page {
+                case .book:
                     WordBookView(store: model.wordBook, model: model)
-                } else {
+                case .lookup:
                     WordLookupView(viewModel: model)
+                case .utilities:
+                    ToolsUtilitiesView(passwordModel: passwordModel ?? PasswordViewModel())
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -123,17 +104,33 @@ struct WordWorkspaceView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 1) {
-            navigationRow(L10n.t(.wordLookup), symbol: "character.book.closed", selected: !navigation.showBook) {
-                WordLookupWindow.shared.showWindow()
+            // Traffic lights + module switcher when hosted in the main window.
+            MainWindowSidebarHeader()
+            navigationRow(L10n.t(.wordLookup), symbol: "character.book.closed", selected: navigation.page == .lookup) {
+                MainWindow.shared.showTools(.lookup)
             }
-            navigationRow(L10n.t(.wordBook), symbol: "books.vertical", selected: navigation.showBook,
+            navigationRow(L10n.t(.wordBook), symbol: "books.vertical", selected: navigation.page == .book,
                           count: store.words.count) {
-                WordBookWindow.shared.showWindow()
+                MainWindow.shared.showTools(.book)
             }
             navigationRow(t("API 设置", "API settings"), symbol: "gearshape", selected: false) {
                 navigation.showsModelSettings = true
             }
             .accessibilityIdentifier("wordAPISettings")
+            // 工具（对齐菜单栏面板「工具」标签）：生成密码 / 保持唤醒在本模块打开，截图为全屏覆盖层。
+            Text(t("工具", "Tools"))
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(WordsV3Style.text3)
+                .padding(.horizontal, 10).padding(.top, 12).padding(.bottom, 4)
+            navigationRow(L10n.t(.generatePassword), symbol: "key", selected: navigation.page == .utilities) {
+                navigation.page = .utilities
+            }
+            navigationRow(L10n.t(.keepAwakeTitle), symbol: keepAwake.isActive ? "sun.max" : "moon",
+                          selected: false, trailing: L10n.t(keepAwake.isActive ? .keepAwakeOn : .keepAwakeOff)) {
+                navigation.page = .utilities
+            }
+            navigationRow(t("截图与录屏", "Screenshot & recording"), symbol: "camera", selected: false) {
+                ScreenshotSessionCoordinator.shared.startCapture(mode: .region, fromMenu: true)
+            }
             if !recentWords.isEmpty {
                 Text(t("最近查询", "Recent lookups"))
                     .font(.system(size: 11, weight: .semibold)).foregroundStyle(WordsV3Style.text3)
@@ -147,8 +144,8 @@ struct WordWorkspaceView: View {
             Spacer(minLength: 0)
             footer
         }
-        .padding(.horizontal, 10).padding(.top, 50).padding(.bottom, 0)
-        .frame(width: 219).frame(maxHeight: .infinity)
+        .padding(.horizontal, 10).padding(.top, mainWindowNavigator == nil ? 50 : 0).padding(.bottom, 0)
+        .frame(width: mainWindowNavigator == nil ? 219 : MainWindowMetrics.sidebarWidth - 1).frame(maxHeight: .infinity)
         .background(WordsV3Style.side)
         .overlay(alignment: .trailing) {
             Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1).offset(x: 1)
@@ -157,7 +154,7 @@ struct WordWorkspaceView: View {
     }
 
     private func navigationRow(_ title: String, symbol: String, selected: Bool, count: Int? = nil,
-                               action: @escaping () -> Void) -> some View {
+                               trailing: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: symbol).font(.system(size: 14))
@@ -169,6 +166,9 @@ struct WordWorkspaceView: View {
                 if let count {
                     Text("\(count)").font(.system(size: 11.5).monospacedDigit()).foregroundStyle(WordsV3Style.text3)
                 }
+                if let trailing {
+                    Text(trailing).font(.system(size: 11.5)).foregroundStyle(WordsV3Style.text3)
+                }
             }
             .padding(.horizontal, 10).frame(height: 30)
             .background(selected ? WordsV3Style.fill2 : Color.clear, in: RoundedRectangle(cornerRadius: 7))
@@ -178,9 +178,9 @@ struct WordWorkspaceView: View {
     }
 
     private func recentRow(_ word: SavedWord) -> some View {
-        let current = !navigation.showBook && model.entry?.word.lowercased() == word.id
+        let current = navigation.page == .lookup && model.entry?.word.lowercased() == word.id
         return Button {
-            navigation.showBook = false
+            navigation.page = .lookup
             model.showSaved(word.entry)
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 8) {

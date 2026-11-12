@@ -242,6 +242,9 @@ enum L10nKey: String {
     case folderName
     case shortcut
     case folderShortcutHint
+    case globalShortcutsInSettings
+    case notifSettingsConnection
+    case notifSettingsPermissions
     case snippetTitle
     case content
     case confirmDeleteFolder
@@ -780,6 +783,9 @@ struct L10n {
             .folderName: "文件夹名称",
             .shortcut: "快捷键",
             .folderShortcutHint: "设置后可通过快捷键直接弹出该文件夹菜单",
+            .globalShortcutsInSettings: "全局快捷键：设置 › 快捷键",
+            .notifSettingsConnection: "设备 › 局域网设置",
+            .notifSettingsPermissions: "设置 › 权限",
             .snippetTitle: "片段标题",
             .content: "内容",
             .confirmDeleteFolder: "确定要删除文件夹吗？",
@@ -1305,6 +1311,9 @@ struct L10n {
             .folderName: "Folder Name",
             .shortcut: "Shortcut",
             .folderShortcutHint: "Set a shortcut to open this folder menu directly",
+            .globalShortcutsInSettings: "Global shortcuts: Settings › Shortcuts",
+            .notifSettingsConnection: "Devices › LAN settings",
+            .notifSettingsPermissions: "Settings › Permissions",
             .snippetTitle: "Snippet Title",
             .content: "Content",
             .confirmDeleteFolder: "Delete this folder?",

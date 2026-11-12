@@ -199,6 +199,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 先检出发布说明，再下载产物（checkout 会清空工作目录）
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/release-notes
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-*
@@ -214,17 +219,30 @@ jobs:
           test -s "dist/ClipyClone-Windows-x64-v${APP_VERSION}.zip"
           test "$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 3
           sha256sum dist/*
+      - name: Compose short bilingual release notes
+        env:
+          TAG: ${{ needs.metadata.outputs.tag }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          notes=".github/release-notes/${TAG}.md"
+          {
+            if [ -s "$notes" ]; then cat "$notes"; else echo "Clipy ${TAG}"; fi
+            echo
+            echo "---"
+            echo "macOS 版含修改后的 macshot 截图模块（GPLv3），Clipy 自有代码为 MIT；Android / Windows 不含 macshot。"
+            echo "The macOS app includes a modified macshot module (GPLv3); Clipy code is MIT. Android / Windows do not include macshot."
+            echo
+            echo "[MIT](https://github.com/${REPO}/blob/${TAG}/LICENSE) · [GPLv3](https://github.com/${REPO}/blob/${TAG}/LICENSE.GPL-3.0) · [第三方声明 / Notices](https://github.com/${REPO}/blob/${TAG}/THIRD_PARTY_NOTICES.md) · [源码 / Source](https://github.com/${REPO}/archive/refs/tags/${TAG}.zip)"
+          } > "$RUNNER_TEMP/release-notes.md"
       - name: Publish release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ needs.metadata.outputs.tag }}
           name: Clipy ${{ needs.metadata.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          generate_release_notes: true
-          body: |
-            The macOS application includes a modified macshot screenshot module and is distributed under GNU GPLv3. Clipy-authored code retains its MIT license; the Android and Windows packages do not include macshot.
-
-            Licenses and provenance: [MIT scope](https://github.com/${{ github.repository }}/blob/${{ needs.metadata.outputs.tag }}/LICENSE) · [GPLv3 text](https://github.com/${{ github.repository }}/blob/${{ needs.metadata.outputs.tag }}/LICENSE.GPL-3.0) · [third-party notices and modifications](https://github.com/${{ github.repository }}/blob/${{ needs.metadata.outputs.tag }}/THIRD_PARTY_NOTICES.md). The [corresponding source archive](https://github.com/${{ github.repository }}/archive/refs/tags/${{ needs.metadata.outputs.tag }}.zip) is available for this exact release tag.
+          generate_release_notes: false
+          body_path: ${{ runner.temp }}/release-notes.md
           draft: false
           prerelease: false
           make_latest: true

@@ -241,6 +241,14 @@ struct ScreenshotSettingsView: View {
         },
         onOpenSettings: { PermissionDeepLink.openCameraSettings() }
       )
+      // 权限用在哪里：在主窗口内直达对应模块 / 设置分类
+      SettingsJumpRow(
+        text: settingsText("辅助功能也用于手机控制 Mac 锁屏；输入监控用于录屏按键显示。",
+                           "Accessibility also powers phone-controlled Mac locking; Input Monitoring powers keystroke display."),
+        links: [
+          (settingsText("手机控制 Mac", "Phone controls Mac"), { MainWindow.shared.showDevices(page: .screenControl) }),
+          (settingsText("录屏设置", "Recording settings"), { MainWindow.shared.showSettings(page: ScreenshotSettingsView.pagePrefix + "recording") }),
+        ])
     }
     SettingsFootnote(L10n.t(.screenCapturePermissionHint))
   }

@@ -1,12 +1,5 @@
 import SwiftUI
 
-final class WordBookWindow {
-    static let shared = WordBookWindow()
-    func showWindow() {
-        WordLookupWindow.shared.showWindow(showBook: true)
-    }
-}
-
 struct WordBookView: View {
     @EnvironmentObject private var languageObserver: AppLanguageObserver
     @ObservedObject var store: WordBookStore
@@ -116,7 +109,7 @@ struct WordBookView: View {
                             .padding(.horizontal, 20).padding(.bottom, 12)
                         Rectangle().fill(WordsV3Style.line).frame(height: 0.5)
                         WordEntryDetailView(viewModel: model, entry: word.entry,
-                            onLookupPhrase: { WordLookupWindow.shared.showWindow(query: $0) },
+                            onLookupPhrase: { MainWindow.shared.showTools(.lookup, query: $0) },
                             showChineseMeanings: showChineseMeanings)
                     }
                 } else {

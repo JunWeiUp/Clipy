@@ -11,6 +11,15 @@ struct AppSettingsPage: Identifiable {
   var badge: String? = nil
 }
 
+/// Sidebar shortcut to a setting that lives in another main-window module
+/// (devices, notifications, snippets, tools). Opens it in place, never a new window.
+struct AppSettingsLink: Identifiable {
+  let id: String
+  let title: String
+  let symbol: String
+  let action: () -> Void
+}
+
 enum AppSettingsSearch {
   /// Bilingual keywords per page, in addition to the visible row labels that each
   /// settings row reports at runtime (`labels`).
@@ -92,6 +101,11 @@ enum SettingsPalette {
     case "sync": return [c(0x64D2FF), c(0x0A84FF)]
     case "permissions": return [c(0x30D158), c(0x248A3D)]
     case "about": return [c(0xAEAEB2), c(0x8E8E93)]
+    case "link.lan": return [c(0x64D2FF), c(0x0A84FF)]
+    case "link.screen": return [c(0x8E8E93), c(0x636366)]
+    case "link.notifications": return [c(0xFF6482), c(0xFF375F)]
+    case "link.snippets": return [c(0xFFD60A), c(0xFF9F0A)]
+    case "link.words": return [c(0xBF5AF2), c(0x8944AB)]
     default: return [c(0x8E8E93), c(0x636366)]
     }
   }
@@ -210,16 +224,17 @@ private struct AppSettingsTopKey: PreferenceKey {
 
 // MARK: - Layout
 
-/// V3 preferences shell: full-height 236 pt sidebar (search, coloured category
+/// V3 settings module (main window): sidebar with the module switcher, search, coloured category
 /// squares, counts), a toolbar with back/forward + current category, and one
 /// continuous scrolling document. Sidebar clicks jump to a section; scrolling
 /// updates the highlighted category without triggering another jump.
 struct AppSettingsLayout<Content: View>: View {
   @Binding var selection: String
   let pages: [AppSettingsPage]
-  var showsSidebar = true
-  var underTitlebar = false
+  /// 「其他模块中的设置」直达项（仅主窗口设置模块提供）。
+  var links: [AppSettingsLink] = []
   @ViewBuilder let content: (String) -> Content
+  @Environment(\.mainWindowNavigator) private var mainWindowNavigator
   @StateObject private var navigator = AppSettingsNavigator()
   @State private var pendingJump: String?
   @State private var jumpReset: DispatchWorkItem?
@@ -285,17 +300,15 @@ struct AppSettingsLayout<Content: View>: View {
 
   var body: some View {
     HStack(spacing: 0) {
-      if showsSidebar {
-        sidebar
-        Rectangle().fill(SettingsPalette.line).frame(width: 0.5)
-      }
+      sidebar
+      Rectangle().fill(SettingsPalette.line).frame(width: 0.5)
       VStack(spacing: 0) {
-        if showsSidebar { toolbar }
+        toolbar
         document
       }
       .background(SettingsPalette.main)
     }
-    .ignoresSafeArea(.container, edges: underTitlebar ? .top : [])
+    .ignoresSafeArea(.container, edges: mainWindowNavigator != nil ? .top : [])
     .onReceive(NotificationCenter.default.publisher(for: .appSettingsNavigate)) { notification in
       guard let id = notification.object as? String, pages.contains(where: { $0.id == id }) else { return }
       // External deep links (menu / other windows) start a fresh history like opening the window.
@@ -314,6 +327,11 @@ struct AppSettingsLayout<Content: View>: View {
         navHistory = [selection]
         navPosition = 0
       }
+      // Deep link on first mount (e.g. main window opened at Settings › History).
+      if selection != pages.first?.id {
+        let target = selection
+        DispatchQueue.main.async { navigate(to: target, push: false) }
+      }
     }
     .onDisappear {
       jumpReset?.cancel()
@@ -325,20 +343,30 @@ struct AppSettingsLayout<Content: View>: View {
 
   private var sidebar: some View {
     VStack(alignment: .leading, spacing: 0) {
-      Color.clear.frame(height: underTitlebar ? 36 : 0)
+      if mainWindowNavigator != nil {
+        // Traffic lights + module switcher, same as the other main-window modules.
+        MainWindowSidebarHeader()
+      }
       searchField
-        .padding(.horizontal, 4)
+        .padding(.horizontal, mainWindowNavigator != nil ? 0 : 4)
         .padding(.bottom, 12)
       ScrollView(.vertical, showsIndicators: false) {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
           ForEach(pages) { page in sidebarRow(page) }
+          if !links.isEmpty {
+            Text(settingsText("其他模块中的设置", "In other modules"))
+              .font(.system(size: 11, weight: .semibold))
+              .foregroundStyle(SettingsPalette.text3)
+              .padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 5)
+            ForEach(links) { link in linkRow(link) }
+          }
         }
       }
     }
-    .padding(.top, 14)
+    .padding(.top, mainWindowNavigator != nil ? 0 : 14)
     .padding(.horizontal, 10)
     .padding(.bottom, 10)
-    .frame(width: 236)
+    .frame(width: mainWindowNavigator != nil ? MainWindowMetrics.sidebarWidth : 236)
     .frame(maxHeight: .infinity, alignment: .top)
     .background(SettingsPalette.sidebar)
   }
@@ -416,6 +444,30 @@ struct AppSettingsLayout<Content: View>: View {
     .accessibilityAddTraits(selected ? .isSelected : [])
   }
 
+  private func linkRow(_ link: AppSettingsLink) -> some View {
+    let matches = AppSettingsSearch.tokens(searchText).isEmpty || AppSettingsSearch.text(link.title, matches: searchText)
+    return Button {
+      searchFocused = false
+      link.action()
+    } label: {
+      HStack(spacing: 9) {
+        SettingsCategoryIcon(pageID: link.id, symbol: link.symbol)
+        Text(link.title).font(.system(size: 13)).lineLimit(1)
+        Spacer(minLength: 4)
+        Image(systemName: "arrow.up.right")
+          .font(.system(size: 10.5, weight: .semibold))
+          .foregroundStyle(SettingsPalette.text3)
+      }
+      .foregroundStyle(SettingsPalette.text)
+      .padding(.horizontal, 10)
+      .frame(height: 30)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .opacity(matches ? 1 : 0.35)
+    .help(link.title)
+  }
+
   // MARK: Toolbar
 
   private var toolbar: some View {
@@ -470,8 +522,7 @@ struct AppSettingsLayout<Content: View>: View {
             .environment(\.settingsPageID, page.id)
         }
       }
-      .padding(.horizontal, showsSidebar ? 30 : 20)
-      .padding(.top, showsSidebar ? 0 : 14)
+      .padding(.horizontal, 30)
       .padding(.bottom, 60)
       .environment(\.settingsSearchQuery, searchText)
       .environment(\.settingsNavigator, navigator)
@@ -505,21 +556,17 @@ struct AppSettingsLayout<Content: View>: View {
             key: AppSettingsPositionKey.self,
             value: [page.id: geometry.frame(in: .named("settingsDocument")).minY])
         })
-    if showsSidebar {
-      HStack(spacing: 8) {
-        SettingsCategoryIcon(pageID: page.id, symbol: page.symbol, size: 24)
-        Text(page.title)
-          .font(.system(size: 17, weight: .bold))
-          .foregroundStyle(SettingsPalette.text)
-          .accessibilityAddTraits(.isHeader)
-      }
-      .padding(.horizontal, 4)
-      .background(anchor)
-      .padding(.top, first ? 6 : 16)
-      .padding(.bottom, 10)
-    } else {
-      anchor.frame(height: 0)
+    HStack(spacing: 8) {
+      SettingsCategoryIcon(pageID: page.id, symbol: page.symbol, size: 24)
+      Text(page.title)
+        .font(.system(size: 17, weight: .bold))
+        .foregroundStyle(SettingsPalette.text)
+        .accessibilityAddTraits(.isHeader)
     }
+    .padding(.horizontal, 4)
+    .background(anchor)
+    .padding(.top, first ? 6 : 16)
+    .padding(.bottom, 10)
   }
 }
 
@@ -657,6 +704,51 @@ struct SettingsFootnote: View {
       .padding(.horizontal, 6)
       .padding(.top, -4)
       .padding(.bottom, 12)
+  }
+}
+
+/// Inline cross-module jump (「查看历史 ›」): switches the main window to another
+/// module or settings category instead of opening a window.
+struct SettingsJumpLink: View {
+  let title: String
+  let action: () -> Void
+  init(_ title: String, action: @escaping () -> Void) {
+    self.title = title
+    self.action = action
+  }
+  @State private var hovered = false
+  var body: some View {
+    Button(action: action) {
+      Text(title + " ›")
+        .font(.system(size: 11.5, weight: .medium))
+        .foregroundStyle(AppColor.accent)
+        .underline(hovered)
+    }
+    .buttonStyle(.plain)
+    .onHover { hovered = $0 }
+    .fixedSize()
+  }
+}
+
+/// Caption row inside a card with one or more cross-module jumps.
+struct SettingsJumpRow: View {
+  let text: String
+  let links: [(String, () -> Void)]
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 8) {
+      Text(text)
+        .font(.system(size: 11.5))
+        .foregroundStyle(SettingsPalette.text3)
+        .fixedSize(horizontal: false, vertical: true)
+      ForEach(Array(links.enumerated()), id: \.offset) { _, link in
+        SettingsJumpLink(link.0, action: link.1)
+      }
+      Spacer(minLength: 0)
+    }
+    .padding(.horizontal, 14)
+    .padding(.vertical, 7)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .settingsSearchable(text)
   }
 }
 

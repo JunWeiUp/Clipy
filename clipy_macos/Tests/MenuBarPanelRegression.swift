@@ -344,7 +344,7 @@ func runWindowSnapshots() -> Never {
     ], total: 86)
     notificationModel.selectedIDs = [fixtureNotifications[0].id]
     NotificationManager.shared.bannerApps = ["example.chat", "example.sms"] // in-memory only, never saved
-    let steps = ["history-light", "history-dark", "snippets-light", "snippets-dark", "words-light", "words-dark", "notifications-light", "notifications-dark", "settings-general", "devices-lan-light", "settings-permissions", "devices-light", "password-light", "password-dark", "onboarding-light", "onboarding-dark", "onboarding-launch-light", "onboarding-launch-dark", "onboarding-devices-light", "onboarding-devices-dark", "devices-dark", "relay-light", "relay-dark", "settings-general-dark", "devices-lan-dark", "settings-permissions-dark", "settings-search-light", "settings-search-dark", "hub-history-light", "hub-snippets-dark", "hub-devices-light", "hub-notifications-light", "hub-devices-lan-light", "hub-devices-lan-dark", "hub-devices-screen-light", "hub-devices-relaysettings-dark"]
+    let steps = ["history-light", "history-dark", "snippets-light", "snippets-dark", "words-light", "words-dark", "notifications-light", "notifications-dark", "settings-general", "devices-lan-light", "settings-permissions", "devices-light", "password-light", "password-dark", "onboarding-light", "onboarding-dark", "onboarding-launch-light", "onboarding-launch-dark", "onboarding-devices-light", "onboarding-devices-dark", "devices-dark", "relay-light", "relay-dark", "settings-general-dark", "devices-lan-dark", "settings-permissions-dark", "settings-search-light", "settings-search-dark", "hub-history-light", "hub-snippets-dark", "hub-devices-light", "hub-notifications-light", "hub-devices-lan-light", "hub-devices-lan-dark", "hub-devices-screen-light", "hub-devices-relaysettings-dark", "hub-tools-light", "hub-tools-utilities-dark", "hub-settings-light", "hub-settings-dark"]
     var step = 0
     func prepare() {
         window.appearance = NSAppearance(named: step % 2 == 0 ? .aqua : .darkAqua)
@@ -375,7 +375,7 @@ func runWindowSnapshots() -> Never {
             root = AnyView(OnboardingView(initialStep: initialStep).environmentObject(AppLanguageObserver.shared))
         }
         if steps[step].hasPrefix("hub-") {
-            // Main window: the four modules with the shared section switcher in the sidebar.
+            // Main window: the six modules with the shared section switcher in the sidebar.
             window.appearance = NSAppearance(named: steps[step].hasSuffix("-dark") ? .darkAqua : .aqua)
             let name = steps[step].dropFirst(4).split(separator: "-").first.map(String.init) ?? ""
             let section = MainWindowSection(rawValue: name) ?? .history
@@ -387,6 +387,10 @@ func runWindowSnapshots() -> Never {
                 let target: DevicesPage = steps[step].contains("-lan-") ? .lan : steps[step].contains("-screen-") ? .screenControl : steps[step].contains("-relaysettings-") ? .relaySettings : .devices
                 module = AnyView(DevicesView(page: target))
             case .notifications: module = AnyView(NotificationView(viewModel: notificationModel))
+            case .tools:
+                wordNavigation.page = steps[step].contains("-utilities-") ? .utilities : .lookup
+                module = AnyView(WordWorkspaceView(model: wordModel, navigation: wordNavigation, passwordModel: passwordModel))
+            case .settings: module = AnyView(SettingsView())
             }
             root = AnyView(module.environment(\.mainWindowNavigator, MainWindowNavigator(section: section))
                 .environmentObject(AppLanguageObserver.shared))
@@ -399,7 +403,7 @@ func runWindowSnapshots() -> Never {
         if steps[step].hasPrefix("words-") { window.setContentSize(NSSize(width: 1112, height: 712)) }
         if steps[step].hasPrefix("password-") { window.setContentSize(NSSize(width: 460, height: 548)) }
         if steps[step].hasPrefix("onboarding-") { window.setContentSize(NSSize(width: 860, height: 580)) }
-        if steps[step].hasPrefix("settings-") { window.setContentSize(AppWindowSize.settings) }
+        if steps[step].hasPrefix("settings-") { window.setContentSize(MainWindowMetrics.size) }
         if steps[step].hasPrefix("hub-") { window.setContentSize(MainWindowMetrics.size) }
         window.center()
         window.orderFrontRegardless()

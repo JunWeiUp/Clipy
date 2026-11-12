@@ -91,7 +91,6 @@ struct SnippetEditorView: View {
                     SnippetFolderSettings(folder: folder, viewModel: viewModel).id(folder.id)
                 }
             }
-            MainWindowSidebarFooter()
         }
         .padding(.horizontal, 8)
         .padding(.bottom, 8)
@@ -269,6 +268,11 @@ private struct SnippetFolderSettings: View {
                 .frame(height: 30)
                 Text(L10n.t(.folderShortcutHint)).font(AppFont.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                // 全局快捷键（搜索 / 截图 / 查词）在设置模块，避免冲突时可直达
+                SettingsJumpLink(L10n.t(.globalShortcutsInSettings)) {
+                    dismiss()
+                    MainWindow.shared.showSettings(page: "shortcuts")
+                }
             }
             Divider()
             Button(L10n.t(.delete), role: .destructive) {

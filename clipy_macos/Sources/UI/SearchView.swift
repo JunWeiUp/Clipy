@@ -542,7 +542,7 @@ struct SearchView: View {
             }
             Spacer(minLength: 8)
             Button {
-                SettingsWindow.shared.show(page: "history")
+                MainWindow.shared.showSettings(page: "history")
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "hourglass").font(.system(size: 13)).foregroundStyle(HistoryV3.text3)
@@ -557,9 +557,8 @@ struct SearchView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(HistoryV3.s("打开偏好设置 · 保留时长", "Open Preferences · Keep History For"))
+            .help(HistoryV3.s("设置 › 历史记录 · 保留时长", "Settings › History · Keep History For"))
             .overlay(alignment: .top) { HistoryV3.line.frame(height: 0.5) }
-            MainWindowSidebarFooter()
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 10)

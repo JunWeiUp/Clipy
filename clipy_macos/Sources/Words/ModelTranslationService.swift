@@ -136,8 +136,11 @@ final class ModelTranslationService: NSObject, URLSessionTaskDelegate {
         return text
     }
 
-    func translate(_ text: String, direction: WordTranslation.Direction) async throws -> WordTranslation {
+    func translate(_ text: String) async throws -> WordTranslation {
         let text = try WordQuery.modelText(text)
+        // Han text (including traditional Chinese and mixed Chinese/English) translates to English.
+        let direction: WordTranslation.Direction = text.range(of: "\\p{Han}", options: .regularExpression) != nil
+            ? .chineseToEnglish : .englishToChinese
         let request = try Self.request(text, configuration: .current,
                                        key: ModelTranslationKeychain.read(), direction: direction)
         let data = try await fetch(request)

@@ -8,9 +8,6 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
     @Published var usesModelTranslation = false {
         didSet { if oldValue != usesModelTranslation { clearLookup() } }
     }
-    @Published var translationToEnglish = false {
-        didSet { if oldValue != translationToEnglish { clearLookup() } }
-    }
     @Published private(set) var modelError: String?
     @Published private(set) var translation: WordTranslation?
     @Published private(set) var entry: WordEntry?
@@ -82,10 +79,9 @@ final class WordLookupViewModel: NSObject, ObservableObject, AVAudioPlayerDelega
         query = term
         if usesModelTranslation {
             isLoading = true
-            let direction: WordTranslation.Direction = translationToEnglish ? .chineseToEnglish : .englishToChinese
             lookupTask = Task { @MainActor [weak self] in
                 do {
-                    let result = try await ModelTranslationService().translate(term, direction: direction)
+                    let result = try await ModelTranslationService().translate(term)
                     guard !Task.isCancelled, let self, self.generation == token else { return }
                     self.translation = result
                     self.isLoading = false

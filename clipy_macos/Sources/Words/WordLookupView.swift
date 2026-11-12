@@ -50,11 +50,8 @@ struct WordLookupView: View {
         }
         .labelsHidden().pickerStyle(.segmented).fixedSize()
         if viewModel.usesModelTranslation {
-          Picker(ModelTranslationText.t("翻译为", "Translate into"), selection: $viewModel.translationToEnglish) {
-            Text(ModelTranslationText.t("中文", "Chinese")).tag(false)
-            Text(ModelTranslationText.t("英文", "English")).tag(true)
-          }
-          .pickerStyle(.menu).fixedSize()
+          Text(ModelTranslationText.t("自动中英互译", "Auto Chinese ↔ English"))
+            .font(.system(size: 12)).foregroundStyle(WordsV3Style.text3)
         }
         Spacer()
         Text(ModelTranslationText.t("⌘L 聚焦输入 · ⌘↩ 提交", "⌘L Focus input · ⌘↩ Submit"))

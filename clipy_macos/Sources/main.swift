@@ -169,7 +169,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(NSMenuItem(title: L10n.t(.selectAll), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
         editMenuItem.submenu = editMenu
 
-        // 主窗口四个模块（⌥⌘1–4），偏好设置仍是独立窗口。
+        // 主窗口六个模块（⌥⌘1–6）：历史 / 片段 / 设备 / 通知 / 工具 / 设置；⌘, 也打开「设置」。
         let windowMenuItem = NSMenuItem()
         mainMenu.addItem(windowMenuItem)
         let windowMenu = NSMenu(title: PreferencesManager.shared.appLanguage == .zh ? "窗口" : "Window")
@@ -183,7 +183,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openPreferencesFromMenu() {
         NSApp.activate(ignoringOtherApps: true)
-        SettingsWindow.shared.makeKeyAndOrderFront(nil)
+        MainWindow.shared.showSettings()
     }
 
     @objc private func showMainWindowSection(_ sender: NSMenuItem) {

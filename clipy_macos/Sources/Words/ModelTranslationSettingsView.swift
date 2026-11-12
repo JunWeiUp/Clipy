@@ -53,6 +53,11 @@ struct ModelTranslationSettingsView: View {
             Text(t("密钥保存在系统钥匙串。仅点击翻译时向此接口发送文本；译文不保存到单词本。",
                    "Keys are stored in Keychain. Text is sent to this endpoint only on submission; translations are not saved to vocabulary."))
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            // 单词查询快捷键在设置模块（主窗口内直达）
+            SettingsJumpLink(t("单词查询快捷键：设置 › 快捷键", "Word lookup shortcut: Settings › Shortcuts")) {
+                dismiss()
+                MainWindow.shared.showSettings(page: "shortcuts")
+            }
             if let error { Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()

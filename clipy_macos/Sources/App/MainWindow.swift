@@ -1,14 +1,16 @@
 import AppKit
 import SwiftUI
 
-/// Clipy 主窗口（V3 · `UI/design-v3/screens/mac-hub.html`）：剪贴板历史 / 片段 / 设备 / 手机通知
-/// 合在一个窗口，侧栏顶部切换（⌥⌘1–4；⌘1–9 留给历史快速粘贴）。偏好设置仍是独立窗口（⌘,）。
+/// Clipy 主窗口（V3 · `docs/design/design-v3/screens/mac-hub.html`）：剪贴板历史 / 片段 / 设备 / 手机通知 /
+/// 工具 / 设置合在唯一的窗口，侧栏顶部切换（⌥⌘1–6，⌘, 直达设置；⌘1–9 留给历史快速粘贴）。
+/// 不再有独立的偏好设置、查词或生成密码窗口：菜单、面板与全局快捷键都调用这里的
+/// `showSettings` / `showTools` 等入口定位模块与分区，设置项与各模块之间双向直达。
 ///
 /// 生命周期沿用各模块原有规则：同一时刻只挂载当前模块视图，切走时视图消失、由各自的
 /// onDisappear / prepareForClose 释放数据，切回时 onAppear 重新加载；关窗调用当前模块
 /// prepareForClose，复用窗口重新打开时调用其原有的 reactivate 钩子。
 enum MainWindowSection: String, CaseIterable, Identifiable {
-    case history, snippets, devices, notifications
+    case history, snippets, devices, notifications, tools, settings
 
     var id: String { rawValue }
 
@@ -21,6 +23,8 @@ enum MainWindowSection: String, CaseIterable, Identifiable {
         case .snippets: return Self.zh ? "片段" : "Snippets"
         case .devices: return Self.zh ? "设备" : "Devices"
         case .notifications: return Self.zh ? "通知" : "Alerts"
+        case .tools: return Self.zh ? "工具" : "Tools"
+        case .settings: return Self.zh ? "设置" : "Settings"
         }
     }
 
@@ -30,6 +34,8 @@ enum MainWindowSection: String, CaseIterable, Identifiable {
         case .snippets: return Self.zh ? "片段" : "Snippets"
         case .devices: return Self.zh ? "设备" : "Devices"
         case .notifications: return Self.zh ? "手机通知" : "Phone Notifications"
+        case .tools: return Self.zh ? "工具" : "Tools"
+        case .settings: return Self.zh ? "设置" : "Settings"
         }
     }
 
@@ -39,6 +45,8 @@ enum MainWindowSection: String, CaseIterable, Identifiable {
         case .snippets: return "text.quote"
         case .devices: return "laptopcomputer.and.iphone"
         case .notifications: return "bell"
+        case .tools: return "wrench.and.screwdriver"
+        case .settings: return "gearshape"
         }
     }
 
@@ -63,7 +71,7 @@ private struct MainWindowNavigatorKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// 非 nil 表示模块视图正嵌在主窗口中：侧栏顶部显示模块切换条、底部显示偏好设置入口。
+    /// 非 nil 表示模块视图正嵌在主窗口中：侧栏顶部显示模块切换条。
     var mainWindowNavigator: MainWindowNavigator? {
         get { self[MainWindowNavigatorKey.self] }
         set { self[MainWindowNavigatorKey.self] = newValue }
@@ -71,7 +79,7 @@ extension EnvironmentValues {
 }
 
 enum MainWindowMetrics {
-    /// 主窗口内四个模块统一的侧栏宽度。
+    /// 主窗口内各模块统一的侧栏宽度。
     static let sidebarWidth: CGFloat = 220
     static let size = CGSize(width: 1180, height: 720)
     static let minSize = CGSize(width: 980, height: 560)
@@ -87,6 +95,12 @@ final class MainWindow {
     private var searchModel: SearchViewModel?
     private var snippetModel: SnippetEditorViewModel?
     private var notificationModel: NotificationViewModel?
+    private var wordModel: WordLookupViewModel?
+    private var passwordModel: PasswordViewModel?
+    /// 工具模块导航（单词查询 / 单词表 / 生成密码与保持唤醒），跨挂载保留。
+    let wordNavigation = WordWorkspaceNavigation()
+    /// 设置模块下次挂载时定位的分类（外部深链）。
+    private(set) var pendingSettingsPage: String?
     private weak var window: NSWindow?
     private var wasVisibleBeforeShow = false
 
@@ -125,6 +139,84 @@ final class MainWindow {
         let model = NotificationViewModel()
         notificationModel = model
         return model
+    }
+
+    var wordViewModel: WordLookupViewModel {
+        if let wordModel { return wordModel }
+        let model = WordLookupViewModel()
+        wordModel = model
+        return model
+    }
+
+    var passwordViewModel: PasswordViewModel {
+        if let passwordModel { return passwordModel }
+        let model = PasswordViewModel()
+        passwordModel = model
+        return model
+    }
+
+    // MARK: Routing (all entries land in this window)
+
+    /// 设置模块并定位分类；`sync` 为旧的设备分类，转到「设备 › 局域网设置」。
+    func showSettings(page: String? = nil) {
+        if page == "sync" {
+            showDevices(page: .lan)
+            return
+        }
+        pendingSettingsPage = page
+        let alreadyShowing = navigator.section == .settings && window?.isVisible == true
+        show(.settings)
+        // 已挂载的设置文档直接滚动；新挂载时由 SettingsView 读取 pendingSettingsPage。
+        if alreadyShowing, let page {
+            pendingSettingsPage = nil
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .appSettingsNavigate, object: page)
+            }
+        }
+    }
+
+    func consumePendingSettingsPage() -> String? {
+        defer { pendingSettingsPage = nil }
+        return pendingSettingsPage
+    }
+
+    /// 工具模块：单词查询（可带查询词 / 剪贴板预填）、单词表、生成密码与保持唤醒。
+    func showTools(_ page: WordWorkspacePage = .lookup, query: String? = nil, openModelSettings: Bool = false) {
+        let items = NSPasteboard.general.pasteboardItems ?? []
+        let clipboardText = items.count == 1 && !items[0].types.contains(.fileURL)
+            ? items[0].string(forType: .string) : nil
+        wordNavigation.page = page
+        show(.tools)
+        let model = wordViewModel
+        switch page {
+        case .lookup:
+            if let query {
+                model.query = query
+                model.search()
+            } else if !openModelSettings {
+                model.prepareForPresentation(clipboardText: clipboardText)
+            }
+        case .book:
+            model.prepareForClose()
+        case .utilities:
+            break
+        }
+        if openModelSettings {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [self] in wordNavigation.showsModelSettings = true }
+        }
+    }
+
+    func showSnippets(openFolderSettings: Bool) {
+        show(.snippets)
+        guard openFolderSettings else { return }
+        // 等新挂载的视图订阅后再请求，popover 才有锚点。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [self] in snippetViewModel.folderSettingsRequest += 1 }
+    }
+
+    func showNotifications(openSettings: Bool) {
+        showNotifications()
+        guard openSettings else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [self] in notificationViewModel.settingsPopoverRequest += 1 }
     }
 
     func showHistory(initialQuery: String) {
@@ -171,6 +263,8 @@ final class MainWindow {
                 self?.searchModel = nil
                 self?.snippetModel = nil
                 self?.notificationModel = nil
+                self?.wordModel = nil
+                self?.passwordModel = nil
                 MemoryFootprintReclaimer.reclaimIfIdle()
             },
             update: { [weak self] window in
@@ -198,6 +292,11 @@ final class MainWindow {
                 self.snippetModel?.prepareForClose()
             }
         }
+        // 工具：切走即停止查询 / 发音并清空结果（与原查词窗口关闭一致），密码不留在内存。
+        if old == .tools {
+            wordModel?.prepareForClose()
+            passwordModel = nil
+        }
     }
 
     /// 仅当主窗口当前显示的是指定模块时关闭（如历史「粘贴并关闭」）。
@@ -213,7 +312,10 @@ final class MainWindow {
         case .history: searchModel?.prepareForClose()
         case .snippets: snippetModel?.prepareForClose()
         case .notifications: notificationModel?.prepareForClose()
-        case .devices: break
+        case .tools:
+            wordModel?.prepareForClose()
+            passwordModel = nil
+        case .devices, .settings: break
         }
     }
 
@@ -222,13 +324,13 @@ final class MainWindow {
         case .history: searchModel?.reactivate()
         case .snippets: snippetModel?.activate()
         case .notifications: notificationModel?.refreshIfStale()
-        case .devices: break
+        case .devices, .tools, .settings: break
         }
     }
 
     // MARK: App menu
 
-    /// 应用菜单「窗口」：四个模块（⌥⌘1–4）。
+    /// 应用菜单「窗口」：六个模块（⌥⌘1–6）。
     static func makeWindowMenuItems(target: AnyObject, action: Selector) -> [NSMenuItem] {
         MainWindowSection.allCases.enumerated().map { index, section in
             let item = NSMenuItem(title: section.title, action: action, keyEquivalent: section.keyEquivalent)
@@ -265,11 +367,16 @@ struct MainWindowRootView: View {
             DevicesView(page: owner.devicesPage)
         case .notifications:
             NotificationView(viewModel: owner.notificationViewModel)
+        case .tools:
+            WordWorkspaceView(model: owner.wordViewModel, navigation: owner.wordNavigation,
+                              passwordModel: owner.passwordViewModel)
+        case .settings:
+            SettingsView(initialPage: owner.consumePendingSettingsPage())
         }
     }
 }
 
-// MARK: - Sidebar chrome shared by the four modules
+// MARK: - Sidebar chrome shared by the modules
 
 /// 侧栏顶部：红绿灯留白 + 模块切换条。
 struct MainWindowSidebarHeader: View {
@@ -340,36 +447,5 @@ private struct MainWindowSectionButton: View {
         .help("\(section.title)  ⌥⌘\(section.keyEquivalent)")
         .accessibilityLabel(section.title)
         .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
-    }
-}
-
-/// 侧栏底部：偏好设置入口（偏好设置保持独立窗口）。不在主窗口中时不显示。
-struct MainWindowSidebarFooter: View {
-    @Environment(\.mainWindowNavigator) private var navigator
-    @EnvironmentObject private var languageObserver: AppLanguageObserver
-    @State private var hovered = false
-
-    var body: some View {
-        if navigator != nil {
-            let _ = languageObserver.revision
-            Button {
-                SettingsWindow.shared.makeKeyAndOrderFront(nil)
-            } label: {
-                HStack(spacing: 9) {
-                    Image(systemName: "gearshape").font(.system(size: 14)).foregroundStyle(SplitV3Color.text2)
-                        .frame(width: 18)
-                    Text(L10n.t(.preferences) + "…").font(.system(size: 13))
-                    Spacer(minLength: 4)
-                    Text("⌘,").font(.system(size: 11, weight: .medium)).foregroundStyle(SplitV3Color.text3)
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .background(RoundedRectangle(cornerRadius: 7).fill(hovered ? SplitV3Color.fill : .clear))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .onHover { hovered = $0 }
-            .padding(.top, 4)
-        }
     }
 }

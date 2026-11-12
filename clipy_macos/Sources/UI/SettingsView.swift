@@ -20,7 +20,9 @@ struct SettingsView: View {
   @State private var wordShortcutFailed = false
   @State private var isReencryptingHistory = false
 
-  init() {
+  /// `initialPage`: category to open at (deep link from other modules / menus).
+  init(initialPage: String? = nil) {
+    if let initialPage, !initialPage.isEmpty { _selectedSettingsPage = State(initialValue: initialPage) }
     let prefs = PreferencesManager.shared
     _selectedLanguage = State(initialValue: prefs.appLanguage)
     _selectedAppearance = State(initialValue: prefs.appAppearance)
@@ -63,13 +65,34 @@ struct SettingsView: View {
       ]
   }
 
+  /// Settings that live in other main-window modules, reachable from the sidebar.
+  private var moduleLinks: [AppSettingsLink] {
+    [
+      .init(id: "link.lan", title: settingsText("局域网与中继", "LAN & relay"), symbol: "network") {
+        MainWindow.shared.showDevices(page: .lan)
+      },
+      .init(id: "link.screen", title: settingsText("手机控制 Mac", "Phone controls Mac"), symbol: "iphone") {
+        MainWindow.shared.showDevices(page: .screenControl)
+      },
+      .init(id: "link.notifications", title: settingsText("通知同步", "Notification sync"), symbol: "bell") {
+        MainWindow.shared.showNotifications(openSettings: true)
+      },
+      .init(id: "link.snippets", title: settingsText("片段文件夹", "Snippet folders"), symbol: "folder") {
+        MainWindow.shared.showSnippets(openFolderSettings: true)
+      },
+      .init(id: "link.words", title: settingsText("查词 API", "Dictionary API"), symbol: "character.book.closed") {
+        MainWindow.shared.showTools(.lookup, openModelSettings: true)
+      },
+    ]
+  }
+
   /// Retention choices in days; 0 keeps history forever.
   private static let retentionOptions = [0, 7, 30, 90, 365]
 
   var body: some View {
     let _ = languageObserver.revision
 
-    AppSettingsLayout(selection: $selectedSettingsPage, pages: settingsPages) { pageID in
+    AppSettingsLayout(selection: $selectedSettingsPage, pages: settingsPages, links: moduleLinks) { pageID in
       if pageID == "general" { generalPage }
       if pageID == "history" { historyPage }
       if pageID == "shortcuts" { shortcutsPage }
@@ -177,6 +200,9 @@ struct SettingsView: View {
         PreferencesManager.shared.historyRetentionDays = newValue
         ClipboardManager.shared.applyHistoryLimit()
       }
+      SettingsJumpRow(
+        text: settingsText("在主窗口「历史」中浏览、置顶与删除记录。", "Browse, pin and delete entries in History."),
+        links: [(settingsText("查看历史", "Open History"), { MainWindow.shared.show(.history) })])
     }
     SettingsSubheader(L10n.t(.excludedApps))
     ExcludedAppsEditor()
@@ -246,6 +272,13 @@ struct SettingsView: View {
       if wordShortcutFailed {
         SettingsCaptionRow(L10n.t(.wordShortcutConflict), color: SettingsPalette.warn)
       }
+      SettingsJumpRow(
+        text: settingsText("片段文件夹快捷键与查词接口在对应模块中设置。",
+                           "Snippet folder shortcuts and the dictionary API are set in their modules."),
+        links: [
+          (settingsText("片段文件夹", "Snippet folders"), { MainWindow.shared.showSnippets(openFolderSettings: true) }),
+          (settingsText("查词 API", "Dictionary API"), { MainWindow.shared.showTools(.lookup, openModelSettings: true) }),
+        ])
     }
   }
 
@@ -269,6 +302,16 @@ struct SettingsView: View {
       }
       .padding(.vertical, 4)
       .padding(.horizontal, 2)
+    }
+    SettingsSubheader(settingsText("设备与同步", "Devices & Sync"))
+    SettingsCard {
+      SettingsJumpRow(
+        text: settingsText("设备连接、局域网同步与公网设备组位于主窗口「设备」。",
+                           "Device connection, LAN sync and relay groups live in Devices."),
+        links: [
+          (settingsText("局域网设置", "LAN settings"), { MainWindow.shared.showDevices(page: .lan) }),
+          (settingsText("公网设备组", "Relay group"), { MainWindow.shared.showDevices(page: .relay) }),
+        ])
     }
     SettingsSubheader(settingsText("诊断", "Diagnostics"))
     SettingsCard {

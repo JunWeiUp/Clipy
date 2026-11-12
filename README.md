@@ -131,7 +131,7 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.38** · Source build **12374** (Android arm64 `versionCode` **14374**) · Latest published release: **[v1.0.38](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.38)** · [Build metadata](clipy_flutter/pubspec.yaml)
+Current source version: **1.0.39** · Source build **12375** (Android arm64 `versionCode` **14375**) · Latest published release: **[v1.0.38](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.38)** · [Build metadata](clipy_flutter/pubspec.yaml)
 
 Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see sync version notes (local document: `docs/GETTING_STARTED.md#sync-version-notes`).
 
@@ -174,7 +174,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 - Ranked results, multi-select, copy/paste, and pin straight from results.
 
 ### 📖 Dictionary, translation & vocabulary book (macOS)
-- Open from the clipboard menu or press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>D</kbd>; change or disable the shortcut in Preferences.
+- Open from the clipboard menu or press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>D</kbd>; change or disable the shortcut in Settings.
 - Search in Chinese, English or with partial text. Chinese queries list English translations; bilingual suggestions and English spelling corrections open complete entries on selection. English entries include Chinese definitions, parts of speech, American IPA, word forms, phrases and bilingual examples. Click a phrase to look it up.
 - Translate English phrases and full sentences into Chinese, or Chinese sentences into English, including punctuation and numbers (up to 500 characters). Unlisted phrases such as `Fine-grained personal` show a separate machine translation with copy and English read-aloud actions. Paste text into the input, then click **Look up** or press <kbd>⌘</kbd> + <kbd>Return</kbd>. Sentence translations are not added to Vocabulary.
 - Play American pronunciation; if dictionary audio fails, use an installed system American English voice. Missing IPA, phrases or examples are shown explicitly.
@@ -208,11 +208,11 @@ Download installers from the [latest published release](https://github.com/JunWe
 - Turning it off or quitting Clipy releases the request. Closing the laptop lid and choosing Sleep manually still work; restarting Clipy starts with Keep Awake off.
 
 ### macOS interface
-- **Hidden menu bar icons:** opt in under Preferences → General or the panel’s settings. On every connected display, overflowing items appear in a visible row below the panel search field with their original icon when capture succeeds, or an application icon and name otherwise. Clicking requests the original menu through Accessibility; some apps do not support this. Icons are never moved. Accessibility is required; Screen Recording is optional for original previews (macOS 14+). Dynamic status images are not guaranteed.
+- **Hidden menu bar icons:** opt in under Settings → General or the panel’s settings. On every connected display, overflowing items appear in a visible row below the panel search field with their original icon when capture succeeds, or an application icon and name otherwise. Clicking requests the original menu through Accessibility; some apps do not support this. Icons are never moved. Accessibility is required; Screen Recording is optional for original previews (macOS 14+). Dynamic status images are not guaranteed.
 - Native title bars, readable light/dark content surfaces, consistent SF Symbols, spacing and controls.
 - Press <kbd>Esc</kbd> to close the focused window, including settings, search, word lookup, vocabulary, snippet and image/video editors, OCR results and pinned images. Existing save prompts still apply; input-method composition, shortcut recording and modal dialogs handle cancellation first.
-- **Control panel:** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, Clipboard / Snippets / Devices / Tools tabs (refresh plus direct Send Text / Send File per device), and a notification page. Detail pages use a smaller Back/title layout; Tools groups four launchers: direct screenshot modes, Lookup / Vocabulary, and Password. Its hidden-icon strip matches the other tabs, and switching to Tools keeps the same panel size; Keep Awake and Notifications remain in the footer, and the Settings gear opens Preferences directly. Notification banners are configured in Notifications, hidden-icon controls in Preferences, and Quit in the application menu. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-clicking the menu-bar icon has no action.
-- Preferences and screenshot settings scroll continuously across categories; the sidebar follows the visible section and supports click-to-jump. See the macOS design standard (local document: `docs/MACOS_DESIGN.md`) for UI development guidance.
+- **Control panel:** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, Clipboard / Snippets / Devices / Tools tabs (refresh plus direct Send Text / Send File per device), and a notification page. Detail pages use a smaller Back/title layout; Tools groups four launchers: direct screenshot modes, Lookup / Vocabulary, and Password. Its hidden-icon strip matches the other tabs, and switching to Tools keeps the same panel size; Keep Awake and Notifications remain in the footer, and the Settings gear opens Settings in the main window. Notification banners are configured in Notifications, hidden-icon controls in Settings, and Quit in the application menu. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-clicking the menu-bar icon has no action.
+- **One main window:** History, Snippets, Devices, Notifications, Tools (Lookup, Word Book, Password, Keep Awake) and Settings share one window — switch with <kbd>⌥</kbd><kbd>⌘</kbd><kbd>1</kbd>–<kbd>6</kbd>; <kbd>⌘</kbd><kbd>,</kbd> opens Settings. Settings scroll continuously with a following sidebar, and settings that live in other modules (LAN & relay, notification sync, snippet folders, dictionary API) link there in place instead of opening new windows. See the macOS design standard (local document: `docs/MACOS_DESIGN.md`) for UI development guidance.
 
 ### ⌨️ Global hotkeys & 🌍 i18n
 - Hotkeys for search, word lookup, screenshots, and every snippet.
@@ -291,10 +291,10 @@ cd clipy_flutter
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.38
+./scripts/package_windows.ps1 -Version 1.0.39
 ```
 
-The package is `dist/ClipyClone-Windows-x64-v1.0.38.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Version 1.0.33 fixes garbled Chinese tray, notification and screenshot-hint text, keeps transparency of 32-bit clipboard bitmaps, retries when another app briefly holds the clipboard, and rejects malformed bitmaps instead of reading past their data. Windows source and release ZIPs are unsigned; check the release page for public availability.
+The package is `dist/ClipyClone-Windows-x64-v1.0.39.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Version 1.0.33 fixes garbled Chinese tray, notification and screenshot-hint text, keeps transparency of 32-bit clipboard bitmaps, retries when another app briefly holds the clipboard, and rejects malformed bitmaps instead of reading past their data. Windows source and release ZIPs are unsigned; check the release page for public availability.
 
 ### iOS (Flutter + Swift)
 
@@ -327,9 +327,9 @@ Run `bash scripts/check.sh all` from the root for local quality checks. On macOS
 - `SnippetManager` — folders, snippets, hotkeys, import/export.
 - `SyncManager` — subnet/manual discovery, length-prefixed TCP sync (protocol v3), AES-GCM encryption, reliable history + notification delivery.
 - `Sources/Screenshot/` — the full screenshot/recording engine (ported from macshot): unified `OverlayView`, 18-tool annotation engine, scroll capture, recording, beautify/effects, OCR, pin, floating thumbnail, editor window. Driven by `ScreenshotSessionCoordinator`.
-- `MainWindow` — shared history, snippets, devices and notifications window; global history search supports filters and ranking.
+- `MainWindow` — the single window for history, snippets, devices, notifications, tools and settings; global history search supports filters and ranking.
 - `NotificationManager` — phone-notification mirror.
-- `PreferencesManager`, `SettingsWindow`, `LogWindow` — config & editing surfaces.
+- `PreferencesManager`, `SettingsView`, `LogWindow` — config & editing surfaces.
 
 **Android app** — Flutter (`clipy_flutter`) with Kotlin platform channels, foreground service, notification listener and countdown widget.
 
@@ -355,6 +355,8 @@ Clipy uses a LAN-first protocol v3 for clipboard history and notifications:
 Full wire notes, headless Android channel rules, and code map: `docs/PROTOCOL.md`.
 
 Current source also supports an opt-in self-hosted Internet relay (local document: `docs/COMMON-RELAY-SDK.md`): LAN first, authenticated WSS fallback for text, notifications and files. Enroll each relay device with its own identity and verified peer public keys; LAN sending remains pairing-free. The native iOS Share Extension remains LAN-only. Available in v1.0.32; a compatible common-relay server is required.
+
+Version 1.0.39 merges every Mac management window — including Settings and Tools — into one main window with in-place cross-links, and model translation now detects the Chinese ↔ English direction automatically.
 
 Version 1.0.38 adds a **server access password**, separate from the device key. New QR invitations and encrypted short links include it; scanning or pasting an invitation securely saves it for that relay address before joining. Creating a group or connecting manually still requires configuring the password first; legacy invitations without one require it to be entered if not already saved. Sharing a full invitation grants access, so share it only with trusted devices. Authentication failures preserve the device identity and LAN configuration. Source uses Common Relay v0.1.5; see dependency details (local document: `docs/COMMON-RELAY-SDK.md`).
 
