@@ -20,6 +20,11 @@
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>LSEnvironment</key>
+    <dict>
+        <key>MallocLargeCache</key>
+        <string>0</string>
+    </dict>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>NSLocalNetworkUsageDescription</key>

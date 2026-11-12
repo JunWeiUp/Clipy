@@ -1,5 +1,10 @@
 import AppKit
 
+#if !CLIPY_CORE_TESTS
+// 必须最先执行：MallocLargeCache 只在进程启动时生效（见 MallocTuning）。
+MallocTuning.ensureLargeAllocationsReturnToSystem()
+#endif
+
 // Worker dispatch precedes every app/test entry, so it never builds NSApplication.
 if CommandLine.arguments.contains(OCRSubprocess.childModeArgument) {
     OCRSubprocess.runChildMode()
@@ -175,6 +180,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let windowMenu = NSMenu(title: PreferencesManager.shared.appLanguage == .zh ? "窗口" : "Window")
         MainWindow.makeWindowMenuItems(target: self, action: #selector(showMainWindowSection(_:)))
             .forEach(windowMenu.addItem)
+        // 菜单兜底 ⌘W：焦点在输入框时窗口的 keyDown 收不到 ⌘W。
+        windowMenu.addItem(NSMenuItem.separator())
+        windowMenu.addItem(NSMenuItem(
+            title: PreferencesManager.shared.appLanguage == .zh ? "关闭窗口" : "Close Window",
+            action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
         windowMenuItem.submenu = windowMenu
         NSApp.windowsMenu = windowMenu
 

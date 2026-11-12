@@ -142,6 +142,7 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
         window.backgroundColor = .clear
         window.isOpaque = false
         window.hasShadow = true
+        window.depthLimit = .twentyfourBitRGB // 同 HostingWindow：避免广色域屏的 8 字节/像素缓冲
         window.delegate = self
         window.onEscape = { [weak self] in self?.model.escape() }
         window.command = { [weak self] event in self?.handleKey(event) ?? false }
@@ -151,8 +152,19 @@ final class MenuBarPanelController: NSObject, NSWindowDelegate {
         generation &+= 1 // Cancels any earlier deferred action, even after the window is hidden.
         guard isVisible else { return }
         MenuBarOverflowManager.shared.endMenuPresentation()
-        panel?.orderOut(nil)
-        panel?.contentViewController = nil
+        // 关闭时整个销毁面板窗口：隐藏的面板会保留毛玻璃/绘制缓冲区（随所在显示器
+        // 尺寸与色深增长，2560×1440 广色域屏约 28–46 MB）。先清空内容并缩成 1×1 提交
+        // 一帧，让残留缓冲区变成极小的一块，再关闭；下次打开重新创建。
+        if let panel {
+            panel.contentViewController = nil
+            panel.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
+            panel.setFrame(NSRect(x: panel.frame.minX, y: panel.frame.minY, width: 1, height: 1), display: true)
+            CATransaction.flush()
+            panel.orderOut(nil)
+            panel.delegate = nil
+            panel.close()
+        }
+        panel = nil
         model.end()
         snapshotsPending = false; historyPending = false
         if let localMonitor { NSEvent.removeMonitor(localMonitor); self.localMonitor = nil }

@@ -90,7 +90,19 @@ final class WindowSession<Content: View> {
 
     private func teardownIfStillClosed(generation: UInt64) {
         guard let window, reusePolicy.shouldTeardown(generation: generation, isVisible: window.isVisible) else { return }
+        // HostingWindow 把 SwiftUI 树挂在 contentView 容器里（不是 contentViewController），
+        // 只清 contentViewController 等于没清：窗口外壳若被 AppKit/KVO 继续持有，整棵界面
+        // （历史列表、缩略图、图层与 IOSurface）会随之常驻，每开关一次累积一份。
         window.contentViewController = nil
+        window.contentView = nil
+        window.delegate = nil
+        // 关闭的窗口对象可能被 AppKit 继续持有，连同按窗口尺寸分配的绘制缓冲。
+        // 先停掉位置自动保存（避免把 1×1 记下来），再缩成 1×1 提交一帧，残留只剩极小一块。
+        window.setFrameAutosaveName("")
+        window.minSize = NSSize(width: 1, height: 1)
+        window.contentMinSize = NSSize(width: 1, height: 1)
+        window.setFrame(NSRect(x: window.frame.minX, y: window.frame.minY, width: 1, height: 1), display: true)
+        CATransaction.flush()
         self.window = nil
         onTeardown?()
         onTeardown = nil

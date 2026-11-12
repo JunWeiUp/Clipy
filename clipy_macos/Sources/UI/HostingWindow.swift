@@ -53,6 +53,9 @@ final class HostingWindow<Content: View>: EscapeClosingWindow, NSWindowDelegate,
         // Capture overlays have their own canvas chrome and lifecycle.
         backgroundColor = .windowBackgroundColor
         isOpaque = true
+        // 广色域屏默认给窗口分配每像素 8 字节的绘制缓冲；界面只有文字、图标和普通图片，
+        // 限制为 24 位色即可把常驻的图形缓冲减半。
+        depthLimit = .twentyfourBitRGB
         titlebarAppearsTransparent = true
         titleVisibility = fullSizeContent ? .hidden : .visible
         if #available(macOS 13.0, *) {

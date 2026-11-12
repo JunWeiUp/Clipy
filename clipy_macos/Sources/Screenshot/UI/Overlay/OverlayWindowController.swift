@@ -171,6 +171,9 @@ class OverlayWindowController {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
+        // 截屏本身是 8 位 SDR；广色域屏默认的 8 字节/像素整屏缓冲（内置屏约 46 MB/块）
+        // 关窗后会被系统留着，限制为 24 位色即可减半且不影响画质。
+        window.depthLimit = .twentyfourBitRGB
         // Idle/warmed panels are click-through by invariant. Mouse events are
         // enabled only when a real capture is presented (showOverlay/makeKey).
         // This guarantees that a stranded warm panel — e.g. if warmPanel()'s
@@ -447,6 +450,12 @@ class OverlayWindowController {
         rootView = nil
         overlayView = nil
         overlayWindow?.ignoresMouseEvents = true
+        // 关闭前缩成 1×1 提交一帧：已关闭的窗口可能仍被系统持有，连同整屏大小的
+        // 绘制缓冲；缩小后残留只剩极小一块。
+        if let window = overlayWindow {
+            window.setFrame(NSRect(x: window.frame.minX, y: window.frame.minY, width: 1, height: 1), display: true)
+            CATransaction.flush()
+        }
         overlayWindow?.orderOut(nil)
         overlayWindow?.close()
         overlayWindow = nil

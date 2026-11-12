@@ -131,7 +131,7 @@ Mac 悬浮窗顶部就是搜索，下方依次是隐藏的菜单栏图标和最�
 <details>
 <summary><b>版本、下载与源码构建</b></summary>
 
-当前源码版本：**1.0.39** · 源码构建号 **12375**（Android arm64 `versionCode` **14375**） · 最新正式版：**[v1.0.39](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.39)** · [构建版本配置](clipy_flutter/pubspec.yaml)
+当前源码版本：**1.0.40** · 源码构建号 **12379**（Android arm64 `versionCode` **14379**） · 最新正式版：**[v1.0.39](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.39)** · [构建版本配置](clipy_flutter/pubspec.yaml)
 
 安装包请前往[最新正式版](https://github.com/JunWeiUp/Clipy/releases/latest)，具体应用版本和构建号以发布说明为准。Android 改版已在 v1.0.19 发布；后续开发期间，源码版本可能领先于公开安装包。Release 徽章只显示公开版本，不包含草稿。旧版升级请阅读同步版本差异（本地文档：`docs/GETTING_STARTED_ZH.md#同步版本差异`）。
 
@@ -291,10 +291,10 @@ cd clipy_flutter
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.39
+./scripts/package_windows.ps1 -Version 1.0.40
 ```
 
-产物为 `dist/ClipyClone-Windows-x64-v1.0.39.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。v1.0.24 在「历史记录」提供「截图」菜单，支持区域、窗口和显示器截图；完成后复制 PNG 并保存到本机历史。窗口截图使用 Windows `PrintWindow`：目标应用可能拒绝捕获，也可能返回空白画面，受保护或使用 GPU 绘制的内容尤其需要实机检查。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。v1.0.33 修复托盘、通知与截图提示中的中文乱码，保留 32 位剪贴板位图的透明度，其他程序短暂占用剪贴板时会重试，并拒绝读取异常位图以免越界。Windows 源码构建与正式版 ZIP 均未签名；公开版本以发布页为准。
+产物为 `dist/ClipyClone-Windows-x64-v1.0.40.zip`。完整解压后运行 `ClipyClone.exe`；关闭主窗口后仍在系统托盘继续记录和同步，托盘菜单的「退出」才会结束进程。文字可向已授权设备自动同步；复制的图片和文件保留在本机历史，文件传输需显式发起。v1.0.24 在「历史记录」提供「截图」菜单，支持区域、窗口和显示器截图；完成后复制 PNG 并保存到本机历史。窗口截图使用 Windows `PrintWindow`：目标应用可能拒绝捕获，也可能返回空白画面，受保护或使用 GPU 绘制的内容尤其需要实机检查。设置中可按剪贴板来源程序名排除应用；能识别来源进程时默认排除常见密码管理器。v1.0.33 修复托盘、通知与截图提示中的中文乱码，保留 32 位剪贴板位图的透明度，其他程序短暂占用剪贴板时会重试，并拒绝读取异常位图以免越界。Windows 源码构建与正式版 ZIP 均未签名；公开版本以发布页为准。
 
 ### iOS（Flutter + Swift）
 
@@ -354,6 +354,8 @@ Clipy 使用面向局域网的协议 v3 处理剪贴板历史与通知：
 完整线协议、无 UI 保活通道规则与代码地图见 `docs/PROTOCOL.md`。
 
 当前源码新增可选的自托管公网中继（本地文档：`docs/COMMON-RELAY-SDK.md`）：优先局域网直连，不可用时通过带访问密钥的 WSS 中继传输文字、通知和文件。公网中继为每台设备登记独立身份并核对对端公钥；局域网发送仍无需配对。iOS 原生分享扩展仍仅支持局域网。已随 v1.0.32 发布，需要兼容的 common-relay 服务。
+
+v1.0.40 降低 Mac 端常驻内存：截图用完的大块内存立即归还系统，关闭的窗口会释放界面，窗口改用 24 位色绘制——主窗口从约 260 MB 降到 85 MB，截图不再让内存越截越高。
 
 v1.0.39 把 Mac 端所有管理窗口（含设置与工具）合并为一个主窗口，模块之间在窗口内直接跳转；模型翻译自动识别中英互译方向。
 
