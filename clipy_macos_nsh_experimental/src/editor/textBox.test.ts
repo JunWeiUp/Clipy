@@ -1,0 +1,3 @@
+import {test,expect} from 'nsh/test';import {textBoxLayout} from './textBox';
+test('translation text boxes wrap long words and CJK, preserve newlines, and shrink to their original OCR rectangle',()=>{const measure=(text:string,size:number)=>Array.from(text).length*size*.5;const result=textBoxLayout('longtranslation中文\nline',60,40,24,measure);expect(result.fontSize<24).toBe(true);expect(result.lines.length*result.lineHeight<=36).toBe(true);expect(result.lines.every(line=>measure(line,result.fontSize)<=56)).toBe(true);expect(result.lines.join('')).toBe('longtranslation中文line');});
+test('unfittable text reaches 4px and remains clipped instead of claiming a fit',()=>{const result=textBoxLayout('impossible',1,1,24,()=>100);expect(result.fontSize).toBe(4);});

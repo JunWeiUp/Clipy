@@ -1,0 +1,18 @@
+import Foundation
+struct BridgeFailure:Error{let code:String;let message:String}
+@main struct TransportLifecycleRegression{
+ @MainActor final class Box{var a="";var b="";var received:[String:Any]?;var writes=0}
+ @MainActor static func main()async throws{
+  let root=FileManager.default.temporaryDirectory.appendingPathComponent("clipy-transport-lifecycle-"+UUID().uuidString);defer{try? FileManager.default.removeItem(at:root)}
+  let box=Box();let a=LANService(emit:{_,_ in},peerId:"transport-a",stateDirectory:root);let b=LANService(emit:{event,payload in if event=="lan.history.received"{box.received=payload}},peerId:"transport-b",stateDirectory:root);defer{a.stopAll();b.stopAll()}
+  box.b=try b.openTunnel(id:"a",initiator:false,send:{data in box.writes+=1;try await a.feedTunnel(sessionId:box.a,data:data)})
+  box.a=try a.openTunnel(id:"b",initiator:true,send:{data in box.writes+=1;try await b.feedTunnel(sessionId:box.b,data:data)})
+  for _ in 0..<100{if (a.status()["peers"] as? [Any])?.count==1,(b.status()["peers"] as? [Any])?.count==1{break};try await Task.sleep(nanoseconds:1_000_000)}
+  guard a.status()["listening"] as? Bool==false,a.status()["lanEnabled"] as? Bool==false,a.status()["maintenanceActive"] as? Bool==true else{fatalError("relay-only maintenance disabled")}
+  let first=Task{@MainActor in try await a.sendText(peerId:"transport-b",text:"relay only")};for _ in 0..<100{if box.received != nil{break};try await Task.sleep(nanoseconds:1_000_000)};guard let relayId=box.received?["messageId"] as? String else{fatalError("relay-only inbound missing")};let before=box.writes;a.retryPending(now:Date().addingTimeInterval(121));try await Task.sleep(nanoseconds:20_000_000);guard box.writes>before,a.status()["pendingOffline"] as? Int==1 else{fatalError("relay-only stale pending not retried")};a.stopLAN();guard a.status()["relayRoutes"] as? Int==1,a.status()["pendingReceipts"] as? Int==1,a.status()["maintenanceActive"] as? Bool==true else{fatalError("LAN-off closed relay-only receipt")};try b.acknowledge(messageId:relayId);_=try await first.value;guard a.status()["pendingOffline"] as? Int==0 else{fatalError("relay-only ACK did not clear journal")}
+  _=try a.start(port:15601,deviceName:"A");_=try b.start(port:15602,deviceName:"B");try await Task.sleep(nanoseconds:20_000_000);_=try await a.connect(host:"127.0.0.1",port:15602);guard a.status()["routeCount"] as? Int==2,a.status()["relayRoutes"] as? Int==1 else{fatalError("enabling LAN discarded relay")}
+  box.received=nil;let second=Task{@MainActor in try await a.sendText(peerId:"transport-b",text:"both on, turn LAN off")};for _ in 0..<100{if box.received != nil{break};try await Task.sleep(nanoseconds:1_000_000)};guard let id=box.received?["messageId"] as? String else{fatalError("LAN receipt missing")};a.stopLAN();try await Task.sleep(nanoseconds:50_000_000);guard a.status()["relayRoutes"] as? Int==1,a.status()["pendingReceipts"] as? Int==1,(a.status()["peers"] as? [[String:Any]])?.first?["transport"] as? String=="relay" else{fatalError("LAN off failed relay failover")};try b.acknowledge(messageId:id);_=try await second.value
+  b.stopLAN();guard b.status()["maintenanceActive"] as? Bool==true else{fatalError("remaining relay maintenance stopped")};a.stopAll();b.stopAll();guard a.status()["maintenanceActive"] as? Bool==false,b.status()["maintenanceActive"] as? Bool==false else{fatalError("last transport shutdown leaked maintenance")}
+  print("PASS: relay-only no-listener maintenance/retry/ACK, enabling LAN preserves relay, disabling LAN preserves original relay session and pending receipt, stopAll releases maintenance")
+ }
+}

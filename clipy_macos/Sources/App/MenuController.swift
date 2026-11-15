@@ -89,8 +89,21 @@ class MenuController: NSObject {
         }
     }
     
+    /// 固定 autosaveName：系统按它记住位置（⌘ 拖动后的位置也会保留）。
+    private static let statusItemAutosaveName = "ClipyStatusItem"
+    private static let statusItemPositionSeededKey = "clipy.statusItemRightmostSeeded"
+
     private func setupStatusItem() {
+        // 首次启动预置系统的 "NSStatusItem Preferred Position <name>"（离屏幕右缘的距离，越小越靠右），
+        // 让图标尽量排在最右侧（系统控制中心/时钟仍由 macOS 固定在最右）。只写一次，之后尊重用户拖动。
+        let defaults = UserDefaults.standard
+        let positionKey = "NSStatusItem Preferred Position \(Self.statusItemAutosaveName)"
+        if !defaults.bool(forKey: Self.statusItemPositionSeededKey) {
+            defaults.set(1, forKey: positionKey)
+            defaults.set(true, forKey: Self.statusItemPositionSeededKey)
+        }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.autosaveName = Self.statusItemAutosaveName
 
         if let button = statusItem.button {
             // 使用 SF Symbol 替代 emoji，与系统菜单栏图标风格统一。

@@ -4,8 +4,8 @@
 
 ## Before making changes
 
-- Read Development (local document: `docs/DEVELOPMENT.md`) for setup and validation commands.
-- Use the Architecture map (local document: `docs/ARCHITECTURE.md`) to locate the owning module.
+- Read Development (local document: `docs/development/DEVELOPMENT.md`) for setup and validation commands.
+- Use the Architecture map (local document: `docs/architecture/ARCHITECTURE.md`) to locate the owning module.
 - Discuss large features, protocol changes, and data migrations in an issue first.
 - Report vulnerabilities according to [SECURITY.md](SECURITY.md), not a public
   issue containing private clipboard contents or exploit details.
@@ -16,7 +16,7 @@
 1. Create a focused branch from the current default branch.
 2. Keep behavior changes separate from large formatting or file moves where practical.
 3. Add regression tests for changed logic. Update both protocol implementations
-   and `docs/PROTOCOL.md` when changing the wire contract.
+   and `docs/architecture/PROTOCOL.md` when changing the wire contract.
 4. Run `bash scripts/check.sh all`; build the affected native platform as described
    in the development guide. List unrun device tests explicitly.
 5. Open a PR describing the problem, solution, test results and migration impact.

@@ -1,0 +1,3 @@
+import {test,expect} from 'nsh/test';
+import {sourceToOutput,outputToSource,geometrySize} from './geometry';
+test('crop rotate flip and frame preview have the same source-coordinate inverse',()=>{for(const rotation of [0,90,180,270])for(const flipH of [false,true])for(const flipV of [false,true]){const input={source:{width:640,height:360},crop:{x:100,y:60,width:300,height:120},rotation,flipH,flipV,padding:30,header:32};const point={x:180,y:95};expect(outputToSource(sourceToOutput(point,input),input)).toEqual(point);const size=geometrySize(input);expect(size.width).toBe((rotation%180?120:300)+60);expect(size.height).toBe((rotation%180?300:120)+92);}});

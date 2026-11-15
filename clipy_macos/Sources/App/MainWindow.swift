@@ -164,14 +164,13 @@ final class MainWindow {
             return
         }
         pendingSettingsPage = page
-        let alreadyShowing = navigator.section == .settings && window?.isVisible == true
         show(.settings)
-        // 已挂载的设置文档直接滚动；新挂载时由 SettingsView 读取 pendingSettingsPage。
-        if alreadyShowing, let page {
-            pendingSettingsPage = nil
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: .appSettingsNavigate, object: page)
-            }
+        // 新挂载时 SettingsView 读取 pendingSettingsPage；已挂载（含被遮挡或关窗后复用）的
+        // 设置文档不会重新读取，统一广播一次跳转。未指定分类时回到顶部，而不是停在上次的滚动位置。
+        DispatchQueue.main.async { [weak self] in
+            self?.pendingSettingsPage = nil
+            NotificationCenter.default.post(name: .appSettingsNavigate,
+                                            object: page ?? AppSettingsNavigator.topTarget)
         }
     }
 

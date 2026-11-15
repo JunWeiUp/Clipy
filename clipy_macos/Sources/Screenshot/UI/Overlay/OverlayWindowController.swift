@@ -1,5 +1,6 @@
 import Cocoa
 import CoreImage
+import IOSurface
 import UniformTypeIdentifiers
 import Vision
 
@@ -49,14 +50,43 @@ private final class ScreenshotOverlayRootView: NSView {
         CATransaction.setDisableActions(true)
         previewLayer.frame = bounds
         previewLayer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        previewLayer.contents = cgImage
+        // A CGImage set as contents is converted by CoreAnimation into a half-float
+        // (8 B/px) copy that stays in CA's process-wide image cache long after the
+        // capture is gone (~28 MB per 1440p screen, found holding after every session).
+        // An IOSurface is displayed as-is and freed with the layer contents.
+        previewLayer.contents = Self.makePreviewSurface(cgImage) ?? cgImage
         CATransaction.commit()
         overlayView.usesExternalScreenshotPreview = true
     }
 
     func clearScreenshotPreview() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         previewLayer.contents = nil
+        CATransaction.commit()
         overlayView.usesExternalScreenshotPreview = false
+    }
+
+    /// 8-bit BGRA surface tagged with the capture's own color space, so the copy is a
+    /// straight pixel copy and the render server does the color matching.
+    private static func makePreviewSurface(_ image: CGImage) -> IOSurface? {
+        let width = image.width, height = image.height
+        guard width > 0, height > 0, let surface = IOSurface(properties: [
+            .width: width, .height: height, .bytesPerElement: 4,
+            .pixelFormat: 0x4247_5241, // 'BGRA'
+        ]) else { return nil }
+        let space = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)!
+        guard surface.lock(options: [], seed: nil) == kIOReturnSuccess else { return nil }
+        defer { surface.unlock(options: [], seed: nil) }
+        guard let context = CGContext(
+            data: surface.baseAddress, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: surface.bytesPerRow, space: space,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return nil }
+        context.interpolationQuality = .none
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        if let icc = space.copyICCData() { IOSurfaceSetValue(unsafeBitCast(surface, to: IOSurfaceRef.self), kIOSurfaceColorSpace, icc) }
+        return surface
     }
 }
 

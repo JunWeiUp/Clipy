@@ -1,0 +1,1 @@
+{"name":"Clipy Storage Probe","id":"dev.clipy.tsx.storage-probe","window":{"title":"原生存储验证","defaultSize":{"width":520,"height":180}},"capabilities":{"process":{"execute":["clipy-native"],"env":["CLIPY_NSH_HELPER"]},"fs":{"read":["${dataDir}"],"write":["${dataDir}"]}}}

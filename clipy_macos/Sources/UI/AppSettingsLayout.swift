@@ -310,7 +310,17 @@ struct AppSettingsLayout<Content: View>: View {
     }
     .ignoresSafeArea(.container, edges: mainWindowNavigator != nil ? .top : [])
     .onReceive(NotificationCenter.default.publisher(for: .appSettingsNavigate)) { notification in
-      guard let id = notification.object as? String, pages.contains(where: { $0.id == id }) else { return }
+      guard let requested = notification.object as? String else { return }
+      if requested == AppSettingsNavigator.topTarget, let first = pages.first?.id {
+        searchText = ""
+        navHistory = [first]
+        navPosition = 0
+        jump(to: first, anchor: first, offset: 6)
+        DispatchQueue.main.async { navigator.scrollToTop() }
+        return
+      }
+      let id = requested
+      guard pages.contains(where: { $0.id == id }) else { return }
       // External deep links (menu / other windows) start a fresh history like opening the window.
       searchText = ""
       navHistory = [id]
@@ -579,7 +589,22 @@ final class AppSettingsNavigator: ObservableObject {
   }
   private var anchors: [String: Anchor] = [:]
 
+  /// `appSettingsNavigate` payload meaning "show the document from its top".
+  static let topTarget = "__settings.top__"
+
   func register(_ view: NSView, id: String) { anchors[id] = Anchor(view) }
+
+  func scrollToTop() {
+    guard let scroll = anchors.values.compactMap({ $0.view?.enclosingScrollView }).first,
+      let document = scroll.documentView
+    else { return }
+    let clip = scroll.contentView
+    let y = document.isFlipped
+      ? document.bounds.minY
+      : max(document.bounds.minY, document.bounds.maxY - clip.bounds.height)
+    clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
+    scroll.reflectScrolledClipView(clip)
+  }
 
   var isAtEnd: Bool {
     guard let scroll = anchors.values.compactMap({ $0.view?.enclosingScrollView }).first,

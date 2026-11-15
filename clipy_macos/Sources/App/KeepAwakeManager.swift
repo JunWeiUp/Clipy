@@ -17,24 +17,68 @@ struct KeepAwakeAssertionDriver {
         release: { IOPMAssertionRelease($0) })
 }
 
-/// A session-only power assertion. The system releases it when Clipy exits;
-/// explicit disable and application termination release it immediately.
+struct KeepAwakePreferenceStore {
+    let load: () -> Bool
+    let save: (Bool) -> Void
+
+    static let preferences = KeepAwakePreferenceStore(
+        load: { PreferencesManager.shared.keepAwakeEnabled },
+        save: { PreferencesManager.shared.keepAwakeEnabled = $0 })
+
+    static let ephemeral = KeepAwakePreferenceStore(
+        load: { false },
+        save: { _ in })
+}
+
+/// Manages the macOS idle display/sleep power assertion.
+/// User changes persist across restarts and app reinstalls; `stop()` releases
+/// the OS assertion on termination without clearing the saved preference.
 final class KeepAwakeManager: ObservableObject {
-    static let shared = KeepAwakeManager()
+    static let shared = KeepAwakeManager(driver: .system, preferenceStore: .preferences)
 
     @Published private(set) var isActive = false
     private(set) var lastError: IOReturn?
     private var assertionID: IOPMAssertionID?
     private let driver: KeepAwakeAssertionDriver
+    private let preferenceStore: KeepAwakePreferenceStore
 
-    init(driver: KeepAwakeAssertionDriver = .system) {
+    init(
+        driver: KeepAwakeAssertionDriver = .system,
+        preferenceStore: KeepAwakePreferenceStore = .ephemeral
+    ) {
         self.driver = driver
+        self.preferenceStore = preferenceStore
     }
 
     @discardableResult
     func setEnabled(_ enabled: Bool) -> Bool {
         precondition(Thread.isMainThread)
-        if enabled == isActive { return true }
+        if enabled == isActive {
+            preferenceStore.save(enabled)
+            return true
+        }
+        guard applyAssertionState(enabled) else { return false }
+        preferenceStore.save(enabled)
+        return true
+    }
+
+    @discardableResult
+    func restoreSavedState() -> Bool {
+        precondition(Thread.isMainThread)
+        guard preferenceStore.load() else { return true }
+        if isActive { return true }
+        return applyAssertionState(true)
+    }
+
+    @discardableResult
+    func toggle() -> Bool { setEnabled(!isActive) }
+
+    func stop() {
+        precondition(Thread.isMainThread)
+        _ = applyAssertionState(false)
+    }
+
+    private func applyAssertionState(_ enabled: Bool) -> Bool {
         if enabled {
             var id: IOPMAssertionID = 0
             let result = driver.acquire(&id)
@@ -56,11 +100,6 @@ final class KeepAwakeManager: ObservableObject {
         lastError = nil
         return true
     }
-
-    @discardableResult
-    func toggle() -> Bool { setEnabled(!isActive) }
-
-    func stop() { _ = setEnabled(false) }
 
     deinit {
         if let assertionID { _ = driver.release(assertionID) }

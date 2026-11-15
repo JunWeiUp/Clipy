@@ -35,6 +35,12 @@ final class SyncRelayClient: @unchecked Sendable {
     private var refreshingMembership = false
     private var membershipChecked = false
     private var stopped = false
+    /// Liveness: a peers query must answer within `firstProbeTimeout`; one slow answer gets a
+    /// second, longer window before the session is declared lost. A single hiccup (relay
+    /// under load, proxy, Wi-Fi wake) no longer tears down and rebuilds the whole WebSocket.
+    static let firstProbeTimeout: TimeInterval = 3, retryProbeTimeout: TimeInterval = 8
+    private var connectedAt: Date?
+    private var reconnects = 0
     private var metadata: [String: Peer] = [:]
     private var bridges: [String: RelayByteBridge] = [:]
     private var pending: [String: RelayEvent] = [:]
@@ -68,7 +74,7 @@ final class SyncRelayClient: @unchecked Sendable {
                 do {
                     let value = try await SyncRelayGroups.refreshedConfiguration(raw,url:endpoint,accessPassword:self?.accessPassword)
                     self?.queue.async { guard let self, !self.stopped else { return };self.refreshingMembership = false;self.membershipChecked = true;self.token = value;self.connect() }
-                } catch { self?.queue.async { guard let self, !self.stopped else { return };self.refreshingMembership = false;self.report(error);self.lost(self.generation) } }
+                } catch { self?.queue.async { guard let self, !self.stopped else { return };self.refreshingMembership = false;self.report(error);self.lost(self.generation, reason: "membership refresh failed: \(error)") } }
             }
             return
         }
@@ -76,7 +82,7 @@ final class SyncRelayClient: @unchecked Sendable {
         generation += 1; let current = generation
         let journal: RelayJournal
         do { journal = try Self.journal.get() }
-        catch { lost(current); return }
+        catch { lost(current, reason: "journal unavailable"); return }
         let connection = CommonRelay.RelayClient(identity: identity, journal: journal); client = connection
         runTask = Task { [weak self] in
             do {
@@ -85,13 +91,14 @@ final class SyncRelayClient: @unchecked Sendable {
                 self.queue.async {
                     guard current == self.generation, !self.stopped else { return }
                     SyncRelayConnectionState.shared.update(.connected, owner: self.statusOwner)
-                    self.backoff = 1; self.refresh(connection, current)
+                    appLog("Relay: connected (reconnects=\(self.reconnects), backoff was \(Int(self.backoff))s)")
+                    self.connectedAt = Date(); self.backoff = 1; self.refresh(connection, current)
                     let timer = DispatchSource.makeTimerSource(queue: self.queue)
                     timer.schedule(deadline: .now() + 30, repeating: 30)
                     timer.setEventHandler { [weak self] in self?.refresh(connection, current) }; self.timer = timer; timer.resume()
                 }
                 for try await event in events { self.queue.async { guard current == self.generation, !self.stopped else { return }; self.handle(event, connection, current) } }
-            } catch { self?.queue.async { guard let self, !self.stopped, current == self.generation else { return }; self.report(error); self.lost(current) } }
+            } catch { self?.queue.async { guard let self, !self.stopped, current == self.generation else { return }; self.report(error); self.lost(current, reason: "connection: \(error)") } }
         }
     }
     private func report(_ error: Error) {
@@ -107,14 +114,23 @@ final class SyncRelayClient: @unchecked Sendable {
         onPeers(Array(metadata.values))
         guard refreshGeneration != current else { return }; refreshGeneration = current
         let requestID = UUID(); refreshRequestID = requestID
-        queue.asyncAfter(deadline:.now()+3) { [weak self] in
+        query(connection, current, requestID)
+        armProbeDeadline(connection, current, requestID, retry: false)
+    }
+    private func armProbeDeadline(_ connection: CommonRelay.RelayClient, _ current: Int, _ requestID: UUID, retry: Bool) {
+        queue.asyncAfter(deadline: .now() + (retry ? Self.retryProbeTimeout : Self.firstProbeTimeout)) { [weak self] in
             guard let self, self.refreshRequestID == requestID, self.refreshGeneration == current, self.generation == current, !self.stopped else { return }
-            self.refreshGeneration = nil; self.lost(current)
+            if !retry { self.query(connection, current, requestID); self.armProbeDeadline(connection, current, requestID, retry: true); return }
+            self.refreshGeneration = nil; self.refreshRequestID = nil
+            self.lost(current, reason: "peers query unanswered for \(Int(Self.firstProbeTimeout + Self.retryProbeTimeout))s")
         }
+    }
+    /// Any answer for `requestID` (first or retried query) proves the session alive.
+    private func query(_ connection: CommonRelay.RelayClient, _ current: Int, _ requestID: UUID) {
         Task { [weak self] in
             let peers = try? await connection.peers()
             guard let self else { return }
-            self.queue.async { if self.refreshRequestID == requestID { self.refreshGeneration = nil; self.refreshRequestID = nil } }
+            self.queue.async { if self.refreshRequestID == requestID, peers != nil { self.refreshGeneration = nil; self.refreshRequestID = nil } }
             guard let peers else { return }
             self.queue.async { guard current == self.generation, !self.stopped else { return }; for peer in peers { self.announce(peer.device, connection, current) }; self.onPeers(Array(self.metadata.values)) }
         }
@@ -127,7 +143,7 @@ final class SyncRelayClient: @unchecked Sendable {
     private func handle(_ event: RelayEvent, _ connection: CommonRelay.RelayClient, _ current: Int) {
         let type = event["type"] as? String
         if type == "group.changed" {
-            if let object = try? JSONSerialization.jsonObject(with:Data(token.utf8)) as? [String:Any], let entry = object["group_entry"] as? [String:Any], let state = try? RelayGroups.unpack(entry), (event["revision"] as? Int ?? 0) > (state["revision"] as? Int ?? 0) { membershipChecked = false;lost(current) };return
+            if let object = try? JSONSerialization.jsonObject(with:Data(token.utf8)) as? [String:Any], let entry = object["group_entry"] as? [String:Any], let state = try? RelayGroups.unpack(entry), (event["revision"] as? Int ?? 0) > (state["revision"] as? Int ?? 0) { membershipChecked = false;lost(current, reason: "group changed") };return
         }
         if type == "peer.up", let own = event["identity"] as? [String: Any], let peer = own["device"] as? String { onPeerAvailable?();announce(peer, connection, current) }
         if type == "peer.down", let own = event["identity"] as? [String: Any], let peer = own["device"] as? String { metadata.removeValue(forKey: peer); bridges.removeValue(forKey: peer)?.close(); callbacks.removeValue(forKey: peer); pending.removeValue(forKey: peer); opening.remove(peer) }
@@ -173,9 +189,13 @@ final class SyncRelayClient: @unchecked Sendable {
             } catch { self?.queue.async { self?.opening.remove(peer) } }
         }
     }
-    private func lost(_ current: Int) {
+    private func lost(_ current: Int, reason: String) {
         membershipChecked = false
         guard current == generation, !stopped else { return }; generation += 1
+        reconnects += 1
+        let uptime = connectedAt.map { " after \(Int(Date().timeIntervalSince($0)))s" } ?? " (not connected)"
+        appLog("Relay: lost\(uptime), reason=\(reason); retry in \(Int(backoff))s (reconnects=\(reconnects))", level: .warning)
+        connectedAt = nil
         SyncRelayConnectionState.shared.disconnected(statusOwner)
         timer?.cancel(); timer = nil; metadata.removeAll(); pending.removeAll(); callbacks.removeAll(); opening.removeAll()
         for bridge in Array(bridges.values) { bridge.close() }; bridges.removeAll()

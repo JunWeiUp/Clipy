@@ -35,6 +35,7 @@ class PreferencesManager {
     private let deviceNameKey = "deviceName"
     private let appLanguageKey = "appLanguage"
     private let launchAtLoginKey = "launchAtLogin"
+    private let keepAwakeEnabledKey = "keepAwakeEnabled"
     private let historyEncryptionEnabledKey = "historyEncryptionEnabled"
     private let historyImageOCRIndexingKey = "historyImageOCRIndexing"
     private let searchGlobalShortcutEnabledKey = "searchGlobalShortcutEnabled"
@@ -72,6 +73,12 @@ class PreferencesManager {
     var menuBarOverflowEnabled: Bool {
         get { defaults.bool(forKey: "menuBarOverflowEnabled") }
         set { defaults.set(newValue, forKey: "menuBarOverflowEnabled") }
+    }
+
+    /// Local-only power assertion preference; never synchronized to other devices.
+    var keepAwakeEnabled: Bool {
+        get { defaults.bool(forKey: keepAwakeEnabledKey) }
+        set { defaults.set(newValue, forKey: keepAwakeEnabledKey) }
     }
 
     var deviceName: String {

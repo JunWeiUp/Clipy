@@ -26,16 +26,21 @@ def main():
     if git_root != ROOT:
         parser.error("Run this script from its original repository")
     paths = {ROOT / p for p in OUTPUTS}
-    if args.include_nsh and (ROOT / "clipy_nsh").is_dir():
-        for parent, dirs, _ in os.walk(ROOT / "clipy_nsh", followlinks=False):
-            for name in list(dirs):
-                if name in {".nsh", "target", "dist", "__pycache__"}:
-                    paths.add(Path(parent) / name)
-                    dirs.remove(name)
-        paths.update(ROOT / p for p in (
-            "clipy_nsh/host/macos/token/bundle",
-            "clipy_nsh/host/macos/token/tests/selection-regression",
-        ))
+    if args.include_nsh:
+        paths.add(ROOT / ".nsh")
+        for name in ("clipy_macos_nsh_experimental", "clipy_macos_nsh", "clipy_nsh"):
+            experiment = ROOT / name
+            if not experiment.is_dir():
+                continue
+            for parent, dirs, _ in os.walk(experiment, followlinks=False):
+                for directory in list(dirs):
+                    if directory in {".nsh", "target", "dist", "__pycache__", ".build", ".swiftpm"}:
+                        paths.add(Path(parent) / directory)
+                        dirs.remove(directory)
+            paths.update(experiment / path for path in (
+                "host/macos/token/bundle",
+                "host/macos/token/tests/selection-regression",
+            ))
     tracked = [p for p in subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0") if p]
     candidates = []
     for path in sorted(paths):

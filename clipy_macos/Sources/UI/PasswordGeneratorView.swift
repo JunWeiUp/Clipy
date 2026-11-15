@@ -359,7 +359,7 @@ struct ToolsUtilitiesView: View {
                 Text(L10n.t(.keepAwakeFailed)).font(.system(size: 12)).foregroundStyle(.red)
             }
             Rectangle().fill(PasswordV3Style.line).frame(height: 0.5)
-            Label(text("退出 Clipy 时自动关闭", "Turns off when Clipy quits"), systemImage: "info.circle")
+            Label(text("记住开关状态；仅在 Clipy 运行时生效", "Remembers state; active while Clipy runs"), systemImage: "info.circle")
                 .font(.system(size: 11.5)).foregroundStyle(PasswordV3Style.text3)
         }
         .padding(16)

@@ -118,6 +118,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             name: .appLanguageDidChange,
             object: nil
         )
+        KeepAwakeManager.shared.restoreSavedState()
         menuController = MenuController()
         MemoryFootprintReclaimer.registerIdleHandlers()
         LaunchAtLoginManager.syncWithPreference()

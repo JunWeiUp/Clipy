@@ -1,0 +1,73 @@
+{
+  "name": "Clipy TSX Preview",
+  "id": "dev.clipy.tsx.macos",
+  "version": "1.0.0",
+  "build": 1,
+  "window": {
+    "title": "Clipy",
+    "defaultSize": {
+      "width": 1140,
+      "height": 760
+    },
+    "minSize": {
+      "width": 900,
+      "height": 600
+    },
+    "closeOnPress": false
+  },
+  "macos": {
+    "activationPolicy": "accessory",
+    "infoPlist": {
+      "NSMicrophoneUsageDescription": "录屏时按需录制麦克风。",
+      "NSCameraUsageDescription": "录屏时按需显示摄像头。",
+      "NSScreenCaptureUsageDescription": "截图和录屏需要屏幕录制权限。"
+    }
+  },
+  "capabilities": {
+    "process": {
+      "execute": [
+        "clipy-native"
+      ],
+      "env": [
+        "CLIPY_NSH_HELPER"
+      ]
+    },
+    "fs": {
+      "read": [
+        "${dataDir}"
+      ],
+      "write": [
+        "${dataDir}"
+      ]
+    },
+    "clipboard": true,
+    "picker": true,
+    "speech": true,
+    "notifications": true,
+    "audio": true,
+    "statusBar": true,
+    "network": {
+      "hosts": [
+        "*"
+      ]
+    },
+    "windows": {
+      "kinds": [
+        "normal",
+        "dialog",
+        "panel",
+        "popup"
+      ],
+      "max": 12
+    },
+    "openUrl": {
+      "schemes": [
+        "https",
+        "http",
+        "mailto"
+      ]
+    }
+  },
+  "theme": "theme.json",
+  "icon": "assets/AppIcon.png"
+}

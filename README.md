@@ -9,7 +9,7 @@
 
 **[Download for macOS ↗](https://github.com/JunWeiUp/Clipy/releases/latest)** &nbsp;&nbsp; · &nbsp;&nbsp; **[Download for Android ↗](https://github.com/JunWeiUp/Clipy/releases/latest)** &nbsp;&nbsp; · &nbsp;&nbsp; **[Download for Windows ↗](https://github.com/JunWeiUp/Clipy/releases/latest)**
 
-<sub>Latest published release linked above · macOS 13+ / Apple Silicon · Windows 10/11 x64 · Android arm64 · <a href="docs/GETTING_STARTED.md#downloads">Installation guide</a></sub>
+<sub>Latest published release linked above · macOS 13+ / Apple Silicon · Windows 10/11 x64 · Android arm64 · <a href="docs/guides/GETTING_STARTED.md#downloads">Installation guide</a></sub>
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=1262f3)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
@@ -53,7 +53,7 @@ Organize reusable replies and code snippets in folders on Mac. Assign keyboard s
 </tr>
 </table>
 
-Experimental: optional phone control of the Mac lock screen (local document: `docs/SCREEN_CONTROL.md`), with local Keychain password configuration, direct actions for connected phones (no control key), and verified system Accessibility controls (no separate helper). Real locked-screen unlock acceptance is pending; this opt-in capability is not production-validated.
+Experimental: optional phone control of the Mac lock screen (local document: `docs/architecture/SCREEN_CONTROL.md`), with local Keychain password configuration, direct actions for connected phones (no control key), and verified system Accessibility controls (no separate helper). Real locked-screen unlock acceptance is pending; this opt-in capability is not production-validated.
 
 ## Platform support
 
@@ -120,20 +120,20 @@ Scroll continuously through Mac preferences, or jump to a category from the side
 
 ## Get started in three steps
 
-1. **Install Clipy.** Move the Mac app to Applications, extract the full Windows ZIP, or install the Android APK. Mac uses the menu bar; Windows stays in the system tray when its window closes. See the installation guide (local document: `docs/GETTING_STARTED.md`), including first launch on macOS (local document: `docs/MACOS_INSTALL.md`).
+1. **Install Clipy.** Move the Mac app to Applications, extract the full Windows ZIP, or install the Android APK. Mac uses the menu bar; Windows stays in the system tray when its window closes. See the installation guide (local document: `docs/guides/GETTING_STARTED.md`), including first launch on macOS (local document: `docs/guides/MACOS_INSTALL.md`).
 2. **Copy something worth keeping.** Keep Clipy open on Android for your first test. On Mac, press <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> to search your history.
-3. **Connect your devices.** Use the same trusted Wi-Fi, refresh the device list, then send directly or enable automatic outgoing sharing. Follow the connection steps (local document: `docs/GETTING_STARTED.md#connect-mac-and-android`).
+3. **Connect your devices.** Use the same trusted Wi-Fi, refresh the device list, then send directly or enable automatic outgoing sharing. Follow the connection steps (local document: `docs/guides/GETTING_STARTED.md#connect-mac-and-android`).
 
-**Installation & troubleshooting (local document: `docs/GETTING_STARTED.md`)** · **[Report a problem](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[Suggest a feature](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
+**Installation & troubleshooting (local document: `docs/guides/GETTING_STARTED.md`)** · **[Report a problem](https://github.com/JunWeiUp/Clipy/issues/new?template=bug_report.yml)** · **[Suggest a feature](https://github.com/JunWeiUp/Clipy/issues/new?template=feature_request.yml)**
 
 > **Before sharing:** sync is designed for trusted networks and uses a built-in default encryption key in current source. Read the [security boundaries](SECURITY.md). The macOS application includes a modified macshot screenshot module and is distributed under [GPLv3](LICENSE.GPL-3.0); see [provenance and source access](THIRD_PARTY_NOTICES.md).
 
 <details>
 <summary><b>Versions, downloads and source builds</b></summary>
 
-Current source version: **1.0.40** · Source build **12379** (Android arm64 `versionCode` **14379**) · Latest published release: **[v1.0.40](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.40)** · [Build metadata](clipy_flutter/pubspec.yaml)
+Current source version: **1.0.41** · Source build **12386** (Android arm64 `versionCode` **14386**) · Latest published release: **[v1.0.40](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.40)** · [Build metadata](clipy_flutter/pubspec.yaml)
 
-Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see sync version notes (local document: `docs/GETTING_STARTED.md#sync-version-notes`).
+Download installers from the [latest published release](https://github.com/JunWeiUp/Clipy/releases/latest); its notes identify the packaged version and build number. The Android redesign was released in v1.0.19. The source version may move ahead of published packages during future development. Release badges track published versions and exclude drafts. For differences from older versions, see sync version notes (local document: `docs/guides/GETTING_STARTED.md#sync-version-notes`).
 
 </details>
 
@@ -212,7 +212,7 @@ Download installers from the [latest published release](https://github.com/JunWe
 - Native title bars, readable light/dark content surfaces, consistent SF Symbols, spacing and controls.
 - Press <kbd>Esc</kbd> to close the focused window, including settings, search, word lookup, vocabulary, snippet and image/video editors, OCR results and pinned images. Existing save prompts still apply; input-method composition, shortcut recording and modal dialogs handle cancellation first.
 - **Control panel:** left-click the menu-bar icon for a compact native panel with search in its top row, visible hidden icons, Clipboard / Snippets / Devices / Tools tabs (refresh plus direct Send Text / Send File per device), and a notification page. Detail pages use a smaller Back/title layout; Tools groups four launchers: direct screenshot modes, Lookup / Vocabulary, and Password. Its hidden-icon strip matches the other tabs, and switching to Tools keeps the same panel size; Keep Awake and Notifications remain in the footer, and the Settings gear opens Settings in the main window. Notification banners are configured in Notifications, hidden-icon controls in Settings, and Quit in the application menu. Search runs asynchronously across history, snippets and tools; six recent copies appear initially. Click a history row to copy and paste supported text formats; the row’s Copy button keeps the panel open. Pin it to keep it visible when clicking outside. Right-clicking the menu-bar icon has no action.
-- **One main window:** History, Snippets, Devices, Notifications, Tools (Lookup, Word Book, Password, Keep Awake) and Settings share one window — switch with <kbd>⌥</kbd><kbd>⌘</kbd><kbd>1</kbd>–<kbd>6</kbd>; <kbd>⌘</kbd><kbd>,</kbd> opens Settings. Settings scroll continuously with a following sidebar, and settings that live in other modules (LAN & relay, notification sync, snippet folders, dictionary API) link there in place instead of opening new windows. See the macOS design standard (local document: `docs/MACOS_DESIGN.md`) for UI development guidance.
+- **One main window:** History, Snippets, Devices, Notifications, Tools (Lookup, Word Book, Password, Keep Awake) and Settings share one window — switch with <kbd>⌥</kbd><kbd>⌘</kbd><kbd>1</kbd>–<kbd>6</kbd>; <kbd>⌘</kbd><kbd>,</kbd> opens Settings. Settings scroll continuously with a following sidebar, and settings that live in other modules (LAN & relay, notification sync, snippet folders, dictionary API) link there in place instead of opening new windows. See the macOS design standard (local document: `docs/design/standards/MACOS_DESIGN.md`) for UI development guidance.
 
 ### ⌨️ Global hotkeys & 🌍 i18n
 - Hotkeys for search, word lookup, screenshots, and every snippet.
@@ -249,19 +249,19 @@ Output: `clipy_macos/ClipyClone.app` and `clipy_macos/ClipyClone.app.dSYM`. The 
 INSTALL_APP=1 LAUNCH_APP=1 ./build_macos_app.sh
 ```
 
-Local macOS builds are ad-hoc signed, not Developer ID signed or notarized. See build and signing options (local document: `docs/DEVELOPMENT.md#macos`).
+Local macOS builds are ad-hoc signed, not Developer ID signed or notarized. See build and signing options (local document: `docs/development/DEVELOPMENT.md#macos`).
 
 **Build on GitHub:** open [Actions → macOS Build](https://github.com/JunWeiUp/Clipy/actions/workflows/macos.yml) and choose **Run workflow** to build just the Mac app, with no signing secrets or Android setup. Pushes to `main`/`master` and pull requests affecting macOS run the same Mac job through CI; release checks still run every platform.
 
 After the Mac job succeeds, download its artifact from the run summary (GitHub sign-in required; retained for 30 days). It contains only the **Apple Silicon / macOS 13+** app ZIP; the run summary links to the installation guide and the packaging step prints its SHA-256 digest.
 
-These are ad-hoc signed development builds, not published releases. See the first-launch guide (local document: `docs/MACOS_INSTALL.md`) for **Privacy & Security → Open Anyway** and permissions after updates. After the release checklist is complete, version tags trigger a three-platform public release.
+These are ad-hoc signed development builds, not published releases. See the first-launch guide (local document: `docs/guides/MACOS_INSTALL.md`) for **Privacy & Security → Open Anyway** and permissions after updates. After the release checklist is complete, version tags trigger a three-platform public release.
 
 ### Android (Flutter)
 
 Requirements: Flutter **3.41.7** (see `.fvmrc`), JDK 17 and the Android SDK.
 
-Configure a persistent release keystore once on each build machine, using the ignored `clipy_flutter/android/key.properties` or the signing environment variables in the Android signing guide (local document: `docs/DEVELOPMENT.md#android`). Once configured, build with:
+Configure a persistent release keystore once on each build machine, using the ignored `clipy_flutter/android/key.properties` or the signing environment variables in the Android signing guide (local document: `docs/development/DEVELOPMENT.md#android`). Once configured, build with:
 
 ```bash
 ./build_android_apk.sh
@@ -291,15 +291,15 @@ cd clipy_flutter
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.40
+./scripts/package_windows.ps1 -Version 1.0.41
 ```
 
-The package is `dist/ClipyClone-Windows-x64-v1.0.40.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Version 1.0.33 fixes garbled Chinese tray, notification and screenshot-hint text, keeps transparency of 32-bit clipboard bitmaps, retries when another app briefly holds the clipboard, and rejects malformed bitmaps instead of reading past their data. Windows source and release ZIPs are unsigned; check the release page for public availability.
+The package is `dist/ClipyClone-Windows-x64-v1.0.41.zip`. Extract the full ZIP before starting `ClipyClone.exe`. Closing its window keeps clipboard history and LAN sync running in the system tray; choose Exit from the tray menu to quit. Text syncs automatically with authorized peers; copied images and files remain in local history, and file transfer is explicit. Version 1.0.24 includes a Screenshot menu in History for region, window, or display capture; each completed PNG is copied and saved in local history. Window capture uses Windows `PrintWindow`: a target may reject capture or return a blank frame, especially for protected or GPU-rendered content. Windows settings let you exclude clipboard-owner executable names; common password managers are excluded by default when the source process can be identified. Version 1.0.33 fixes garbled Chinese tray, notification and screenshot-hint text, keeps transparency of 32-bit clipboard bitmaps, retries when another app briefly holds the clipboard, and rejects malformed bitmaps instead of reading past their data. Windows source and release ZIPs are unsigned; check the release page for public availability.
 
 ### iOS (Flutter + Swift)
 
 For a signed local installation on a connected iPhone, follow the
-device build and installation guide (local document: `docs/DEVELOPMENT.md#install-on-a-connected-iphone`).
+device build and installation guide (local document: `docs/development/DEVELOPMENT.md#install-on-a-connected-iphone`).
 The iOS runner uses the scene lifecycle and shows platform-specific paste/sync guidance.
 
 The iOS 15+ target builds in CI without signing and is not offered as an IPA or TestFlight download. It shows local history, imports clipboard text from a user-tapped native Paste control, syncs while foregrounded, sends/receives files, and displays Android-mirrored notifications. Background execution and access to other apps' notifications are restricted by iOS. A signed device build and real-device permission/sync check are required before public distribution.
@@ -352,28 +352,32 @@ Clipy uses a LAN-first protocol v3 for clipboard history and notifications:
 - **Reliability** — history frames require `ack` after persist; bounded offline queue + endpoint cache for reconnect.
 - **Loop prevention** — content hashes prevent rebroadcast loops.
 
-Full wire notes, headless Android channel rules, and code map: `docs/PROTOCOL.md`.
+Full wire notes, headless Android channel rules, and code map: `docs/architecture/PROTOCOL.md`.
 
-Current source also supports an opt-in self-hosted Internet relay (local document: `docs/COMMON-RELAY-SDK.md`): LAN first, authenticated WSS fallback for text, notifications and files. Enroll each relay device with its own identity and verified peer public keys; LAN sending remains pairing-free. The native iOS Share Extension remains LAN-only. Available in v1.0.32; a compatible common-relay server is required.
+Current source also supports an opt-in self-hosted Internet relay (local document: `docs/architecture/COMMON-RELAY-SDK.md`): LAN first, authenticated WSS fallback for text, notifications and files. Enroll each relay device with its own identity and verified peer public keys; LAN sending remains pairing-free. The native iOS Share Extension remains LAN-only. Available in v1.0.32; a compatible common-relay server is required.
+
+Version 1.0.41 persists Mac Keep Awake across restarts and reinstalls while still releasing the power assertion on quit, moves Mac screenshot previews to `IOSurface` and upgrades Common Relay to `v0.1.6` (`NWConnection`) to eliminate WebSocket/CoreAnimation buffer leaks, and remembers the menu-bar icon position while scrolling uncategorized Settings jumps back to the top.
 
 Version 1.0.40 cuts the Mac app's resident memory: freed screenshot buffers return to the system immediately, closed windows release their interface, and windows draw at 24-bit color — the main window drops from about 260 MB to 85 MB and memory no longer grows with each screenshot.
 
 Version 1.0.39 merges every Mac management window — including Settings and Tools — into one main window with in-place cross-links, and model translation now detects the Chinese ↔ English direction automatically.
 
-Version 1.0.38 adds a **server access password**, separate from the device key. New QR invitations and encrypted short links include it; scanning or pasting an invitation securely saves it for that relay address before joining. Creating a group or connecting manually still requires configuring the password first; legacy invitations without one require it to be entered if not already saved. Sharing a full invitation grants access, so share it only with trusted devices. Authentication failures preserve the device identity and LAN configuration. Source uses Common Relay v0.1.5; see dependency details (local document: `docs/COMMON-RELAY-SDK.md`).
+Version 1.0.38 adds a **server access password**, separate from the device key. New QR invitations and encrypted short links include it; scanning or pasting an invitation securely saves it for that relay address before joining. Creating a group or connecting manually still requires configuring the password first; legacy invitations without one require it to be entered if not already saved. Sharing a full invitation grants access, so share it only with trusted devices. Authentication failures preserve the device identity and LAN configuration. Source uses Common Relay v0.1.5; see dependency details (local document: `docs/architecture/COMMON-RELAY-SDK.md`).
 
 ## 📁 Project structure
 
-Documentation and design assets under `docs/` are maintained locally and excluded from Git. The local design entrypoint is `docs/design/design-v3/index.html`.
+The maintained macOS client remains the Swift/AppKit implementation in `clipy_macos/`. The NSH/TSX prototype is paused and clearly marked experimental; it is excluded from default builds and releases.
+
+Documentation and design assets under `docs/` are maintained locally and excluded from Git. The local design entrypoint is `docs/design/index.html`.
 
 Android requires **Android 8.0 (API 26)** or newer.
 
-The Flutter project was renamed from `clipy_android` to `clipy_flutter`; installed app identities and user data remain compatible. See the directory and dependency guide (local document: `docs/REPOSITORY_LAYOUT.md`).
+The Flutter project was renamed from `clipy_android` to `clipy_flutter`; installed app identities and user data remain compatible. See the directory and dependency guide (local document: `docs/architecture/REPOSITORY_LAYOUT.md`).
 
 ```
 clipy_macos/Sources/      # macOS Swift/AppKit source
 clipy_flutter/lib/        # Android, Windows & iOS Flutter/Dart source
-clipy_nsh/                # Paused experiment (kept, not released)
+clipy_macos_nsh_experimental/ # Experimental only; paused, excluded from production builds
 packages/relay-swift/     # macOS Swift dependency manifest and lockfile
 scripts/                  # Build, checks, icon and test tools
 docs/                     # Architecture, development and feature guides
@@ -388,7 +392,7 @@ assets/                   # Logo & app icons
 
 ## 🤝 Contributing
 
-Issues and pull requests are welcome in English or Chinese. See [CONTRIBUTING.md](CONTRIBUTING.md), the architecture map (local document: `docs/ARCHITECTURE.md`) and the change guide (local document: `docs/AI_CHANGE_GUIDE.md`). To contribute code:
+Issues and pull requests are welcome in English or Chinese. See [CONTRIBUTING.md](CONTRIBUTING.md), the architecture map (local document: `docs/architecture/ARCHITECTURE.md`) and the change guide (local document: `docs/development/AI_CHANGE_GUIDE.md`). To contribute code:
 
 1. Fork the repo and create a feature branch.
 2. Run `bash scripts/check.sh all` and build the affected native platform.
@@ -396,7 +400,7 @@ Issues and pull requests are welcome in English or Chinese. See [CONTRIBUTING.md
 
 ## 📦 Releasing
 
-After completing the release checklist (local document: `docs/DEVELOPMENT.md#release-checklist`), configuring signing and updating `clipy_flutter/pubspec.yaml` and both README files, commit the changes. Push a **new, unused** version tag matching the source version to run CI and publish the release automatically when all jobs pass:
+After completing the release checklist (local document: `docs/development/DEVELOPMENT.md#release-checklist`), configuring signing and updating `clipy_flutter/pubspec.yaml` and both README files, commit the changes. Push a **new, unused** version tag matching the source version to run CI and publish the release automatically when all jobs pass:
 
 ```bash
 VERSION="$(awk '/^version:/ {split($2, v, "+"); print v[1]; exit}' clipy_flutter/pubspec.yaml)"
@@ -408,7 +412,7 @@ The `Release` workflow can also be triggered manually with the matching `X.Y.Z` 
 
 The workflow publishes a normal, latest release with exactly three uploaded packages: macOS ZIP, Android arm64 APK and Windows x64 ZIP. SHA-256 digests appear on GitHub beside each package; no separate checksum, symbols, license or notice file is uploaded. The macOS app bundles MIT and GPLv3 texts and third-party notices; the Windows ZIP bundles its applicable MIT text and notices. GitHub also generates source-code archives separately from uploaded packages. After publication, check the asset links and update published-version text in both README files and both getting-started guides. See [GitHub's release instructions](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository).
 
-Use the release notes template (local document: `docs/RELEASE_NOTES_TEMPLATE.md`) to explain user-visible changes, upgrade steps, and the platforms included in each release.
+Use the release notes template (local document: `docs/development/RELEASE_NOTES_TEMPLATE.md`) to explain user-visible changes, upgrade steps, and the platforms included in each release.
 
 ## 📄 License
 
@@ -426,9 +430,9 @@ If Clipy saves you time, consider giving it a ⭐ — it really helps others dis
 
 </div>
 
-Common Relay SDK upgrade / 通用中继 SDK 升级 (local document: `docs/COMMON-RELAY-SDK.md`)
+Common Relay SDK upgrade / 通用中继 SDK 升级 (local document: `docs/architecture/COMMON-RELAY-SDK.md`)
 
-Version 1.0.32: relay settings include **Manage relay device group** for listing online/offline members, inviting devices by QR/link, approving joins and removing members. Management requires a compatible common-relay server; new groups require self-service creation to be enabled. See relay SDK and device groups (local document: `docs/COMMON-RELAY-SDK.md`). Existing legacy groups can activate management through a trusted administrator invitation.
+Version 1.0.32: relay settings include **Manage relay device group** for listing online/offline members, inviting devices by QR/link, approving joins and removing members. Management requires a compatible common-relay server; new groups require self-service creation to be enabled. See relay SDK and device groups (local document: `docs/architecture/COMMON-RELAY-SDK.md`). Existing legacy groups can activate management through a trusted administrator invitation.
 
 
 Relay device groups support creating a new group directly or joining by QR invitation. Creators can invite, view and remove devices. Invitations, pairing approval and member lists have separate sections. Existing legacy groups retain their configuration and can upgrade management trust through a manager invitation.
@@ -441,7 +445,7 @@ Network changes and device refresh now probe stale connections within three seco
 
 ### UI alignment in source
 
-The interface follows platform-specific design standards: macOS (local document: `docs/MACOS_DESIGN.md`), Android (local document: `docs/ANDROID_DESIGN.md`), Cupertino presentation on iOS, and Fluent-style controls on Windows. Design HTML and machine-specific acceptance evidence are maintained locally and are not included in source distributions.
+The interface follows platform-specific design standards: macOS (local document: `docs/design/standards/MACOS_DESIGN.md`), Android (local document: `docs/design/standards/ANDROID_DESIGN.md`), Cupertino presentation on iOS, and Fluent-style controls on Windows. Design HTML and machine-specific acceptance evidence are maintained locally and are not included in source distributions.
 
 macOS appearance can be changed immediately in **Settings → General → Appearance** (System, Light, Dark); the choice is remembered after restart.
 

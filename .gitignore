@@ -73,3 +73,6 @@ clipy_flutter/ios/Signing.local.xcconfig
 # Swift Package Manager local build cache
 .build/
 .swiftpm/
+
+# NSH generated declarations, bytecode and host outputs
+.nsh/
