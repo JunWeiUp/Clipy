@@ -16,7 +16,7 @@ struct SyncRelaySettingsView: View {
     @State private var showEnrollment = false
     private var zh: Bool { PreferencesManager.shared.appLanguage == .zh }
     var body: some View {
-        SettingsSubheader(zh ? "公网中继" : "Internet relay")
+        SettingsSubheader(zh ? "中继连接" : "Relay connection")
         SettingsCard {
             SettingsRow(icon: SettingsRowIcon(symbol: "globe", tint: .blue), title: zh ? "公网设备组" : "Relay device group") {
                 Button(zh ? "管理公网设备组…" : "Manage relay device group…") { if let openGroup { openGroup() } else { showGroup = true } }

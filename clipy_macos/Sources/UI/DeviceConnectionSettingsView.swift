@@ -33,7 +33,6 @@ struct DeviceConnectionSettingsView: View {
     private var title: String {
         switch page {
         case .screenControl: return settingsText("手机控制 Mac", "Control this Mac")
-        case .relaySettings: return settingsText("中继连接", "Relay connection")
         default: return settingsText("局域网设置", "LAN settings")
         }
     }
@@ -42,13 +41,6 @@ struct DeviceConnectionSettingsView: View {
         VStack(spacing: 0) {
             SplitV3Toolbar {
                 Text(title).font(.system(size: 15, weight: .semibold))
-                if page != .screenControl {
-                    Picker("", selection: $page) {
-                        Text(settingsText("局域网", "LAN")).tag(DevicesPage.lan)
-                        Text(settingsText("中继连接", "Relay")).tag(DevicesPage.relaySettings)
-                    }.pickerStyle(.segmented).frame(width: 190).padding(.leading, 12)
-                        .accessibilityLabel(settingsText("连接类型", "Connection type"))
-                }
                 Spacer()
                 Text(settingsText("本机配置", "This Mac")).font(.system(size: 11.5)).foregroundStyle(SplitV3Color.text3)
             }
@@ -56,10 +48,6 @@ struct DeviceConnectionSettingsView: View {
                 if page == .screenControl {
                     VStack(alignment: .leading, spacing: 12) { ScreenControlSettingsView() }
                         .padding(28).frame(maxWidth: 800).frame(maxWidth: .infinity)
-                } else if page == .relaySettings {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SyncRelaySettingsView(openGroup: { page = .relay })
-                    }.padding(28).frame(maxWidth: 800).frame(maxWidth: .infinity)
                 } else {
                     lanContent.padding(28)
                 }

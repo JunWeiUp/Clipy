@@ -281,8 +281,8 @@ struct MenuBarPanelView: View {
         VStack(spacing: 0) {
             ForEach(model.visibleTools, id: \.rawValue) { tool in
                 toolRow(tool.title, detail: tool.hint, symbol: tool.symbol,
-                        status: tool == .keepAwake ? L10n.t(keepAwake.isActive ? .keepAwakeOn : .keepAwakeOff) : nil,
-                        active: tool == .keepAwake && keepAwake.isActive) { model.useTool(tool) }
+                        status: tool == .keepAwake ? KeepAwakeFormat.status(keepAwake) : nil,
+                        active: tool == .keepAwake && keepAwake.isEnabled) { model.useTool(tool) }
                     .id("t:" + tool.rawValue)
                     .background(model.selectedID == "t:" + tool.rawValue ? AppColor.accent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 8))
                     .onHover { if $0 { model.selectedID = "t:" + tool.rawValue } }
@@ -373,23 +373,74 @@ struct MenuBarPanelView: View {
             actionLink(.panelAllNotifications) { model.onAction?(.notifications) }
         }
     }
+    /// 保持唤醒胶囊：点按=按上次时长开关；⌄=时长/模式快捷菜单。剩余时间 15s 刷新，仅面板可见时存在。
+    private var keepAwakeControl: some View {
+        let on = keepAwake.isEnabled
+        return TimelineView(.periodic(from: .now, by: 15)) { _ in
+            HStack(spacing: 0) {
+                Button { model.useTool(.keepAwake) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: !on ? "moon.zzz" : keepAwake.isPausedOnBattery ? "pause.circle" : "sun.max.fill")
+                        Text(L10n.t(.keepAwakeTitle))
+                        Text(KeepAwakeFormat.status(keepAwake))
+                            .font(AppFont.caption.monospacedDigit()).foregroundStyle(on ? AppColor.accent : .secondary)
+                    }.font(AppFont.secondary).lineLimit(1).padding(.leading, 8).padding(.trailing, 4)
+                        .frame(height: 32).contentShape(Rectangle())
+                }.buttonStyle(.plain).help(L10n.t(.keepAwakeHint))
+                    .accessibilityLabel(L10n.t(.keepAwakeTitle))
+                    .accessibilityValue(KeepAwakeFormat.status(keepAwake))
+                    .accessibilityAddTraits(on ? [.isSelected] : [])
+                Menu {
+                    keepAwakeMenuItems
+                } label: {
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .tint(on ? AppColor.accent : Color.secondary)
+                .frame(width: 20, height: 32)
+                .accessibilityLabel(KeepAwakeFormat.t("保持唤醒时长与模式", "Keep Awake duration and mode"))
+            }
+            .foregroundStyle(on ? AppColor.accent : Color.primary)
+            .background(on ? AppColor.accent.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 7))
+        }
+    }
+
+    @ViewBuilder private var keepAwakeMenuItems: some View {
+        let t = KeepAwakeFormat.t
+        Button(keepAwake.isEnabled ? t("关闭保持唤醒", "Turn Off Keep Awake") : t("开启保持唤醒", "Turn On Keep Awake")) {
+            model.useTool(.keepAwake)
+        }
+        Divider()
+        Section(t("时长", "Duration")) {
+            ForEach(KeepAwakeSettings.durationPresets, id: \.self) { minutes in
+                Button {
+                    if !keepAwake.start(minutes: minutes) { model.notice = L10n.t(.keepAwakeFailed) }
+                } label: {
+                    if keepAwake.activePresetMinutes == minutes {
+                        Label(KeepAwakeFormat.duration(minutes: minutes), systemImage: "checkmark")
+                    } else {
+                        Text(KeepAwakeFormat.duration(minutes: minutes))
+                    }
+                }
+            }
+            if keepAwake.endDate != nil {
+                Button(t("延长 1 小时", "Extend 1 Hour")) { keepAwake.extend(by: 3600) }
+            }
+        }
+        Divider()
+        Section(t("模式", "Mode")) {
+            Picker(t("模式", "Mode"), selection: Binding(get: { keepAwake.settings.mode }, set: { keepAwake.setMode($0) })) {
+                Text(t("保持系统唤醒（可灭屏锁屏）", "Keep System Awake (display can sleep)")).tag(KeepAwakeMode.system)
+                Text(t("屏幕保持常亮", "Keep Display On")).tag(KeepAwakeMode.display)
+            }.pickerStyle(.inline).labelsHidden()
+        }
+        Divider()
+        Button(t("更多设置…", "More Settings…")) { model.onAction?(.keepAwakeSettings) }
+    }
+
     private var footer: some View {
         HStack(spacing: 10) {
-            Button { model.useTool(.keepAwake) } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: keepAwake.isActive ? "sun.max.fill" : "moon.zzz")
-                    Text(L10n.t(.keepAwakeTitle))
-                    Text(L10n.t(keepAwake.isActive ? .keepAwakeOn : .keepAwakeOff))
-                        .font(AppFont.caption).foregroundStyle(.secondary)
-                }.font(AppFont.secondary).lineLimit(1).padding(.horizontal, 8)
-                    .frame(height: 32).contentShape(Rectangle())
-                    .foregroundStyle(keepAwake.isActive ? AppColor.accent : Color.primary)
-                    .background(keepAwake.isActive ? AppColor.accent.opacity(0.10) : .clear,
-                                in: RoundedRectangle(cornerRadius: 7))
-            }.buttonStyle(.plain).help(L10n.t(.keepAwakeHint))
-                .accessibilityLabel(L10n.t(.keepAwakeTitle))
-                .accessibilityValue(L10n.t(keepAwake.isActive ? .keepAwakeOn : .keepAwakeOff))
-                .accessibilityAddTraits(keepAwake.isActive ? [.isSelected] : [])
+            keepAwakeControl
             Divider().frame(height: 17)
             Button { model.navigate(.notifications) } label: {
                 HStack(spacing: 6) {

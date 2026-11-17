@@ -20,8 +20,8 @@ enum WordGlobalHotKeyManager {
     }
 }
 
-/// 工具模块的页面：单词查询 / 单词表 / 生成密码与保持唤醒。
-enum WordWorkspacePage: Equatable { case lookup, book, utilities }
+/// 工具模块的页面：单词查询 / 单词表 / 生成密码 / 保持唤醒。
+enum WordWorkspacePage: Equatable { case lookup, book, utilities, keepAwake }
 
 final class WordWorkspaceNavigation: ObservableObject {
     @Published var page: WordWorkspacePage = .lookup
@@ -92,6 +92,8 @@ struct WordWorkspaceView: View {
                     WordLookupView(viewModel: model)
                 case .utilities:
                     ToolsUtilitiesView(passwordModel: passwordModel ?? PasswordViewModel())
+                case .keepAwake:
+                    KeepAwakeView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -124,9 +126,11 @@ struct WordWorkspaceView: View {
             navigationRow(L10n.t(.generatePassword), symbol: "key", selected: navigation.page == .utilities) {
                 navigation.page = .utilities
             }
-            navigationRow(L10n.t(.keepAwakeTitle), symbol: keepAwake.isActive ? "sun.max" : "moon",
-                          selected: false, trailing: L10n.t(keepAwake.isActive ? .keepAwakeOn : .keepAwakeOff)) {
-                navigation.page = .utilities
+            TimelineView(.periodic(from: .now, by: 30)) { _ in
+                navigationRow(L10n.t(.keepAwakeTitle), symbol: keepAwake.isEnabled ? "sun.max" : "moon",
+                              selected: navigation.page == .keepAwake, trailing: KeepAwakeFormat.status(keepAwake)) {
+                    navigation.page = .keepAwake
+                }
             }
             navigationRow(t("截图与录屏", "Screenshot & recording"), symbol: "camera", selected: false) {
                 ScreenshotSessionCoordinator.shared.startCapture(mode: .region, fromMenu: true)

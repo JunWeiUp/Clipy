@@ -155,6 +155,9 @@ class MenuController: NSObject {
             } else {
                 controlPanelStorage?.model.notice = nil
             }
+        case .keepAwakeSettings:
+            NSApp.activate(ignoringOtherApps: true)
+            MainWindow.shared.showTools(.keepAwake)
         case .region: startScreenshotRegion()
         case .window: startScreenshotWindow()
         case .fullscreen: startScreenshotFullscreen()

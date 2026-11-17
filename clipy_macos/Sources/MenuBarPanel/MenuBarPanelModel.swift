@@ -15,7 +15,7 @@ final class MenuBarPanelModel: ObservableObject {
         }
     }
     enum Page { case home, capture, notifications }
-    enum Action { case search(String), snippets, preferences, syncSettings, notifications, word, wordBook, password, toggleKeepAwake
+    enum Action { case search(String), snippets, preferences, syncSettings, notifications, word, wordBook, password, toggleKeepAwake, keepAwakeSettings
         case region, window, fullscreen, screenshotSettings, permission
         case sendText(String), sendFile(String)
     }

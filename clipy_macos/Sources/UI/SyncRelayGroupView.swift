@@ -21,11 +21,13 @@ struct SyncRelayGroupView: View {
     private let openSettings: (() -> Void)?
     private let embedded: Bool
     private let isFixture: Bool
+    private let showToolbar: Bool
     private struct GroupExit: Identifiable { let disband: Bool;var id: Bool { disband } }
     private struct GroupRemoval: Identifiable { let id: String;let name: String }
 
-    init(embedded: Bool = false, fixture: SyncRelayGroups? = nil, openSettings: (() -> Void)? = nil) {
+    init(embedded: Bool = false, fixture: SyncRelayGroups? = nil, openSettings: (() -> Void)? = nil, showToolbar: Bool = true) {
         self.openSettings = openSettings
+        self.showToolbar = showToolbar
         self.embedded = embedded
         self.isFixture = fixture != nil
         _model = StateObject(wrappedValue: fixture ?? SyncRelayGroups())
@@ -33,7 +35,10 @@ struct SyncRelayGroupView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
+            if showToolbar { toolbar } else {
+                HStack(spacing: 8) { Spacer(minLength: 8); toolbarActions }
+                    .padding(.horizontal, 22).padding(.top, 12)
+            }
             HStack(spacing: 0) {
                 ScrollView { leftColumn.padding(.horizontal, 22).padding(.vertical, 18) }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -90,19 +95,25 @@ struct SyncRelayGroupView: View {
             Text(model.t("在不同网络之间连接你的设备","Connect your devices across networks"))
                 .font(.system(size: 11.5)).foregroundStyle(SplitV3Color.text3).lineLimit(1)
             Spacer(minLength: 8)
-            if model.busy { ProgressView().controlSize(.small) }
-            if isFresh {
-                Button { creating = false } label: { Label(model.t("加入已有组","Join group"), systemImage: "link") }
-                    .buttonStyle(DevicesSmallButtonStyle())
-                Button { creating = true } label: { Label(model.t("创建新组","Create group"), systemImage: "plus") }
-                    .buttonStyle(DevicesSmallButtonStyle(primary: true))
-            }
-            Button { model.perform { try await model.refresh() } } label: { Label(model.t("刷新","Refresh"), systemImage: "arrow.clockwise") }
-                .buttonStyle(DevicesSmallButtonStyle())
+            toolbarActions
             if !embedded {
                 Button(model.t("完成","Done")) { dismiss() }.buttonStyle(DevicesSmallButtonStyle()).keyboardShortcut(.cancelAction)
             }
         }
+    }
+
+    /// Shared by the standalone toolbar and the compact bar used when the
+    /// unified relay settings page owns the toolbar.
+    @ViewBuilder private var toolbarActions: some View {
+        if model.busy { ProgressView().controlSize(.small) }
+        if isFresh {
+            Button { creating = false } label: { Label(model.t("加入已有组","Join group"), systemImage: "link") }
+                .buttonStyle(DevicesSmallButtonStyle())
+            Button { creating = true } label: { Label(model.t("创建新组","Create group"), systemImage: "plus") }
+                .buttonStyle(DevicesSmallButtonStyle(primary: true))
+        }
+        Button { model.perform { try await model.refresh() } } label: { Label(model.t("刷新","Refresh"), systemImage: "arrow.clockwise") }
+            .buttonStyle(DevicesSmallButtonStyle())
     }
 
     // MARK: Left column

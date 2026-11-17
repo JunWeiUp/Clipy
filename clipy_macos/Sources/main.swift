@@ -118,7 +118,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             name: .appLanguageDidChange,
             object: nil
         )
-        KeepAwakeManager.shared.restoreSavedState()
+        if !KeepAwakeManager.shared.restoreSavedState() { appLog("Keep Awake: could not restore saved session at launch", level: .warning) }
         menuController = MenuController()
         MemoryFootprintReclaimer.registerIdleHandlers()
         LaunchAtLoginManager.syncWithPreference()
@@ -135,7 +135,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        KeepAwakeManager.shared.stop()
+        KeepAwakeManager.shared.releaseForTermination()
     }
 
     private func setupMainMenu() {

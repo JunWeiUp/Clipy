@@ -30,6 +30,7 @@ class _RelaySettingsState extends State<RelaySettings> {
   bool _showPassword = false;
   final _enrollment = TextEditingController();
   bool _enabled = false, _loaded = false, _saving = false, _configured = false;
+  bool _groupTab = false;
   String? _error;
   bool get zh => AppLanguageController.instance.language == AppLanguage.zh;
   String t(String cn, String en) => zh ? cn : en;
@@ -174,7 +175,7 @@ class _RelaySettingsState extends State<RelaySettings> {
 
   @override
   Widget build(BuildContext context) => ClipySection(
-    title: t('公网中继', 'Internet relay'),
+    title: t('中继设置', 'Relay settings'),
     subtitle: t(
       '设备 ID 和公网 Key 分开保存；局域网无需配置中继。',
       'Keep device ID and Internet Key separate. LAN needs no relay setup.',
@@ -184,179 +185,230 @@ class _RelaySettingsState extends State<RelaySettings> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (widget.showGroupManagement)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.devices),
-              title: Text(t('管理公网设备组', 'Manage relay device group')),
-              subtitle: Text(
-                t('查看设备、添加设备或扫码加入', 'View devices, invite or scan to join'),
-              ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () async {
-                await Navigator.of(context).push(
-                  Platform.isIOS
-                      ? CupertinoPageRoute<void>(
-                          builder: (_) => const RelayGroupPage(),
-                        )
-                      : MaterialPageRoute<void>(
-                          builder: (_) => const RelayGroupPage(),
-                        ),
-                );
-                if (mounted) {
-                  await _load();
-                  widget.onSettingsChanged?.call();
-                }
-              },
-            ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(t('启用公网中继', 'Enable Internet relay')),
-            value: _enabled,
-            onChanged: !_loaded || _saving
-                ? null
-                : (value) => setState(() => _enabled = value),
-          ),
-          TextField(
-            key: const PageStorageKey('relay-url'),
-            controller: _url,
-            onChanged: (_) {
-              // Never carry a displayed credential to another server draft.
-              setState(() {
-                _password.clear();
-                _showPassword = false;
-              });
-            },
-            enabled: _loaded && !_saving,
-            autocorrect: false,
-            textDirection: TextDirection.ltr,
-            maxLines: null,
-            keyboardType: TextInputType.url,
-            textInputAction: TextInputAction.next,
-            inputFormatters: [FilteringTextInputFormatter.singleLineFormatter],
-            decoration: InputDecoration(labelText: t('中继地址', 'Relay URL')),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            key: const PageStorageKey('relay-access-password'),
-            controller: _password,
-            enabled: _loaded && !_saving,
-            obscureText: !_showPassword,
-            autocorrect: false,
-            enableSuggestions: false,
-            textDirection: TextDirection.ltr,
-            decoration: InputDecoration(
-              labelText: t('访问密码', 'Access password'),
-              helperMaxLines: 8,
-              helperText: t(
-                '仅保存在本机安全存储，不包含在邀请中。8–128 位可见 ASCII 字符，不含空格；关闭中继后可留空清除。启用前须填写；修改地址后请重新填写。',
-                'Stored securely on this device, never in invitations. 8–128 printable ASCII characters, no spaces. Clear while relay is disabled. Required before enabling; re-enter after changing URL.',
-              ),
-              suffixIcon: IconButton(
-                tooltip: _showPassword
-                    ? t('隐藏密码', 'Hide password')
-                    : t('显示密码', 'Show password'),
-                onPressed: _loaded && !_saving
-                    ? () => setState(() => _showPassword = !_showPassword)
-                    : null,
-                icon: Icon(
-                  _showPassword ? Icons.visibility_off : Icons.visibility,
+          if (widget.showGroupManagement) ...[
+            SegmentedButton<bool>(
+              segments: [
+                ButtonSegment(
+                  value: true,
+                  label: Text(t('公网设备组', 'Relay device group')),
                 ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            key: const PageStorageKey('relay-device-id'),
-            controller: _device,
-            enabled: _loaded && !_saving,
-            autocorrect: false,
-            enableSuggestions: false,
-            maxLength: 80,
-            maxLines: null,
-            keyboardType: TextInputType.text,
-            textInputAction: TextInputAction.next,
-            textDirection: TextDirection.ltr,
-            style: Theme.of(context).textTheme.bodyMedium,
-            inputFormatters: [FilteringTextInputFormatter.singleLineFormatter],
-            decoration: InputDecoration(
-              labelText: t('设备 ID', 'Device ID'),
-              counterText: '',
-              helperMaxLines: 6,
-              helperText: t(
-                '填写服务端登记的 ID；更换 Key 时无需修改。',
-                'Use the registered ID. Keep it when replacing the key.',
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            key: const PageStorageKey('relay-access-key'),
-            controller: _key,
-            enabled: _loaded && !_saving,
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            decoration: InputDecoration(
-              labelText: t('公网 Key', 'Internet Key'),
-              helperMaxLines: 6,
-              helperText: _configured
-                  ? t('已保存，留空保持不变', 'Saved; leave blank to keep')
+                ButtonSegment(
+                  value: false,
+                  label: Text(t('中继连接', 'Relay connection')),
+                ),
+              ],
+              selected: {_groupTab},
+              onSelectionChanged: _loaded && !_saving
+                  ? (value) => setState(() => _groupTab = value.first)
                   : null,
             ),
-          ),
-          // ExpansionTile stores a bool in PageStorage. Each field needs a
-          // distinct key so its internal scroll offset cannot read that bool
-          // (or the Devices list offset) when the section is expanded.
-          ExpansionTile(
-            key: const PageStorageKey('relay-enrollment-section'),
-            shape: const Border(),
-            collapsedShape: const Border(),
-            childrenPadding: const EdgeInsets.only(top: 4, bottom: 12),
-            tilePadding: EdgeInsets.zero,
-            title: Text(t('首次接入 / 更新信任配置', 'Enrollment / trusted peers')),
-            children: [
-              TextButton.icon(
-                onPressed: _loaded && !_saving ? _copyEnrollment : null,
-                icon: const Icon(Icons.key),
-                label: Text(t('复制本机公钥登记信息', 'Copy device enrollment info')),
+            const SizedBox(height: 12),
+            if (_groupTab)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.devices),
+                title: Text(t('公网设备组', 'Relay device group')),
+                subtitle: Text(
+                  t('查看设备、添加设备或扫码加入', 'View devices, invite or scan to join'),
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () async {
+                  await Navigator.of(context).push(
+                    Platform.isIOS
+                        ? CupertinoPageRoute<void>(
+                            builder: (_) => const RelayGroupPage(),
+                          )
+                        : MaterialPageRoute<void>(
+                            builder: (_) => const RelayGroupPage(),
+                          ),
+                  );
+                  if (mounted) {
+                    await _load();
+                    widget.onSettingsChanged?.call();
+                  }
+                },
               ),
-              TextField(
-                key: const PageStorageKey('relay-enrollment-input'),
-                controller: _enrollment,
-                enabled: _loaded && !_saving,
-                obscureText: true,
-                autocorrect: false,
-                enableSuggestions: false,
-                decoration: InputDecoration(
-                  labelText: t('本设备接入配置 JSON', 'Device enrollment JSON'),
-                  helperMaxLines: 6,
-                  helperText: t(
-                    '首次接入时导入；仅换 Key 无需重复填写。',
-                    'Import once. Not needed when only replacing the key.',
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(
+                    const ClipboardData(
+                      text: 'https://github.com/JunWeiUp/common-relay',
+                    ),
+                  );
+                  if (!context.mounted) return;
+                  showClipyMessage(
+                    context,
+                    t('中继公开项目链接已复制', 'Relay project link copied'),
+                  );
+                },
+                icon: const Icon(Icons.copy_rounded, size: 16),
+                label: Text(
+                  t(
+                    '复制中继公开项目链接（含部署文档）',
+                    'Copy relay project link (with deployment docs)',
                   ),
                 ),
               ),
-            ],
-          ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+            ),
+          ],
+          if (!_groupTab) ...[
+            // Connection form: endpoint, credentials and enrollment.
+            if (widget.showGroupManagement) const SizedBox.shrink(),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(t('启用公网中继', 'Enable Internet relay')),
+              value: _enabled,
+              onChanged: !_loaded || _saving
+                  ? null
+                  : (value) => setState(() => _enabled = value),
+            ),
+            TextField(
+              key: const PageStorageKey('relay-url'),
+              controller: _url,
+              onChanged: (_) {
+                // Never carry a displayed credential to another server draft.
+                setState(() {
+                  _password.clear();
+                  _showPassword = false;
+                });
+              },
+              enabled: _loaded && !_saving,
+              autocorrect: false,
+              textDirection: TextDirection.ltr,
+              maxLines: null,
+              keyboardType: TextInputType.url,
+              textInputAction: TextInputAction.next,
+              inputFormatters: [
+                FilteringTextInputFormatter.singleLineFormatter,
+              ],
+              decoration: InputDecoration(labelText: t('中继地址', 'Relay URL')),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const PageStorageKey('relay-access-password'),
+              controller: _password,
+              enabled: _loaded && !_saving,
+              obscureText: !_showPassword,
+              autocorrect: false,
+              enableSuggestions: false,
+              textDirection: TextDirection.ltr,
+              decoration: InputDecoration(
+                labelText: t('访问密码', 'Access password'),
+                helperMaxLines: 8,
+                helperText: t(
+                  '仅保存在本机安全存储，不包含在邀请中。8–128 位可见 ASCII 字符，不含空格；关闭中继后可留空清除。启用前须填写；修改地址后请重新填写。',
+                  'Stored securely on this device, never in invitations. 8–128 printable ASCII characters, no spaces. Clear while relay is disabled. Required before enabling; re-enter after changing URL.',
+                ),
+                suffixIcon: IconButton(
+                  tooltip: _showPassword
+                      ? t('隐藏密码', 'Hide password')
+                      : t('显示密码', 'Show password'),
+                  onPressed: _loaded && !_saving
+                      ? () => setState(() => _showPassword = !_showPassword)
+                      : null,
+                  icon: Icon(
+                    _showPassword ? Icons.visibility_off : Icons.visibility,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const PageStorageKey('relay-device-id'),
+              controller: _device,
+              enabled: _loaded && !_saving,
+              autocorrect: false,
+              enableSuggestions: false,
+              maxLength: 80,
+              maxLines: null,
+              keyboardType: TextInputType.text,
+              textInputAction: TextInputAction.next,
+              textDirection: TextDirection.ltr,
+              style: Theme.of(context).textTheme.bodyMedium,
+              inputFormatters: [
+                FilteringTextInputFormatter.singleLineFormatter,
+              ],
+              decoration: InputDecoration(
+                labelText: t('设备 ID', 'Device ID'),
+                counterText: '',
+                helperMaxLines: 6,
+                helperText: t(
+                  '填写服务端登记的 ID；更换 Key 时无需修改。',
+                  'Use the registered ID. Keep it when replacing the key.',
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const PageStorageKey('relay-access-key'),
+              controller: _key,
+              enabled: _loaded && !_saving,
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: InputDecoration(
+                labelText: t('公网 Key', 'Internet Key'),
+                helperMaxLines: 6,
+                helperText: _configured
+                    ? t('已保存，留空保持不变', 'Saved; leave blank to keep')
+                    : null,
+              ),
+            ),
+            // ExpansionTile stores a bool in PageStorage. Each field needs a
+            // distinct key so its internal scroll offset cannot read that bool
+            // (or the Devices list offset) when the section is expanded.
+            ExpansionTile(
+              key: const PageStorageKey('relay-enrollment-section'),
+              shape: const Border(),
+              collapsedShape: const Border(),
+              childrenPadding: const EdgeInsets.only(top: 4, bottom: 12),
+              tilePadding: EdgeInsets.zero,
+              title: Text(t('首次接入 / 更新信任配置', 'Enrollment / trusted peers')),
+              children: [
+                TextButton.icon(
+                  onPressed: _loaded && !_saving ? _copyEnrollment : null,
+                  icon: const Icon(Icons.key),
+                  label: Text(t('复制本机公钥登记信息', 'Copy device enrollment info')),
+                ),
+                TextField(
+                  key: const PageStorageKey('relay-enrollment-input'),
+                  controller: _enrollment,
+                  enabled: _loaded && !_saving,
+                  obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: InputDecoration(
+                    labelText: t('本设备接入配置 JSON', 'Device enrollment JSON'),
+                    helperMaxLines: 6,
+                    helperText: t(
+                      '首次接入时导入；仅换 Key 无需重复填写。',
+                      'Import once. Not needed when only replacing the key.',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: _loaded && !_saving ? _save : null,
               child: Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                t(
+                  _saving ? '正在保存…' : '保存中继设置',
+                  _saving ? 'Saving…' : 'Save relay settings',
+                ),
               ),
             ),
-          const SizedBox(height: 12),
-          FilledButton(
-            onPressed: _loaded && !_saving ? _save : null,
-            child: Text(
-              t(
-                _saving ? '正在保存…' : '保存中继设置',
-                _saving ? 'Saving…' : 'Save relay settings',
-              ),
-            ),
-          ),
+          ],
         ],
       ),
     ),

@@ -76,10 +76,28 @@ class PreferencesManager {
     }
 
     /// Local-only power assertion preference; never synchronized to other devices.
+    /// Legacy single switch (≤ v1.0.41). Read once to migrate into `keepAwakeSessionData`.
     var keepAwakeEnabled: Bool {
         get { defaults.bool(forKey: keepAwakeEnabledKey) }
         set { defaults.set(newValue, forKey: keepAwakeEnabledKey) }
     }
+
+    /// JSON-encoded `KeepAwakeSettings` (mode, last duration, power conditions, behaviour).
+    var keepAwakeSettingsData: Data? {
+        get { defaults.data(forKey: "keepAwakeSettings") }
+        set { defaults.set(newValue, forKey: "keepAwakeSettings") }
+    }
+
+    /// JSON-encoded active `KeepAwakeSession`; nil when Keep Awake is off.
+    var keepAwakeSessionData: Data? {
+        get { defaults.data(forKey: "keepAwakeSession") }
+        set {
+            if let newValue { defaults.set(newValue, forKey: "keepAwakeSession") }
+            else { defaults.removeObject(forKey: "keepAwakeSession") }
+        }
+    }
+
+    func hasKeepAwakeSessionKey() -> Bool { defaults.object(forKey: "keepAwakeSession") != nil }
 
     var deviceName: String {
         get { defaults.string(forKey: deviceNameKey) ?? Self.fallbackDeviceName }

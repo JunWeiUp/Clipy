@@ -198,7 +198,7 @@ class _WindowsSettingsPageState extends State<WindowsSettingsPage> {
               key: const PageStorageKey('windows-relay-settings'),
               leading: const Icon(Icons.public),
               title: Text(
-                l10n.language == AppLanguage.zh ? '公网中继' : 'Internet relay',
+                l10n.language == AppLanguage.zh ? '中继设置' : 'Relay settings',
               ),
               children: const [RelaySettings()],
             ),

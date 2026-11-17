@@ -73,10 +73,10 @@ struct DevicesView: View {
                 deviceList.frame(width: 400)
                 SplitV3Hairline(vertical: true)
                 inspector.frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .relay:
-                SyncRelayGroupView(embedded: true, fixture: relayFixture, openSettings: { page = .relaySettings })
+            case .relay, .relaySettings:
+                RelaySettingsWorkspaceView(page: $page, fixture: relayFixture)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .lan, .relaySettings, .screenControl:
+            case .lan, .screenControl:
                 DeviceConnectionSettingsView(page: $page, syncEnabled: Binding(get: { syncEnabled }, set: setSyncEnabled), onlineCount: onlineRows.count)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .diagnostics:
@@ -106,9 +106,9 @@ struct DevicesView: View {
             sidebarItem(DevicesText.t("我的设备", "My devices"), symbol: "laptopcomputer.and.iphone",
                         selected: page == .devices, count: rows.count) { page = .devices }
             sidebarItem(DevicesText.t("局域网设置", "LAN settings"), symbol: "network",
-                        selected: page == .lan || page == .relaySettings) { page = .lan }
-            sidebarItem(DevicesText.t("公网设备组", "Relay device group"), symbol: "person.2",
-                        selected: page == .relay) { page = .relay }
+                        selected: page == .lan) { page = .lan }
+            sidebarItem(DevicesText.t("中继设置", "Relay settings"), symbol: "point.3.connected.trianglepath.dotted",
+                        selected: page == .relay || page == .relaySettings) { page = .relay }
             Text(DevicesText.t("维护", "Maintenance"))
                 .font(.system(size: 11, weight: .semibold)).foregroundStyle(SplitV3Color.text3)
                 .padding(.horizontal, 10).padding(.top, 12).padding(.bottom, 5)

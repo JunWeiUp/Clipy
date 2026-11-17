@@ -344,78 +344,67 @@ func runWindowSnapshots() -> Never {
     ], total: 86)
     notificationModel.selectedIDs = [fixtureNotifications[0].id]
     NotificationManager.shared.bannerApps = ["example.chat", "example.sms"] // in-memory only, never saved
-    let steps = ["history-light", "history-dark", "snippets-light", "snippets-dark", "words-light", "words-dark", "notifications-light", "notifications-dark", "settings-general", "devices-lan-light", "settings-permissions", "devices-light", "password-light", "password-dark", "onboarding-light", "onboarding-dark", "onboarding-launch-light", "onboarding-launch-dark", "onboarding-devices-light", "onboarding-devices-dark", "devices-dark", "relay-light", "relay-dark", "settings-general-dark", "devices-lan-dark", "settings-permissions-dark", "settings-search-light", "settings-search-dark", "hub-history-light", "hub-snippets-dark", "hub-devices-light", "hub-notifications-light", "hub-devices-lan-light", "hub-devices-lan-dark", "hub-devices-screen-light", "hub-devices-relaysettings-dark", "hub-tools-light", "hub-tools-utilities-dark", "hub-settings-light", "hub-settings-dark"]
+    // Only real windows: the unified main window (hub-*) and the onboarding window.
+    // Old standalone module windows were merged into the main window and are not rendered.
+    let steps = ["hub-history-light", "hub-history-dark", "hub-snippets-light", "hub-snippets-dark",
+                 "hub-devices-light", "hub-devices-dark", "hub-devices-lan-light", "hub-devices-lan-dark",
+                 "hub-devices-relay-light", "hub-devices-relay-dark", "hub-devices-screen-light", "hub-devices-relaysettings-dark",
+                 "hub-notifications-light", "hub-notifications-dark",
+                 "hub-tools-light", "hub-tools-dark", "hub-tools-utilities-light", "hub-tools-utilities-dark",
+                 "hub-tools-keepawake-light", "hub-tools-keepawake-dark",
+                 "hub-settings-light", "hub-settings-dark", "hub-settings-search-light", "hub-settings-search-dark",
+                 "hub-settings-permissions-light", "hub-settings-permissions-dark",
+                 "onboarding-light", "onboarding-dark", "onboarding-launch-light", "onboarding-launch-dark",
+                 "onboarding-devices-light", "onboarding-devices-dark"]
     var step = 0
     func prepare() {
-        window.appearance = NSAppearance(named: step % 2 == 0 ? .aqua : .darkAqua)
-        var root: AnyView
-        if steps[step].hasPrefix("devices-") || steps[step].hasPrefix("relay-") {
-            // Devices window fixtures (fictional peers, relay group and connection stats).
-            window.appearance = NSAppearance(named: steps[step].hasSuffix("-dark") ? .darkAqua : .aqua)
-            root = AnyView(DevicesView(page: steps[step].hasPrefix("relay-") ? .relay : (steps[step].hasPrefix("devices-lan-") ? .lan : .devices)).environmentObject(AppLanguageObserver.shared))
-        } else if step < 2 {
-            root = AnyView(SearchView(viewModel: model).environmentObject(AppLanguageObserver.shared))
-        } else if step < 4 {
-            root = AnyView(SnippetEditorView(viewModel: snippetModel).environmentObject(AppLanguageObserver.shared))
-        } else if step < 6 {
-            root = AnyView(WordWorkspaceView(model: wordModel, navigation: wordNavigation).environmentObject(AppLanguageObserver.shared))
-        } else if step < 8 {
-            root = AnyView(NotificationView(viewModel: notificationModel).environmentObject(AppLanguageObserver.shared))
-        } else if steps[step].hasPrefix("settings-") {
-            if steps[step].hasSuffix("-dark") { window.appearance = NSAppearance(named: .darkAqua) }
-            if steps[step].hasSuffix("-light") { window.appearance = NSAppearance(named: .aqua) }
-            root = AnyView(SettingsView().environmentObject(AppLanguageObserver.shared))
-        } else if step == 11 {
-            root = AnyView(DevicesView().environmentObject(AppLanguageObserver.shared))
-        } else if step < 14 {
-            root = AnyView(PasswordGeneratorView(viewModel: passwordModel).environmentObject(AppLanguageObserver.shared))
-        } else {
-            window.appearance = NSAppearance(named: steps[step].hasSuffix("-dark") ? .darkAqua : .aqua)
-            let initialStep = steps[step].contains("-launch-") ? 0 : (steps[step].contains("-devices-") ? 2 : 1)
-            root = AnyView(OnboardingView(initialStep: initialStep).environmentObject(AppLanguageObserver.shared))
-        }
-        if steps[step].hasPrefix("hub-") {
+        let name = steps[step]
+        window.appearance = NSAppearance(named: name.hasSuffix("-dark") ? .darkAqua : .aqua)
+        let root: AnyView
+        if name.hasPrefix("hub-") {
             // Main window: the six modules with the shared section switcher in the sidebar.
-            window.appearance = NSAppearance(named: steps[step].hasSuffix("-dark") ? .darkAqua : .aqua)
-            let name = steps[step].dropFirst(4).split(separator: "-").first.map(String.init) ?? ""
-            let section = MainWindowSection(rawValue: name) ?? .history
+            let sectionName = name.dropFirst(4).split(separator: "-").first.map(String.init) ?? ""
+            let section = MainWindowSection(rawValue: sectionName) ?? .history
             let module: AnyView
             switch section {
             case .history: module = AnyView(SearchView(viewModel: model))
             case .snippets: module = AnyView(SnippetEditorView(viewModel: snippetModel))
             case .devices:
-                let target: DevicesPage = steps[step].contains("-lan-") ? .lan : steps[step].contains("-screen-") ? .screenControl : steps[step].contains("-relaysettings-") ? .relaySettings : .devices
+                let target: DevicesPage = name.contains("-lan-") ? .lan : name.contains("-screen-") ? .screenControl
+                    : name.contains("-relaysettings-") ? .relaySettings : name.contains("-relay-") ? .relay : .devices
                 module = AnyView(DevicesView(page: target))
             case .notifications: module = AnyView(NotificationView(viewModel: notificationModel))
             case .tools:
-                wordNavigation.page = steps[step].contains("-utilities-") ? .utilities : .lookup
+                if name.contains("-keepawake-") {
+                    // Fixture: a running 2-hour session in "system" mode (display may sleep and lock).
+                    if !KeepAwakeManager.shared.isEnabled { KeepAwakeManager.shared.start(minutes: 120) }
+                    wordNavigation.page = .keepAwake
+                } else {
+                    wordNavigation.page = name.contains("-utilities-") ? .utilities : .lookup
+                }
                 module = AnyView(WordWorkspaceView(model: wordModel, navigation: wordNavigation, passwordModel: passwordModel))
             case .settings: module = AnyView(SettingsView())
             }
             root = AnyView(module.environment(\.mainWindowNavigator, MainWindowNavigator(section: section))
                 .environmentObject(AppLanguageObserver.shared))
+        } else {
+            let initialStep = name.contains("-launch-") ? 0 : (name.contains("-devices-") ? 2 : 1)
+            root = AnyView(OnboardingView(initialStep: initialStep).environmentObject(AppLanguageObserver.shared))
         }
         let controller = NSHostingController(rootView: root)
-        controller.sizingOptions = steps[step].hasPrefix("onboarding-") ? [.minSize] : []
+        controller.sizingOptions = name.hasPrefix("onboarding-") ? [.minSize] : []
         window.contentViewController = controller
-        window.setContentSize(step < 12 ? NSSize(width: 1100, height: 680) : NSSize(width: 640, height: 470))
-        if steps[step].hasPrefix("devices-") || steps[step].hasPrefix("relay-") { window.setContentSize(NSSize(width: 1136, height: 700)) }
-        if steps[step].hasPrefix("words-") { window.setContentSize(NSSize(width: 1112, height: 712)) }
-        if steps[step].hasPrefix("password-") { window.setContentSize(NSSize(width: 460, height: 548)) }
-        if steps[step].hasPrefix("onboarding-") { window.setContentSize(NSSize(width: 860, height: 580)) }
-        if steps[step].hasPrefix("settings-") { window.setContentSize(MainWindowMetrics.size) }
-        if steps[step].hasPrefix("hub-") { window.setContentSize(MainWindowMetrics.size) }
+        window.setContentSize(name.hasPrefix("onboarding-") ? NSSize(width: 860, height: 580) : MainWindowMetrics.size)
         window.center()
         window.orderFrontRegardless()
-        if steps[step].hasPrefix("settings-search") {
+        if name.hasPrefix("hub-settings-search") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                NotificationCenter.default.post(name: Notification.Name("clipySettingsSnapshotSearch"), object: steps[step].hasSuffix("-dark") ? "快捷键" : "麦克风")
+                NotificationCenter.default.post(name: Notification.Name("clipySettingsSnapshotSearch"), object: name.hasSuffix("-dark") ? "快捷键" : "麦克风")
             }
         }
-        if steps[step].hasPrefix("settings-permissions") {
-            let page = "permissions"
+        if name.hasPrefix("hub-settings-permissions") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                NotificationCenter.default.post(name: .appSettingsNavigate, object: page)
+                NotificationCenter.default.post(name: .appSettingsNavigate, object: "permissions")
             }
         }
     }

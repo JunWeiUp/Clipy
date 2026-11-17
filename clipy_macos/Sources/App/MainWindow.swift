@@ -197,7 +197,7 @@ final class MainWindow {
             }
         case .book:
             model.prepareForClose()
-        case .utilities:
+        case .utilities, .keepAwake:
             break
         }
         if openModelSettings {

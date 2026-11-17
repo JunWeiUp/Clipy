@@ -310,7 +310,7 @@ struct SettingsView: View {
                            "Device connection, LAN sync and relay groups live in Devices."),
         links: [
           (settingsText("局域网设置", "LAN settings"), { MainWindow.shared.showDevices(page: .lan) }),
-          (settingsText("公网设备组", "Relay group"), { MainWindow.shared.showDevices(page: .relay) }),
+          (settingsText("中继设置", "Relay settings"), { MainWindow.shared.showDevices(page: .relay) }),
         ])
     }
     SettingsSubheader(settingsText("诊断", "Diagnostics"))
