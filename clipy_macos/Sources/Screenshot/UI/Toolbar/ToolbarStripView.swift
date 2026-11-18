@@ -11,6 +11,8 @@ class ToolbarStripView: NSView {
     /// Set to true in editor mode so gap clicks pass through to the image beneath.
     var passesThrough = false
     var usesWindowAppearance = false
+    /// False while hosted inside the capture control island, which draws the shared glass.
+    var drawsChromeBackground = true { didSet { if oldValue != drawsChromeBackground { needsDisplay = true } } }
     /// Suppress hover visuals/callbacks while a toolbar-initiated drag is moving
     /// the whole toolbar panel under the cursor.
     var suppressesHover = false {
@@ -165,7 +167,9 @@ class ToolbarStripView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         // The V3 editor hosts the strip inside its title-bar row, which draws its own material.
         if usesWindowAppearance { return }
-        if barStyle != .standard {
+        if !drawsChromeBackground {
+            // Island-hosted: only the group separators.
+        } else if barStyle != .standard {
             // mac-capture.html .capbar / mac-recording.html .ctl: dark glass, hairline edge.
             let radius: CGFloat = barStyle == .captureBar ? 16 : 14
             let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.25, dy: 0.25), xRadius: radius, yRadius: radius)

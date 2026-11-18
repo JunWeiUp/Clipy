@@ -56,6 +56,17 @@ class ToolOptionsRowView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Inside the capture control island the row is an inset band (mac-capture.html `.island .orow`).
+    var isIslandHosted = false {
+        didSet {
+            guard oldValue != isIslandHosted, overlayView?.isEditorMode != true else { return }
+            layer?.cornerRadius = isIslandHosted ? 9 : 10
+            layer?.backgroundColor = isIslandHosted
+                ? NSColor.white.withAlphaComponent(0.055).cgColor : ToolbarLayout.bgColor.cgColor
+            layer?.borderWidth = isIslandHosted ? 0 : 0.5
+        }
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         if overlayView?.isEditorMode == true {

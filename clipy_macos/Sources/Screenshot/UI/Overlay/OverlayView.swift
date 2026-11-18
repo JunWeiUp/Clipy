@@ -450,6 +450,16 @@ class OverlayView: NSView {
     private var resolutionBoxRect: NSRect = .zero
     private var captureModeBar: CaptureModeBarView?
     private var captureHintView: CaptureHintView?
+    // Unified control island (mac-capture.html `.island`): one draggable group for
+    // options row + annotation strip + capture bar + shortcut hint.
+    private var captureIsland: CaptureIslandView?
+    private var islandSnapGuides: [IslandSnapGuideView] = []
+    /// User-placed bottom-centre anchor for this session (nil = pinned/default position).
+    private var islandAnchor: NSPoint?
+    private var islandDragStartAnchor: NSPoint?
+    private var islandCollapsed = false
+    /// Overlay-space frame of the island. .zero when hidden.
+    private var islandRect: NSRect = .zero
     private var preSelectionPresetButton: PreSelectionPresetButton?
     private var preSelectionPresetButtonRect: NSRect = .zero
 
@@ -1508,6 +1518,7 @@ class OverlayView: NSView {
         if let bottomStripView, view === bottomStripView { return true }
         if let rightStripView, view === rightStripView { return true }
         if let toolOptionsRowView, view === toolOptionsRowView { return true }
+        if let captureIsland, view === captureIsland { return true }
         return false
     }
 
@@ -1523,6 +1534,7 @@ class OverlayView: NSView {
             if rightStripView?.isHidden == false, rightBarRect.contains(point) { return true }
             if toolOptionsRowView?.isHidden == false, optionsRowRect.width > 1,
                optionsRowRect.contains(point) { return true }
+            if captureIsland?.isHidden == false, islandRect.contains(point) { return true }
         }
         if updateCursorForChrome(at: point) { return true }
         if resolutionBoxRect != .zero && resolutionBoxRect.contains(point) { return true }
@@ -2490,6 +2502,9 @@ class OverlayView: NSView {
         }
         if rightStripView?.isHidden == false {
             rects.append(rightBarRect)
+        }
+        if captureIsland?.isHidden == false {
+            rects.append(islandRect)
         }
         return rects.filter { $0.width > 1 && $0.height > 1 }
     }
@@ -5183,25 +5198,26 @@ class OverlayView: NSView {
             }
         }
 
+        updateCaptureHint()
         repositionToolbars()
         updateResolutionBox()
-        updateCaptureHint()
     }
 
     /// mac-capture.html `.hint`: top-right shortcut reminder in the selected state.
     private func updateCaptureHint() {
         let visible = !isEditorMode && !isRecording && !isScrollCapturing && showToolbars && state == .selected
+            && !islandCollapsed
         guard visible else { captureHintView?.isHidden = true; return }
         let hint = captureHintView ?? {
             let view = CaptureHintView(items: [
                 ("Space", L("Hold to move selection")), ("⇧", L("Square")),
                 ("↩", L("Quick capture")), ("esc", L("Cancel")),
-            ])
+            ], compact: true)
             addSubview(view)
             captureHintView = view
             return view
         }()
-        hint.frame.origin = NSPoint(x: bounds.maxX - 28 - hint.frame.width, y: bounds.maxY - 44 - hint.frame.height)
+        // Positioned inside the control island by layoutCaptureIsland().
         hint.isHidden = false
     }
 
@@ -5220,6 +5236,13 @@ class OverlayView: NSView {
         let rightHasButtons = rightStrip.buttonViews.count > 0
         rightStrip.isHidden = !visible || !rightHasButtons
         toolOptionsRowView?.isHidden = !visible || !toolHasOptionsRow || !bottomHasButtons
+        let usesIsland = visible && !isEditorMode && !isRecording
+        if !usesIsland { hideCaptureIsland() }
+        if isEditorMode || isRecording {
+            bottomStrip.drawsChromeBackground = true
+            rightStrip.drawsChromeBackground = true
+            toolOptionsRowView?.isIslandHosted = false
+        }
         guard visible else {
             // Toolbars hidden (deselected / scroll capture): dismiss the
             // resolution box and clear the chrome rects so isPointOnChrome
@@ -5271,16 +5294,9 @@ class OverlayView: NSView {
             let x = max(bounds.minX + 8, min(bounds.midX - rightSize.width / 2, bounds.maxX - rightSize.width - 8))
             rightStrip.frame.origin = NSPoint(x: x, y: bounds.minY + 84)
         } else {
-            // mac-capture.html: capture bar bottom-centre, annotation strip and options row
-            // stacked above it, all centred on the screen (not on the selection).
-            let capX = max(bounds.minX + 8, min(bounds.midX - rightSize.width / 2, bounds.maxX - rightSize.width - 8))
-            rightStrip.frame.origin = NSPoint(x: capX, y: bounds.minY + 34)
-            let toolsX = max(bounds.minX + 8, min(bounds.midX - bottomSize.width / 2, bounds.maxX - bottomSize.width - 8))
-            bottomStrip.frame.origin = NSPoint(x: toolsX, y: rightStrip.frame.maxY + 12)
-            if !annotationToolsVisible {
-                bottomStrip.isHidden = true
-                toolOptionsRowView?.isHidden = true
-            }
+            // mac-capture.html `.island`: options row, annotation strip, capture bar and
+            // shortcut hint stacked inside one draggable control island.
+            layoutCaptureIsland(capStrip: rightStrip, toolStrip: bottomStrip)
         }
 
         // bottomBarRect is the intended OVERLAY-space rect. Build it from the
@@ -5290,7 +5306,13 @@ class OverlayView: NSView {
         rightBarRect = rightStrip.frame
 
         // Position options row — above bottom bar in editor, below in overlay
-        if let row = toolOptionsRowView, !row.isHidden {
+        if usesIsland {
+            if let row = toolOptionsRowView, !row.isHidden {
+                optionsRowRect = NSRect(origin: row.frame.origin, size: row.frame.size)
+            } else {
+                optionsRowRect = .zero
+            }
+        } else if let row = toolOptionsRowView, !row.isHidden {
             // Use the wider of the bottom bar and the row's natural content width
             let rowW = max(bottomBarRect.width, row.contentWidth)
             if !isEditorMode { row.frame.size.width = rowW }
@@ -5310,6 +5332,212 @@ class OverlayView: NSView {
         } else {
             optionsRowRect = .zero
         }
+    }
+
+    // MARK: - Unified control island
+
+    private static let islandPinnedKey = "captureIslandPinned"
+    private static let islandPinnedXKey = "captureIslandPinnedCenterX"
+    private static let islandPinnedYKey = "captureIslandPinnedBottomY"
+    private static let islandSnapDistance: CGFloat = 40
+
+    private var islandPinned: Bool { UserDefaults.standard.bool(forKey: Self.islandPinnedKey) }
+
+    private func ensureCaptureIsland(below strip: NSView) -> CaptureIslandView {
+        if let island = captureIsland { return island }
+        let island = CaptureIslandView()
+        island.onReset = { [weak self] in self?.resetIslandPosition() }
+        island.onTogglePin = { [weak self] in self?.toggleIslandPinned() }
+        island.onToggleCollapse = { [weak self] in self?.toggleIslandCollapsed() }
+        island.onDragBegan = { [weak self] in self?.beginIslandDrag() }
+        island.onDragMoved = { [weak self] delta in self?.moveIslandDrag(by: delta) }
+        island.onDragEnded = { [weak self] in self?.endIslandDrag() }
+        let parent = strip.superview ?? self
+        parent.addSubview(island, positioned: .below, relativeTo: strip)
+        captureIsland = island
+        return island
+    }
+
+    private func hideCaptureIsland() {
+        captureIsland?.isHidden = true
+        islandSnapGuides.forEach { $0.isHidden = true }
+        islandRect = .zero
+    }
+
+    /// Default anchor (bottom-centre) or the top-centre snap slot for an island of `size`.
+    private func islandSlotAnchor(top: Bool, size: NSSize) -> NSPoint {
+        top ? NSPoint(x: bounds.midX, y: bounds.maxY - 44 - size.height)
+            : NSPoint(x: bounds.midX, y: bounds.minY + 26)
+    }
+
+    private func pinnedIslandAnchor() -> NSPoint? {
+        guard islandPinned, bounds.width > 1, bounds.height > 1 else { return nil }
+        let d = UserDefaults.standard
+        return NSPoint(x: bounds.minX + CGFloat(d.double(forKey: Self.islandPinnedXKey)) * bounds.width,
+                       y: bounds.minY + CGFloat(d.double(forKey: Self.islandPinnedYKey)) * bounds.height)
+    }
+
+    private func clampedIslandOrigin(anchor: NSPoint, size: NSSize) -> NSPoint {
+        let x = max(bounds.minX + 8, min(anchor.x - size.width / 2, bounds.maxX - size.width - 8))
+        let y = max(bounds.minY + 8, min(anchor.y, bounds.maxY - size.height - 8))
+        return NSPoint(x: round(x), y: round(y))
+    }
+
+    private func layoutCaptureIsland(capStrip: ToolbarStripView, toolStrip: ToolbarStripView) {
+        let island = ensureCaptureIsland(below: toolStrip)
+        island.isPinned = islandPinned
+        island.isCollapsed = islandCollapsed
+        island.currentToolSymbol = toolStrip.buttonViews.first { bv in
+            if case .tool = bv.action { return bv.isOn }
+            return false
+        }?.sfSymbol
+        capStrip.drawsChromeBackground = false
+        toolStrip.drawsChromeBackground = false
+        toolOptionsRowView?.isIslandHosted = true
+
+        let pad = CaptureIslandView.padding
+        let toolsVisible = !islandCollapsed && annotationToolsVisible && !toolStrip.isHidden
+        let row: ToolOptionsRowView? = {
+            guard toolsVisible, let r = toolOptionsRowView, !r.isHidden else { return nil }
+            return r
+        }()
+        let hint: CaptureHintView? = (!islandCollapsed && captureHintView?.isHidden == false) ? captureHintView : nil
+        if !toolsVisible { toolStrip.isHidden = true }
+        if row == nil { toolOptionsRowView?.isHidden = true }
+        if hint == nil { captureHintView?.isHidden = true }
+        capStrip.isHidden = islandCollapsed || capStrip.buttonViews.isEmpty
+
+        let size: NSSize
+        var contentW: CGFloat = 0
+        if islandCollapsed {
+            size = CaptureIslandView.collapsedSize
+        } else {
+            contentW = capStrip.frame.width
+            if toolsVisible { contentW = max(contentW, toolStrip.frame.width) }
+            if let row { contentW = max(contentW, row.contentWidth) }
+            if let hint { contentW = max(contentW, hint.frame.width) }
+            contentW = ceil(contentW)
+            var h = pad + capStrip.frame.height
+            if let hint { h += 4 + hint.frame.height }
+            if toolsVisible { h += 13 + toolStrip.frame.height }
+            if let row { h += 6 + row.frame.height }
+            h += CaptureIslandView.headerHeight
+            size = NSSize(width: contentW + pad * 2, height: ceil(h))
+        }
+
+        let anchor = islandAnchor ?? pinnedIslandAnchor() ?? islandSlotAnchor(top: false, size: size)
+        let origin = clampedIslandOrigin(anchor: anchor, size: size)
+        island.frame = NSRect(origin: origin, size: size)
+        island.isHidden = false
+        islandRect = island.frame
+        guard !islandCollapsed else { island.separatorY = nil; return }
+
+        let midX = origin.x + size.width / 2
+        var y = origin.y + pad
+        if let hint {
+            hint.frame.origin = NSPoint(x: round(midX - hint.frame.width / 2), y: y)
+            y += hint.frame.height + 4
+        }
+        capStrip.frame.origin = NSPoint(x: round(midX - capStrip.frame.width / 2), y: y)
+        y += capStrip.frame.height
+        if toolsVisible {
+            island.separatorY = y + 6 - origin.y
+            y += 13
+            toolStrip.frame.origin = NSPoint(x: round(midX - toolStrip.frame.width / 2), y: y)
+            y += toolStrip.frame.height
+        } else {
+            island.separatorY = nil
+        }
+        if let row {
+            y += 6
+            row.frame.size.width = contentW
+            row.frame.origin = NSPoint(x: origin.x + pad, y: y)
+        }
+    }
+
+    private func beginIslandDrag() {
+        guard !islandPinned, islandRect.width > 1 else { return }
+        islandDragStartAnchor = NSPoint(x: islandRect.midX, y: islandRect.minY)
+        let size = islandRect.size
+        if islandSnapGuides.isEmpty, let island = captureIsland {
+            for _ in 0..<2 {
+                let guide = IslandSnapGuideView()
+                (island.superview ?? self).addSubview(guide, positioned: .below, relativeTo: island)
+                islandSnapGuides.append(guide)
+            }
+        }
+        for (index, guide) in islandSnapGuides.enumerated() {
+            let top = index == 1
+            let anchor = islandSlotAnchor(top: top, size: size)
+            guide.frame = NSRect(origin: clampedIslandOrigin(anchor: anchor, size: size), size: size)
+            guide.title = top ? L("Top center") : L("Default position · bottom center")
+            guide.isHit = false
+            guide.isHidden = false
+        }
+    }
+
+    private func moveIslandDrag(by delta: NSPoint) {
+        guard let start = islandDragStartAnchor else { return }
+        islandAnchor = NSPoint(x: start.x + delta.x, y: start.y + delta.y)
+        repositionToolbars()
+        for guide in islandSnapGuides { guide.isHit = islandNear(guide.frame.origin) }
+    }
+
+    private func islandNear(_ origin: NSPoint) -> Bool {
+        abs(islandRect.minX - origin.x) < Self.islandSnapDistance
+            && abs(islandRect.minY - origin.y) < Self.islandSnapDistance
+    }
+
+    private func endIslandDrag() {
+        guard islandDragStartAnchor != nil else { return }
+        islandDragStartAnchor = nil
+        if let hit = islandSnapGuides.first(where: { islandNear($0.frame.origin) }) {
+            islandAnchor = NSPoint(x: hit.frame.midX, y: hit.frame.minY)
+        } else if islandRect.width > 1 {
+            islandAnchor = NSPoint(x: islandRect.midX, y: islandRect.minY)
+        }
+        islandSnapGuides.forEach { $0.isHidden = true }
+        repositionToolbars()
+    }
+
+    private func resetIslandPosition() {
+        guard !islandPinned else { return }
+        islandAnchor = nil
+        repositionToolbars()
+    }
+
+    /// Pinning remembers the position (as a fraction of the screen) for later captures
+    /// until the user unpins it.
+    private func toggleIslandPinned() {
+        let d = UserDefaults.standard
+        if islandPinned {
+            if islandRect.width > 1 { islandAnchor = NSPoint(x: islandRect.midX, y: islandRect.minY) }
+            d.set(false, forKey: Self.islandPinnedKey)
+            d.removeObject(forKey: Self.islandPinnedXKey)
+            d.removeObject(forKey: Self.islandPinnedYKey)
+        } else if islandRect.width > 1, bounds.width > 1, bounds.height > 1 {
+            d.set(Double((islandRect.midX - bounds.minX) / bounds.width), forKey: Self.islandPinnedXKey)
+            d.set(Double((islandRect.minY - bounds.minY) / bounds.height), forKey: Self.islandPinnedYKey)
+            d.set(true, forKey: Self.islandPinnedKey)
+            islandAnchor = nil
+        }
+        repositionToolbars()
+    }
+
+    private func toggleIslandCollapsed() {
+        // Anchors are bottom-centre points, so the island keeps its bottom edge and
+        // centre while it changes size; re-anchor a custom position to its clamped frame.
+        if islandAnchor != nil, islandRect.width > 1 {
+            islandAnchor = NSPoint(x: islandRect.midX, y: islandRect.minY)
+        }
+        islandCollapsed.toggle()
+        captureIsland?.isCollapsed = islandCollapsed
+        updateCaptureHint()
+        repositionToolbars()
+    }
+
+    private var canToggleIsland: Bool {
+        !isEditorMode && !isRecording && !isScrollCapturing && showToolbars && state == .selected
     }
 
     /// Liquid Glass: lift each toolbar surface (bottom strip, right strip, tool
@@ -8858,6 +9086,13 @@ class OverlayView: NSView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // ⌥⌘T: collapse / expand the capture control island (keyCode = layout-independent T).
+        let mods = event.modifierFlags
+        if event.keyCode == 17, mods.contains(.command), mods.contains(.option),
+           !mods.contains(.control), !mods.contains(.shift), textEditView == nil, canToggleIsland {
+            toggleIslandCollapsed()
+            return true
+        }
         // Forward Cmd shortcuts to the text view when editing — the main menu
         // intercepts these before keyDown reaches the overlay window.
         // Use keyCode (hardware-based) instead of charactersIgnoringModifiers
@@ -9927,6 +10162,10 @@ class OverlayView: NSView {
         numberCounter = 0
         showToolbars = false
         dismissResolutionBox()
+        islandAnchor = nil
+        islandDragStartAnchor = nil
+        islandCollapsed = false
+        hideCaptureIsland()
         bottomStripView?.isHidden = true
         rightStripView?.isHidden = true
         toolOptionsRowView?.isHidden = true
@@ -9995,6 +10234,10 @@ class OverlayView: NSView {
         captureModeBar = nil
         captureHintView?.removeFromSuperview()
         captureHintView = nil
+        captureIsland?.removeFromSuperview()
+        captureIsland = nil
+        islandSnapGuides.forEach { $0.removeFromSuperview() }
+        islandSnapGuides = []
         lockedAspect = activePreSelectionRatio
         isResizingAnnotation = false
         loupeCursorPoint = .zero
@@ -10331,44 +10574,54 @@ final class CaptureModeBarButton: NSButton {
 /// Non-interactive shortcut reminder (`Space 按住移动选区 · ⇧ 正方形 · ↩ 快速截图 · esc 取消`).
 final class CaptureHintView: NSView {
     private let items: [(String, String)]
-    private let font = NSFont.systemFont(ofSize: 12)
-    private let keyFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+    /// Island-hosted variant: small dim text on the island glass (mac-capture.html `.island .hint`).
+    private let compact: Bool
+    private let font: NSFont
+    private let keyFont: NSFont
+    private var keyHeight: CGFloat { compact ? 16 : 20 }
+    private var itemGap: CGFloat { 14 }
 
-    init(items: [(String, String)]) {
+    init(items: [(String, String)], compact: Bool = false) {
         self.items = items
+        self.compact = compact
+        font = NSFont.systemFont(ofSize: compact ? 10.5 : 12)
+        keyFont = NSFont.systemFont(ofSize: compact ? 9.5 : 11, weight: .semibold)
         super.init(frame: .zero)
-        var width: CGFloat = 12
+        let inset: CGFloat = compact ? 0 : 12
+        var width: CGFloat = inset
         for (index, item) in items.enumerated() {
-            width += keyWidth(item.0) + 5 + ceil((item.1 as NSString).size(withAttributes: [.font: font]).width)
-            if index < items.count - 1 { width += 14 }
+            width += keyWidth(item.0) + (compact ? 4 : 5) + ceil((item.1 as NSString).size(withAttributes: [.font: font]).width)
+            if index < items.count - 1 { width += itemGap }
         }
-        frame.size = NSSize(width: width + 12, height: 34)
+        frame.size = NSSize(width: width + inset, height: compact ? 18 : 34)
     }
     required init?(coder: NSCoder) { fatalError() }
 
     private func keyWidth(_ key: String) -> CGFloat {
-        max(20, ceil((key as NSString).size(withAttributes: [.font: keyFont]).width) + 12)
+        max(compact ? 16 : 20, ceil((key as NSString).size(withAttributes: [.font: keyFont]).width) + (compact ? 8 : 12))
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(srgbRed: 20 / 255, green: 22 / 255, blue: 28 / 255, alpha: 0.72).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10).fill()
-        var x: CGFloat = 12
-        let textAttrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white.withAlphaComponent(0.85)]
-        let keyAttrs: [NSAttributedString.Key: Any] = [.font: keyFont, .foregroundColor: NSColor.white]
+        if !compact {
+            NSColor(srgbRed: 20 / 255, green: 22 / 255, blue: 28 / 255, alpha: 0.72).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10).fill()
+        }
+        var x: CGFloat = compact ? 0 : 12
+        let textAttrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white.withAlphaComponent(compact ? 0.5 : 0.85)]
+        let keyAttrs: [NSAttributedString.Key: Any] = [.font: keyFont, .foregroundColor: NSColor.white.withAlphaComponent(compact ? 0.75 : 1)]
         for (key, text) in items {
             let kw = keyWidth(key)
-            let keyRect = NSRect(x: x, y: (bounds.height - 20) / 2, width: kw, height: 20)
-            NSColor.white.withAlphaComponent(0.15).setFill()
+            let keyRect = NSRect(x: x, y: (bounds.height - keyHeight) / 2, width: kw, height: keyHeight)
+            NSColor.white.withAlphaComponent(compact ? 0.08 : 0.15).setFill()
             NSBezierPath(roundedRect: keyRect, xRadius: 5, yRadius: 5).fill()
             let ks = (key as NSString).size(withAttributes: keyAttrs)
             (key as NSString).draw(at: NSPoint(x: keyRect.midX - ks.width / 2, y: keyRect.midY - ks.height / 2), withAttributes: keyAttrs)
-            x += kw + 5
+            x += kw + (compact ? 4 : 5)
             let ts = (text as NSString).size(withAttributes: textAttrs)
             (text as NSString).draw(at: NSPoint(x: x, y: (bounds.height - ts.height) / 2), withAttributes: textAttrs)
-            x += ceil(ts.width) + 14
+            x += ceil(ts.width) + itemGap
         }
     }
 }

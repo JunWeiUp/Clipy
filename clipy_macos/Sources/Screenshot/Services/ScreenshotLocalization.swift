@@ -411,6 +411,14 @@ enum ScreenshotLocalization {
         "Square": "正方形",
         "Quick capture": "快速截图",
         "Snapped to element edge": "已吸附到元素边缘",
+        "Reset position": "回到默认位置",
+        "Pin position": "固定位置",
+        "Unpin position": "解除固定",
+        "Collapse": "收起",
+        "Expand": "展开",
+        "Pinned": "已固定",
+        "Default position · bottom center": "默认位置 · 底部居中",
+        "Top center": "顶部居中",
         "Click the canvas to sample a color; it becomes the current annotation color.": "在画布上点击取样颜色，取到的颜色设为当前标注颜色。",
     ]
 
