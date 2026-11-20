@@ -70,15 +70,15 @@ final class ScreenshotSessionCoordinator {
     /// hotkey callbacks that aren't statically main-actor-isolated; the work is
     /// hopped to the main actor inside.
     nonisolated func startCapture(mode: Mode = .region, fromMenu: Bool = false) {
-        MainActor.assumeIsolated {
-            beginCapture(mode: mode, fromMenu: fromMenu)
+        Task { @MainActor [weak self] in
+            self?.beginCapture(mode: mode, fromMenu: fromMenu)
         }
     }
 
     /// Cancel any in-flight session (Esc from overlay also lands here via the delegate).
     nonisolated func cancel() {
-        MainActor.assumeIsolated {
-            tearDownOverlays(refocusPreviousApp: true)
+        Task { @MainActor [weak self] in
+            self?.tearDownOverlays(refocusPreviousApp: true)
         }
     }
 

@@ -9,6 +9,8 @@ class HotKeyManager {
     private let lock = NSLock()
     private var hotkeys: [UInt32: () -> Void] = [:]
     private var hotkeyRefs: [UInt32: EventHotKeyRef] = [:]
+    private var registeredKeyCodes: [UInt32: Int] = [:]
+    private var registeredModifiers: [UInt32: UInt32] = [:]
     private var eventHandler: EventHandlerRef?
 
     private init() {
@@ -59,7 +61,16 @@ class HotKeyManager {
 
     @discardableResult
     func register(keyCode: Int, modifiers: UInt, id: UInt32, action: @escaping () -> Void) -> Bool {
-        unregister(id: id)
+        // Carbon's registration APIs are tied to the application event loop.
+        // Preference/snippet saves can arrive from a background queue, so never
+        // call RegisterEventHotKey or UnregisterEventHotKey off the main thread.
+        if !Thread.isMainThread {
+            var result = false
+            DispatchQueue.main.sync {
+                result = self.register(keyCode: keyCode, modifiers: modifiers, id: id, action: action)
+            }
+            return result
+        }
 
         var carbonModifiers: UInt32 = 0
         let modifierFlags = NSEvent.ModifierFlags(rawValue: modifiers)
@@ -67,6 +78,31 @@ class HotKeyManager {
         if modifierFlags.contains(.option) { carbonModifiers |= UInt32(optionKey) }
         if modifierFlags.contains(.control) { carbonModifiers |= UInt32(controlKey) }
         if modifierFlags.contains(.shift) { carbonModifiers |= UInt32(shiftKey) }
+
+        // A notification can ask all shortcuts to be registered even when this
+        // shortcut did not change. Keep the existing Carbon registration in that
+        // case so there is no unregister/register gap in which a key press can be
+        // lost. Updating the closure is enough to pick up the latest state.
+        lock.lock()
+        let alreadyRegistered = hotkeyRefs[id] != nil
+            && registeredKeyCodes[id] == keyCode
+            && registeredModifiers[id] == carbonModifiers
+        if alreadyRegistered {
+            hotkeys[id] = action
+            lock.unlock()
+            return true
+        }
+        let previous = hotkeyRefs[id].map {
+            (ref: $0, keyCode: registeredKeyCodes[id] ?? keyCode,
+             modifiers: registeredModifiers[id] ?? carbonModifiers,
+             action: hotkeys[id])
+        }
+        lock.unlock()
+
+        // An EventHotKeyID cannot be registered twice. Remove only a changed
+        // registration before trying the replacement. The previous definition
+        // is retained so it can be restored if Carbon rejects the new combo.
+        if let previous { UnregisterEventHotKey(previous.ref) }
 
         let hotKeyID = EventHotKeyID(signature: OSType(0x434C5059), id: id) // 'CLPY'
         var hotKeyRef: EventHotKeyRef?
@@ -82,27 +118,62 @@ class HotKeyManager {
             lock.lock()
             hotkeys[id] = action
             hotkeyRefs[id] = ref
+            registeredKeyCodes[id] = keyCode
+            registeredModifiers[id] = carbonModifiers
             lock.unlock()
             return true
         } else {
             appLog("HotKeyManager: RegisterEventHotKey failed for id \(id) (\(status))", level: .warning)
+            if let previous, let oldAction = previous.action {
+                var restoredRef: EventHotKeyRef?
+                let restoreStatus = RegisterEventHotKey(
+                    UInt32(previous.keyCode), previous.modifiers, hotKeyID,
+                    GetApplicationEventTarget(), 0, &restoredRef)
+                if restoreStatus == noErr, let restoredRef {
+                    lock.lock()
+                    hotkeys[id] = oldAction
+                    hotkeyRefs[id] = restoredRef
+                    registeredKeyCodes[id] = previous.keyCode
+                    registeredModifiers[id] = previous.modifiers
+                    lock.unlock()
+                }
+            } else {
+                lock.lock()
+                hotkeys.removeValue(forKey: id)
+                hotkeyRefs.removeValue(forKey: id)
+                registeredKeyCodes.removeValue(forKey: id)
+                registeredModifiers.removeValue(forKey: id)
+                lock.unlock()
+            }
             return false
         }
     }
 
     func unregister(id: UInt32) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.sync { [weak self] in self?.unregister(id: id) }
+            return
+        }
         lock.lock()
         let ref = hotkeyRefs.removeValue(forKey: id)
         hotkeys.removeValue(forKey: id)
+        registeredKeyCodes.removeValue(forKey: id)
+        registeredModifiers.removeValue(forKey: id)
         lock.unlock()
         if let ref { UnregisterEventHotKey(ref) }
     }
 
     func unregisterAll() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.sync { [weak self] in self?.unregisterAll() }
+            return
+        }
         lock.lock()
         let refs = Array(hotkeyRefs.values)
         hotkeyRefs.removeAll()
         hotkeys.removeAll()
+        registeredKeyCodes.removeAll()
+        registeredModifiers.removeAll()
         lock.unlock()
         for ref in refs {
             UnregisterEventHotKey(ref)

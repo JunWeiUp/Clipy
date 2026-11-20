@@ -11,7 +11,7 @@ enum ScreenshotGlobalHotKeyManager {
         }
 
         HotKeyManager.shared.register(keyCode: combo.keyCode, modifiers: combo.modifierFlags, id: hotKeyID) {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 let mode: ScreenshotSessionCoordinator.Mode
                 switch PreferencesManager.shared.screenshotDefaultMode {
                 case .region: mode = .region

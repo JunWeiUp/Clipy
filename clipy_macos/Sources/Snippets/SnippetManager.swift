@@ -115,8 +115,15 @@ class SnippetManager {
         #if CLIPY_CORE_TESTS
         if ProcessInfo.processInfo.environment["CLIPY_WINDOW_SNAPSHOT_DIR"] != nil { return }
         #endif
-        HotKeyManager.shared.unregisterAll()
+        // Rebuild only the snippet-owned registrations. Unregistering every
+        // global hotkey here briefly removed the screenshot/search/word
+        // shortcuts too, so a Control+2 press during this rebuild could be
+        // lost even though those shortcuts had not changed.
+        let previousHotKeyIds = hotKeyIds
         hotKeyIds.removeAll()
+        for id in previousHotKeyIds {
+            HotKeyManager.shared.unregister(id: id)
+        }
 
         for folder in folders {
             if let combo = folder.shortcut {

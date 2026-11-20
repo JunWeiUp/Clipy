@@ -9086,6 +9086,15 @@ class OverlayView: NSView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // The global screenshot shortcut has already started this session. The
+        // original key event can still reach the newly-key overlay on some
+        // macOS versions, where AppKit may interpret Control+number as a
+        // regular command or cancellation. Consume the exact configured combo
+        // while the overlay is active instead of routing it through keyDown.
+        if matchesGlobalScreenshotShortcut(event) {
+            return true
+        }
+
         // ⌥⌘T: collapse / expand the capture control island (keyCode = layout-independent T).
         let mods = event.modifierFlags
         if event.keyCode == 17, mods.contains(.command), mods.contains(.option),
@@ -9191,7 +9200,23 @@ class OverlayView: NSView {
         return super.performKeyEquivalent(with: event)
     }
 
+    private func matchesGlobalScreenshotShortcut(_ event: NSEvent) -> Bool {
+        guard PreferencesManager.shared.isScreenshotShortcutEnabled,
+              let combo = PreferencesManager.shared.screenshotShortcut else {
+            return false
+        }
+        let relevantFlags: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+        let configuredFlags = NSEvent.ModifierFlags(rawValue: combo.modifierFlags)
+            .intersection(relevantFlags)
+        let eventFlags = event.modifierFlags.intersection(relevantFlags)
+        return Int(event.keyCode) == combo.keyCode && eventFlags == configuredFlags
+    }
+
     override func keyDown(with event: NSEvent) {
+        if matchesGlobalScreenshotShortcut(event) {
+            return
+        }
+
         // In recording mode, only allow Escape (to exit recording mode)
         if isRecording {
             if event.keyCode == 53 { // Escape
