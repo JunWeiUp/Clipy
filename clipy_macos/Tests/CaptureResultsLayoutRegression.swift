@@ -5,6 +5,10 @@ func runCaptureResultsLayoutSnapshot() -> Never {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
     guard let directory = ProcessInfo.processInfo.environment["CLIPY_CAPTURE_RESULTS_SNAPSHOT_DIR"] else { exit(2) }
+    if ProcessInfo.processInfo.environment["CLIPY_SNAPSHOT_LANGUAGE"] == "en" {
+        // README English pair: screenshot UI follows Locale.preferredLanguages.
+        UserDefaults.standard.setVolatileDomain(["AppleLanguages": ["en"], "appLanguage": "en"], forName: UserDefaults.argumentDomain)
+    }
     try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
     let image = NSImage(size: NSSize(width: 640, height: 360))
     image.lockFocus()

@@ -1,25 +1,25 @@
 # Product screenshots
 
-English and Chinese screenshots of the current source build use fictional example content. The native panel snapshots are rendered by the macOS core test executable without reading the user's clipboard history or snippets. The older History, Snippets and Preferences captures also use isolated example content.
+English and Chinese screenshots of the current source build use fictional example content. Mac images are native snapshots rendered by the macOS core test executable without reading the user's clipboard history, snippets or devices.
 
 The README begins with the cross-device concept artwork in `../readme/connected-hero.webp`. Its source and built-in imagegen prompt are documented in [../readme/PROMPTS.md](../readme/PROMPTS.md).
 
-Mac gallery order in both README files:
+README gallery (both languages, compact WebP delivery copies):
 
-1. `macos-panel-en.png` / `macos-panel-zh.png` — current 520 × 640 pt native menu-bar panel: top search, scrollable hidden icons, history.
-2. `macos-history-showcase.webp` and `macos-snippets-showcase.webp` — side-by-side History and Snippet Library stories.
-3. `macos-preferences-showcase.webp` — continuous settings, inside an expandable detail.
+| Asset | Source fixture | Shown at |
+| --- | --- | --- |
+| `macos-panel-{en,zh}.webp` | panel `english-history` / `light-history` | 300 px |
+| `macos-{history,snippets,devices,notifications,tools,tools-keepawake}-{en,zh}.webp` | window `hub-*-light` | 400 px |
+| `macos-capture-{en,zh}.webp` | editor `capture-selected` | 400 px |
+| `macos-ocr-{en,zh}.webp` | capture results `ocr-light` | 400 px |
+| `android-{history,devices,settings-dark}-en.webp` | emulator PNGs below (used in both READMEs) | 200 px |
 
-The History, Snippets and Preferences showcases have quality-90 WebP delivery copies to reduce README loading cost. Their PNG originals remain available. Image encoding does not alter the illustrated composition. The panel images are direct native snapshots without decorative editing.
+Each `*-en` / `*-zh` pair renders the same fictional fixture with English or Chinese interface and content. Render with `bash scripts/test_macos_core.sh` and these variables:
 
-The older showcase images use AI-assisted presentation styling: a shared ivory, pale blue and sage paper illustration background, headings and soft shadows. They are visual presentations, not pixel-exact UI references. Each README showcase links to its original `macos-*-en.png` application capture, which preserves the actual controls, typography and content. `macos-menu-showcase.webp` and `macos-menu-en.png` remain as the previous classic-menu reference but are no longer the main README illustration. No private contacts, credentials, prompts or device history are included.
+- `CLIPY_PANEL_SNAPSHOT_DIR` (produces both languages)
+- `CLIPY_WINDOW_SNAPSHOT_DIR`, `CLIPY_EDITOR_SNAPSHOT_DIR`, `CLIPY_CAPTURE_RESULTS_SNAPSHOT_DIR` — add `CLIPY_SNAPSHOT_LANGUAGE=en` for the English set (default Chinese).
 
-`gallery-background.png` is the shared decorative illustration, generated with the built-in imagegen tool. The final presentation prompts are in [PROMPTS.md](PROMPTS.md). Keep original captures when regenerating the showcase images.
-
-Regenerate panel fixtures with `CLIPY_PANEL_SNAPSHOT_DIR=/tmp/clipy-panel-snapshots bash scripts/test_macos_core.sh`. Copy `english-history.png` and `light-history.png` to the respective README assets. Keep both README files in sync when replacing images. Screenshots describe the source build and may include changes not yet in a published release.
-
-Panel fixtures localize both the interface and fictional clipboard contents/file names. The English README panel must contain English examples throughout; the Chinese README keeps its Chinese examples. Reload the fixture history after switching languages before rendering.
-
+Export each at most 1000 px on the long edge (panel 700 px, Android 900 px) and encode with `cwebp -q 80`, keeping each file under ~40 KB. Keep both README files in sync when replacing images. Screenshots describe the source build and may include changes not yet in a published release.
 
 ## Android source previews
 

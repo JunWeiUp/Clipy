@@ -229,27 +229,31 @@ func runWindowSnapshots() -> Never {
     app.setActivationPolicy(.accessory)
     guard let directory = ProcessInfo.processInfo.environment["CLIPY_WINDOW_SNAPSHOT_DIR"] else { exit(2) }
     try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-    UserDefaults.standard.setVolatileDomain(["appLanguage": "zh", "syncRelayDeviceId": "fixture-device", "syncRelayURL": "wss://relay.example", "syncRelayEnabled": false, "syncEnabled": false], forName: UserDefaults.argumentDomain)
+    // CLIPY_SNAPSHOT_LANGUAGE=en renders the same windows with English fixtures (README pairs).
+    let isEnglish = ProcessInfo.processInfo.environment["CLIPY_SNAPSHOT_LANGUAGE"] == "en"
+    func t(_ zh: String, _ en: String) -> String { isEnglish ? en : zh }
+    UserDefaults.standard.setVolatileDomain(["appLanguage": isEnglish ? "en" : "zh", "syncRelayDeviceId": "fixture-device", "syncRelayURL": "wss://relay.example", "syncRelayEnabled": false, "syncEnabled": false], forName: UserDefaults.argumentDomain)
     let model = SearchViewModel()
     let now = Date()
     let entries: [HistoryEntry] = [
-        .init(item: .text("设计评审纪要 · 周四\n参会：产品、设计、Mac 与 Android 开发。\n• 快速面板：搜索框获得焦点，⌘1–6 直接使用最近条目。\n• 片段：文件夹 / 列表 / 正文三栏，切换时保存草稿。\n下周一前完成高保真稿。"),
-              date: now.addingTimeInterval(-60), sourceApp: "备忘录", sourceBundleId: "com.apple.Notes", contentHash: "fixture-window-1",
+        .init(item: .text(t("设计评审纪要 · 周四\n参会：产品、设计、Mac 与 Android 开发。\n• 快速面板：搜索框获得焦点，⌘1–6 直接使用最近条目。\n• 片段：文件夹 / 列表 / 正文三栏，切换时保存草稿。\n下周一前完成高保真稿。", "Design review notes · Thursday\nAttendees: product, design, Mac and Android.\n• Quick panel: search field focused, ⌘1–6 pastes recent items.\n• Snippets: folders / list / editor in three columns, drafts saved on switch.\nHigh-fidelity mockups due Monday.")),
+              date: now.addingTimeInterval(-60), sourceApp: t("备忘录", "Notes"), sourceBundleId: "com.apple.Notes", contentHash: "fixture-window-1",
               isPinned: true, lastUsedAt: now.addingTimeInterval(-40), useCount: 3),
-        .init(item: .text("https://figma.example/design/clipy-v2/设计评审-board"), date: now.addingTimeInterval(-360), sourceApp: "Safari",
+        .init(item: .text(t("https://figma.example/design/clipy-v2/设计评审-board", "https://figma.example/design/clipy-v2/design-review-board")), date: now.addingTimeInterval(-360), sourceApp: "Safari",
               sourceBundleId: "com.apple.Safari", contentHash: "fixture-window-2", lastUsedAt: now.addingTimeInterval(-300), useCount: 1),
         .init(item: .image("/nonexistent/fixture-shot.png"), date: now.addingTimeInterval(-600), sourceApp: "Clipy",
-              sourceBundleId: "com.clipyclone.fixture", contentHash: "fixture-window-3", searchIndex: "设计评审 board"),
-        .init(item: .text("git commit -m \"design: 设计评审修订\" && echo { done }"), date: now.addingTimeInterval(-86_400 - 3_600), sourceApp: "终端",
+              sourceBundleId: "com.clipyclone.fixture", contentHash: "fixture-window-3", searchIndex: t("设计评审 board", "design review board")),
+        .init(item: .text(t("git commit -m \"design: 设计评审修订\" && echo { done }", "git commit -m \"design: design review fixes\" && echo { done }")), date: now.addingTimeInterval(-86_400 - 3_600), sourceApp: t("终端", "Terminal"),
               sourceBundleId: "com.apple.Terminal", contentHash: "fixture-window-4", useCount: 5),
-        .init(item: .files([URL(fileURLWithPath: NSHomeDirectory() + "/Downloads/设计评审素材.zip")]), date: now.addingTimeInterval(-86_400 - 7_200),
-              sourceApp: "访达", sourceBundleId: "com.apple.finder", contentHash: "fixture-window-5", useCount: 1),
-        .init(item: .text("设计评审时请重点关注：键盘操作、空状态说明、深色模式下的对比度。"), date: now.addingTimeInterval(-2 * 86_400),
-              sourceApp: "小米 14", contentHash: "fixture-window-6")
+        .init(item: .files([URL(fileURLWithPath: NSHomeDirectory() + "/Downloads/" + t("设计评审素材.zip", "design-review-assets.zip"))]), date: now.addingTimeInterval(-86_400 - 7_200),
+              sourceApp: t("访达", "Finder"), sourceBundleId: "com.apple.finder", contentHash: "fixture-window-5", useCount: 1),
+        .init(item: .text(t("设计评审时请重点关注：键盘操作、空状态说明、深色模式下的对比度。", "For the design review, focus on keyboard flow, empty states and dark-mode contrast.")), date: now.addingTimeInterval(-2 * 86_400),
+              sourceApp: t("小米 14", "Pixel 9"), contentHash: "fixture-window-6")
     ]
-    model.query = "设计评审"
+    let query = t("设计评审", "design review")
+    model.query = query
     model.results = entries.map {
-        HistorySearchResult(entry: $0, highlightRanges: HistorySearchRanker.highlightRanges(for: $0.item.title, terms: ["设计评审"]), score: nil)
+        HistorySearchResult(entry: $0, highlightRanges: HistorySearchRanker.highlightRanges(for: $0.item.title, terms: query.split(separator: " ").map(String.init)), score: nil)
     }
     model.totalCount = 1284
     model.statusText = L10n.format(.historyShownOfTotal, "\(entries.count)" as NSString, "1,284" as NSString)
@@ -262,9 +266,9 @@ func runWindowSnapshots() -> Never {
     window.backgroundColor = .windowBackgroundColor
     window.isReleasedWhenClosed = false
     // Fictional snippet library (isolated fixture-data store, seeded once).
-    if !SnippetManager.shared.folders.contains(where: { $0.title == "工作" && $0.snippets.contains { $0.title == "会议跟进" } }) {
+    if !SnippetManager.shared.folders.contains(where: { $0.title == t("工作", "Work") && $0.snippets.contains { $0.title == t("会议跟进", "Meeting follow-up") } }) {
         for folder in SnippetManager.shared.folders { SnippetManager.shared.deleteFolder(id: folder.id) }
-        let library: [(String, [(String, String)])] = [
+        let zhLibrary: [(String, [(String, String)])] = [
             ("常用回复", [("好的，收到", "好的，收到，我稍后处理。"), ("稍后回复", "我现在不方便，稍后回复你。"),
                         ("感谢", "非常感谢你的帮助！"), ("示例地址", "示例市示例路 1 号")]),
             ("工作", [("会议跟进", "您好，\n\n感谢今天的详细反馈，和大家一起梳理新方向很有收获。\n\n接下来的安排：\n• 优化首次启动流程\n• 周四前分享更新后的原型\n• 约一次简短的团队评审\n\n有任何新的想法，随时在这里补充。\n\n祝好\n示例"),
@@ -273,6 +277,16 @@ func runWindowSnapshots() -> Never {
             ("开发", [("新建分支", "git switch -c feat/"), ("调试输出", "print(\"[debug]\", value)"), ("PR 描述", "## 改动\n- \n\n## 验证\n- ")]),
             ("个人", [("邮箱", "someone@example.com"), ("签名", "示例 · 产品设计")]),
         ]
+        let enLibrary: [(String, [(String, String)])] = [
+            ("Quick replies", [("Got it", "Got it, I will take care of it shortly."), ("Reply later", "I can't talk right now, I'll get back to you soon."),
+                        ("Thanks", "Thanks a lot for your help!"), ("Sample address", "1 Example Street, Sample City")]),
+            ("Work", [("Meeting follow-up", "Hi team,\n\nThanks for the detailed feedback today. It was great to shape the new direction together.\n\nNext steps:\n• Polish the first-launch flow\n• Share the updated prototype by Thursday\n• Schedule a short team review\n\nAdd any new ideas here at any time.\n\nBest,\nAlex"),
+                    ("Project update", "The first design draft is done; review starts next week."), ("Design review", "Before we wrap up: is the interaction clear and are empty states covered?"),
+                    ("Share prototype", "Here is the latest prototype link. Feel free to comment directly."), ("Weekly retro", "What went well this week? What could be better?")]),
+            ("Dev", [("New branch", "git switch -c feat/"), ("Debug print", "print(\"[debug]\", value)"), ("PR template", "## Changes\n- \n\n## Verification\n- ")]),
+            ("Personal", [("Email", "someone@example.com"), ("Signature", "Alex · Product Design")]),
+        ]
+        let library = isEnglish ? enLibrary : zhLibrary
         for (title, snippets) in library {
             SnippetManager.shared.addFolder(title: title)
             guard let id = SnippetManager.shared.folders.last?.id else { continue }
@@ -280,7 +294,7 @@ func runWindowSnapshots() -> Never {
         }
     }
     let snippetModel = SnippetEditorViewModel()
-    if let work = SnippetManager.shared.folders.first(where: { $0.title == "工作" }) { snippetModel.selectFolder(work.id) }
+    if let work = SnippetManager.shared.folders.first(where: { $0.title == t("工作", "Work") }) { snippetModel.selectFolder(work.id) }
     let wordBookURL = URL(fileURLWithPath: directory).appendingPathComponent("fixture-words.json")
     try? FileManager.default.removeItem(at: wordBookURL)
     let wordStore = WordBookStore(fileURL: wordBookURL)
@@ -294,17 +308,17 @@ func runWindowSnapshots() -> Never {
                   inflections: inflections.map { .init(name: $0.0, value: $0.1) })
     }
     let serendipity = fixtureWord("serendipity", "ˌserənˈdɪpəti",
-        [("n.", "意外发现珍奇事物的本领；机缘凑巧"), ("n.", "（偶然的）幸运发现；意外之喜")],
-        [("by serendipity", "偶然地；机缘巧合地"), ("pure serendipity", "纯属巧合")],
-        [("Finding that old letter in the book was pure serendipity.", "在书里发现那封旧信，纯属意外之喜。", "柯林斯例句"),
-         ("Many scientific discoveries are a matter of serendipity.", "许多科学发现都源于机缘巧合。", "")],
-        [("复数", "serendipities")])
+        [("n.", t("意外发现珍奇事物的本领；机缘凑巧", "the faculty of making fortunate discoveries by accident")), ("n.", t("（偶然的）幸运发现；意外之喜", "a happy accident; a pleasant surprise"))],
+        [("by serendipity", t("偶然地；机缘巧合地", "by happy chance")), ("pure serendipity", t("纯属巧合", "sheer luck"))],
+        [("Finding that old letter in the book was pure serendipity.", t("在书里发现那封旧信，纯属意外之喜。", "Finding that old letter in the book was a happy accident."), t("柯林斯例句", "Collins")),
+         ("Many scientific discoveries are a matter of serendipity.", t("许多科学发现都源于机缘巧合。", "Many discoveries in science came about by chance."), "")],
+        [(t("复数", "Plural"), "serendipities")])
     let fixtureWords: [(WordEntry, Double)] = [
-        (fixtureWord("coincidence", "koʊˈɪnsɪdəns", [("n.", "巧合；巧事")]), 5),
-        (fixtureWord("resilient", "rɪˈzɪliənt", [("adj.", "有弹性的；能迅速恢复的")]), 4),
-        (fixtureWord("nuance", "ˈnuːɑːns", [("n.", "细微差别")]), 3),
-        (fixtureWord("meticulous", "məˈtɪkjələs", [("adj.", "一丝不苟的；极其仔细的")]), 2),
-        (fixtureWord("ephemeral", "əˈfemərəl", [("adj.", "短暂的；转瞬即逝的")]), 1),
+        (fixtureWord("coincidence", "koʊˈɪnsɪdəns", [("n.", t("巧合；巧事", "a chance occurrence"))]), 5),
+        (fixtureWord("resilient", "rɪˈzɪliənt", [("adj.", t("有弹性的；能迅速恢复的", "able to recover quickly"))]), 4),
+        (fixtureWord("nuance", "ˈnuːɑːns", [("n.", t("细微差别", "a subtle difference"))]), 3),
+        (fixtureWord("meticulous", "məˈtɪkjələs", [("adj.", t("一丝不苟的；极其仔细的", "showing great attention to detail"))]), 2),
+        (fixtureWord("ephemeral", "əˈfemərəl", [("adj.", t("短暂的；转瞬即逝的", "lasting a very short time"))]), 1),
     ]
     for (entry, daysAgo) in fixtureWords { wordStore.record(entry, at: Date().addingTimeInterval(-daysAgo * 86_400)) }
     wordStore.record(serendipity, at: Date().addingTimeInterval(-9 * 86_400))
@@ -325,7 +339,16 @@ func runWindowSnapshots() -> Never {
             packageName: pkg, appName: app, title: title, subtitle: subtitle, body: body,
             postTime: time.timeIntervalSince1970, groupKey: nil, isClearable: clearable, isArchived: archived, extras: nil)
     }
-    let fixtureNotifications = [
+    let fixtureNotifications = isEnglish ? [
+        fixtureNotification(1, "example.sms", "Messages", "Example Bank", "Your card ending 0000 was charged $26.80 today. Available balance $1,284.56. Not you? Call support.", dayOffset: 0, hour: 15, minute: 40),
+        fixtureNotification(2, "example.chat", "WhatsApp", "Design team", "Sam: Reviewed the hi-fi mockups. The send button on Devices is really clear.", dayOffset: 0, hour: 15, minute: 36),
+        fixtureNotification(3, "example.sms", "Messages", "Example Service", "Your code is 000000. It expires in 5 minutes. Do not share it.", dayOffset: 0, hour: 15, minute: 31),
+        fixtureNotification(4, "example.work", "Slack", "Approvals", "Your time-off request was approved by Example.", dayOffset: 0, hour: 14, minute: 58),
+        fixtureNotification(5, "example.chat", "WhatsApp", "Jamie", "Dinner tonight?", dayOffset: 0, hour: 14, minute: 12),
+        fixtureNotification(6, "example.parcel", "Parcels", "Ready for pickup", "Your parcel is at the Example locker. Pickup code 0-0-0000", dayOffset: 0, hour: 13, minute: 20, clearable: false),
+        fixtureNotification(7, "example.chat", "WhatsApp", "Notes to self", "[File] review-assets.zip", dayOffset: -1, hour: 21, minute: 40, archived: true),
+        fixtureNotification(8, "example.mail", "Gmail", "Re: Clipy release plan", "Attached is the latest schedule. Please confirm by Friday.", dayOffset: -1, hour: 21, minute: 14),
+    ] : [
         fixtureNotification(1, "example.sms", "短信", "106****5521", "【示例银行】您尾号 0000 的卡于今日消费 268.00 元，可用余额 12,840.56 元。如非本人操作，请致电客服。", dayOffset: 0, hour: 15, minute: 40),
         fixtureNotification(2, "example.chat", "微信", "产品设计群", "王工：高保真稿我看过了，设备页的发送入口很清楚。", dayOffset: 0, hour: 15, minute: 36),
         fixtureNotification(3, "example.sms", "短信", "106****0000", "验证码 000000，5 分钟内有效，请勿泄露。", dayOffset: 0, hour: 15, minute: 31),
@@ -335,7 +358,13 @@ func runWindowSnapshots() -> Never {
         fixtureNotification(7, "example.chat", "微信", "文件传输助手", "[文件] 评审素材.zip", dayOffset: -1, hour: 21, minute: 40, archived: true),
         fixtureNotification(8, "example.mail", "QQ邮箱", "Re: Clipy 发布计划", "附件为最新排期表，请在周五前确认。", dayOffset: -1, hour: 21, minute: 14),
     ]
-    notificationModel.setSnapshot(entries: fixtureNotifications, apps: [
+    notificationModel.setSnapshot(entries: fixtureNotifications, apps: isEnglish ? [
+        .init(packageName: "example.chat", appName: "WhatsApp", count: 38),
+        .init(packageName: "example.sms", appName: "Messages", count: 12),
+        .init(packageName: "example.work", appName: "Slack", count: 21),
+        .init(packageName: "example.parcel", appName: "Parcels", count: 9),
+        .init(packageName: "example.mail", appName: "Gmail", count: 6),
+    ] : [
         .init(packageName: "example.chat", appName: "微信", count: 38),
         .init(packageName: "example.sms", appName: "短信", count: 12),
         .init(packageName: "example.work", appName: "钉钉", count: 21),
@@ -399,7 +428,7 @@ func runWindowSnapshots() -> Never {
         window.orderFrontRegardless()
         if name.hasPrefix("hub-settings-search") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                NotificationCenter.default.post(name: Notification.Name("clipySettingsSnapshotSearch"), object: name.hasSuffix("-dark") ? "快捷键" : "麦克风")
+                NotificationCenter.default.post(name: Notification.Name("clipySettingsSnapshotSearch"), object: name.hasSuffix("-dark") ? t("快捷键", "shortcut") : t("麦克风", "microphone"))
             }
         }
         if name.hasPrefix("hub-settings-permissions") {

@@ -6,6 +6,10 @@ func runEditorLayoutSnapshot() -> Never {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
     guard let directory = ProcessInfo.processInfo.environment["CLIPY_EDITOR_SNAPSHOT_DIR"] else { exit(2) }
+    if ProcessInfo.processInfo.environment["CLIPY_SNAPSHOT_LANGUAGE"] == "en" {
+        // README English pair: screenshot UI follows Locale.preferredLanguages.
+        UserDefaults.standard.setVolatileDomain(["AppleLanguages": ["en"], "appLanguage": "en"], forName: UserDefaults.argumentDomain)
+    }
     try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
     guard let bitmap = CGContext(data: nil, width: 640, height: 420, bitsPerComponent: 8,
                                  bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
