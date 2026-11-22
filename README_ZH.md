@@ -98,7 +98,7 @@
 > [!NOTE]
 > 局域网同步面向可信网络。当前源码使用内置默认 AES-GCM 密钥，不能验证设备身份。详见 [SECURITY.md](SECURITY.md)。
 
-当前源码版本：**1.0.43** · 源码构建号 **12390**（Android arm64 `versionCode` **14390**） · 最新正式版：**[v1.0.43](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.43)**
+当前源码版本：**1.0.44** · 源码构建号 **12404**（Android arm64 `versionCode` **14404**） · 最新正式版：**[v1.0.43](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.43)**
 
 <details>
 <summary><b>全部功能</b></summary>
@@ -138,7 +138,7 @@ cd clipy_flutter
 flutter pub get --enforce-lockfile
 flutter build windows --release --no-pub -t lib/main_windows.dart
 cd ..
-./scripts/package_windows.ps1 -Version 1.0.43
+./scripts/package_windows.ps1 -Version 1.0.44
 ```
 
 **iOS**：iOS 15+ 目标在 CI 中做无签名构建；真机安装需要自行签名。
