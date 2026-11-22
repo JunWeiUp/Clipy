@@ -50,7 +50,9 @@ class _RelaySettingsState extends State<RelaySettings> {
     try {
       final decoded = RelayConfiguration.decode(trimmed);
       final dev = decoded['device'];
-      if (dev is String && RelayConfiguration.validDevice(dev) && _device.text != dev) {
+      if (dev is String &&
+          RelayConfiguration.validDevice(dev) &&
+          _device.text != dev) {
         _device.text = dev;
       }
     } catch (_) {}
@@ -214,7 +216,8 @@ class _RelaySettingsState extends State<RelaySettings> {
                 '接入配置 JSON 的公钥与私钥不匹配（导入完整配置需含成对 secret_key 与 public_key）。',
                 'Enrollment JSON public/secret keypair mismatch.',
               )
-            : error is FormatException && error.message == 'invalidConfiguration'
+            : error is FormatException &&
+                  error.message == 'invalidConfiguration'
             ? t(
                 '接入配置 JSON 缺少有效字段（需含 app="clipy"、group、device、token≥32位、trusted_peers）。',
                 'Enrollment JSON is missing required valid fields.',
@@ -445,12 +448,19 @@ class _RelaySettingsState extends State<RelaySettings> {
                 labelText: t('公网 Key', 'Internet Key'),
                 helperMaxLines: 6,
                 helperText: _configured
-                    ? t('已保存，留空保持不变；点右侧眼睛可载入并修改', 'Saved; leave blank to keep or tap eye to edit')
+                    ? t(
+                        '已保存，留空保持不变；点右侧眼睛可载入并修改',
+                        'Saved; leave blank to keep or tap eye to edit',
+                      )
                     : null,
                 suffixIcon: IconButton(
-                  tooltip: _showKey ? t('隐藏 Key', 'Hide key') : t('显示并编辑 Key', 'Show and edit key'),
+                  tooltip: _showKey
+                      ? t('隐藏 Key', 'Hide key')
+                      : t('显示并编辑 Key', 'Show and edit key'),
                   onPressed: _loaded && !_saving ? _toggleShowKey : null,
-                  icon: Icon(_showKey ? Icons.visibility_off : Icons.visibility),
+                  icon: Icon(
+                    _showKey ? Icons.visibility_off : Icons.visibility,
+                  ),
                 ),
               ),
             ),
@@ -472,10 +482,14 @@ class _RelaySettingsState extends State<RelaySettings> {
                     TextButton.icon(
                       onPressed: _loaded && !_saving ? _copyEnrollment : null,
                       icon: const Icon(Icons.key),
-                      label: Text(t('复制本机公钥登记信息', 'Copy device enrollment info')),
+                      label: Text(
+                        t('复制本机公钥登记信息', 'Copy device enrollment info'),
+                      ),
                     ),
                     TextButton.icon(
-                      onPressed: _loaded && !_saving ? _loadCurrentEnrollment : null,
+                      onPressed: _loaded && !_saving
+                          ? _loadCurrentEnrollment
+                          : null,
                       icon: const Icon(Icons.edit_note),
                       label: Text(t('载入当前配置', 'Load current')),
                     ),
@@ -504,11 +518,19 @@ class _RelaySettingsState extends State<RelaySettings> {
                       'Load to edit anytime or paste new JSON; Device ID syncs automatically.',
                     ),
                     suffixIcon: IconButton(
-                      tooltip: _showEnrollmentText ? t('隐藏配置', 'Hide JSON') : t('显示配置', 'Show JSON'),
+                      tooltip: _showEnrollmentText
+                          ? t('隐藏配置', 'Hide JSON')
+                          : t('显示配置', 'Show JSON'),
                       onPressed: _loaded && !_saving
-                          ? () => setState(() => _showEnrollmentText = !_showEnrollmentText)
+                          ? () => setState(
+                              () => _showEnrollmentText = !_showEnrollmentText,
+                            )
                           : null,
-                      icon: Icon(_showEnrollmentText ? Icons.visibility_off : Icons.visibility),
+                      icon: Icon(
+                        _showEnrollmentText
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
                     ),
                   ),
                 ),

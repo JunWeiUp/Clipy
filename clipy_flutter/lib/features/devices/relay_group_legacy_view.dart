@@ -41,7 +41,9 @@ class RelayGroupLegacyView extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final devices = _allDevices;
-    final onlineCount = devices.where((id) => onlineDevices.contains(id)).length;
+    final onlineCount = devices
+        .where((id) => onlineDevices.contains(id))
+        .length;
     if (isV2) {
       final trustedSet = trustedDevices.toSet();
       return Column(
@@ -51,14 +53,20 @@ class RelayGroupLegacyView extends StatelessWidget {
             children: [
               CircleAvatar(
                 backgroundColor: theme.colorScheme.primaryContainer,
-                child: Icon(Icons.group, color: theme.colorScheme.onPrimaryContainer),
+                child: Icon(
+                  Icons.group,
+                  color: theme.colorScheme.onPrimaryContainer,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(group.isEmpty ? 'clipy' : group, style: theme.textTheme.titleLarge),
+                    Text(
+                      group.isEmpty ? 'clipy' : group,
+                      style: theme.textTheme.titleLarge,
+                    ),
                     Text(
                       [
                         t('${devices.length} 台设备', '${devices.length} devices'),
@@ -83,56 +91,63 @@ class RelayGroupLegacyView extends StatelessWidget {
               children: [
                 for (var i = 0; i < devices.length; i++) ...[
                   if (i > 0) const Divider(height: 1),
-                  Builder(builder: (context) {
-                    final id = devices[i];
-                    final isSelf = id == device;
-                    final isOnline = onlineDevices.contains(id);
-                    final isTrusted = isSelf || trustedSet.contains(id);
-                    final label = isSelf
-                        ? (selfName.isNotEmpty ? selfName : id)
-                        : (peerNames[id] ?? id);
-                    final status = !presenceKnown
-                        ? t('状态未刷新', 'Status not refreshed')
-                        : (isOnline ? t('在线', 'Online') : t('离线', 'Offline'));
-                    final isPhone = id.toLowerCase().contains('android') ||
-                        id.toLowerCase().contains('phone') ||
-                        id.toLowerCase().contains('ios');
-                    return ListTile(
-                      leading: Icon(
-                        isPhone ? Icons.smartphone : Icons.computer,
-                        color: isOnline ? theme.colorScheme.primary : theme.disabledColor,
-                      ),
-                      title: Text(
-                        '$label${isSelf ? t('（本机）', ' (this device)') : ''}',
-                      ),
-                      subtitle: Row(
-                        children: [
-                          Icon(
-                            Icons.circle,
-                            size: 8,
-                            color: isOnline ? Colors.green : theme.disabledColor,
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              '$id · $status',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                      trailing: Chip(
-                        visualDensity: VisualDensity.compact,
-                        label: Text(
-                          isSelf
-                              ? t('本机', 'This device')
-                              : isTrusted
-                                  ? t('可信设备', 'Trusted')
-                                  : t('未信任', 'Untrusted'),
+                  Builder(
+                    builder: (context) {
+                      final id = devices[i];
+                      final isSelf = id == device;
+                      final isOnline = onlineDevices.contains(id);
+                      final isTrusted = isSelf || trustedSet.contains(id);
+                      final label = isSelf
+                          ? (selfName.isNotEmpty ? selfName : id)
+                          : (peerNames[id] ?? id);
+                      final status = !presenceKnown
+                          ? t('状态未刷新', 'Status not refreshed')
+                          : (isOnline ? t('在线', 'Online') : t('离线', 'Offline'));
+                      final isPhone =
+                          id.toLowerCase().contains('android') ||
+                          id.toLowerCase().contains('phone') ||
+                          id.toLowerCase().contains('ios');
+                      return ListTile(
+                        leading: Icon(
+                          isPhone ? Icons.smartphone : Icons.computer,
+                          color: isOnline
+                              ? theme.colorScheme.primary
+                              : theme.disabledColor,
                         ),
-                      ),
-                    );
-                  }),
+                        title: Text(
+                          '$label${isSelf ? t('（本机）', ' (this device)') : ''}',
+                        ),
+                        subtitle: Row(
+                          children: [
+                            Icon(
+                              Icons.circle,
+                              size: 8,
+                              color: isOnline
+                                  ? Colors.green
+                                  : theme.disabledColor,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                '$id · $status',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        trailing: Chip(
+                          visualDensity: VisualDensity.compact,
+                          label: Text(
+                            isSelf
+                                ? t('本机', 'This device')
+                                : isTrusted
+                                ? t('可信设备', 'Trusted')
+                                : t('未信任', 'Untrusted'),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                 ],
               ],
             ),

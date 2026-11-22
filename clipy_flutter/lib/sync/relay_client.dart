@@ -62,7 +62,8 @@ class SyncRelayClient {
   Set<String> get onlineDevices => Set.unmodifiable(_onlineDevices);
   Map<String, String> get peerNames => Map.unmodifiable({
     for (final entry in _metadata.entries)
-      if (entry.value['name'] is String && (entry.value['name'] as String).isNotEmpty)
+      if (entry.value['name'] is String &&
+          (entry.value['name'] as String).isNotEmpty)
         entry.key: entry.value['name'] as String,
   });
   bool get presenceKnown => _presenceKnown;
@@ -77,6 +78,7 @@ class SyncRelayClient {
     final portPart = u.hasPort ? ':${u.port}' : '';
     return '$scheme://${u.host}$portPart';
   }
+
   void _setState(RelayConnectionState value) {
     if (state == value) return;
     state = value;
