@@ -7,6 +7,7 @@ import CommonRelay
 struct SyncRelayGroupView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model: SyncRelayGroups
+    @ObservedObject private var connectionState = SyncRelayConnectionState.shared
     @State private var text = ""
     @State private var groupName = ""
     @State private var creating = true
@@ -65,12 +66,12 @@ struct SyncRelayGroupView: View {
             VStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle").font(.system(size: 28)).foregroundStyle(SplitV3Color.danger)
                 Text((model.revoked || model.accessDenied) ? model.t("清除失效的组配置？","Clear unavailable group configuration?") : action.disband ? model.t("解散整个设备组？","Disband this group?") : model.t("退出当前设备组？","Leave this group?")).font(.system(size: 15, weight: .semibold))
-                Text((model.revoked || model.accessDenied) ? model.t("只清除本机已失效的公网组配置，保留历史记录和局域网设置。然后可创建或加入其他设备组。","Clear only this device’s unavailable relay configuration. Local history and LAN settings are preserved. You can then create or join another group.") : action.disband ? model.t("所有设备将失去本组公网访问权限，未使用的邀请会失效。此操作不可撤销。本机历史记录和局域网配置会保留。","All devices lose relay access and invitations expire. This cannot be undone. Local history and LAN settings are preserved.") : model.t("仅本机离开，其他设备继续使用。若组内只剩本机，空组会同时关闭。本机历史记录和局域网配置会保留。","Only this device leaves; other devices continue using the group. Empty groups close. Local history and LAN settings are preserved."))
+                Text((model.revoked || model.accessDenied) ? model.t("只清除本机已失效的公网组配置，保留历史记录和局域网设置。然后可创建或加入其他设备组。","Clear only this device’s unavailable relay configuration. Local history and LAN settings are preserved. You can then create or join another group.") : model.legacy ? model.t("仅清除本机的公网组接入配置并断开中继，保留历史记录和局域网设置。之后可重新配置或加入其他设备组。","Clears only this Mac’s relay enrollment and disconnects relay. Local history and LAN settings are preserved. You can reconfigure or join another group anytime.") : action.disband ? model.t("所有设备将失去本组公网访问权限，未使用的邀请会失效。此操作不可撤销。本机历史记录和局域网配置会保留。","All devices lose relay access and invitations expire. This cannot be undone. Local history and LAN settings are preserved.") : model.t("仅本机离开，其他设备继续使用。若组内只剩本机，空组会同时关闭。本机历史记录和局域网配置会保留。","Only this device leaves; other devices continue using the group. Empty groups close. Local history and LAN settings are preserved."))
                     .font(.system(size: 12.5)).foregroundStyle(SplitV3Color.text2).multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true).padding(.bottom, 10)
                 HStack(spacing: 8) {
                     Button(model.t("取消","Cancel")) { exiting=nil }.buttonStyle(RelayWideButtonStyle()).keyboardShortcut(.cancelAction)
-                    Button((model.revoked || model.accessDenied) ? model.t("清除并继续","Clear and continue") : action.disband ? model.t("确认解散","Disband group") : model.t("确认退出","Leave group")) { exiting=nil;model.perform { if model.accessDenied { try await model.clearUnavailableEnrollment() } else { try await model.exitGroup(disband:action.disband) };creating=true;groupName="";text="" } }
+                    Button((model.revoked || model.accessDenied) ? model.t("清除并继续","Clear and continue") : action.disband ? model.t("确认解散","Disband group") : model.t("确认退出","Leave group")) { exiting=nil;model.perform { if model.accessDenied { try await model.clearUnavailableEnrollment() } else if model.legacy { try await model.leaveLocalGroup() } else { try await model.exitGroup(disband:action.disband) };creating=true;groupName="";text="" } }
                         .buttonStyle(RelayWideButtonStyle(kind: .dangerFill))
                 }
             }.padding(20).frame(width:400)
@@ -131,7 +132,7 @@ struct SyncRelayGroupView: View {
             } else if model.accessDenied { deniedAccess.padding(.top, 18) }
             else if model.revoked { unavailableGroup.padding(.top, 18) }
             else if model.enrolled { groupHeader; requestCard; memberList }
-            else if model.legacy { existingGroup.padding(.top, 18) }
+            else if model.legacy { spaceGroupHeader; spaceMemberList; if !model.isV2 { legacyUpgradeCard.padding(.top, 14) } }
             else if !model.pendingCode.isEmpty { pendingJoin.padding(.top, 18) }
             else if creating || model.creationPending { creation.padding(.top, 18) }
             else { enrollment.padding(.top, 18) }
@@ -303,6 +304,29 @@ struct SyncRelayGroupView: View {
                     Button(model.t("退出当前组","Leave group")) { exiting=GroupExit(disband:false) }.buttonStyle(RelayWideButtonStyle())
                     if model.manager { Button(model.t("解散设备组","Disband group")) { exiting=GroupExit(disband:true) }.buttonStyle(RelayWideButtonStyle(kind: .danger)) }
                 }
+            } else if model.legacy && !(model.revoked || model.accessDenied) {
+                VStack(spacing: 8) {
+                    Image(systemName: model.isV2 ? "lock.shield" : "server.rack")
+                        .font(.system(size: 30, weight: .light))
+                        .foregroundStyle(RelayTint.link)
+                    Text(model.isV2 ? model.t("v2 加密空间", "v2 Encrypted Space") : model.t("传统设备组", "Legacy relay group"))
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(model.isV2
+                         ? model.t("成员列表与实时在线状态来自 Common Relay v2 空间；设备密钥与信任列表可随时在「中继连接」中修改。", "Members and live online status come from your Common Relay v2 Space. Edit keys or trusted devices anytime in Relay connection.")
+                         : model.t("当前使用传统中继配置，可在左侧展开升级组管理配置，或前往中继连接修改。", "Using legacy relay enrollment. Upgrade group management on the left or edit in Relay connection."))
+                        .font(.system(size: 12)).foregroundStyle(SplitV3Color.text3).multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button { navigateToSettings() } label: {
+                        Label(model.t("编辑中继配置", "Edit relay config"), systemImage: "slider.horizontal.3")
+                    }
+                    .buttonStyle(SplitV3ButtonStyle(kind: .primary))
+                    .padding(.top, 4)
+                }.padding(.horizontal, 16).padding(.vertical, 18).frame(maxWidth: .infinity).devicesCard(radius: 12)
+                Spacer(minLength: 0)
+                Text(model.t("退出仅清除本机公网组配置，保留历史记录和局域网设置。", "Leaving clears only this Mac’s relay enrollment. Local history and LAN settings are preserved."))
+                    .font(.system(size: 11.5)).foregroundStyle(SplitV3Color.text3).fixedSize(horizontal: false, vertical: true)
+                Button(model.t("退出当前组","Leave group")) { exiting=GroupExit(disband:false) }
+                    .buttonStyle(RelayWideButtonStyle(kind: .danger))
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "qrcode").font(.system(size: 30, weight: .light)).foregroundStyle(SplitV3Color.text3)
@@ -394,20 +418,95 @@ struct SyncRelayGroupView: View {
             Button(model.t("返回创建或加入","Return to create or join")) { exiting=GroupExit(disband:false) }.buttonStyle(SplitV3ButtonStyle(kind: .primary))
         }.padding(16).frame(maxWidth:.infinity,alignment:.leading).devicesCard(radius: 12)
     }
-    private var existingGroup: some View {
-        VStack(alignment:.leading,spacing:12) {
-            Label(model.t("已接入设备组","Already enrolled"),systemImage:"checkmark.circle.fill").font(.system(size: 15, weight: .semibold)).foregroundStyle(.green)
-            Text(model.group).font(.system(size: 15)).textSelection(.enabled)
-            Text("\(model.t("本机设备 ID","This device")): \(model.device)").font(.system(size: 11.5)).foregroundStyle(SplitV3Color.text3).textSelection(.enabled)
-            SplitV3Hairline()
-            Label(model.t("组管理待启用","Group management pending"),systemImage:"info.circle").font(.system(size: 13, weight: .semibold))
-            Text(model.t("原有设备组和同步配置已保留。新版添加、移除设备功能需要服务端升级，并为当前组启用管理权限；无需重新加入设备组。","Your existing group and sync configuration are preserved. Adding and removing devices requires the server update and management activation for this group. You do not need to join again."))
-                .font(.system(size: 12.5)).foregroundStyle(SplitV3Color.text2)
-            if !model.trustedDevices.isEmpty {
-                Text(model.t("本机已保存的可信设备","Trusted devices saved on this Mac")).font(.system(size: 13, weight: .semibold))
-                ForEach(model.trustedDevices,id:\.self) { id in Text(id).font(.system(size: 11.5)).textSelection(.enabled) }
-                Text(model.t("这是本机保存的信任列表，并非服务器完整成员列表。","This is the locally saved trust list, not the complete server membership list.")).font(.system(size: 11.5)).foregroundStyle(SplitV3Color.text3)
+    private var spaceDevices: [String] {
+        var list: [String] = []
+        if !model.device.isEmpty { list.append(model.device) }
+        for id in model.trustedDevices where !list.contains(id) { list.append(id) }
+        for id in connectionState.onlineDevices.sorted() where !list.contains(id) { list.append(id) }
+        return list
+    }
+
+    private var spaceOnlineCount: Int {
+        spaceDevices.filter { id in
+            if id == model.device && connectionState.status == .connected { return true }
+            return connectionState.onlineDevices.contains(id)
+        }.count
+    }
+
+    private var spaceGroupHeader: some View {
+        let known = connectionState.presenceKnown || connectionState.status == .connected
+        return HStack(spacing: 14) {
+            Image(systemName: "person.2").font(.system(size: 20)).foregroundStyle(.white)
+                .frame(width: 48, height: 48)
+                .background(LinearGradient(colors: [Color(red: 0.38, green: 0.65, blue: 0.98), Color(red: 0.04, green: 0.42, blue: 1)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 14))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.group.isEmpty ? "clipy" : model.group).font(.system(size: 19, weight: .bold)).lineLimit(1)
+                Text([model.t("\(spaceDevices.count) 台设备", "\(spaceDevices.count) devices"),
+                      model.isV2 ? model.t("v2 加密空间", "v2 Encrypted Space") : model.t("已接入设备组", "Enrolled group"),
+                      known ? model.t("\(spaceOnlineCount) 台在线", "\(spaceOnlineCount) online") : model.t("连接中", "Connecting")].joined(separator: " · "))
+                    .font(.system(size: 12)).foregroundStyle(SplitV3Color.text3)
             }
+            Spacer(minLength: 0)
+            RelayTag(text: model.isV2 ? model.t("v2 端到端空间", "v2 E2E Space") : model.t("传统配置", "Legacy"), accent: model.isV2)
+        }.padding(.top, 18).padding(.bottom, 14)
+    }
+
+    private var spaceMemberList: some View {
+        let trustedSet = Set(model.trustedDevices)
+        let known = connectionState.presenceKnown || connectionState.status == .connected
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(model.t("成员", "Members")).font(.system(size: 13, weight: .semibold)).padding(.horizontal, 4).padding(.top, 4)
+            VStack(spacing: 0) {
+                ForEach(Array(spaceDevices.enumerated()), id: \.element) { index, id in
+                    if index > 0 { SplitV3Hairline() }
+                    let isSelf = id == model.device
+                    let isOnline = (isSelf && connectionState.status == .connected) || connectionState.onlineDevices.contains(id)
+                    let displayName = isSelf
+                        ? (Host.current().localizedName ?? id)
+                        : (connectionState.peerNames[id] ?? id)
+                    let isTrusted = isSelf || trustedSet.contains(id)
+                    let statusText = !known ? model.t("状态未刷新", "Status not refreshed")
+                        : (isOnline ? model.t("在线", "Online") : model.t("离线", "Offline"))
+                    let iconName = id.lowercased().contains("android") || id.lowercased().contains("phone") || id.lowercased().contains("ios")
+                        ? "iphone" : "desktopcomputer"
+                    HStack(spacing: 12) {
+                        Image(systemName: iconName).font(.system(size: 15)).foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                            .background(LinearGradient(colors: isOnline
+                                                       ? [Color(red: 0.36, green: 0.61, blue: 1), Color(red: 0.04, green: 0.42, blue: 1)]
+                                                       : [Color.gray.opacity(0.65), Color.gray.opacity(0.45)],
+                                                       startPoint: .topLeading, endPoint: .bottomTrailing),
+                                        in: RoundedRectangle(cornerRadius: 9))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(displayName)\(isSelf ? model.t("（本机）", " (this device)") : "")")
+                                .font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .fill(isOnline ? Color(red: 0.19, green: 0.82, blue: 0.35) : SplitV3Color.text3.opacity(0.5))
+                                    .frame(width: 6, height: 6)
+                                Text("\(id) · \(statusText)")
+                                    .font(.system(size: 11.5)).foregroundStyle(SplitV3Color.text3)
+                                    .lineLimit(1).truncationMode(.middle)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                        RelayTag(
+                            text: isSelf ? model.t("本机", "This Mac") : (isTrusted ? model.t("可信设备", "Trusted") : model.t("未信任", "Untrusted")),
+                            accent: isSelf
+                        )
+                    }.padding(.horizontal, 14).padding(.vertical, 10)
+                }
+            }.devicesCard()
+            Text(model.isV2
+                 ? model.t("实时在线状态随中继连接自动更新；点右上角「刷新」可立即同步。", "Online status updates live over the relay connection; click Refresh to poll immediately.")
+                 : model.t("以上为本机保存的可信设备列表及实时在线状态。", "Shows locally trusted devices and live online status."))
+                .font(.system(size: 11.5)).foregroundStyle(SplitV3Color.text3).padding(.horizontal, 4)
+        }
+    }
+
+    private var legacyUpgradeCard: some View {
+        VStack(alignment:.leading,spacing:12) {
             DisclosureGroup(model.t("升级组管理配置","Upgrade group management"),isExpanded:$showUpgrade) { enrollment }
         }.padding(16).frame(maxWidth:.infinity,alignment:.leading).devicesCard(radius: 12)
     }
@@ -423,7 +522,11 @@ struct SyncRelayGroupView: View {
                 Text(model.t("本机名称","Device name")).font(.system(size: 12)).foregroundStyle(SplitV3Color.text2)
                 TextField(model.t("本机名称","Device name"),text:$name).disabled(model.creationPending)
             }
-            HStack {
+            HStack(spacing: 8) {
+                if model.creationPending {
+                    Button(model.t("放弃草稿", "Discard draft")) { model.perform { try model.discard() } }
+                        .buttonStyle(SplitV3ButtonStyle())
+                }
                 Spacer()
                 Button { model.perform { try await model.createGroup(title:groupName,name:name) } } label: {
                     Label(model.creationPending ? model.t("继续创建","Continue creating") : model.t("创建设备组","Create group"),systemImage:"plus.circle")

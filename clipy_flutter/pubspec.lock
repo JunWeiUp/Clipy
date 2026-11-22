@@ -77,11 +77,11 @@ packages:
     dependency: "direct main"
     description:
       path: "sdk/dart"
-      ref: "v0.1.5"
-      resolved-ref: "2c79e3f2218bd5d5e001a744d4e7e1cfdbec110f"
+      ref: "v0.2.1"
+      resolved-ref: cb33cd19cd1d5d005f77f58b17a3a61b434adfb6
       url: "https://github.com/JunWeiUp/common-relay.git"
     source: git
-    version: "0.1.5"
+    version: "0.1.7"
   connectivity_plus:
     dependency: "direct main"
     description:

@@ -33,7 +33,7 @@ class _RelayGroupPageState extends State<RelayGroupPage>
       _name = TextEditingController(text: Platform.localHostname);
   Map<String, dynamic>? _state, _invitation, _request;
   Set<String> _online = {};
-  String _self = '', _message = '', _group = '';
+  String _self = '', _message = '', _group = '', _relayUrl = '';
   bool _loaded = false,
       _legacy = false,
       _showUpgrade = false,
@@ -197,6 +197,8 @@ class _RelayGroupPageState extends State<RelayGroupPage>
       _onlineKnown = false;
       _self = g.config['device'] as String? ?? '';
       _group = g.config['group'] as String? ?? '';
+      _relayUrl = g.config['url'] as String? ?? '';
+      if (_legacy) SyncManager.instance.refreshRelayPeers();
       _trustedDevices =
           (g.config['trusted_peers'] as Map? ?? {}).keys
               .cast<String>()
@@ -581,7 +583,7 @@ class _RelayGroupPageState extends State<RelayGroupPage>
     if (confirmed != true || !mounted) return;
     await _work(() async {
       try {
-        if (!_revoked) {
+        if (!_revoked && !_legacy) {
           await ClipyRelayGroups.exitGroup(disband: disband);
         }
       } catch (e) {
@@ -1032,17 +1034,27 @@ class _RelayGroupPageState extends State<RelayGroupPage>
                     device: _self,
                     trustedDevices: _trustedDevices,
                     zh: zh,
+                    isV2: Uri.tryParse(_relayUrl)?.path == '/v2/ws',
+                    onlineDevices: SyncManager.instance.relayOnlineDevices,
+                    peerNames: SyncManager.instance.relayPeerNames,
+                    presenceKnown: SyncManager.instance.relayPresenceKnown,
+                    selfName: SyncManager.instance.displayName,
+                    busy: _busy,
+                    onEditSettings: _editRelayAccess,
+                    onLeave: () => _exitGroup(false),
                   ),
-                  const SizedBox(height: 16),
-                  OutlinedButton.icon(
-                    onPressed: _busy
-                        ? null
-                        : () => setState(() => _showUpgrade = !_showUpgrade),
-                    icon: Icon(
-                      _showUpgrade ? Icons.expand_less : Icons.expand_more,
+                  if (Uri.tryParse(_relayUrl)?.path != '/v2/ws') ...[
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      onPressed: _busy
+                          ? null
+                          : () => setState(() => _showUpgrade = !_showUpgrade),
+                      icon: Icon(
+                        _showUpgrade ? Icons.expand_less : Icons.expand_more,
+                      ),
+                      label: Text(t('升级组管理配置', 'Upgrade group management')),
                     ),
-                    label: Text(t('升级组管理配置', 'Upgrade group management')),
-                  ),
+                  ],
                   const SizedBox(height: 20),
                 ] else if (!_pending && !_creationPending) ...[
                   SegmentedButton<bool>(

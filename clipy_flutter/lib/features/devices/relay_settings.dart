@@ -28,12 +28,73 @@ class _RelaySettingsState extends State<RelaySettings> {
   final _key = TextEditingController();
   final _password = TextEditingController();
   bool _showPassword = false;
+  bool _showKey = false;
+  bool _showEnrollmentText = false;
+  String _lastOrigin = '';
   final _enrollment = TextEditingController();
   bool _enabled = false, _loaded = false, _saving = false, _configured = false;
   bool _groupTab = false;
   String? _error;
   bool get zh => AppLanguageController.instance.language == AppLanguage.zh;
   String t(String cn, String en) => zh ? cn : en;
+
+  static String _originOf(String raw) {
+    final u = Uri.tryParse(raw.trim());
+    if (u == null || u.host.isEmpty) return '';
+    return '${u.scheme}://${u.host.toLowerCase()}:${u.hasPort ? u.port : 443}';
+  }
+
+  void _syncDeviceFromEnrollment(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return;
+    try {
+      final decoded = RelayConfiguration.decode(trimmed);
+      final dev = decoded['device'];
+      if (dev is String && RelayConfiguration.validDevice(dev) && _device.text != dev) {
+        _device.text = dev;
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadCurrentEnrollment() async {
+    final raw = await ClipyRelayIdentity.config();
+    if (!mounted) return;
+    if (raw.trim().isEmpty) {
+      showClipyMessage(context, t('本机尚未保存接入配置。', 'No saved enrollment yet.'));
+      return;
+    }
+    setState(() {
+      _enrollment.text = raw;
+      _showEnrollmentText = true;
+      _syncDeviceFromEnrollment(raw);
+    });
+  }
+
+  Future<void> _pasteEnrollment() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim() ?? '';
+    if (!mounted) return;
+    if (text.isEmpty) {
+      showClipyMessage(context, t('剪贴板为空。', 'Clipboard is empty.'));
+      return;
+    }
+    setState(() {
+      _enrollment.text = text;
+      _showEnrollmentText = true;
+      _syncDeviceFromEnrollment(text);
+    });
+  }
+
+  Future<void> _toggleShowKey() async {
+    if (!_showKey && _key.text.isEmpty) {
+      final cfg = RelayConfiguration.decode(await ClipyRelayIdentity.config());
+      final saved = cfg['token'];
+      if (saved is String && saved.isNotEmpty && mounted) {
+        _key.text = saved;
+      }
+    }
+    if (mounted) setState(() => _showKey = !_showKey);
+  }
 
   @override
   void initState() {
@@ -59,6 +120,7 @@ class _RelaySettingsState extends State<RelaySettings> {
         _url.text =
             prefs.getString('syncRelayURL') ??
             'wss://relay.example.test/relay/v1/ws';
+        _lastOrigin = _originOf(_url.text);
         _device.text =
             prefs.getString('syncRelayDeviceId') ??
             config['device'] as String? ??
@@ -95,6 +157,7 @@ class _RelaySettingsState extends State<RelaySettings> {
       _error = null;
     });
     try {
+      _syncDeviceFromEnrollment(_enrollment.text);
       await SyncManager.instance.updateRelaySettings(
         enabled: _enabled,
         url: _url.text,
@@ -130,6 +193,31 @@ class _RelaySettingsState extends State<RelaySettings> {
             ? t(
                 '首次配置请先导入本设备接入配置，之后可单独更换公网 Key。',
                 'Import device enrollment once; then the Internet Key can be replaced separately.',
+              )
+            : error is FormatException && error.message == 'invalidRelayURL'
+            ? t(
+                '中继地址无效：请填写 wss://…/v2/ws 或 wss://…/relay/v1/ws。',
+                'Invalid relay URL: use wss://…/v2/ws or wss://…/relay/v1/ws.',
+              )
+            : error is FormatException && error.message == 'invalidDevice'
+            ? t(
+                '设备 ID 格式无效（仅允许字母、数字、-、_，1–80 位）。',
+                'Invalid device ID (1–80 alphanumeric, - or _ characters).',
+              )
+            : error is FormatException && error.message == 'deviceMismatch'
+            ? t(
+                '设备 ID 与接入配置 JSON 中的 device 不一致。',
+                'Device ID does not match the device field in enrollment JSON.',
+              )
+            : error is FormatException && error.message == 'publicKeyMismatch'
+            ? t(
+                '接入配置 JSON 的公钥与私钥不匹配（导入完整配置需含成对 secret_key 与 public_key）。',
+                'Enrollment JSON public/secret keypair mismatch.',
+              )
+            : error is FormatException && error.message == 'invalidConfiguration'
+            ? t(
+                '接入配置 JSON 缺少有效字段（需含 app="clipy"、group、device、token≥32位、trusted_peers）。',
+                'Enrollment JSON is missing required valid fields.',
               )
             : t(
                 '保存失败，请检查设备 ID、WSS 地址、Key 和接入配置是否匹配。',
@@ -267,12 +355,17 @@ class _RelaySettingsState extends State<RelaySettings> {
             TextField(
               key: const PageStorageKey('relay-url'),
               controller: _url,
-              onChanged: (_) {
-                // Never carry a displayed credential to another server draft.
-                setState(() {
-                  _password.clear();
-                  _showPassword = false;
-                });
+              onChanged: (value) {
+                // Only clear password when switching to a different server origin;
+                // changing path (/relay/v1/ws -> /v2/ws) on the same host preserves it.
+                final nextOrigin = _originOf(value);
+                if (nextOrigin != _lastOrigin) {
+                  _lastOrigin = nextOrigin;
+                  setState(() {
+                    _password.clear();
+                    _showPassword = false;
+                  });
+                }
               },
               enabled: _loaded && !_saving,
               autocorrect: false,
@@ -345,15 +438,20 @@ class _RelaySettingsState extends State<RelaySettings> {
               key: const PageStorageKey('relay-access-key'),
               controller: _key,
               enabled: _loaded && !_saving,
-              obscureText: true,
+              obscureText: !_showKey,
               autocorrect: false,
               enableSuggestions: false,
               decoration: InputDecoration(
                 labelText: t('公网 Key', 'Internet Key'),
                 helperMaxLines: 6,
                 helperText: _configured
-                    ? t('已保存，留空保持不变', 'Saved; leave blank to keep')
+                    ? t('已保存，留空保持不变；点右侧眼睛可载入并修改', 'Saved; leave blank to keep or tap eye to edit')
                     : null,
+                suffixIcon: IconButton(
+                  tooltip: _showKey ? t('隐藏 Key', 'Hide key') : t('显示并编辑 Key', 'Show and edit key'),
+                  onPressed: _loaded && !_saving ? _toggleShowKey : null,
+                  icon: Icon(_showKey ? Icons.visibility_off : Icons.visibility),
+                ),
               ),
             ),
             // ExpansionTile stores a bool in PageStorage. Each field needs a
@@ -367,24 +465,50 @@ class _RelaySettingsState extends State<RelaySettings> {
               tilePadding: EdgeInsets.zero,
               title: Text(t('首次接入 / 更新信任配置', 'Enrollment / trusted peers')),
               children: [
-                TextButton.icon(
-                  onPressed: _loaded && !_saving ? _copyEnrollment : null,
-                  icon: const Icon(Icons.key),
-                  label: Text(t('复制本机公钥登记信息', 'Copy device enrollment info')),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    TextButton.icon(
+                      onPressed: _loaded && !_saving ? _copyEnrollment : null,
+                      icon: const Icon(Icons.key),
+                      label: Text(t('复制本机公钥登记信息', 'Copy device enrollment info')),
+                    ),
+                    TextButton.icon(
+                      onPressed: _loaded && !_saving ? _loadCurrentEnrollment : null,
+                      icon: const Icon(Icons.edit_note),
+                      label: Text(t('载入当前配置', 'Load current')),
+                    ),
+                    TextButton.icon(
+                      onPressed: _loaded && !_saving ? _pasteEnrollment : null,
+                      icon: const Icon(Icons.content_paste),
+                      label: Text(t('粘贴', 'Paste')),
+                    ),
+                  ],
                 ),
                 TextField(
                   key: const PageStorageKey('relay-enrollment-input'),
                   controller: _enrollment,
                   enabled: _loaded && !_saving,
-                  obscureText: true,
+                  obscureText: !_showEnrollmentText,
+                  maxLines: _showEnrollmentText ? 4 : 1,
+                  minLines: 1,
+                  onChanged: _syncDeviceFromEnrollment,
                   autocorrect: false,
                   enableSuggestions: false,
                   decoration: InputDecoration(
                     labelText: t('本设备接入配置 JSON', 'Device enrollment JSON'),
                     helperMaxLines: 6,
                     helperText: t(
-                      '首次接入时导入；仅换 Key 无需重复填写。',
-                      'Import once. Not needed when only replacing the key.',
+                      '支持随时载入修改或粘贴新配置；粘贴含 device 的 JSON 会自动同步上方设备 ID。',
+                      'Load to edit anytime or paste new JSON; Device ID syncs automatically.',
+                    ),
+                    suffixIcon: IconButton(
+                      tooltip: _showEnrollmentText ? t('隐藏配置', 'Hide JSON') : t('显示配置', 'Show JSON'),
+                      onPressed: _loaded && !_saving
+                          ? () => setState(() => _showEnrollmentText = !_showEnrollmentText)
+                          : null,
+                      icon: Icon(_showEnrollmentText ? Icons.visibility_off : Icons.visibility),
                     ),
                   ),
                 ),

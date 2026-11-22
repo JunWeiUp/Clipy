@@ -24,6 +24,7 @@ final class SyncRelayGroups: ObservableObject {
     @Published var enrolled = false
     @Published var loaded = false
     @Published var legacy = false
+    @Published var isV2 = false
     @Published var trustedDevices: [String] = []
     @Published var onlineKnown = false
     private var task: Task<Void,Never>?
@@ -71,14 +72,14 @@ final class SyncRelayGroups: ObservableObject {
     private static func authenticated(_ config: [String:Any]) throws -> RelayGroups {
         let configuredURL = SyncRelaySettings.url.isEmpty ? "wss://relay.example.test/relay/v1/ws" : SyncRelaySettings.url
         guard config["url"] as? String == configuredURL else { throw RelayError.invalid("pending relay differs from settings") }
-        let secret = try SyncRelaySettings.accessPassword(url: configuredURL)
+        let secret = try SyncRelaySettings.effectiveAccessPassword(for: configuredURL)
         try SyncRelayAccessPolicy.validate(secret ?? "")
         return RelayGroups(config: SyncRelayAccessPolicy.applying(secret, to: config))
     }
     static func load(requirePassword: Bool = false) throws -> RelayGroups {
         let raw = SyncRelaySettings.token();var c = raw.isEmpty ? [:] : (try JSONSerialization.jsonObject(with:Data(raw.utf8)) as? [String:Any] ?? [:])
         c["url"] = SyncRelaySettings.url.isEmpty ? (c["url"] ?? "wss://relay.example.test/relay/v1/ws") : SyncRelaySettings.url
-        let secret = try SyncRelaySettings.accessPassword(url:c["url"] as? String ?? "")
+        let secret = try SyncRelaySettings.effectiveAccessPassword(for: c["url"] as? String ?? "")
         if requirePassword { try SyncRelayAccessPolicy.validate(secret ?? "") }
         return RelayGroups(config:SyncRelayAccessPolicy.applying(secret,to:c))
     }
@@ -154,8 +155,10 @@ final class SyncRelayGroups: ObservableObject {
         let g = try Self.load();hasAccessPassword = g.config["password"] as? String != nil;device = g.config["device"] as? String ?? ""
         group = g.config["group"] as? String ?? ""
         let status = SyncRelayGroupState.classify(g.config)
+        isV2 = URL(string: g.config["url"] as? String ?? "")?.path == "/v2/ws"
         legacy = status == .legacy;enrolled = status == .managed;loaded = true;onlineKnown = false
         trustedDevices = (g.config["trusted_peers"] as? [String:String] ?? [:]).keys.filter { $0 != device }.sorted()
+        if legacy { SyncManager.shared.refreshRelayPeers() }
         if enrolled, !accessDenied, let entry = g.config["group_entry"] as? [String:Any] { members = try RelayGroups.unpack(entry)["members"] as? [[String:Any]] ?? [] }
         if enrolled { try SyncRelayAccessPolicy.validate(g.config["password"] as? String ?? "");let result = try await g.refresh();try Self.persist(g);let state = result["state"] as? [String:Any] ?? [:];members = state["members"] as? [[String:Any]] ?? [];group = state["group"] as? String ?? "";groupName = state["name"] as? String ?? group;online = Set(result["online"] as? [String] ?? []);onlineKnown = true;enrolled = true;revoked = false;accessDenied = false }
         if let inv = try Self.read("outgoing") { if (inv["expires"] as? Double ?? 0) > Date().timeIntervalSince1970 { invitation = inv } else { try Self.write("outgoing",nil);invitation = nil;request = nil } }
@@ -211,6 +214,10 @@ final class SyncRelayGroups: ObservableObject {
         try Self.write("pending",nil); try Self.write("outgoing",nil); try Self.write("exit",nil)
         members=[];online=[];invitation=nil;request=nil;pendingCode="";creationPending=false;enrolled=false;legacy=false;revoked=false;accessDenied=false
         try await refresh()
+    }
+    func leaveLocalGroup() async throws {
+        try await clearUnavailableEnrollment()
+        message = t("已退出当前组。你可以重新配置，或创建/加入其他设备组。", "You left the group. You can reconfigure, or create/join another group.")
     }
     func createGroup(title: String, name: String) async throws {
         if !creationPending && (!(1...128).contains(title.trimmingCharacters(in:.whitespacesAndNewlines).utf8.count) || !(1...128).contains(name.trimmingCharacters(in:.whitespacesAndNewlines).utf8.count)) { message = t("请填写简短的设备组名称和本机名称。","Enter a short group name and device name.");return }
@@ -295,5 +302,5 @@ final class SyncRelayGroups: ObservableObject {
         if finished { try Task.checkCancellation();try Self.persist(g,activate:true);try Self.write("pending",nil);pendingCode = "";try await refresh();message = t("已加入，公网中继已启用。","Joined. Internet relay enabled.") }
         else { message = pendingAutomatic ? t("正在自动加入…","Joining automatically…") : t("正在等待邀请设备批准。","Waiting for approval on the inviting device.") }
     }
-    func discard() throws { try Self.write("pending",nil);pendingCode = "" }
+    func discard() throws { try Self.write("pending",nil);pendingCode = "";creationPending = false;creationGroupName = "" }
 }

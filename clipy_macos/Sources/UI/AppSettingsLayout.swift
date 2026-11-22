@@ -665,7 +665,11 @@ struct SettingsCard<Content: View>: View {
     _VariadicView.Tree(SettingsCardLayout()) { content() }
       .background(SettingsPalette.card)
       .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-      .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(SettingsPalette.line, lineWidth: 0.5))
+      .overlay(
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+          .strokeBorder(SettingsPalette.line, lineWidth: 0.5)
+          .allowsHitTesting(false)
+      )
       .padding(.bottom, 12)
   }
 }
@@ -953,7 +957,11 @@ struct SettingsTextFieldStyle: ViewModifier {
       .padding(.horizontal, 8)
       .frame(height: height)
       .background(SettingsPalette.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-      .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(SettingsPalette.controlLine, lineWidth: 0.5))
+      .overlay(
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+          .strokeBorder(SettingsPalette.controlLine, lineWidth: 0.5)
+          .allowsHitTesting(false)
+      )
   }
 }
 

@@ -52,12 +52,31 @@ class SyncRelayClient {
   }
 
   cr.RelayClient? _client;
+  cr.RelayV2Pipe? _v2Pipe;
+  cr.RelayV2Pipe? _refreshingV2;
   Timer? _timer;
   final _tunnels = <String, _RelayTunnel>{};
   final _metadata = <String, Map<String, dynamic>>{};
+  final _onlineDevices = <String>{};
+  bool _presenceKnown = false;
+  Set<String> get onlineDevices => Set.unmodifiable(_onlineDevices);
+  Map<String, String> get peerNames => Map.unmodifiable({
+    for (final entry in _metadata.entries)
+      if (entry.value['name'] is String && (entry.value['name'] as String).isNotEmpty)
+        entry.key: entry.value['name'] as String,
+  });
+  bool get presenceKnown => _presenceKnown;
+  void _notifyPresence() => onStateChanged?.call(state);
   bool _stopped = false;
   int _retry = 1;
   bool _running = false, _restartRequested = false;
+  bool get _isV2 => Uri.tryParse(url)?.path == '/v2/ws';
+  String get _v2BaseUrl {
+    final u = Uri.parse(url);
+    final scheme = u.scheme == 'ws' ? 'http' : 'https';
+    final portPart = u.hasPort ? ':${u.port}' : '';
+    return '$scheme://${u.host}$portPart';
+  }
   void _setState(RelayConnectionState value) {
     if (state == value) return;
     state = value;
@@ -72,7 +91,7 @@ class SyncRelayClient {
         uri.userInfo.isEmpty &&
         !uri.hasQuery &&
         !uri.hasFragment &&
-        uri.path == '/relay/v1/ws';
+        (uri.path == '/relay/v1/ws' || uri.path == '/v2/ws');
   }
 
   void start() => unawaited(_run());
@@ -83,6 +102,7 @@ class SyncRelayClient {
     _timer?.cancel();
     if (_running) {
       unawaited(_client?.close());
+      unawaited(_v2Pipe?.close());
     } else {
       unawaited(_run());
     }
@@ -93,6 +113,12 @@ class SyncRelayClient {
     if (!_running) {
       _timer?.cancel();
       unawaited(_run());
+      return;
+    }
+    if (_isV2) {
+      final pipe = _v2Pipe;
+      if (pipe == null || state != RelayConnectionState.ready) return;
+      unawaited(_refreshV2(pipe).catchError((Object _) {}));
       return;
     }
     final client = _client;
@@ -150,6 +176,10 @@ class SyncRelayClient {
 
   Future<void> _run() async {
     if (_stopped || _running) return;
+    if (_isV2) {
+      await _runV2();
+      return;
+    }
     _running = true;
     _setState(RelayConnectionState.connecting);
     cr.RelayClient? client;
@@ -256,6 +286,9 @@ class SyncRelayClient {
             if (lanPeer == null || lanPeer == id) break;
             final first = !_metadata.containsKey(peer);
             _metadata[peer] = info;
+            _onlineDevices.add(peer);
+            _presenceKnown = true;
+            _notifyPresence();
             if (first) {
               unawaited(_announce(active, peer).catchError((Object _) {}));
             }
@@ -381,6 +414,313 @@ class SyncRelayClient {
     await Future.any([upload, download]);
   }
 
+  Future<void> _announceV2(cr.RelayV2Pipe pipe, String peer) async {
+    if (peer == pipe.identity.device ||
+        !pipe.identity.trustedPeers.containsKey(peer)) {
+      return;
+    }
+    await pipe.sendMessage(
+      peer,
+      'clipy.presence',
+      Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'type': 'clipy.presence',
+            'peerId': id,
+            'name': name,
+            'port': port,
+            'addresses': addresses.take(8).toList(),
+          }),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _reconcilePresenceV2(
+    cr.RelayV2Pipe pipe,
+    List<String> peers,
+  ) async {
+    final online = peers.toSet();
+    online.add(pipe.identity.device);
+    _onlineDevices
+      ..clear()
+      ..addAll(online);
+    _presenceKnown = true;
+    for (final existing in _metadata.keys.toList()) {
+      if (!online.contains(existing)) {
+        _metadata.remove(existing);
+        _tunnels.remove(existing)?.close();
+      }
+    }
+    _notifyPresence();
+    for (final peer in peers) {
+      if (_stopped || !identical(_v2Pipe, pipe)) return;
+      if (!_metadata.containsKey(peer)) onPeerAvailable?.call();
+      await _announceV2(pipe, peer);
+    }
+  }
+
+  Future<void> _refreshV2(cr.RelayV2Pipe pipe) async {
+    if (_stopped || !identical(_v2Pipe, pipe)) return;
+    for (final entry in _metadata.entries.toList()) {
+      if (_lanPeer(entry.key) != null &&
+          !_hasSession(entry.key) &&
+          id.compareTo(_lanPeer(entry.key)!) < 0) {
+        unawaited(_openV2(entry.key, entry.value));
+      }
+    }
+    if (identical(_refreshingV2, pipe)) return;
+    _refreshingV2 = pipe;
+    try {
+      final peers = await pipe.peers(timeout: const Duration(seconds: 3));
+      if (_stopped || !identical(_v2Pipe, pipe)) return;
+      await _reconcilePresenceV2(pipe, peers);
+    } on TimeoutException {
+      if (!_stopped && identical(_v2Pipe, pipe)) networkChanged();
+    } finally {
+      if (identical(_refreshingV2, pipe)) _refreshingV2 = null;
+    }
+  }
+
+  Future<void> _runV2() async {
+    _running = true;
+    _setState(RelayConnectionState.connecting);
+    cr.RelayV2Client? v2Client;
+    cr.RelayV2Pipe? pipe;
+    SecureKey? key;
+    bool denied = false;
+    try {
+      var c = jsonDecode(token) as Map<String, dynamic>;
+      if (c.containsKey('group_entry')) {
+        c = await ClipyRelayGroups.run(() async {
+          final latest = await ClipyRelayGroups.load();
+          if (latest.config['device'] != c['device']) {
+            throw StateError('Identity changed');
+          }
+          await latest.refresh();
+          await ClipyRelayGroups.persist(latest);
+          return latest.config;
+        });
+      }
+      if (c['app'] != 'clipy' ||
+          c['device'] is! String ||
+          !RelayConfiguration.validDevice(c['device'] as String)) {
+        throw StateError('Device identity mismatch');
+      }
+      final sodium = await SodiumInit.init();
+      key = SecureKey.fromList(sodium, cr.unhex(c['secret_key'] as String));
+      final identity = cr.RelayIdentity(
+        sodium: sodium,
+        app: 'clipy',
+        group: c['group'] as String,
+        device: c['device'] as String,
+        secretKey: key,
+        publicKey: cr.unhex(c['public_key'] as String),
+        trustedPeers: (c['trusted_peers'] as Map<String, dynamic>).map(
+          (name, value) => MapEntry(name, cr.unhex(value as String)),
+        ),
+      );
+      if (_stopped || _restartRequested) return;
+      final accessPassword = await ClipyRelayIdentity.accessPassword(url);
+      v2Client = cr.RelayV2Client(
+        baseUrl: _v2BaseUrl,
+        accessPassword: accessPassword,
+        token: c['token'] as String,
+        allowLocal: allowLocalTest,
+      );
+      pipe = cr.RelayV2Pipe(
+        client: v2Client,
+        space: c['group'] as String,
+        identity: identity,
+      );
+      _v2Pipe = pipe;
+      await pipe.connect();
+      if (_stopped || _restartRequested) return;
+      _retry = 1;
+      _setState(RelayConnectionState.ready);
+      final active = pipe;
+      unawaited(_refreshV2(active).catchError((Object _) {}));
+      _timer = Timer.periodic(
+        const Duration(seconds: 30),
+        (_) => unawaited(_refreshV2(active).catchError((Object _) {})),
+      );
+      await for (final event in active.events) {
+        if (_stopped) break;
+        switch (event['type']) {
+          case 'group.changed':
+            if (c['group_entry'] is Map<String, dynamic>) {
+              final current = cr.RelayGroups.unpack(
+                c['group_entry'] as Map<String, dynamic>,
+              );
+              final rev = (event['seq'] as num?)?.toInt() ?? 0;
+              if (rev > (current['revision'] as int? ?? 0)) {
+                networkChanged();
+              }
+            }
+            break;
+          case 'presence':
+            final peers = (event['peers'] as List? ?? const [])
+                .map((e) => e.toString())
+                .toList();
+            unawaited(
+              _reconcilePresenceV2(active, peers).catchError((Object _) {}),
+            );
+            break;
+          case 'msg':
+            if (event['offline'] == true ||
+                event['topic'] != 'clipy.presence') {
+              break;
+            }
+            final peer = event['from'] as String? ?? '';
+            Map<String, dynamic> info;
+            try {
+              info =
+                  jsonDecode(utf8.decode(active.openMessage(event)))
+                      as Map<String, dynamic>;
+            } catch (_) {
+              break;
+            }
+            if (info['type'] != 'clipy.presence' ||
+                info['addresses'] is! List ||
+                (info['addresses'] as List).length > 8 ||
+                info['port'] is! int ||
+                (info['port'] as int) < 1 ||
+                (info['port'] as int) > 65535) {
+              break;
+            }
+            final lanPeer = RelayConfiguration.lanPeer(peer, info);
+            if (lanPeer == null || lanPeer == id) break;
+            final first = !_metadata.containsKey(peer);
+            _metadata[peer] = info;
+            _onlineDevices.add(peer);
+            _presenceKnown = true;
+            _notifyPresence();
+            if (first) {
+              unawaited(_announceV2(active, peer).catchError((Object _) {}));
+            }
+            if (id.compareTo(lanPeer) < 0) unawaited(_openV2(peer, info));
+            break;
+          case 'stream.open':
+            final peer = event['from'] as String? ?? '';
+            if (_lanPeer(peer) == null ||
+                _hasSession(peer) ||
+                _tunnels.containsKey(peer) ||
+                id.compareTo(_lanPeer(peer)!) < 0) {
+              unawaited(active.rejectStream(event));
+              break;
+            }
+            final tunnel = _RelayTunnel();
+            _tunnels[peer] = tunnel;
+            unawaited(() async {
+              try {
+                tunnel.v2Stream = await active.acceptStream(event);
+                await _bridgeV2(peer, tunnel);
+              } catch (_) {
+              } finally {
+                tunnel.close();
+                if (identical(_tunnels[peer], tunnel)) _tunnels.remove(peer);
+              }
+            }());
+            break;
+        }
+      }
+    } catch (error) {
+      denied = RegExp(r'\b401\b').hasMatch(error.toString());
+    } finally {
+      _timer?.cancel();
+      _v2Pipe = null;
+      _metadata.clear();
+      _onlineDevices.clear();
+      _presenceKnown = false;
+      for (final t in _tunnels.values.toList()) {
+        t.close();
+      }
+      _tunnels.clear();
+      await pipe?.close();
+      v2Client?.close();
+      key?.dispose();
+      _running = false;
+      final restart = _restartRequested;
+      _restartRequested = false;
+      if (!_stopped) {
+        _setState(
+          denied
+              ? RelayConnectionState.accessDenied
+              : RelayConnectionState.retrying,
+        );
+        if (!denied || restart) {
+          _timer = Timer(
+            restart ? Duration.zero : Duration(seconds: _retry),
+            () => unawaited(_run()),
+          );
+          _retry = (_retry * 2).clamp(1, 30);
+        }
+      }
+    }
+  }
+
+  Future<void> _openV2(String peer, Map<String, dynamic> info) async {
+    final pipe = _v2Pipe;
+    if (_stopped ||
+        pipe == null ||
+        _lanPeer(peer) == null ||
+        _hasSession(peer) ||
+        _tunnels.containsKey(peer)) {
+      return;
+    }
+    final tunnel = _RelayTunnel();
+    _tunnels[peer] = tunnel;
+    try {
+      for (final raw in (info['addresses'] as List).take(2)) {
+        final ip = InternetAddress.tryParse(raw as String);
+        if (ip == null || ip.type != InternetAddressType.IPv4) continue;
+        final b = ip.rawAddress;
+        if (!(b[0] == 10 ||
+            (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
+            (b[0] == 192 && b[1] == 168))) {
+          continue;
+        }
+        await tryLan(_lanPeer(peer)!, raw, info['port'] as int);
+      }
+      if (_stopped || tunnel.closed || _hasSession(peer)) return;
+      tunnel.v2Stream = await pipe.openStream(peer, topic: 'clipy.sync');
+      await _bridgeV2(peer, tunnel);
+    } catch (_) {
+    } finally {
+      tunnel.close();
+      if (identical(_tunnels[peer], tunnel)) _tunnels.remove(peer);
+    }
+  }
+
+  Future<void> _bridgeV2(String peer, _RelayTunnel tunnel) async {
+    final stream = tunnel.v2Stream!;
+    final listener = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    try {
+      final accepted = listener.first;
+      tunnel.local = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        listener.port,
+      );
+      tunnel.bridge = await accepted;
+    } finally {
+      await listener.close();
+    }
+    if (_stopped || tunnel.closed || _hasSession(peer)) return;
+    onSocket(_lanPeer(peer)!, tunnel.local!);
+    final upload = () async {
+      await for (final bytes in tunnel.bridge!) {
+        await stream.send(bytes);
+      }
+    }();
+    final download = () async {
+      await for (final bytes in stream.data) {
+        tunnel.bridge!.add(bytes);
+        await tunnel.bridge!.flush();
+      }
+    }();
+    await Future.any([upload, download]);
+  }
+
   void stop() {
     _stopped = true;
     _setState(RelayConnectionState.disabled);
@@ -390,11 +730,13 @@ class SyncRelayClient {
     }
     _tunnels.clear();
     unawaited(_client?.close());
+    unawaited(_v2Pipe?.close());
   }
 }
 
 class _RelayTunnel {
   cr.RelayStream? stream;
+  cr.RelayV2Stream? v2Stream;
   Socket? local, bridge;
   bool closed = false;
   void close() {
@@ -403,5 +745,6 @@ class _RelayTunnel {
     local?.destroy();
     bridge?.destroy();
     unawaited(stream?.close());
+    unawaited(v2Stream?.close());
   }
 }

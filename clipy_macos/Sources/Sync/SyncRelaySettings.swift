@@ -89,6 +89,19 @@ enum SyncRelaySettings {
         guard SyncRelayClient.Access.parse(result) != nil else { throw NSError(domain: "SyncRelay", code: 3) }
         return result
     }
+    static func sameOrigin(_ a: String, _ b: String) -> Bool {
+        guard let ua = URL(string: a), let ub = URL(string: b),
+              let ha = ua.host?.lowercased(), let hb = ub.host?.lowercased() else { return false }
+        return ua.scheme == ub.scheme && ha == hb && (ua.port ?? 443) == (ub.port ?? 443)
+    }
+    static func effectiveAccessPassword(for url: String) throws -> String? {
+        if let exact = try accessPassword(url: url) { return exact }
+        let prev = Self.url
+        if !prev.isEmpty, sameOrigin(prev, url) {
+            return try accessPassword(url: prev)
+        }
+        return nil
+    }
     @discardableResult
     static func save(enabled: Bool, url: String, token: String, deviceID: String? = nil, accessKey: String = "", accessPassword: String? = nil) throws -> Bool {
         let url = url.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -99,13 +112,15 @@ enum SyncRelaySettings {
             enrollment: token.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !enabled || (SyncRelayClient.validURL(url) && SyncRelayClient.Access.parse(updated) != nil) else { throw NSError(domain: "SyncRelay", code: 4) }
         let savedPassword = try Self.accessPassword(url: url)
-        let newPassword = accessPassword ?? savedPassword
+        let carriedPassword = savedPassword == nil ? try Self.effectiveAccessPassword(for: url) : nil
+        let newPassword = accessPassword ?? savedPassword ?? carriedPassword
         if let accessPassword, !accessPassword.isEmpty { try SyncRelayAccessPolicy.validate(accessPassword) }
         if enabled { try SyncRelayAccessPolicy.validate(newPassword ?? "") }
         guard accessPassword == nil || SyncRelayClient.validURL(url) else { throw NSError(domain: "SyncRelay", code: 4) }
-        let passwordChanged = accessPassword != nil && accessPassword != savedPassword
+        let passwordToStore = accessPassword ?? carriedPassword
+        let passwordChanged = passwordToStore != nil && passwordToStore != savedPassword
         guard updated != existing || enabled != Self.enabled || url != Self.url || device != Self.deviceID || passwordChanged else { return false }
-        if let accessPassword, passwordChanged { try storePassword(accessPassword, url: url) }
+        if let passwordToStore, passwordChanged { try storePassword(passwordToStore, url: url) }
         if updated != existing {
             let attributes = [kSecValueData as String: Data(updated.utf8)]
             var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
@@ -134,6 +149,10 @@ extension SyncManager {
             SyncRelayConnectionState.shared.update(SyncRelaySettings.enabled ? .connecting : .disabled)
             startRelay()
         }
+    }
+
+    func refreshRelayPeers() {
+        syncQueue.async { [self] in relayClient?.refreshPeers() }
     }
 
     /// Called on syncQueue; stopped with the ordinary synchronization lifetime.
@@ -198,26 +217,55 @@ final class SyncRelayConnectionState: ObservableObject {
     enum Status { case disabled, connecting, connected, authenticationRequired, unavailable }
     static let shared = SyncRelayConnectionState()
     @Published private(set) var status: Status = .disabled
+    @Published private(set) var onlineDevices: Set<String> = []
+    @Published private(set) var peerNames: [String: String] = [:]
+    @Published private(set) var presenceKnown: Bool = false
     private var owner: UUID?
     func begin(_ id: UUID) {
-        DispatchQueue.main.async { self.owner = id; self.status = .connecting }
+        DispatchQueue.main.async {
+            self.owner = id
+            self.status = .connecting
+            self.onlineDevices = []
+            self.peerNames = [:]
+            self.presenceKnown = false
+        }
     }
     func update(_ value: Status, owner id: UUID? = nil) {
         DispatchQueue.main.async {
             guard id == nil || self.owner == id else { return }
             self.status = value
+            if value != .connected {
+                self.onlineDevices = []
+                self.peerNames = [:]
+                self.presenceKnown = false
+            }
+        }
+    }
+    func updatePresence(online: Set<String>, names: [String: String], owner id: UUID) {
+        DispatchQueue.main.async {
+            guard self.owner == id else { return }
+            self.onlineDevices = online
+            self.peerNames = names
+            self.presenceKnown = true
         }
     }
     func disconnected(_ id: UUID) {
         DispatchQueue.main.async {
             guard self.owner == id, self.status != .authenticationRequired else { return }
             self.status = .unavailable
+            self.onlineDevices = []
+            self.peerNames = [:]
+            self.presenceKnown = false
         }
     }
     func end(_ id: UUID) {
         DispatchQueue.main.async {
             guard self.owner == id else { return }
-            self.owner = nil; self.status = .disabled
+            self.owner = nil
+            self.status = .disabled
+            self.onlineDevices = []
+            self.peerNames = [:]
+            self.presenceKnown = false
         }
     }
 }

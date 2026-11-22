@@ -255,6 +255,10 @@ class SyncManager with WidgetsBindingObserver {
   void _notifyConnectionChanged() => connectionRevision.value++;
   RelayConnectionState get relayConnectionState =>
       _relay?.state ?? RelayConnectionState.disabled;
+  Set<String> get relayOnlineDevices => _relay?.onlineDevices ?? const {};
+  Map<String, String> get relayPeerNames => _relay?.peerNames ?? const {};
+  bool get relayPresenceKnown => _relay?.presenceKnown ?? false;
+  void refreshRelayPeers() => _relay?.refreshPeers();
   bool get hasLanSession =>
       _sessions.values.any((s) => !s.host.startsWith('relay:'));
   bool get hasRelaySession =>

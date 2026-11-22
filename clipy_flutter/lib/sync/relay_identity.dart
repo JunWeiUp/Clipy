@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'relay_configuration.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:sodium/sodium.dart';
@@ -105,20 +106,62 @@ class ClipyRelayIdentity {
       enrollment: enrollment,
     );
     if (c.isEmpty) return '';
-    final identity = await _identity();
-    if ((enrollment.isNotEmpty && c.containsKey('secret_key')) ||
-        c['public_key'] != identity['public_key']) {
-      throw const FormatException('publicKeyMismatch');
-    }
+    final hex64 = RegExp(r'^[a-fA-F0-9]{64}$');
     for (final entry in (c['trusted_peers'] as Map).entries) {
       if (entry.key is! String ||
           !RelayConfiguration.validDevice(entry.key as String) ||
           entry.value is! String ||
-          !RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(entry.value as String)) {
+          !hex64.hasMatch(entry.value as String)) {
         throw const FormatException('invalidConfiguration');
       }
     }
-    c['secret_key'] = identity['secret_key'];
+    final suppliedSecret = c['secret_key'];
+    final suppliedPublic = c['public_key'];
+    if (enrollment.isNotEmpty &&
+        suppliedSecret is String &&
+        suppliedSecret.isNotEmpty) {
+      if (!hex64.hasMatch(suppliedSecret) ||
+          suppliedPublic is! String ||
+          !hex64.hasMatch(suppliedPublic)) {
+        throw const FormatException('publicKeyMismatch');
+      }
+      final sodium = await SodiumInit.init();
+      final sk = SecureKey.fromList(sodium, cr.unhex(suppliedSecret));
+      try {
+        final pk = cr.unhex(suppliedPublic);
+        final probe = Uint8List.fromList([1, 2, 3, 4]);
+        final sealed = sodium.crypto.box.seal(message: probe, publicKey: pk);
+        final opened = sodium.crypto.box.sealOpen(
+          cipherText: sealed,
+          publicKey: pk,
+          secretKey: sk,
+        );
+        if (opened.length != probe.length) {
+          throw const FormatException('publicKeyMismatch');
+        }
+      } catch (_) {
+        throw const FormatException('publicKeyMismatch');
+      } finally {
+        sk.dispose();
+      }
+      final normalizedSecret = suppliedSecret.toLowerCase();
+      final normalizedPublic = suppliedPublic.toLowerCase();
+      await _store.write(
+        key: 'commonRelayIdentity',
+        value: jsonEncode({
+          'secret_key': normalizedSecret,
+          'public_key': normalizedPublic,
+        }),
+      );
+      c['secret_key'] = normalizedSecret;
+      c['public_key'] = normalizedPublic;
+    } else {
+      final identity = await _identity();
+      if (suppliedPublic != identity['public_key']) {
+        throw const FormatException('publicKeyMismatch');
+      }
+      c['secret_key'] = identity['secret_key'];
+    }
     return jsonEncode(c);
   }
 
