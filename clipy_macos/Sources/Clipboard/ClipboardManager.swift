@@ -526,14 +526,25 @@ class ClipboardManager {
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
+            place: .tailAppendEventTap,
+            // Listen-only: we only observe ⌘V and never modify events. An active
+            // filter tap makes the window server wait for our main run loop on
+            // every system-wide keystroke; when the app is idle/napping that
+            // stalls the first key press after a long pause.
+            options: .listenOnly,
             eventsOfInterest: CGEventMask(eventMask),
             // The event is borrowed from the tap machinery, which keeps owning it
             // after the callback returns. passRetained added a +1 nobody balanced,
             // leaking one CGEvent per keystroke.
             callback: { _, type, event, refcon in
                 guard let refcon else {
+                    return Unmanaged.passUnretained(event)
+                }
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    let manager = Unmanaged<ClipboardManager>.fromOpaque(refcon).takeUnretainedValue()
+                    if let tap = manager.pasteEventTap {
+                        CGEvent.tapEnable(tap: tap, enable: true)
+                    }
                     return Unmanaged.passUnretained(event)
                 }
                 guard type == .keyDown else {
