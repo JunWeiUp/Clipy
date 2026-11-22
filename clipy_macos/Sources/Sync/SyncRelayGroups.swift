@@ -76,6 +76,15 @@ final class SyncRelayGroups: ObservableObject {
         try SyncRelayAccessPolicy.validate(secret ?? "")
         return RelayGroups(config: SyncRelayAccessPolicy.applying(secret, to: config))
     }
+    /// 命令行诊断用：本地已保存的设备组配置概况（不含任何密钥）。
+    static func localSummary() throws -> [String:Any] {
+        let c = try load().config
+        var out: [String:Any] = ["device": c["device"] as? String ?? "", "group": c["group"] as? String ?? "",
+                                 "has_token": c["token"] != nil, "has_group_entry": c["group_entry"] != nil,
+                                 "status": "\(SyncRelayGroupState.classify(c))", "relay_enabled": SyncRelaySettings.enabled]
+        if let e = c["group_entry"] as? [String:Any], let g = try? RelayGroups.unpack(e) { out["revision"] = g["revision"] ?? 0; out["group_name"] = g["name"] ?? "" }
+        return out
+    }
     static func load(requirePassword: Bool = false) throws -> RelayGroups {
         let raw = SyncRelaySettings.token();var c = raw.isEmpty ? [:] : (try JSONSerialization.jsonObject(with:Data(raw.utf8)) as? [String:Any] ?? [:])
         c["url"] = SyncRelaySettings.url.isEmpty ? (c["url"] ?? "wss://relay.example.test/relay/v1/ws") : SyncRelaySettings.url
@@ -95,7 +104,7 @@ final class SyncRelayGroups: ObservableObject {
         var saved = SyncRelayAccessPolicy.applying(nil,to:g.config);saved.removeValue(forKey:"enrollment_invitation");saved.removeValue(forKey:"enrollment_name");saved.removeValue(forKey:"creation_draft")
         let raw = String(decoding:try JSONSerialization.data(withJSONObject:saved),as:UTF8.self)
         let changed = try SyncRelaySettings.save(enabled:activate || SyncRelaySettings.enabled,url:g.config["url"] as? String ?? SyncRelaySettings.url,token:raw,deviceID:g.config["device"] as? String)
-        if changed { SyncManager.shared.restartRelayConfiguration() }
+        if changed && !SyncRelayCLI.isActive { SyncManager.shared.restartRelayConfiguration() }
     }
     static func refreshedConfiguration(_ raw: String, url: String, accessPassword: String?) async throws -> String {
         guard var c = try JSONSerialization.jsonObject(with:Data(raw.utf8)) as? [String:Any], c["group_entry"] != nil else { return raw }
@@ -158,7 +167,7 @@ final class SyncRelayGroups: ObservableObject {
         isV2 = URL(string: g.config["url"] as? String ?? "")?.path == "/v2/ws"
         legacy = status == .legacy;enrolled = status == .managed;loaded = true;onlineKnown = false
         trustedDevices = (g.config["trusted_peers"] as? [String:String] ?? [:]).keys.filter { $0 != device }.sorted()
-        if legacy { SyncManager.shared.refreshRelayPeers() }
+        if legacy && !SyncRelayCLI.isActive { SyncManager.shared.refreshRelayPeers() }
         if enrolled, !accessDenied, let entry = g.config["group_entry"] as? [String:Any] { members = try RelayGroups.unpack(entry)["members"] as? [[String:Any]] ?? [] }
         if enrolled { try SyncRelayAccessPolicy.validate(g.config["password"] as? String ?? "");let result = try await g.refresh();try Self.persist(g);let state = result["state"] as? [String:Any] ?? [:];members = state["members"] as? [[String:Any]] ?? [];group = state["group"] as? String ?? "";groupName = state["name"] as? String ?? group;online = Set(result["online"] as? [String] ?? []);onlineKnown = true;enrolled = true;revoked = false;accessDenied = false }
         if let inv = try Self.read("outgoing") { if (inv["expires"] as? Double ?? 0) > Date().timeIntervalSince1970 { invitation = inv } else { try Self.write("outgoing",nil);invitation = nil;request = nil } }
@@ -202,7 +211,7 @@ final class SyncRelayGroups: ObservableObject {
             throw error
         }
         if let secret = g.config["secret_key"] as? String { try Self.write("identity",["secret_key":secret]) }
-        try SyncRelaySettings.clearEnrollment();SyncManager.shared.restartRelayConfiguration()
+        try SyncRelaySettings.clearEnrollment();if !SyncRelayCLI.isActive { SyncManager.shared.restartRelayConfiguration() }
         try Self.write("pending",nil);try Self.write("outgoing",nil);try Self.write("exit",nil)
         members=[];online=[];invitation=nil;request=nil;pendingCode="";creationPending=false;enrolled=false;legacy=false;revoked=false
         try await refresh();message = disband ? t("设备组已解散。你可以创建或加入其他组。","Group disbanded. You can create or join another group.") : t("已退出当前组。你可以创建或加入其他组。","You left the group. You can create or join another group.")
@@ -210,7 +219,7 @@ final class SyncRelayGroups: ObservableObject {
     func clearUnavailableEnrollment() async throws {
         let current = try Self.load()
         if let secret = current.config["secret_key"] as? String { try Self.write("identity",["secret_key":secret]) }
-        try SyncRelaySettings.clearEnrollment(); SyncManager.shared.restartRelayConfiguration()
+        try SyncRelaySettings.clearEnrollment(); if !SyncRelayCLI.isActive { SyncManager.shared.restartRelayConfiguration() }
         try Self.write("pending",nil); try Self.write("outgoing",nil); try Self.write("exit",nil)
         members=[];online=[];invitation=nil;request=nil;pendingCode="";creationPending=false;enrolled=false;legacy=false;revoked=false;accessDenied=false
         try await refresh()

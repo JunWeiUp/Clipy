@@ -10,6 +10,11 @@ if CommandLine.arguments.contains(OCRSubprocess.childModeArgument) {
     OCRSubprocess.runChildMode()
 }
 
+// 设备组命令行（无界面、不启动中继连接），见 Sync/SyncRelayCLI.swift。
+if CommandLine.arguments.contains(SyncRelayCLI.argument) {
+    SyncRelayCLI.run()
+}
+
 #if CLIPY_CORE_TESTS
 if CommandLine.arguments.contains("--clipy-history-selection-tests") {
     runHistorySelectionApplicationTests()
