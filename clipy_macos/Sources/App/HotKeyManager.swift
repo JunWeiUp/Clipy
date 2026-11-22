@@ -107,12 +107,25 @@ class HotKeyManager {
         let hotKeyID = EventHotKeyID(signature: OSType(0x434C5059), id: id) // 'CLPY'
         var hotKeyRef: EventHotKeyRef?
 
-        let status = RegisterEventHotKey(UInt32(keyCode),
+        // Claim the combo exclusively so apps launched later cannot register the
+        // same shortcut. If another app already holds it, macOS splits key
+        // presses between the two owners (the shortcut appears to need two
+        // presses), so log the conflict and fall back to a shared registration.
+        var status = RegisterEventHotKey(UInt32(keyCode),
                                         carbonModifiers,
                                         hotKeyID,
                                         GetApplicationEventTarget(),
-                                        0,
+                                        OptionBits(kEventHotKeyExclusive),
                                         &hotKeyRef)
+        if status == OSStatus(eventHotKeyExistsErr) {
+            appLog("HotKeyManager: shortcut for id \(id) (keyCode=\(keyCode) modifiers=\(carbonModifiers)) is already registered by another app; presses may be delivered to that app instead", level: .warning)
+            status = RegisterEventHotKey(UInt32(keyCode),
+                                         carbonModifiers,
+                                         hotKeyID,
+                                         GetApplicationEventTarget(),
+                                         0,
+                                         &hotKeyRef)
+        }
 
         if status == noErr, let ref = hotKeyRef {
             lock.lock()
