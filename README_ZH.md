@@ -1,17 +1,23 @@
 <div align="center">
   <img src="Logo.png" alt="Clipy" width="64" height="64" />
   <h1>Clipy</h1>
-  <p><b>剪贴板历史 · 局域网加密同步 · 截图与 OCR</b><br />macOS · Windows · Android</p>
+  <p><b>面向 Mac、Android 与 Windows 的开源跨端剪贴板、文件互传、手机通知镜像与截图 OCR 工具。</b><br />局域网加密直连，无需云账号，无订阅。</p>
+  <p><sub>macOS 原生 Swift/AppKit · Windows & Android 基于 Flutter · 可选自建公网中继</sub></p>
   <p><a href="README.md">English</a> · <strong>简体中文</strong></p>
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=1262f3)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
 [![macOS 许可 GPLv3](https://img.shields.io/badge/macOS-GPLv3-blue)](LICENSE.GPL-3.0) [![Clipy 代码 MIT](https://img.shields.io/badge/Clipy_代码-MIT-green)](LICENSE)
 
-  <img src="res/readme/connected-hero.webp" alt="概念插画：文字、图片和链接在 Mac 与 Android 手机之间流转" width="640" />
+  <img src="res/readme/demo.webp" alt="Clipy 功能演示：剪贴板历史、局域网同步、文件互传、手机通知、截图与 OCR" width="760" />
 
 **[⬇ 下载最新版](https://github.com/JunWeiUp/Clipy/releases/latest)**<br />
 <sub>macOS 13+（Apple 芯片）· Windows 10/11 x64 · Android 8.0+ arm64</sub>
+
+```bash
+# macOS（Homebrew 一行安装）
+brew install --cask --no-quarantine junweiup/tap/clipy
+```
 
 </div>
 
@@ -72,7 +78,7 @@
 </p>
 <p align="center"><sub>历史 · 设备 · 设置，另有通知转发与桌面倒计时部件（Android 截图为英文界面）</sub></p>
 
-<sub>截图均使用虚构示例数据，展示当前源码版本；顶部为概念插画。[制作说明](res/screenshots/README.md)</sub>
+<sub>截图均使用虚构示例数据，展示当前源码版本。[制作说明](res/screenshots/README.md)</sub>
 
 ## 平台
 
@@ -86,6 +92,19 @@
 | 截图、OCR、录屏 | ✅ | 截图 | | |
 | 查词、保持唤醒 | ✅ | | | |
 | 安装包 | ZIP | ZIP | APK | 仅源码 |
+
+## 为什么做 Clipy
+
+如果你同时使用 **Mac + Android 手机（或 Windows 电脑）**，往往要同时装剪贴板、传文件、通知转发、截图录屏好几个工具。Clipy 把这些日常高频场景收进一个本地优先的开源应用里，不依赖云端账号。
+
+| | Clipy | Maccy | LocalSend | KDE Connect | CleanShot X |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| Mac 剪贴板历史与片段 | ✅ | ✅ | — | — | — |
+| 跨端局域网剪贴板同步 | ✅ | — | — | ✅ | — |
+| 局域网文件互传（单文件最大 1 GiB） | ✅ | — | ✅ | ✅ | — |
+| Mac 查看 / 同步 Android 通知 | ✅ | — | — | ✅ | — |
+| 截图、标注、OCR 与录屏 | ✅ | — | — | — | ✅ |
+| 开源且无需云账号 | ✅ | ✅ | ✅ | ✅ | — |
 
 ## 三步上手
 

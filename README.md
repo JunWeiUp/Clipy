@@ -1,17 +1,23 @@
 <div align="center">
   <img src="Logo.png" alt="Clipy" width="64" height="64" />
   <h1>Clipy</h1>
-  <p><b>Clipboard history · encrypted LAN sync · screenshots & OCR</b><br />macOS · Windows · Android</p>
+  <p><b>Open-source clipboard sync, file transfer, phone notifications & screenshots for Mac, Android and Windows.</b><br />Local-first over your LAN — no cloud account, no subscription.</p>
+  <p><sub>Native Swift/AppKit on macOS · Flutter on Windows & Android · Optional self-hosted relay</sub></p>
   <p><strong>English</strong> · <a href="README_ZH.md">简体中文</a></p>
 
 [![Release](https://img.shields.io/github/v/release/JunWeiUp/Clipy?label=Release&logo=github&color=1262f3)](https://github.com/JunWeiUp/Clipy/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/JunWeiUp/Clipy/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/JunWeiUp/Clipy/actions/workflows/ci.yml)
 [![macOS license GPLv3](https://img.shields.io/badge/macOS-GPLv3-blue)](LICENSE.GPL-3.0) [![Clipy code MIT](https://img.shields.io/badge/Clipy_code-MIT-green)](LICENSE)
 
-  <img src="res/readme/connected-hero.webp" alt="Concept illustration: text, images and links flowing between a Mac and an Android phone" width="640" />
+  <img src="res/readme/demo.webp" alt="Clipy overview: clipboard history, LAN sync, file transfer, Android notifications, screenshots and OCR" width="760" />
 
 **[⬇ Download the latest release](https://github.com/JunWeiUp/Clipy/releases/latest)**<br />
 <sub>macOS 13+ (Apple Silicon) · Windows 10/11 x64 · Android 8.0+ arm64</sub>
+
+```bash
+# macOS (Homebrew)
+brew install --cask --no-quarantine junweiup/tap/clipy
+```
 
 </div>
 
@@ -72,7 +78,7 @@
 </p>
 <p align="center"><sub>History · Devices · Settings, plus notification forwarding and a countdown widget</sub></p>
 
-<sub>Screenshots use fictional sample data and show the current source build. The header is a concept illustration. [Production notes](res/screenshots/README.md)</sub>
+<sub>Screenshots use fictional sample data and show the current source build. [Production notes](res/screenshots/README.md)</sub>
 
 ## Platforms
 
@@ -86,6 +92,19 @@
 | Screenshots, OCR, recording | ✅ | screenshots | | |
 | Dictionary, Keep Awake | ✅ | | | |
 | Package | ZIP | ZIP | APK | source only |
+
+## Why Clipy
+
+Built for people who use a **Mac alongside an Android phone or Windows PC** and want one local-first, open-source tool instead of juggling separate clipboard, file-sharing, notification and screenshot utilities.
+
+| | Clipy | Maccy | LocalSend | KDE Connect | CleanShot X |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| Clipboard history & snippets (Mac) | ✅ | ✅ | — | — | — |
+| Cross-device LAN clipboard sync | ✅ | — | — | ✅ | — |
+| LAN file transfer (up to 1 GiB) | ✅ | — | ✅ | ✅ | — |
+| Android notifications on Mac | ✅ | — | — | ✅ | — |
+| Screenshots, annotation, OCR & recording | ✅ | — | — | — | ✅ |
+| Open source & no cloud account | ✅ | ✅ | ✅ | ✅ | — |
 
 ## Get started
 
