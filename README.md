@@ -117,7 +117,7 @@ Built for people who use a **Mac alongside an Android phone or Windows PC** and 
 > [!NOTE]
 > LAN sync is meant for trusted networks. The current source uses a built-in default AES-GCM key, which does not authenticate devices. See [SECURITY.md](SECURITY.md).
 
-Current source version: **1.0.45** · Source build **12407** (Android arm64 `versionCode` **14407**) · Latest published release: **[v1.0.44](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.44)**
+Current source version: **1.0.45** · Source build **12407** (Android arm64 `versionCode` **14407**) · Latest published release: **[v1.0.45](https://github.com/JunWeiUp/Clipy/releases/tag/v1.0.45)**
 
 <details>
 <summary><b>All features</b></summary>
