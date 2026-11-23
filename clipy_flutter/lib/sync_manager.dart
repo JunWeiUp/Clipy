@@ -159,6 +159,9 @@ class _Session {
   final Socket socket;
   final BytesBuilder buffer = BytesBuilder(copy: false);
   DateTime lastPong = DateTime.now();
+  // Diagnostics only: session age / last inbound bytes for close-reason logs.
+  final DateTime createdAt = DateTime.now();
+  DateTime lastInbound = DateTime.now();
   StreamSubscription<List<int>>? subscription;
   final bool isClient;
   final bool inbound;
@@ -639,7 +642,8 @@ class SyncManager with WidgetsBindingObserver {
       onStateChanged: (_) {
         if (_isRunCurrent(epoch)) _notifyConnectionChanged();
       },
-      onPeerAvailable: _probeNetworkSessions,
+      onPeerAvailable: () =>
+          _probeNetworkSessions(trigger: 'relayPeerAvailable'),
       hasSession: (id) => _sessions.containsKey(id),
       tryLan: (id, host, port) => _dial(
         host,
@@ -734,7 +738,11 @@ class SyncManager with WidgetsBindingObserver {
       for (final id in relayPeers) {
         // A direct session may have replaced the old tunnel while awaiting.
         if (_sessions[id]?.host.startsWith('relay:') == true) {
-          await _closeSession(id, scheduleReconnect: false);
+          await _closeSession(
+            id,
+            scheduleReconnect: false,
+            reason: 'relayRestart',
+          );
         }
       }
       if (_isRunCurrent(epoch)) await _startRelay(epoch);
@@ -894,15 +902,34 @@ class SyncManager with WidgetsBindingObserver {
   }
 
   Timer? _networkProbeTimer;
+  DateTime? _lastRelayPeerProbe;
 
-  void _probeNetworkSessions() {
+  void _probeNetworkSessions({String trigger = 'unspecified'}) {
     // Repeated Scan taps share one deadline instead of postponing recovery.
     if (_networkProbeTimer != null || !_runLifecycle.isActive) return;
+    final now = DateTime.now();
+    final fromRelayPeer = trigger == 'relayPeerAvailable';
+    if (fromRelayPeer) {
+      if (!shouldStartRelayPeerProbe(_lastRelayPeerProbe, now)) return;
+      _lastRelayPeerProbe = now;
+    }
     final epoch = _runLifecycle.epoch;
     final captured = Map.of(_sessions);
+    final delay = networkProbeDelay(
+      hasRelaySession: captured.values.any((s) => s.host.startsWith('relay:')),
+    );
+    String secs(DateTime t) =>
+        (now.difference(t).inMilliseconds / 1000).toStringAsFixed(1);
+    appLog(
+      'Probe start (trigger=$trigger): [${captured.entries.map((e) => '${e.key.substring(0, e.key.length.clamp(0, 8))}@${e.value.host.startsWith('relay:') ? 'relay' : e.value.host} age=${secs(e.value.createdAt)}s pong=${secs(e.value.lastPong)}s').join(', ')}]',
+      console: true,
+    );
     final pongs = {for (final e in captured.entries) e.key: e.value.lastPong};
+    final inbound = {
+      for (final e in captured.entries) e.key: e.value.lastInbound,
+    };
     unawaited(_sendPings());
-    _networkProbeTimer = Timer(const Duration(seconds: 3), () {
+    _networkProbeTimer = Timer(delay, () {
       _networkProbeTimer = null;
       if (!_isRunCurrent(epoch)) return;
       for (final e in captured.entries) {
@@ -913,11 +940,24 @@ class SyncManager with WidgetsBindingObserver {
               currentConnection: current,
               previousPong: pongs[e.key]!,
               currentPong: current.lastPong,
+              previousInbound: inbound[e.key]!,
+              currentInbound: current.lastInbound,
             )) {
-          unawaited(_closeSession(e.key, scheduleReconnect: true));
+          final at = DateTime.now();
+          String ago(DateTime t) =>
+              (at.difference(t).inMilliseconds / 1000).toStringAsFixed(1);
+          unawaited(
+            _closeSession(
+              e.key,
+              scheduleReconnect: true,
+              reason:
+                  'probeNoResponse(trigger=$trigger, lastPong=${ago(current.lastPong)}s, lastInbound=${ago(current.lastInbound)}s)',
+            ),
+          );
         }
       }
-      _relay?.refreshPeers();
+      // Refreshing here would re-announce peers and re-trigger this probe.
+      if (!fromRelayPeer) _relay?.refreshPeers();
     });
   }
 
@@ -936,7 +976,7 @@ class SyncManager with WidgetsBindingObserver {
           !isEnabled) {
         return;
       }
-      _probeNetworkSessions();
+      _probeNetworkSessions(trigger: 'connectivityChanged');
       _relay?.networkChanged();
       unawaited(_recoverAfterNetworkRestore(epoch));
     });
@@ -1005,7 +1045,12 @@ class SyncManager with WidgetsBindingObserver {
       final session = _sessions[id];
       if (session == null) continue;
       if (session.lastPong.isBefore(stale)) {
-        await _closeSession(id, scheduleReconnect: true, keepaliveDriven: true);
+        await _closeSession(
+          id,
+          scheduleReconnect: true,
+          keepaliveDriven: true,
+          reason: 'keepaliveTimeout',
+        );
         continue;
       }
       try {
@@ -1015,7 +1060,12 @@ class SyncManager with WidgetsBindingObserver {
           'ping send failed to ${id.substring(0, id.length.clamp(0, 8))}: $e',
           level: 'warning',
         );
-        await _closeSession(id, scheduleReconnect: true, keepaliveDriven: true);
+        await _closeSession(
+          id,
+          scheduleReconnect: true,
+          keepaliveDriven: true,
+          reason: 'pingSendFailed',
+        );
         continue;
       }
       unawaited(_retryStalePendingHistory(id));

@@ -169,7 +169,7 @@ extension SyncManager {
                     (!self.incomingFiles.isEmpty || !self.fileAckWaiters.isEmpty) { Darwin.close(fd); return }
                 if host.hasPrefix("relay:") && !existing.host.hasPrefix("relay:") { Darwin.close(fd); return }
                 appLog("Replacing session for \(peerId.prefix(8)) (existing last pong \(Int(Date().timeIntervalSince(existing.lastPong)))s ago)")
-                self.closeSession(peerId: peerId, scheduleReconnect: false)
+                self.closeSession(peerId: peerId, scheduleReconnect: false, reason: "replaced(new=\(host.hasPrefix("relay:") ? "relay" : host))")
             }
             if let client = self.acceptingClients.removeValue(forKey: fd) { client.source.cancel() }
             var session = Session(peerId: peerId, host: host, port: port, fd: fd, isClient: self.peerId < peerId)
@@ -193,7 +193,7 @@ extension SyncManager {
                 self.flushPending(for: peerId)
             }) { [weak self] in
                 guard let self, self.sessions[peerId]?.fd == fd else { return }
-                self.closeSession(peerId: peerId, scheduleReconnect: true)
+                self.closeSession(peerId: peerId, scheduleReconnect: true, reason: "writeFailed")
             }
             session.writer = writer
             session.readSource = source
@@ -231,6 +231,7 @@ extension SyncManager {
             }
             if count > 0 {
                 session.buffer.append(receiveScratch.prefix(count))
+                session.lastInbound = Date()
                 sessions[peerId] = session
                 drainBuffer(peerId: peerId)
                 guard let current = sessions[peerId], current.inboundID == session.inboundID,
@@ -239,13 +240,12 @@ extension SyncManager {
                 continue
             }
             if count == 0 {
-                appLog("recv EOF from \(peerId.prefix(8))")
-                closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true)
+                closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true, reason: "peerEOF")
             } else if errno != EAGAIN {
                 let err = errno
                 appLog("recv error errno=\(err) from \(peerId.prefix(8))")
                 diagnostics.noteError(peerId: peerId, "recvError(\(err))")
-                closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true)
+                closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true, reason: "recvError(\(err))")
             }
             return
         }
@@ -258,7 +258,7 @@ extension SyncManager {
             let length = session.buffer.withUnsafeBytes { Int(UInt32(bigEndian: $0.loadUnaligned(as: UInt32.self))) }
             guard length > 0, length <= Self.maxFrameLength else {
                 diagnostics.noteError(peerId: peerId, "badFrameLength(\(length))")
-                closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true); return
+                closeSession(peerId: peerId, scheduleReconnect: true, keepaliveDriven: true, reason: "badFrameLength(\(length))"); return
             }
             guard session.buffer.count >= 4 + length else { sessions[peerId] = session; return }
             guard let ticket = inboundBudget.reserve(bytes: length, sessionID: session.inboundID) else {
@@ -275,8 +275,9 @@ extension SyncManager {
         }
     }
 
-    func closeSession(peerId: String, scheduleReconnect: Bool, keepaliveDriven: Bool = false) {
+    func closeSession(peerId: String, scheduleReconnect: Bool, keepaliveDriven: Bool = false, reason: String = "unspecified") {
         guard let session = sessions.removeValue(forKey: peerId) else { return }
+        let closedAt = Date()
         let cancellations = DispatchGroup()
         if let source = session.readSource {
             cancellations.enter()
@@ -296,7 +297,7 @@ extension SyncManager {
         // Mid-transfer file chunks will never arrive on this socket again.
         discardIncomingFiles(from: peerId)
         diagnostics.noteSessionDown(peerId: peerId)
-        appLog("Session closed with \(peerId.prefix(8))")
+        appLog("Session closed with \(peerId.prefix(8)) reason=\(reason) host=\(session.host.hasPrefix("relay:") ? "relay" : session.host) age=\(String(format: "%.1f", closedAt.timeIntervalSince(session.createdAt)))s lastPong=\(String(format: "%.1f", closedAt.timeIntervalSince(session.lastPong)))s lastInbound=\(String(format: "%.1f", closedAt.timeIntervalSince(session.lastInbound)))s")
         if scheduleReconnect { relayClient?.refreshPeers() }
         guard scheduleReconnect, !(keepaliveDriven && !session.isClient) else { return }
         self.scheduleReconnect(peerId: peerId)

@@ -144,7 +144,7 @@ extension SyncManager {
             relayClient?.stop(); relayClient = nil
             relayConnecting.removeAll()
             for (id, session) in sessions where session.host.hasPrefix("relay:") {
-                closeSession(peerId: id, scheduleReconnect: false)
+                closeSession(peerId: id, scheduleReconnect: false, reason: "relayRestart")
             }
             SyncRelayConnectionState.shared.update(SyncRelaySettings.enabled ? .connecting : .disabled)
             startRelay()
@@ -205,7 +205,7 @@ extension SyncManager {
         client.onPeerAvailable = { [weak self] in
             self?.syncQueue.async { [weak self] in
                 guard let self, generation == self.currentGeneration, relayGeneration == self.relayConfigurationGeneration else { return }
-                self.probeNetworkSessions()
+                self.probeNetworkSessions(trigger: "relayPeerAvailable")
             }
         }
         relayClient = client; client.start()

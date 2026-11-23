@@ -43,7 +43,7 @@ extension SyncDiscoveryMethods on SyncManager {
     await ensureStartedIfEnabled();
     if (generation != _discoveryGeneration) return;
     final epoch = _runLifecycle.epoch;
-    _probeNetworkSessions();
+    _probeNetworkSessions(trigger: 'refreshDiscovery');
     _relay?.refreshPeers();
     if (!(_isRunCurrent(epoch) && generation == _discoveryGeneration) ||
         !isServerRunning) {

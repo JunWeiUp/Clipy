@@ -17,11 +17,13 @@ class LogManager extends ChangeNotifier {
 
   Future<int> count() => AppLogRepository.instance.count();
 
-  void log(String message, {String level = 'info'}) {
+  /// [console] mirrors the line to logcat/stdout in release builds too, for
+  /// adb-only field diagnostics (session lifecycle). Keep it low-volume.
+  void log(String message, {String level = 'info', bool console = false}) {
     final timestamp = DateTime.now().toString().split('.')[0];
     final logMessage = '[$timestamp] [${level.toUpperCase()}] $message';
-    if (kDebugMode) {
-      debugPrint(logMessage);
+    if (kDebugMode || console) {
+      debugPrint('Clipy $logMessage');
     }
     unawaited(AppLogRepository.instance.insert(level: level, message: message));
     _scheduleNotify();
@@ -40,6 +42,6 @@ class LogManager extends ChangeNotifier {
   }
 }
 
-void appLog(String message, {String level = 'info'}) {
-  LogManager.instance.log(message, level: level);
+void appLog(String message, {String level = 'info', bool console = false}) {
+  LogManager.instance.log(message, level: level, console: console);
 }

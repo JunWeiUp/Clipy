@@ -103,10 +103,14 @@ final class SyncManager: NSObject {
         var historyReplayRows: [Int64] = []
         var buffer = Data()
         var lastPong = Date()
+        /// Diagnostics only: session age and last inbound byte time for close-reason logs.
+        let createdAt = Date()
+        var lastInbound = Date()
         var screenAuthorization: ScreenControlChallenge?
         let isClient: Bool
     }
     var sessions: [String: Session] = [:]
+    var lastRelayPeerProbe: Date?
     var reconnectBackoffs: [String: TimeInterval] = [:]
     var pendingReconnects: [String: DispatchWorkItem] = [:]
     var lastReconnectAttempt: [String: Date] = [:]
@@ -212,7 +216,7 @@ final class SyncManager: NSObject {
             self.pendingDiscoveryWork?.cancel(); self.pendingDiscoveryWork = nil
             self.pendingReconnects.values.forEach { $0.cancel() }
             self.pendingReconnects.removeAll(); self.reconnectBackoffs.removeAll()
-            for id in Array(self.sessions.keys) { self.closeSession(peerId: id, scheduleReconnect: false) }
+            for id in Array(self.sessions.keys) { self.closeSession(peerId: id, scheduleReconnect: false, reason: "stop") }
             for (fd, client) in self.acceptingClients { client.source.cancel(); Darwin.close(fd) }
             self.acceptingClients.removeAll()
             self.stopListening()
@@ -234,7 +238,7 @@ final class SyncManager: NSObject {
         isRefreshingDiscovery = true
         syncQueue.async { [weak self] in
             guard let self else { return }
-            self.probeNetworkSessions()
+            self.probeNetworkSessions(trigger: "refreshDiscovery")
             self.relayClient?.refreshPeers()
             let liveSessions = self.sessions
             var cached: [String: CachedEndpoint] = [:]
@@ -493,7 +497,7 @@ final class SyncManager: NSObject {
         let cutoff = Date().addingTimeInterval(-Self.pingInterval * 3)
         for id in Array(sessions.keys) {
             guard let session = sessions[id], !session.readSuspended else { continue }
-            if session.lastPong < cutoff { closeSession(peerId: id, scheduleReconnect: true, keepaliveDriven: true); continue }
+            if session.lastPong < cutoff { closeSession(peerId: id, scheduleReconnect: true, keepaliveDriven: true, reason: "keepaliveTimeout"); continue }
             if !sendSessionFrame(session.fd, data) { appLog("ping send failed to \(id.prefix(8))", level: .warning) }
             retryStalePendingHistory(for: id)
         }
@@ -509,7 +513,7 @@ final class SyncManager: NSObject {
             self.lastPathSignature = signature
             if path.status == .satisfied && changed {
                 appLog("Network path changed; probing sessions and reconnecting relay")
-                self.probeNetworkSessions()
+                self.probeNetworkSessions(trigger: "pathChanged")
                 self.restartRelayConfiguration()
                 self.loadEndpointCache()
                 self.scheduleDiscovery(immediate: true, scanFullSubnet: false)
@@ -521,11 +525,29 @@ final class SyncManager: NSObject {
         pathMonitor?.cancel(); pathMonitor = nil; lastPathSignature = nil
         networkProbe?.cancel(); networkProbe = nil
     }
-    /// One bounded check per network event/Scan burst; fresh pongs keep healthy LAN sessions.
-    func probeNetworkSessions(delay: TimeInterval = 3) {
+    /// Relay re-announces a peer after every `refreshPeers()`, so peer-available
+    /// probes must be throttled or probe → refresh → peer.up re-arms forever.
+    static let relayPeerProbeCooldown: TimeInterval = 30
+    /// Relay tunnels (5G, remote relay, backlog flush) need more than LAN's 3s.
+    static let relayProbeDelay: TimeInterval = 8
+
+    /// One bounded check per network event/Scan burst; any fresh pong or inbound
+    /// byte keeps a session (a busy backlog flush may queue the pong behind data).
+    func probeNetworkSessions(delay: TimeInterval = 3, trigger: String = "unspecified") {
         guard networkProbe == nil else { return }
+        let fromRelayPeer = trigger == "relayPeerAvailable"
+        let now = Date()
+        if fromRelayPeer {
+            if let last = lastRelayPeerProbe, now.timeIntervalSince(last) < Self.relayPeerProbeCooldown { return }
+            lastRelayPeerProbe = now
+        }
         let generation = currentGeneration
         let captured = sessions
+        let delay = captured.values.contains { $0.host.hasPrefix("relay:") } ? max(delay, Self.relayProbeDelay) : delay
+        let summary = captured.map { id, s in
+            "\(id.prefix(8))@\(s.host.hasPrefix("relay:") ? "relay" : s.host) age=\(String(format: "%.1f", now.timeIntervalSince(s.createdAt)))s pong=\(String(format: "%.1f", now.timeIntervalSince(s.lastPong)))s"
+        }.sorted().joined(separator: ", ")
+        appLog("Probe start (trigger=\(trigger), delay=\(Int(delay))s): [\(summary)]")
         sendPings()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }; self.networkProbe = nil
@@ -533,10 +555,13 @@ final class SyncManager: NSObject {
             for (id, old) in captured {
                 guard let current = self.sessions[id], !old.readSuspended, !current.readSuspended,
                     current.fd == old.fd, current.readSource === old.readSource,
-                    current.lastPong <= old.lastPong else { continue }
-                self.closeSession(peerId:id,scheduleReconnect:true)
+                    current.lastPong <= old.lastPong, current.lastInbound <= old.lastInbound else { continue }
+                let at = Date()
+                self.closeSession(peerId: id, scheduleReconnect: true,
+                    reason: "probeNoResponse(trigger=\(trigger), lastPong=\(String(format: "%.1f", at.timeIntervalSince(current.lastPong)))s, lastInbound=\(String(format: "%.1f", at.timeIntervalSince(current.lastInbound)))s)")
             }
-            self.relayClient?.refreshPeers()
+            // Refreshing here would re-announce peers and re-trigger this probe.
+            if !fromRelayPeer { self.relayClient?.refreshPeers() }
         }
         networkProbe = work
         syncQueue.asyncAfter(deadline:.now()+delay,execute:work)

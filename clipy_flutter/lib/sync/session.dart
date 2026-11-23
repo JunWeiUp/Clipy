@@ -250,6 +250,7 @@ extension SyncSessionMethods on SyncManager {
         if (id == null) return;
         final session = _sessions[id];
         if (session == null || !identical(session.socket, socket)) return;
+        session.lastInbound = DateTime.now();
         session.buffer.add(chunk);
         _drainBuffer(id);
       },
@@ -263,7 +264,12 @@ extension SyncSessionMethods on SyncManager {
           );
           diagnostics.noteError(id, 'socketError');
           unawaited(
-            _closeSession(id, scheduleReconnect: true, keepaliveDriven: true),
+            _closeSession(
+              id,
+              scheduleReconnect: true,
+              keepaliveDriven: true,
+              reason: 'socketError($e)',
+            ),
           );
         }
       },
@@ -271,10 +277,9 @@ extension SyncSessionMethods on SyncManager {
         if (!firstFrame.isCompleted) firstFrame.complete(null);
         final id = adoptedPeerId;
         if (id != null && identical(_sessions[id]?.socket, socket)) {
-          appLog(
-            'Socket closed by peer ${id.substring(0, id.length.clamp(0, 8))}',
+          unawaited(
+            _closeSession(id, scheduleReconnect: false, reason: 'peerEOF'),
           );
-          unawaited(_closeSession(id, scheduleReconnect: false));
         }
       },
       cancelOnError: true,
@@ -468,6 +473,7 @@ extension SyncSessionMethods on SyncManager {
     diagnostics.noteSessionUp(env.peerId, name: name, host: host);
     appLog(
       'Session up with $name (${env.peerId.substring(0, env.peerId.length.clamp(0, 8))}) @ $host:$peerPort',
+      console: true,
     );
   }
 
@@ -571,7 +577,12 @@ extension SyncSessionMethods on SyncManager {
       if (length <= 0 || length > syncMaxFrameLength) {
         diagnostics.noteError(peerId, 'badFrameLength($length)');
         unawaited(
-          _closeSession(peerId, scheduleReconnect: true, keepaliveDriven: true),
+          _closeSession(
+            peerId,
+            scheduleReconnect: true,
+            keepaliveDriven: true,
+            reason: 'badFrameLength($length)',
+          ),
         );
         return;
       }
@@ -596,10 +607,12 @@ extension SyncSessionMethods on SyncManager {
     String peerId, {
     required bool scheduleReconnect,
     bool keepaliveDriven = false,
+    String reason = 'unspecified',
   }) async {
     _clearMacScreen(peerId);
     final session = _sessions.remove(peerId);
     if (session == null) return;
+    final closedAt = DateTime.now();
     session.fileReceiveFlow?.close();
     await session.subscription?.cancel();
     try {
@@ -616,8 +629,11 @@ extension SyncSessionMethods on SyncManager {
     // fail; store still runs).
     await _flushHistoryFetchCatchUp(peerId);
     diagnostics.noteSessionDown(peerId);
+    String ago(DateTime t) =>
+        (closedAt.difference(t).inMilliseconds / 1000).toStringAsFixed(1);
     appLog(
-      'Session closed with ${peerId.substring(0, peerId.length.clamp(0, 8))}',
+      'Session closed with ${peerId.substring(0, peerId.length.clamp(0, 8))} reason=$reason host=${session.host.startsWith('relay:') ? 'relay' : session.host} age=${ago(session.createdAt)}s lastPong=${ago(session.lastPong)}s lastInbound=${ago(session.lastInbound)}s',
+      console: true,
     );
     if (!scheduleReconnect) return;
     _relay?.refreshPeers();

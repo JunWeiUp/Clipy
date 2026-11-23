@@ -310,7 +310,7 @@ private func runNetworkHandoffChecks() {
     let manager = SyncManager()
     var peers: [String:Int32] = [:]
     manager.syncQueue.sync {
-        for id in ["stale", "healthy", "replacement"] {
+        for id in ["stale", "healthy", "busy", "replacement"] {
             var fds: [Int32] = [0,0]
             precondition(socketpair(AF_UNIX,SOCK_STREAM,0,&fds) == 0)
             peers[id] = fds[1]
@@ -321,6 +321,8 @@ private func runNetworkHandoffChecks() {
         manager.probeNetworkSessions(delay:2)
         check(manager.networkProbe === first,"repeat scan preserves probe deadline")
         manager.sessions["healthy"]!.lastPong = Date().addingTimeInterval(1)
+        // A backlog flush may queue the pong behind data; inbound bytes prove liveness.
+        manager.sessions["busy"]!.lastInbound = Date().addingTimeInterval(1)
         // A replacement reader identity must survive a late probe even with the same fd.
         let fd = manager.sessions["replacement"]!.fd
         manager.sessions["replacement"]!.readSource = DispatchSource.makeReadSource(fileDescriptor:fd,queue:manager.syncQueue)
@@ -336,7 +338,16 @@ private func runNetworkHandoffChecks() {
         check(manager.networkProbe == nil, "network probe completes within deadline")
         check(manager.sessions["stale"] == nil,"network probe retires stale session")
         check(manager.sessions["healthy"] != nil,"pong preserves healthy LAN")
+        check(manager.sessions["busy"] != nil,"inbound data preserves busy session without pong")
         check(manager.sessions["replacement"] != nil,"late probe preserves replacement")
+        // Relay re-announces after every refresh; peer-available probes must not re-arm.
+        manager.lastRelayPeerProbe = Date()
+        manager.probeNetworkSessions(delay:0.05, trigger:"relayPeerAvailable")
+        check(manager.networkProbe == nil,"relay peer-available probe respects cooldown")
+        manager.lastRelayPeerProbe = Date().addingTimeInterval(-SyncManager.relayPeerProbeCooldown)
+        manager.probeNetworkSessions(delay:0.05, trigger:"relayPeerAvailable")
+        check(manager.networkProbe != nil,"relay peer-available probe runs after cooldown")
+        manager.networkProbe?.cancel(); manager.networkProbe = nil
         for id in Array(manager.sessions.keys) { manager.closeSession(peerId:id,scheduleReconnect:false) }
     }
     for fd in peers.values { Darwin.close(fd) }

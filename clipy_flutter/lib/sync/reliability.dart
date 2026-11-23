@@ -93,8 +93,12 @@ extension SyncReliabilityMethods on SyncManager {
           _inFlightHashes.putIfAbsent(peerId, () => <String>{}).add(hash);
         }
         return true;
-      } catch (_) {
-        await _closeSession(peerId, scheduleReconnect: true);
+      } catch (e) {
+        await _closeSession(
+          peerId,
+          scheduleReconnect: true,
+          reason: 'deliverWriteFailed($e)',
+        );
       }
     }
     if (_isQueueable(type)) {

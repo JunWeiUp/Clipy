@@ -208,7 +208,11 @@ extension SyncFileTransferMethods on SyncManager {
       return false;
     } on SocketException catch (e) {
       appLog('sendFile socket error: $e', level: 'warning');
-      await _closeSession(peerId, scheduleReconnect: true);
+      await _closeSession(
+        peerId,
+        scheduleReconnect: true,
+        reason: 'fileSendSocketError',
+      );
       emit(1, failed: true);
       return false;
     } catch (e) {
