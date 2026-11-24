@@ -20,6 +20,8 @@ cp "${REPO_ROOT}/clipy_macos/Tests/UIMemoryPolicyRegression.swift" "${TEST_DIR}/
 cp "${REPO_ROOT}/clipy_macos/Tests/UIMemoryLifecycleRegression.swift" "${TEST_DIR}/UIMemoryLifecycleRegression.swift"
 swiftc "${REPO_ROOT}/clipy_macos/Sources/Sync/SyncInboundBudget.swift" "${REPO_ROOT}/clipy_macos/Tests/SyncInboundBudgetRegression.swift" -o "${TEST_DIR}/inbound-budget-tests"
 "${TEST_DIR}/inbound-budget-tests"
+swiftc "${REPO_ROOT}/clipy_macos/Sources/Sync/SyncProtocol.swift" "${REPO_ROOT}/clipy_macos/Tests/ProtocolV3ContractRegression.swift" -o "${TEST_DIR}/protocol-v3-contract-tests"
+"${TEST_DIR}/protocol-v3-contract-tests" "${REPO_ROOT}/scripts/fixtures/protocol_v3_fixtures.json"
 swiftc "${REPO_ROOT}/clipy_macos/Sources/ScreenControl/ScreenControlSecurity.swift" "${REPO_ROOT}/clipy_macos/Sources/ScreenControl/ScreenControlUnlockSubmission.swift" "${REPO_ROOT}/clipy_macos/Sources/ScreenControl/ScreenControlAXTraversal.swift" "${REPO_ROOT}/clipy_macos/Tests/ScreenControlRegression.swift" -o "${TEST_DIR}/screen-control-tests"
 "${TEST_DIR}/screen-control-tests"
 source "${REPO_ROOT}/scripts/common_relay_swift.sh"

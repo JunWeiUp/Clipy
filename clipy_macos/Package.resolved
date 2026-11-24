@@ -1,0 +1,23 @@
+{
+  "pins" : [
+    {
+      "identity" : "common-relay",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/JunWeiUp/common-relay.git",
+      "state" : {
+        "revision" : "e28c8400aa243ea5c14914f8d18d75a8264e4e35",
+        "version" : "0.2.2"
+      }
+    },
+    {
+      "identity" : "swift-sodium",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jedisct1/swift-sodium.git",
+      "state" : {
+        "revision" : "cfd195c76882aa9b997560ca7cb95d72fbf5db00",
+        "version" : "0.11.0"
+      }
+    }
+  ],
+  "version" : 2
+}

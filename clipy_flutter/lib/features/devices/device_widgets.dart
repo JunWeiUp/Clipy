@@ -178,7 +178,207 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
   List<DiscoveredPeer> _peers = [];
   bool _refreshing = false;
   final Set<String> _busy = {};
+  final Set<String> _queriedMacScreens = {};
   String? _expandedPeerId;
+
+  void _ensureMacScreenQueried(String peerId) {
+    if (!widget.compact || !macScreenControlSupported) return;
+    if (_queriedMacScreens.add(peerId)) {
+      SyncManager.instance.queryMacScreen(peerId);
+    }
+  }
+
+  Widget _buildPeerActionBar(
+    BuildContext context, {
+    required DiscoveredPeer peer,
+    required String id,
+    required bool busy,
+    required SyncManager manager,
+    required AppStrings l10n,
+  }) {
+    if (Platform.isIOS) {
+      return Padding(
+        padding: EdgeInsets.fromLTRB(12, 0, 12, widget.compact ? 10 : 16),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            CupertinoButton(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              minimumSize: const Size(44, 36),
+              color: CupertinoColors.systemBlue.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(10),
+              onPressed: !manager.isEnabled || busy
+                  ? null
+                  : () => _change(
+                      id,
+                      () => showSendTextToDeviceDialog(context, peer),
+                    ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    CupertinoIcons.text_alignleft,
+                    size: 16,
+                    color: CupertinoColors.systemBlue,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    l10n.sendText,
+                    style: const TextStyle(
+                      color: CupertinoColors.systemBlue,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            CupertinoButton(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              minimumSize: const Size(44, 36),
+              borderRadius: BorderRadius.circular(10),
+              onPressed: !manager.isEnabled || busy
+                  ? null
+                  : () => _change(
+                      id,
+                      () => pickAndSendFileToDevice(context, peer),
+                    ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(CupertinoIcons.doc, size: 16),
+                  const SizedBox(width: 6),
+                  Text(l10n.sendFile, style: const TextStyle(fontSize: 14)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    const compactStyle = ButtonStyle(
+      padding: WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+      ),
+      minimumSize: WidgetStatePropertyAll(Size(0, 40)),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
+    );
+
+    final sendTextBtn = FilledButton.tonalIcon(
+      style: widget.compact ? compactStyle : null,
+      onPressed: !manager.isEnabled || busy
+          ? null
+          : () => _change(id, () => showSendTextToDeviceDialog(context, peer)),
+      icon: const Icon(Icons.notes_rounded, size: 18),
+      label: Text(
+        l10n.sendText.replaceAll('…', '').replaceAll('...', ''),
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+    final sendFileBtn = OutlinedButton.icon(
+      style: widget.compact ? compactStyle : null,
+      onPressed: !manager.isEnabled || busy
+          ? null
+          : () => _change(id, () => pickAndSendFileToDevice(context, peer)),
+      icon: const Icon(Icons.upload_file_outlined, size: 18),
+      label: Text(
+        l10n.sendFile.replaceAll('…', '').replaceAll('...', ''),
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+
+    if (!widget.compact) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [sendTextBtn, sendFileBtn],
+        ),
+      );
+    }
+
+    _ensureMacScreenQueried(id);
+    return ValueListenableBuilder<Map<String, MacScreenState>>(
+      valueListenable: manager.macScreens,
+      builder: (context, states, _) {
+        final screenState = macScreenControlSupported ? states[id] : null;
+        final showScreenBtn = screenState != null && screenState.configured;
+        final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final useWrap =
+                      textScale > 1.35 ||
+                      constraints.maxWidth < (showScreenBtn ? 300 : 240);
+                  final screenBtn = showScreenBtn
+                      ? MacScreenCompactAction(
+                          key: ValueKey('screen.compact.$id'),
+                          peerId: id,
+                          buttonStyle: compactStyle,
+                        )
+                      : null;
+                  if (useWrap) {
+                    return Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        sendTextBtn,
+                        sendFileBtn,
+                        if (screenBtn != null) screenBtn,
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: sendTextBtn),
+                      const SizedBox(width: 8),
+                      Expanded(child: sendFileBtn),
+                      if (screenBtn != null) ...[
+                        const SizedBox(width: 8),
+                        Expanded(child: screenBtn),
+                      ],
+                    ],
+                  );
+                },
+              ),
+              if (showScreenBtn && !screenState.directControl)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    Localizations.localeOf(context).languageCode == 'zh'
+                        ? '请先更新 Mac 端'
+                        : 'Update the Mac app first',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              if (showScreenBtn && !screenState.helper)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    Localizations.localeOf(context).languageCode == 'zh'
+                        ? '请在 Mac 系统设置中允许 Clipy 的辅助功能权限'
+                        : 'Allow Clipy Accessibility access in Mac System Settings',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -377,9 +577,10 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
                 padding: EdgeInsets.only(bottom: widget.compact ? 8 : 12),
                 child: Card(
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       ListTile(
-                        minTileHeight: widget.compact ? 64 : null,
+                        minTileHeight: widget.compact ? 60 : null,
                         contentPadding: widget.compact
                             ? const EdgeInsets.only(left: 12, right: 4)
                             : null,
@@ -390,13 +591,45 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
                         ),
                         title: Text(
                           peer?.displayName ?? manager.resolvedPeerLabel(id),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        subtitle: Text(
-                          peer == null
-                              ? l10n.deviceOffline
-                              : '${l10n.deviceOnline} · ${peer.host.startsWith('relay:') ? l10n.internetRelay : peer.host}',
-                          style: TextStyle(color: colors.onSurfaceVariant),
-                        ),
+                        subtitle:
+                            widget.compact &&
+                                peer != null &&
+                                macScreenControlSupported
+                            ? ValueListenableBuilder<
+                                Map<String, MacScreenState>
+                              >(
+                                valueListenable: manager.macScreens,
+                                builder: (context, states, _) {
+                                  final screenLabel =
+                                      macScreenCompactStatusLabel(
+                                        context,
+                                        states[id],
+                                      );
+                                  final base =
+                                      '${l10n.deviceOnline} · ${peer.host.startsWith('relay:') ? l10n.internetRelay : peer.host}';
+                                  return Text(
+                                    screenLabel == null
+                                        ? base
+                                        : '$base · $screenLabel',
+                                    style: TextStyle(
+                                      color: colors.onSurfaceVariant,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  );
+                                },
+                              )
+                            : Text(
+                                peer == null
+                                    ? l10n.deviceOffline
+                                    : '${l10n.deviceOnline} · ${peer.host.startsWith('relay:') ? l10n.internetRelay : peer.host}',
+                                style: TextStyle(
+                                  color: colors.onSurfaceVariant,
+                                ),
+                              ),
                         trailing: widget.compact
                             ? IconButton(
                                 tooltip: l10n.deviceSyncSettings,
@@ -417,122 +650,17 @@ class _SyncTargetDeviceListState extends State<SyncTargetDeviceList> {
                             : null,
                       ),
                       if (peer != null)
-                        Padding(
-                          padding: EdgeInsets.fromLTRB(
-                            12,
-                            0,
-                            12,
-                            widget.compact ? 8 : 16,
-                          ),
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              if (Platform.isIOS) ...[
-                                CupertinoButton(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 6,
-                                  ),
-                                  minimumSize: const Size(44, 36),
-                                  color: CupertinoColors.systemBlue.withValues(
-                                    alpha: .12,
-                                  ),
-                                  borderRadius: BorderRadius.circular(10),
-                                  onPressed: !manager.isEnabled || busy
-                                      ? null
-                                      : () => _change(
-                                          id,
-                                          () => showSendTextToDeviceDialog(
-                                            context,
-                                            peer,
-                                          ),
-                                        ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(
-                                        CupertinoIcons.text_alignleft,
-                                        size: 16,
-                                        color: CupertinoColors.systemBlue,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        l10n.sendText,
-                                        style: const TextStyle(
-                                          color: CupertinoColors.systemBlue,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                CupertinoButton(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 6,
-                                  ),
-                                  minimumSize: const Size(44, 36),
-                                  borderRadius: BorderRadius.circular(10),
-                                  onPressed: !manager.isEnabled || busy
-                                      ? null
-                                      : () => _change(
-                                          id,
-                                          () => pickAndSendFileToDevice(
-                                            context,
-                                            peer,
-                                          ),
-                                        ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(CupertinoIcons.doc, size: 16),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        l10n.sendFile,
-                                        style: const TextStyle(fontSize: 14),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ] else ...[
-                                FilledButton.tonalIcon(
-                                  onPressed: !manager.isEnabled || busy
-                                      ? null
-                                      : () => _change(
-                                          id,
-                                          () => showSendTextToDeviceDialog(
-                                            context,
-                                            peer,
-                                          ),
-                                        ),
-                                  icon: const Icon(
-                                    Icons.notes_rounded,
-                                    size: 18,
-                                  ),
-                                  label: Text(l10n.sendText),
-                                ),
-                                OutlinedButton.icon(
-                                  onPressed: !manager.isEnabled || busy
-                                      ? null
-                                      : () => _change(
-                                          id,
-                                          () => pickAndSendFileToDevice(
-                                            context,
-                                            peer,
-                                          ),
-                                        ),
-                                  icon: const Icon(
-                                    Icons.upload_file_outlined,
-                                    size: 18,
-                                  ),
-                                  label: Text(l10n.sendFile),
-                                ),
-                              ],
-                            ],
-                          ),
+                        _buildPeerActionBar(
+                          context,
+                          peer: peer,
+                          id: id,
+                          busy: busy,
+                          manager: manager,
+                          l10n: l10n,
                         ),
-                      if (peer != null && macScreenControlSupported)
+                      if (peer != null &&
+                          macScreenControlSupported &&
+                          !widget.compact)
                         MacScreenControls(
                           key: ValueKey('screen.$id'),
                           peerId: id,

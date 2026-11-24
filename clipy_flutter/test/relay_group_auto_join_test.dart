@@ -156,6 +156,11 @@ void main() {
           expect(await ClipyRelayIdentity.accessPassword(url), '');
         }
         expect(requests, 1);
+        // Once enrolled, invitations for another relay must still be rejected
+        // before any network request.
+        await ClipyRelayIdentity.saveConfig(
+          jsonEncode({'url': url, 'group': 'fixture', 'token': 'enrolled-tok'}),
+        );
         final other = Map<String, dynamic>.from(invitation)
           ..['url'] = 'wss://other.invalid/relay/v1/ws';
         final foreign = cr.RelayInvitationLinks.make(
@@ -171,6 +176,49 @@ void main() {
       },
     );
   }
+  test(
+    'unenrolled device adopts verified invitation server URL automatically',
+    () async {
+      const configuredUrl = 'wss://localhost/relay/v1/ws';
+      const inviteUrl = 'wss://other.invalid/relay/v1/ws';
+      const access = 'Adopt-Server-Pass-42';
+      SharedPreferences.setMockInitialValues({'syncRelayURL': configuredUrl});
+      await ClipyRelayIdentity.saveConfig('');
+      final sodium = await SodiumInit.init();
+      final invitation = {
+        'version': 1,
+        'app': 'clipy',
+        'url': inviteUrl,
+        'id': '34' * 16,
+        'group': 'adopted-group',
+        'expires': DateTime.now().millisecondsSinceEpoch ~/ 1000 + 600,
+      };
+      final key = sodium.randombytes.buf(32);
+      final link = cr.RelayInvitationLinks.make(
+        invitation,
+        key,
+        password: access,
+      );
+      final packet = cr.RelayInvitationLinks.seal(
+        sodium,
+        invitation,
+        key,
+        sodium.randombytes.buf(24),
+      );
+      final previous = HttpOverrides.current;
+      HttpOverrides.global = _MockNetwork((uri) {
+        expect(uri.host, 'other.invalid');
+        return {'version': 1, 'packet': packet};
+      });
+      addTearDown(() => HttpOverrides.global = previous);
+
+      final resolved = await ClipyRelayGroups.resolveInvitation(link);
+      expect(resolved['group'], 'adopted-group');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('syncRelayURL'), inviteUrl);
+      expect(await ClipyRelayIdentity.accessPassword(inviteUrl), access);
+    },
+  );
   test(
     'resumed QR refreshes old fragment with the current server password',
     () async {

@@ -256,21 +256,34 @@ final class SyncRelayGroups: ObservableObject {
         guard current.config["group_entry"] == nil else { throw RelayError.invalid("already enrolled") }
         let snapshot = current.config
         let configuredURL = snapshot["url"] as? String ?? ""
+        let isUnenrolled = snapshot["token"] == nil && snapshot["group_entry"] == nil
         let compact = raw.hasPrefix("common-relay://") && !raw.hasPrefix("common-relay://join#")
         let resolved: [String:Any]
         var importedPassword: String?
+        let targetURL: String
         if compact {
             let link = try RelayInvitationLinks.parse(raw)
+            targetURL = (isUnenrolled && SyncRelayClient.validURL(link.url)) ? link.url : configuredURL
+            let savedForTarget = targetURL == configuredURL
+                ? (snapshot["password"] as? String)
+                : (try SyncRelaySettings.effectiveAccessPassword(for: targetURL))
             // Check scope before any HTTP request or credential write.
-            let secret = try SyncRelayAccessPolicy.invitationPassword(url:link.url,configuredURL:configuredURL,
-                supplied:link.password,saved:snapshot["password"] as? String)
-            let resolver = RelayGroups(config:SyncRelayAccessPolicy.applying(secret,to:snapshot))
+            let secret = try SyncRelayAccessPolicy.invitationPassword(url:link.url,configuredURL:targetURL,
+                supplied:link.password,saved:savedForTarget)
+            var resolverConfig = snapshot
+            resolverConfig["url"] = targetURL
+            let resolver = RelayGroups(config:SyncRelayAccessPolicy.applying(secret,to:resolverConfig))
             resolved = try await resolver.resolveInvitation(raw)
             importedPassword = link.password
         } else {
             resolved = try Self.decode(raw)
-            _ = try SyncRelayAccessPolicy.invitationPassword(url:resolved["url"] as? String ?? configuredURL,
-                configuredURL:configuredURL,supplied:nil,saved:snapshot["password"] as? String)
+            let inviteURL = resolved["url"] as? String ?? configuredURL
+            targetURL = (isUnenrolled && SyncRelayClient.validURL(inviteURL)) ? inviteURL : configuredURL
+            let savedForTarget = targetURL == configuredURL
+                ? (snapshot["password"] as? String)
+                : (try SyncRelaySettings.effectiveAccessPassword(for: targetURL))
+            _ = try SyncRelayAccessPolicy.invitationPassword(url:inviteURL,
+                configuredURL:targetURL,supplied:nil,saved:savedForTarget)
         }
         try Task.checkCancellation()
         guard SyncRelayAccessPolicy.sameRequestConfiguration(snapshot,try Self.load().config) else {
@@ -280,10 +293,14 @@ final class SyncRelayGroups: ObservableObject {
         // before placing the invitation in enrollment_invitation or pending_join.
         let inv = SyncRelayAccessPolicy.applying(nil,to:resolved)
         if current.config["token"] != nil && (current.config["group"] as? String != inv["group"] as? String || (inv["url"] != nil && current.config["url"] as? String != inv["url"] as? String)) { throw RelayError.invalid("existing identity scope") }
+        if isUnenrolled && targetURL != configuredURL {
+            try SyncRelaySettings.adoptInvitationURL(targetURL)
+            current.config["url"] = targetURL
+        }
         // Require explicit settings for a different relay before making any enrollment request.
         guard (inv["url"] as? String ?? current.config["url"] as? String) == current.config["url"] as? String else { throw RelayError.invalid("invitation relay differs from settings") }
         if let importedPassword {
-            try SyncRelaySettings.saveInvitationPassword(importedPassword,url:configuredURL)
+            try SyncRelaySettings.saveInvitationPassword(importedPassword,url:targetURL)
             current.config["password"] = importedPassword
             hasAccessPassword = true
         }

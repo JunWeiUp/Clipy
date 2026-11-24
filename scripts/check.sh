@@ -10,6 +10,15 @@ check_repo() {
   python3 scripts/check_repository.py
   python3 -B scripts/test_repository_privacy.py
   python3 scripts/check_icons.py
+  python3 -B scripts/check_localization.py
+  python3 -B scripts/check_architecture.py
+  if command -v swiftc >/dev/null 2>&1; then
+    local proto_bin
+    proto_bin="$(mktemp "${TMPDIR:-/tmp}/clipy-proto-v3.XXXXXX")"
+    swiftc clipy_macos/Sources/Sync/SyncProtocol.swift clipy_macos/Tests/ProtocolV3ContractRegression.swift -o "${proto_bin}"
+    "${proto_bin}" scripts/fixtures/protocol_v3_fixtures.json
+    rm -f "${proto_bin}"
+  fi
 }
 
 check_flutter() {

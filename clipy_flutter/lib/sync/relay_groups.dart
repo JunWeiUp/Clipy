@@ -25,21 +25,47 @@ class ClipyRelayGroups {
       'common-relay://join#${base64Url.encode(utf8.encode(jsonEncode(ClipyRelayIdentity.withoutAccessPassword(value))))}';
   static Future<Map<String, dynamic>> resolveInvitation(String text) async {
     final raw = text.trim();
+    final current = await load();
+    final isUnenrolled =
+        !current.config.containsKey('group_entry') &&
+        !current.config.containsKey('token');
     if (raw.startsWith('common-relay://') &&
         !raw.startsWith('common-relay://join#')) {
       final endpoint = cr.RelayInvitationLinks.parse(raw);
-      await _checkServer(endpoint.url);
-      final g = await load();
-      final previousPassword = g.config['password'] as String? ?? '';
-      if (endpoint.password == null) await requireAccess();
-      g.config['app'] = 'clipy';
-      final invitation = await g.resolveInvitation(raw);
-      // Only adopt a credential after the encrypted invitation's scope and expiry
-      // have been verified. A late response must not overwrite edited settings.
-      await _checkServer(endpoint.url);
+      if (!isUnenrolled) {
+        await _checkServer(endpoint.url);
+      }
+      final previousPassword = await ClipyRelayIdentity.accessPassword(
+        endpoint.url,
+      );
+      if (endpoint.password == null && previousPassword.isEmpty) {
+        throw const FormatException('relayPasswordRequired');
+      }
+      final resolverConfig = Map<String, dynamic>.from(current.config)
+        ..['url'] = endpoint.url
+        ..['app'] = 'clipy';
+      final effectivePassword = endpoint.password ?? previousPassword;
+      if (effectivePassword.isNotEmpty) {
+        resolverConfig['password'] = effectivePassword;
+      } else {
+        resolverConfig.remove('password');
+      }
+      final resolver = cr.RelayGroups(current.sodium, resolverConfig);
+      final invitation = await resolver.resolveInvitation(raw);
+      // Only adopt the server URL / credential after the encrypted invitation's
+      // scope and expiry have been verified.
+      if (!isUnenrolled) {
+        await _checkServer(endpoint.url);
+      }
       if (await ClipyRelayIdentity.accessPassword(endpoint.url) !=
           previousPassword) {
         throw StateError('Access credential changed during request');
+      }
+      if (isUnenrolled &&
+          RelayConfiguration.passwordScope(endpoint.url) !=
+              RelayConfiguration.passwordScope(await _selectedURL())) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('syncRelayURL', endpoint.url);
       }
       if (endpoint.password != null) {
         await ClipyRelayIdentity.saveAccessPassword(
@@ -49,8 +75,17 @@ class ClipyRelayGroups {
       }
       return ClipyRelayIdentity.withoutAccessPassword(invitation);
     }
+    final decoded = decodeInvitation(raw);
+    final inviteUrl = (decoded['url'] as String?)?.trim() ?? '';
+    if (isUnenrolled &&
+        inviteUrl.isNotEmpty &&
+        RelayConfiguration.passwordScope(inviteUrl) !=
+            RelayConfiguration.passwordScope(await _selectedURL())) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('syncRelayURL', inviteUrl);
+    }
     await requireAccess();
-    return decodeInvitation(raw);
+    return decoded;
   }
 
   /// Refresh the fragment when resuming an invitation made before password links

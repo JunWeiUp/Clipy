@@ -5,8 +5,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/JunWeiUp/common-relay.git",
       "state" : {
-        "revision" : "cb33cd19cd1d5d005f77f58b17a3a61b434adfb6",
-        "version" : "0.2.1"
+        "revision" : "e28c8400aa243ea5c14914f8d18d75a8264e4e35",
+        "version" : "0.2.2"
       }
     },
     {

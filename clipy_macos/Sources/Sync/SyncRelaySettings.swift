@@ -30,6 +30,11 @@ enum SyncRelaySettings {
         try SyncRelayAccessPolicy.validate(value)
         try storePassword(value, url: url)
     }
+    /// Unenrolled devices may adopt the relay URL from a verified invitation.
+    static func adoptInvitationURL(_ url: String) throws {
+        guard SyncRelayClient.validURL(url) else { throw NSError(domain: "SyncRelay", code: 4) }
+        UserDefaults.standard.set(url, forKey: "syncRelayURL")
+    }
     static func accessPassword(url: String? = nil) throws -> String? {
         var q = passwordQuery(url: url ?? Self.url)
         q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
