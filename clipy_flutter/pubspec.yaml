@@ -1,7 +1,7 @@
 name: clipy_flutter
 description: Clipboard history, encrypted LAN sync, notification mirroring, and file transfer for Clipy.
 publish_to: none
-version: 1.0.45+12407
+version: 1.0.46+12408
 
 environment:
   sdk: ">=3.11.0 <4.0.0"
@@ -11,7 +11,7 @@ dependencies:
   common_relay:
     git:
       url: https://github.com/JunWeiUp/common-relay.git
-      ref: v0.2.1
+      ref: v0.2.2
       path: sdk/dart
   cupertino_icons: ^1.0.9
   qr_flutter: 4.1.0
