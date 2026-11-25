@@ -30,6 +30,7 @@ class SyncRelayClient {
     required this.onSocket,
     this.onStateChanged,
     this.onPeerAvailable,
+    this.onLog,
     this.journal,
     this.allowLocalTest = false,
   });
@@ -41,6 +42,7 @@ class SyncRelayClient {
   final void Function(String, Socket) onSocket;
   final void Function(RelayConnectionState)? onStateChanged;
   final void Function()? onPeerAvailable;
+  final void Function(String)? onLog;
   final cr.RelayJournal? journal;
   final bool allowLocalTest;
   cr.RelayClient? _refreshingClient;
@@ -56,6 +58,7 @@ class SyncRelayClient {
   cr.RelayV2Pipe? _refreshingV2;
   Timer? _timer;
   final _tunnels = <String, _RelayTunnel>{};
+  final _openAttempts = <String, int>{};
   final _metadata = <String, Map<String, dynamic>>{};
   final _onlineDevices = <String>{};
   bool _presenceKnown = false;
@@ -66,11 +69,33 @@ class SyncRelayClient {
           (entry.value['name'] as String).isNotEmpty)
         entry.key: entry.value['name'] as String,
   });
+
+  /// Online relay peers that have announced a valid LAN `peerId`, keyed by
+  /// `lanPeerId` (never raw `relayDeviceId` and never self).
+  Map<String, ({String relayId, String name, int port})> get resolvedPeers {
+    final result = <String, ({String relayId, String name, int port})>{};
+    for (final entry in _metadata.entries) {
+      final lanId = _lanPeer(entry.key);
+      if (lanId == null || lanId == id) continue;
+      final peerName = entry.value['name'];
+      final peerPort = entry.value['port'];
+      result[lanId] = (
+        relayId: entry.key,
+        name: (peerName is String && peerName.isNotEmpty) ? peerName : lanId,
+        port: peerPort is int ? peerPort : port,
+      );
+    }
+    return Map.unmodifiable(result);
+  }
+
   bool get presenceKnown => _presenceKnown;
   void _notifyPresence() => onStateChanged?.call(state);
   bool _stopped = false;
   int _retry = 1;
   bool _running = false, _restartRequested = false;
+  // A refresh can arrive while the socket is reconnecting. Keep it pending
+  // so a UI refresh during a Wi-Fi/mobile handoff is not silently discarded.
+  bool _refreshRequested = false;
   bool get _isV2 => Uri.tryParse(url)?.path == '/v2/ws';
   String get _v2BaseUrl {
     final u = Uri.parse(url);
@@ -113,19 +138,70 @@ class SyncRelayClient {
   void refreshPeers() {
     if (_stopped) return;
     if (!_running) {
+      _refreshRequested = true;
       _timer?.cancel();
       unawaited(_run());
       return;
     }
     if (_isV2) {
       final pipe = _v2Pipe;
-      if (pipe == null || state != RelayConnectionState.ready) return;
+      if (pipe == null || state != RelayConnectionState.ready) {
+        _refreshRequested = true;
+        return;
+      }
+      _refreshRequested = false;
       unawaited(_refreshV2(pipe).catchError((Object _) {}));
       return;
     }
     final client = _client;
-    if (client == null || state != RelayConnectionState.ready) return;
+    if (client == null || state != RelayConnectionState.ready) {
+      _refreshRequested = true;
+      return;
+    }
+    _refreshRequested = false;
     unawaited(_refresh(client).catchError((Object _) {}));
+  }
+
+  String? _relayIdForPeer(String peer) {
+    if (_metadata.containsKey(peer)) return peer;
+    for (final entry in _metadata.entries) {
+      if (_lanPeer(entry.key) == peer) return entry.key;
+    }
+    return null;
+  }
+
+  /// Open a data tunnel on demand when a user sends to a relay-only peer.
+  /// `peer` may be a LAN `peerId` (the normal SyncManager identifier) or a
+  /// relay device ID; metadata is keyed by relay device ID.
+  void openPeer(String peer) {
+    if (_stopped) return;
+    if (state != RelayConnectionState.ready) {
+      _refreshRequested = true;
+      return;
+    }
+    final relayId = _relayIdForPeer(peer);
+    final info = relayId != null ? _metadata[relayId] : null;
+    if (relayId == null || info == null) {
+      final attempts = (_openAttempts[peer] ?? 0) + 1;
+      if (attempts > 4) {
+        _openAttempts.remove(peer);
+        return;
+      }
+      _openAttempts[peer] = attempts;
+      refreshPeers();
+      Timer(const Duration(milliseconds: 250), () {
+        if (!_stopped) openPeer(peer);
+      });
+      return;
+    }
+    _openAttempts.remove(peer);
+    if (_isV2) {
+      final pipe = _v2Pipe;
+      if (pipe != null) unawaited(_openV2(relayId, info));
+    } else {
+      final client = _client;
+      if (client != null) unawaited(_open(relayId, info));
+    }
   }
 
   Future<void> _announce(cr.RelayClient client, String peer) async {
@@ -237,6 +313,7 @@ class SyncRelayClient {
       if (_stopped || _restartRequested) return;
       _retry = 1;
       _setState(RelayConnectionState.ready);
+      if (_refreshRequested) refreshPeers();
       final active = client;
       unawaited(_refresh(active).catchError((Object _) {}));
       _timer = Timer.periodic(
@@ -298,20 +375,28 @@ class SyncRelayClient {
             break;
           case 'stream.open':
             final peer = event['from'] as String;
-            if (_lanPeer(peer) == null ||
-                _hasSession(peer) ||
-                _tunnels.containsKey(peer) ||
-                id.compareTo(_lanPeer(peer)!) < 0) {
+            final lanId = _lanPeer(peer);
+            final existingTunnel = _tunnels[peer];
+            final rejectCrossed =
+                existingTunnel != null &&
+                (existingTunnel.stream != null ||
+                    existingTunnel.v2Stream != null ||
+                    (lanId != null && id.compareTo(lanId) < 0));
+            if (lanId == null || _hasSession(peer) || rejectCrossed) {
               active.send({'type': 'stream.close', 'id': event['id']});
               break;
             }
+            existingTunnel?.close();
             final tunnel = _RelayTunnel();
             _tunnels[peer] = tunnel;
             unawaited(() async {
               try {
                 tunnel.stream = await active.acceptStream(event);
                 await _bridge(peer, tunnel);
-              } catch (_) {
+              } catch (e) {
+                onLog?.call(
+                  'Relay v1 inbound stream error peer=${lanId.substring(0, lanId.length.clamp(0, 8))}: ${e.runtimeType}: $e',
+                );
               } finally {
                 tunnel.close();
                 if (identical(_tunnels[peer], tunnel)) _tunnels.remove(peer);
@@ -379,7 +464,11 @@ class SyncRelayClient {
       if (_stopped || tunnel.closed || _hasSession(peer)) return;
       tunnel.stream = await client.openStream(peer);
       await _bridge(peer, tunnel);
-    } catch (_) {
+    } catch (e) {
+      final lanId = _lanPeer(peer) ?? peer;
+      onLog?.call(
+        'Relay v1 outbound stream error peer=${lanId.substring(0, lanId.length.clamp(0, 8))}: ${e.runtimeType}: $e',
+      );
     } finally {
       tunnel.close();
       if (identical(_tunnels[peer], tunnel)) _tunnels.remove(peer);
@@ -413,7 +502,12 @@ class SyncRelayClient {
         await tunnel.bridge!.flush();
       }
     }();
-    await Future.any([upload, download]);
+    try {
+      await Future.any([upload, download]);
+    } finally {
+      unawaited(upload.catchError((Object _) {}));
+      unawaited(download.catchError((Object _) {}));
+    }
   }
 
   Future<void> _announceV2(cr.RelayV2Pipe pipe, String peer) async {
@@ -457,6 +551,10 @@ class SyncRelayClient {
     _notifyPresence();
     for (final peer in peers) {
       if (_stopped || !identical(_v2Pipe, pipe)) return;
+      if (peer == pipe.identity.device ||
+          !pipe.identity.trustedPeers.containsKey(peer)) {
+        continue;
+      }
       if (!_metadata.containsKey(peer)) onPeerAvailable?.call();
       await _announceV2(pipe, peer);
     }
@@ -540,6 +638,7 @@ class SyncRelayClient {
       if (_stopped || _restartRequested) return;
       _retry = 1;
       _setState(RelayConnectionState.ready);
+      if (_refreshRequested) refreshPeers();
       final active = pipe;
       unawaited(_refreshV2(active).catchError((Object _) {}));
       _timer = Timer.periodic(
@@ -604,20 +703,28 @@ class SyncRelayClient {
             break;
           case 'stream.open':
             final peer = event['from'] as String? ?? '';
-            if (_lanPeer(peer) == null ||
-                _hasSession(peer) ||
-                _tunnels.containsKey(peer) ||
-                id.compareTo(_lanPeer(peer)!) < 0) {
+            final lanId = _lanPeer(peer);
+            final existingTunnel = _tunnels[peer];
+            final rejectCrossed =
+                existingTunnel != null &&
+                (existingTunnel.v2Stream != null ||
+                    existingTunnel.stream != null ||
+                    (lanId != null && id.compareTo(lanId) < 0));
+            if (lanId == null || _hasSession(peer) || rejectCrossed) {
               unawaited(active.rejectStream(event));
               break;
             }
+            existingTunnel?.close();
             final tunnel = _RelayTunnel();
             _tunnels[peer] = tunnel;
             unawaited(() async {
               try {
                 tunnel.v2Stream = await active.acceptStream(event);
                 await _bridgeV2(peer, tunnel);
-              } catch (_) {
+              } catch (e) {
+                onLog?.call(
+                  'Relay v2 inbound stream error peer=${lanId.substring(0, lanId.length.clamp(0, 8))}: ${e.runtimeType}: $e',
+                );
               } finally {
                 tunnel.close();
                 if (identical(_tunnels[peer], tunnel)) _tunnels.remove(peer);
@@ -687,7 +794,11 @@ class SyncRelayClient {
       if (_stopped || tunnel.closed || _hasSession(peer)) return;
       tunnel.v2Stream = await pipe.openStream(peer, topic: 'clipy.sync');
       await _bridgeV2(peer, tunnel);
-    } catch (_) {
+    } catch (e) {
+      final lanId = _lanPeer(peer) ?? peer;
+      onLog?.call(
+        'Relay v2 outbound stream error peer=${lanId.substring(0, lanId.length.clamp(0, 8))}: ${e.runtimeType}: $e',
+      );
     } finally {
       tunnel.close();
       if (identical(_tunnels[peer], tunnel)) _tunnels.remove(peer);
@@ -720,7 +831,12 @@ class SyncRelayClient {
         await tunnel.bridge!.flush();
       }
     }();
-    await Future.any([upload, download]);
+    try {
+      await Future.any([upload, download]);
+    } finally {
+      unawaited(upload.catchError((Object _) {}));
+      unawaited(download.catchError((Object _) {}));
+    }
   }
 
   void stop() {

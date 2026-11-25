@@ -25,6 +25,7 @@ final class SyncRelayClient: @unchecked Sendable {
         return try RelayJournal(directory: support.appendingPathComponent("ClipyClone/common-relay-journal", isDirectory: true))
     }
     var onPeerAvailable: (() -> Void)?
+    var onSocket: ((Peer, Int32) -> Void)?
     private var refreshGeneration: Int?
     private var refreshRequestID: UUID?
     private var client: CommonRelay.RelayClient?
@@ -204,6 +205,9 @@ final class SyncRelayClient: @unchecked Sendable {
     }
     private func reconcilePresenceV2(_ peers: [String], pipe: RelayV2Pipe, current: Int) {
         let online = Set(peers)
+        let access = Access.parse(token)
+        let ownDevice = access?.device
+        let trusted = access?.trusted_peers
         liveOnlinePeers = online
         for existing in Array(metadata.keys) where !online.contains(existing) {
             metadata.removeValue(forKey: existing)
@@ -213,6 +217,7 @@ final class SyncRelayClient: @unchecked Sendable {
             opening.remove(existing)
         }
         for peer in peers {
+            guard peer != ownDevice, trusted?[peer] != nil else { continue }
             if metadata[peer] == nil { onPeerAvailable?() }
             announceV2(peer, pipe, current)
         }
@@ -249,13 +254,23 @@ final class SyncRelayClient: @unchecked Sendable {
             onPeers(Array(metadata.values))
         case "stream.open":
             guard let peer = event.from else { return }
-            guard let lanID = metadata[peer]?.id ?? Self.lanPeerID(relayID: peer, presence: [:]),
-                  lanID < id, bridges[peer] == nil, pendingV2[peer] == nil else {
+            let peerLanID = metadata[peer]?.id ?? Self.lanPeerID(relayID: peer, presence: [:]) ?? peer
+            if bridges[peer] != nil || (opening.contains(peer) && id < peerLanID) {
                 Task { await pipe.rejectStream(event) }
                 return
             }
+            if let old = pendingV2.removeValue(forKey: peer) {
+                Task { await pipe.rejectStream(old) }
+            }
             pendingV2[peer] = event
-            if metadata[peer] == nil { metadata[peer] = Peer(id: lanID, name: peer, addresses: [], port: 5566) }
+            if metadata[peer] == nil {
+                metadata[peer] = Peer(
+                    id: peerLanID,
+                    name: peer,
+                    addresses: [],
+                    port: 5566
+                )
+            }
             onPeers(Array(metadata.values))
             begin(peer)
         default:
@@ -317,24 +332,39 @@ final class SyncRelayClient: @unchecked Sendable {
             if first { announce(peer, connection, current) }; onPeers(Array(metadata.values))
         }
         if type == "stream.open", let peer = event["from"] as? String {
-            guard let lanID = metadata[peer]?.id ?? Self.lanPeerID(relayID: peer, presence: [:]), lanID < id, bridges[peer] == nil, pending[peer] == nil else { Task { try? await connection.rejectStream(event) }; return }
+            let peerLanID = metadata[peer]?.id ?? Self.lanPeerID(relayID: peer, presence: [:]) ?? peer
+            if bridges[peer] != nil || (opening.contains(peer) && id < peerLanID) {
+                Task { try? await connection.rejectStream(event) }
+                return
+            }
+            if let old = pending.removeValue(forKey: peer) {
+                Task { try? await connection.rejectStream(old) }
+            }
             pending[peer] = event
-            if metadata[peer] == nil { metadata[peer] = Peer(id: lanID, name: peer, addresses: [], port: 5566) }
+            if metadata[peer] == nil { metadata[peer] = Peer(id: peerLanID, name: peer, addresses: [], port: 5566) }
             onPeers(Array(metadata.values)); begin(peer)
         }
     }
-    func open(peer: String, onReady: @escaping (Int32) -> Void) {
+    func open(peer: String, force: Bool = false, onReady: @escaping (Int32) -> Void) {
         queue.async {
             guard let relayID = self.metadata.first(where: { $0.value.id == peer })?.key,
                   !self.stopped, self.bridges[relayID] == nil else { return }
-            self.callbacks[relayID] = onReady; self.begin(relayID)
+            self.callbacks[relayID] = onReady; self.begin(relayID, force: force)
         }
     }
-    private func begin(_ peer: String) {
+    private func resolveReadyCallback(for peer: String, hasIncoming: Bool) -> ((Int32) -> Void)? {
+        if let callback = callbacks.removeValue(forKey: peer) { return callback }
+        guard hasIncoming, let handler = onSocket, let peerMeta = metadata[peer] else { return nil }
+        return { fd in handler(peerMeta, fd) }
+    }
+    private func hasReadyCallback(for peer: String, hasIncoming: Bool) -> Bool {
+        callbacks[peer] != nil || (hasIncoming && onSocket != nil && metadata[peer] != nil)
+    }
+    private func begin(_ peer: String, force: Bool = false) {
         if isV2 {
-            guard let pipe = v2Pipe, callbacks[peer] != nil, bridges[peer] == nil, !opening.contains(peer), !stopped else { return }
             let incoming = pendingV2[peer]
-            guard id < (metadata[peer]?.id ?? peer) || incoming != nil else { return }
+            guard let pipe = v2Pipe, hasReadyCallback(for: peer, hasIncoming: incoming != nil), bridges[peer] == nil, !opening.contains(peer), !stopped else { return }
+            guard force || id < (metadata[peer]?.id ?? peer) || incoming != nil else { return }
             pendingV2.removeValue(forKey: peer); opening.insert(peer); let current = generation
             Task { [weak self] in
                 do {
@@ -343,18 +373,25 @@ final class SyncRelayClient: @unchecked Sendable {
                     guard let self else { await stream.close(); return }
                     self.queue.async {
                         self.opening.remove(peer)
-                        guard !self.stopped, current == self.generation, let callback = self.callbacks.removeValue(forKey: peer) else { Task { await stream.close() }; return }
+                        guard !self.stopped, current == self.generation, let callback = self.resolveReadyCallback(for: peer, hasIncoming: incoming != nil) else { Task { await stream.close() }; return }
                         let bridge = RelayByteBridge(stream: stream, queue: self.queue, onReady: callback); self.bridges[peer] = bridge
                         bridge.onClose = { [weak self, weak bridge] in guard self?.bridges[peer] === bridge else { return }; self?.bridges.removeValue(forKey: peer) }
                         bridge.start()
                     }
-                } catch { self?.queue.async { self?.opening.remove(peer) } }
+                } catch {
+                    appLog("Relay v2 stream \(incoming != nil ? "accept" : "open") failed peer=\(peer.prefix(8)): \(error)", level: .warning)
+                    self?.queue.async {
+                        guard let self else { return }
+                        self.opening.remove(peer)
+                        if self.pendingV2[peer] != nil { self.begin(peer) }
+                    }
+                }
             }
             return
         }
-        guard let connection = client, callbacks[peer] != nil, bridges[peer] == nil, !opening.contains(peer), !stopped else { return }
         let incoming = pending[peer]
-        guard id < (metadata[peer]?.id ?? peer) || incoming != nil else { return }
+        guard let connection = client, hasReadyCallback(for: peer, hasIncoming: incoming != nil), bridges[peer] == nil, !opening.contains(peer), !stopped else { return }
+        guard force || id < (metadata[peer]?.id ?? peer) || incoming != nil else { return }
         pending.removeValue(forKey: peer); opening.insert(peer); let current = generation
         Task { [weak self] in
             do {
@@ -363,12 +400,19 @@ final class SyncRelayClient: @unchecked Sendable {
                 guard let self else { await stream.close(); return }
                 self.queue.async {
                     self.opening.remove(peer)
-                    guard !self.stopped, current == self.generation, let callback = self.callbacks.removeValue(forKey: peer) else { Task { await stream.close() }; return }
+                    guard !self.stopped, current == self.generation, let callback = self.resolveReadyCallback(for: peer, hasIncoming: incoming != nil) else { Task { await stream.close() }; return }
                     let bridge = RelayByteBridge(stream: stream, queue: self.queue, onReady: callback); self.bridges[peer] = bridge
                     bridge.onClose = { [weak self, weak bridge] in guard self?.bridges[peer] === bridge else { return }; self?.bridges.removeValue(forKey: peer) }
                     bridge.start()
                 }
-            } catch { self?.queue.async { self?.opening.remove(peer) } }
+            } catch {
+                appLog("Relay v1 stream \(incoming != nil ? "accept" : "open") failed peer=\(peer.prefix(8)): \(error)", level: .warning)
+                self?.queue.async {
+                    guard let self else { return }
+                    self.opening.remove(peer)
+                    if self.pending[peer] != nil { self.begin(peer) }
+                }
+            }
         }
     }
     private func lost(_ current: Int, reason: String) {

@@ -365,6 +365,33 @@ class SyncManager with WidgetsBindingObserver {
   List<String> get availableDeviceNames =>
       availablePeers.map((p) => p.displayName).toList();
 
+  /// Publish relay presence immediately once a peer has announced its LAN
+  /// `peerId`, even before a data tunnel is opened. Keeps remote devices
+  /// visible under their canonical `lanPeerId` (never raw `relayDeviceId`).
+  void _publishRelayPeers() {
+    final relay = _relay;
+    if (relay == null || !relay.presenceKnown) return;
+    final peers = relay.resolvedPeers;
+    _discoveredPeers.removeWhere(
+      (id, peer) =>
+          peer.host.startsWith('relay:') &&
+          !peers.containsKey(id) &&
+          !_sessions.containsKey(id),
+    );
+    for (final entry in peers.entries) {
+      final id = entry.key;
+      final existing = _discoveredPeers[id];
+      if (existing != null && !existing.host.startsWith('relay:')) continue;
+      _discoveredPeers[id] = DiscoveredPeer(
+        peerId: id,
+        displayName: entry.value.name,
+        host: 'relay:$id',
+        port: entry.value.port,
+      );
+    }
+    _emitPeers();
+  }
+
   /// Snapshot only; the iOS share extension owns its short-lived direct client.
   Future<Map<String, Object>> shareExtensionConfiguration() async {
     final cached = await _readEndpointCache();
@@ -642,10 +669,13 @@ class SyncManager with WidgetsBindingObserver {
       port: port,
       addresses: addresses,
       onStateChanged: (_) {
-        if (_isRunCurrent(epoch)) _notifyConnectionChanged();
+        if (!_isRunCurrent(epoch)) return;
+        _publishRelayPeers();
+        _notifyConnectionChanged();
       },
       onPeerAvailable: () =>
           _probeNetworkSessions(trigger: 'relayPeerAvailable'),
+      onLog: (message) => appLog(message, level: 'warning', console: true),
       hasSession: (id) => _sessions.containsKey(id),
       tryLan: (id, host, port) => _dial(
         host,

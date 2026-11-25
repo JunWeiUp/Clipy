@@ -351,7 +351,8 @@ final class SyncManager: NSObject {
     }
 
     func sendTextToPeer(_ content: String, hash: String, peerId targetId: String, completion: ((Bool) -> Void)? = nil) {
-        guard PreferencesManager.shared.isSyncEnabled, let payload = encrypt(content) else { completion?(false); return }
+        appLog("direct send requested peer=\(targetId.prefix(8)) chars=\(content.count)")
+        guard PreferencesManager.shared.isSyncEnabled, let payload = encrypt(content) else { appLog("direct send rejected: sync disabled or encryption failed", level: .warning); completion?(false); return }
         // Device-list send: history.direct bypasses mutual authorization on both ends.
         sendEnvelope(
             SyncEnvelope.make(type: SyncType.historyDirect, peerId: peerId, name: displayName, hash: hash, payload: payload),

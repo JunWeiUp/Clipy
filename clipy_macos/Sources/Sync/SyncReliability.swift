@@ -72,6 +72,7 @@ extension SyncManager {
     }
 
     @discardableResult func deliver(data: Data, type: String, peerId: String, hash: String?, reliable: Bool, dialReason: String = "deliver") -> Bool {
+        appLog("deliver type=\(type) peer=\(peerId.prefix(8)) session=\(sessions[peerId] != nil)")
         if let session = sessions[peerId], sendSessionFrame(session.fd, data) {
             diagnostics.noteSent(peerId: peerId)
             return true
@@ -80,7 +81,18 @@ extension SyncManager {
         relayClient?.refreshPeers()
         let reason = (type == SyncType.historyDirect) ? "direct" : dialReason
         if let peer = peerSnapshot(peerId) {
-            dial(host: peer.host, port: peer.port, reason: reason, peerId: peerId)
+            if peer.host.hasPrefix("relay:") {
+                relayClient?.open(peer: peerId, force: type == SyncType.historyDirect) { [weak self] fd in
+                    guard let self else { Darwin.close(fd); return }
+                    self.scanQueue.async {
+                        self.performHandshake(fd: fd, host: "relay:\(peerId)", port: peer.port,
+                            inbound: self.peerId > peerId, expectedPeerId: peerId,
+                            expectedGeneration: self.currentGeneration)
+                    }
+                }
+            } else {
+                dial(host: peer.host, port: peer.port, reason: reason, peerId: peerId)
+            }
         } else if let cached = cachedEndpoint(for: peerId) {
             dial(host: cached.host, port: cached.port, reason: reason, peerId: peerId)
         } else {

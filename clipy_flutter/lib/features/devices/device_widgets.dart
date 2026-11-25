@@ -83,6 +83,12 @@ class _SendTextDialog extends StatefulWidget {
 
 class _SendTextDialogState extends State<_SendTextDialog> {
   late final _text = TextEditingController(text: widget.initialText);
+  void _submit(BuildContext context) {
+    final value = _text.text.trim();
+    if (value.isEmpty) return;
+    Navigator.pop(context, value);
+  }
+
   @override
   void dispose() {
     _text.dispose();
@@ -102,6 +108,7 @@ class _SendTextDialogState extends State<_SendTextDialog> {
               maxLines: 6,
               placeholder: context.l10n.enterTextToSend,
               onChanged: (_) => setState(() {}),
+              onSubmitted: (_) => _submit(context),
             ),
           ),
           actions: [
@@ -110,9 +117,7 @@ class _SendTextDialogState extends State<_SendTextDialog> {
               child: Text(context.l10n.cancel),
             ),
             CupertinoDialogAction(
-              onPressed: _text.text.trim().isEmpty
-                  ? null
-                  : () => Navigator.pop(context, _text.text),
+              onPressed: () => _submit(context),
               child: Text(context.l10n.send),
             ),
           ],
@@ -125,6 +130,7 @@ class _SendTextDialogState extends State<_SendTextDialog> {
             minLines: 3,
             maxLines: 6,
             onChanged: (_) => setState(() {}),
+            onSubmitted: (_) => _submit(context),
             decoration: InputDecoration(hintText: context.l10n.enterTextToSend),
           ),
           actions: [
@@ -133,9 +139,7 @@ class _SendTextDialogState extends State<_SendTextDialog> {
               child: Text(context.l10n.cancel),
             ),
             FilledButton(
-              onPressed: _text.text.trim().isEmpty
-                  ? null
-                  : () => Navigator.pop(context, _text.text),
+              onPressed: () => _submit(context),
               child: Text(context.l10n.send),
             ),
           ],

@@ -213,6 +213,14 @@ extension SyncManager {
                 self.probeNetworkSessions(trigger: "relayPeerAvailable")
             }
         }
+        client.onSocket = { [weak self] peer, fd in
+            guard let self else { Darwin.close(fd); return }
+            self.scanQueue.async {
+                self.performHandshake(fd: fd, host: "relay:\(peer.id)", port: peer.port,
+                    inbound: self.peerId > peer.id, expectedPeerId: peer.id,
+                    expectedGeneration: generation)
+            }
+        }
         relayClient = client; client.start()
     }
 }

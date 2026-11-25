@@ -83,6 +83,10 @@ extension SyncReliabilityMethods on SyncManager {
     String? hash,
     String dialReason = 'deliver',
   }) async {
+    appLog(
+      'deliver type=$type peer=${peerId.substring(0, peerId.length.clamp(0, 8))} '
+      'session=${_sessions.containsKey(peerId)}',
+    );
     final session = _sessions[peerId];
     if (session != null) {
       try {
@@ -108,7 +112,11 @@ extension SyncReliabilityMethods on SyncManager {
     final reason = type == SyncType.historyDirect ? 'direct' : dialReason;
     final peer = _discoveredPeers[peerId];
     if (peer != null) {
-      unawaited(_dial(peer.host, peer.port, reason: reason, peerId: peerId));
+      if (peer.host.startsWith('relay:')) {
+        _relay?.openPeer(peerId);
+      } else {
+        unawaited(_dial(peer.host, peer.port, reason: reason, peerId: peerId));
+      }
     } else {
       unawaited(() async {
         for (final e in await _readEndpointCache()) {
@@ -376,7 +384,14 @@ extension SyncReliabilityMethods on SyncManager {
   }
 
   Future<bool> sendTextToPeer(String content, {required String peerId}) async {
-    if (!isEnabled) return false;
+    appLog(
+      'direct send requested peer=${peerId.substring(0, peerId.length.clamp(0, 8))} '
+      'chars=${content.length}',
+    );
+    if (!isEnabled) {
+      appLog('direct send rejected: sync disabled', level: 'warning');
+      return false;
+    }
     final hash = sha256.convert(utf8.encode(content)).toString();
     final payload = _encrypt(content);
     if (payload == null) return false;
